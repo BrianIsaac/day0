@@ -52,6 +52,7 @@ nothing else on your machine can dial them.
 | `dashboard` | `dev` | `CONVEX_DASHBOARD_PORT` 6791 | - |
 | `model` | `model` | `MODEL_PORT` 11434 | `http://model:11434/v1` |
 | `fake-slack` | `test` | `FAKE_SLACK_HOST_PORT` 8090 | `http://fake-slack:8090/api/` |
+| `fake-oidc` | `test` | none | `http://fake-oidc:8443` (a fixed address on a review bed) |
 | `docs-notion-mcp` | `docs-notion` | none | `http://docs-notion-mcp:3000/mcp` |
 | `playwright-mcp` | `browser` | none | `http://playwright-mcp:8931/mcp` |
 | `looker-tile` | `demo` | none | `http://looker-tile:8080` |
@@ -220,6 +221,28 @@ provider's own address, and the surface row and its evidence name that address.
 
 **What it never sees.** A real workspace, a real token or a real message. It
 holds its state in memory and forgets it when the container stops.
+
+---
+
+## `fake-oidc` - the test issuer
+
+**What it is.** A stand-in for a company's OpenID Connect issuer: discovery,
+signing keys, sign-in codes with PKCE and rotating refresh tokens for a fixed
+set of test people, so a customer-local bed can sign people in without an
+external identity provider.
+
+**What day0 uses it for.** Nothing in production. Anyone who reaches it signs
+in as anyone it lists, which is why it is never an issuer a real installation
+points at.
+
+**When you need it.** Reviewing the company sign-in on a bed (`check:sign-in`,
+the sign-in walk).
+
+**When you do not.** Every real installation, which names its own issuer
+(Entra, Okta, Google or another OpenID Connect provider).
+
+**What it never sees.** A real person's account or password. It holds its
+people and codes in memory and forgets them when the container stops.
 
 ---
 

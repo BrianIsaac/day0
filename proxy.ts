@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
+import { CUSTOMER_SESSION_COOKIE, joinCookie, openSession } from '@/lib/customer-session';
+import { CUSTOMER_SIGN_IN, profileMismatch } from '@/lib/customer-sign-in';
+import { publicOrigin } from '@/lib/customer-sign-in-settings';
 import {
   DEV_NO_AUTH_COOKIE,
   DEV_NO_AUTH_SESSION_SECONDS,
@@ -35,6 +38,11 @@ import {
  * in its place is the boundary that mode actually claims: the caller must
  * hold this machine's unlock secret, so the one synthetic user is only
  * ever handed to somebody who read it off this machine's terminal.
+ *
+ * A customer-local build (`NEXT_PUBLIC_DAY0_PROFILE=customer-local`) runs
+ * neither: people sign in through the customer's own issuer, and
+ * `customerSignInGate` below holds every route to the session that sign-in
+ * seals.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
@@ -96,6 +104,15 @@ const isExternallyCalledRoute = createRouteMatcher([
 ]);
 
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
+  // A build and a server that disagree on the profile refuse every request, whichever of the two
+  // asked for the customer sign-in (the wave 10 review, S-m1): the browser and the server would
+  // sign people in two different ways.
+  const mismatch = profileMismatch(process.env.DAY0_PROFILE);
+  if (mismatch) return refuse(mismatch, 503);
+  if (CUSTOMER_SIGN_IN) {
+    const [request] = args;
+    return customerSignInGate(request);
+  }
   if (DEV_NO_AUTH) {
     const [request] = args;
     return isExternallyCalledRoute(request) ? NextResponse.next() : devNoAuthGate(request);
@@ -169,6 +186,55 @@ async function devNoAuthGate(request: NextRequest): Promise<NextResponse> {
   }
 
   return NextResponse.next();
+}
+
+/** The company sign-in's own routes, which a signed-out browser must reach to sign in. */
+const isCustomerSignInRoute = createRouteMatcher(['/api/auth/oidc/(.*)']);
+
+/** Clerk's pages, which a customer-local build never draws. */
+const isClerkPage = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)']);
+
+/**
+ * A redirect to the company sign-in, on the public origin people reach Day0 on
+ * (`DAY0_PUBLIC_URL`), else the request's own: Next's server refuses a relative
+ * `Location` from the proxy, and behind the customer's proxy the request's own
+ * host may be an internal one.
+ */
+function toCompanySignIn(request: NextRequest, returnTo: string): NextResponse {
+  const origin = publicOrigin(process.env.DAY0_PUBLIC_URL);
+  const base = 'origin' in origin ? origin.origin : request.nextUrl.origin;
+  const location = new URL('/api/auth/oidc/login', base);
+  location.searchParams.set('returnTo', returnTo);
+  return NextResponse.redirect(location, { status: 307, headers: { 'cache-control': 'no-store' } });
+}
+
+/**
+ * The customer-local profile's gate (A7): every page and API route needs a
+ * session this install sealed, except the sign-in's own routes and the two
+ * that are called from outside (the voice webhook and Slack's install
+ * redirect, each with its own boundary, above). A signed-out page request is
+ * sent to the company sign-in and brought back afterwards; a signed-out API
+ * call is answered 401. Clerk's pages are never drawn.
+ *
+ * This is the optimistic check Next's guide describes (O2): it reads the
+ * sealed cookie on the Node runtime and nothing else. Authorisation stays on
+ * the deployment, where `getCaller` checks the ID token's signature and the
+ * allowed domains again.
+ */
+async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
+  if (isCustomerSignInRoute(request) || isExternallyCalledRoute(request)) {
+    return NextResponse.next();
+  }
+  if (isClerkPage(request)) return toCompanySignIn(request, '/');
+  const session = await openSession(
+    process.env.DAY0_SESSION_SECRET,
+    joinCookie(CUSTOMER_SESSION_COOKIE, (name) => request.cookies.get(name)?.value),
+  );
+  if (session) return NextResponse.next();
+  if (isApiRoute(request) || (request.method !== 'GET' && request.method !== 'HEAD')) {
+    return NextResponse.json({ error: 'not signed in' }, { status: 401 });
+  }
+  return toCompanySignIn(request, `${request.nextUrl.pathname}${request.nextUrl.search}`);
 }
 
 export const config = {

@@ -3,8 +3,10 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { AUTHORING_LEASE_MS } from '../../../src/lib/skill-authoring';
 import {
   oneToOneWaitsOnManager,
+  attemptsSpent,
   parkedRowNeedsManager,
   skillWaitsOnManager,
+  skillsWaitingOnManager,
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
 } from '../../../src/work/needs-manager';
@@ -41,6 +43,32 @@ describe('needs-manager rules', (): void => {
       ),
     ).toBe(true);
     expect(skillWaitsOnManager(skill({ state: 'registered' }), NOW)).toBe(false);
+  });
+
+  it('withdraws Retry at the third failed attempt, and only from a failed skill', (): void => {
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 2 }))).toBe(false);
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 3 }))).toBe(true);
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 4 }))).toBe(true);
+    expect(attemptsSpent(skill({ state: 'failed' }))).toBe(false);
+    expect(attemptsSpent(skill({ state: 'authoring', authoringAttempts: 3 }))).toBe(false);
+  });
+
+  it('keeps a skill at its third failed attempt on the manager, for Give up', (): void => {
+    const spent = skill({ state: 'failed', authoringAttempts: 3 });
+    expect(skillWaitsOnManager(spent, NOW)).toBe(true);
+    expect(
+      parkedRowNeedsManager(
+        row({ state: 'needs-skill', proposedSkillId: SKILL_ID }),
+        new Map([[SKILL_ID, spent]]),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('leaves a row parked behind a skill taken out of use with nobody until it is proposed again', (): void => {
+    for (const state of ['retired', 'superseded', 'rejected'] as const) {
+      expect(skillWaitsOnManager(skill({ state }), NOW)).toBe(false);
+    }
   });
 
   it('counts every deferral and a skill wait only while the skill is the manager’s', (): void => {
@@ -81,5 +109,24 @@ describe('oneToOneWaitsOnManager (D4 (b))', (): void => {
     expect(oneToOneWaitsOnManager({ state: 'day-one-in-progress' })).toBe(false);
     expect(oneToOneWaitsOnManager({ state: 'charter-pending' })).toBe(false);
     expect(oneToOneWaitsOnManager({ state: 'active' })).toBe(false);
+  });
+});
+
+describe('skillsWaitingOnManager (the Skills tab badge, C-m1)', (): void => {
+  it('counts each skill whose next move is the manager’s once, and none a live run holds or that ended', (): void => {
+    const now = 1_000_000;
+    const skill = (id: string, fields: Partial<Doc<'skills'>>): Doc<'skills'> =>
+      ({ _id: id, name: id, ...fields }) as Doc<'skills'>;
+    const proposed = skill('a', { state: 'proposed' });
+    const rows = [
+      proposed,
+      proposed,
+      skill('b', { state: 'failed', authoringAttempts: 3 }),
+      skill('c', { state: 'authoring' }),
+      skill('d', { state: 'authoring', authoringRunId: 'run' as never, authoringClaimedAt: now }),
+      skill('e', { state: 'registered' }),
+      skill('f', { state: 'retired' }),
+    ];
+    expect(skillsWaitingOnManager(rows, now)).toBe(3);
   });
 });

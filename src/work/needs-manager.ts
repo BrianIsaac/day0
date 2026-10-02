@@ -1,5 +1,6 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { holdsLiveAuthoringClaim } from '../lib/skill-authoring';
+import { MAX_AUTHORING_ATTEMPTS } from './skill-library';
 import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
@@ -44,14 +45,44 @@ export const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Whether a failed skill has spent its authoring attempts ("Attempt 3 of 3"): Retry is withdrawn
+ * and the manager's move is Give up. It still waits on the manager, as every failed skill does.
+ *
+ * @param skill - The skill's state and the attempts its authoring claims counted.
+ */
+export function attemptsSpent(skill: Pick<Doc<'skills'>, 'state' | 'authoringAttempts'>): boolean {
+  return skill.state === 'failed' && (skill.authoringAttempts ?? 0) >= MAX_AUTHORING_ATTEMPTS;
+}
+
+/**
  * Whether the next move on a skill is the manager's: its state waits on a
- * manager's click and no authoring run holds it.
+ * manager's click and no authoring run holds it. A failed skill waits on the
+ * manager whatever its attempts: Retry until the third, Give up after it.
+ * A skill taken out of use (`retired`, `superseded`) or ended (`rejected`)
+ * waits on nobody.
  *
  * @param skill - The skill a parked row waits on.
  * @param now - The instant an authoring claim is judged against.
  */
 export function skillWaitsOnManager(skill: Doc<'skills'>, now: number): boolean {
   return SKILL_WAITS_ON_MANAGER_STATES.has(skill.state) && !holdsLiveAuthoringClaim(skill, now);
+}
+
+/**
+ * How many of an employee's skills wait on the manager, the Skills tab's badge (the wave 10
+ * review, C-m1): proposals (an offered adoption among them), failed drafts and adoptions (Retry,
+ * or Give up at the third attempt), and parked or stalled rows no run holds; each row once,
+ * whichever of the tab's lists carry it.
+ *
+ * @param rows - The rows of the tab's lists, a row listed twice counted once.
+ * @param now - The instant an authoring claim is judged against.
+ */
+export function skillsWaitingOnManager(rows: readonly Doc<'skills'>[], now: number): number {
+  const counted = new Set<Id<'skills'>>();
+  for (const row of rows) {
+    if (skillWaitsOnManager(row, now)) counted.add(row._id);
+  }
+  return counted.size;
 }
 
 /**

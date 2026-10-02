@@ -4,6 +4,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
 import { log } from '@/lib/logger';
+import { isEmployeeNotYours } from '@/agent/employee-access';
 
 /** An agent id and nothing else; anything larger is not a seed request. */
 const SEED_BODY_LIMIT_BYTES = 4 * 1024;
@@ -41,7 +42,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     // it carries the function path and the backend's own words (C-34).
     const message = err instanceof Error ? err.message : String(err);
     log.warn('demo seeding failed', { reason: message });
-    if (/\bforbidden\b/.test(message)) {
+    if (isEmployeeNotYours(err) || /\bforbidden\b/.test(message)) {
       return NextResponse.json({ error: 'that agent is not yours to seed' }, { status: 403 });
     }
     return NextResponse.json({ error: 'demo seeding failed' }, { status: 500 });

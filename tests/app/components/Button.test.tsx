@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { BUTTON_VARIANTS, Button, ButtonLink, buttonClass } from '../../../app/components/Button';
+import { contrast, over, token } from '../../fixtures/theme-contrast';
 
 describe('Button', () => {
   it('is a plain button unless told otherwise, so it never submits a form by accident', () => {
@@ -59,4 +60,30 @@ describe('ButtonLink', () => {
     expect(html).toContain('href="/agent/a1/work"');
     expect(html).toContain(buttonClass('approve'));
   });
+
+  // The grounds a tinted decision is drawn on: the page, a card, an inset, and the tone fills
+  // (the held writes and the batch approval sit on warn, a failed draft's Draft again too).
+  const GROUNDS = ['bg', 'card', 'inset', 'warn-soft', 'ok-soft', 'accent-soft'] as const;
+
+  it.each([
+    ['approve', 'ok'],
+    ['retry', 'warn'],
+  ] as const)(
+    'keeps the text of the %s look at 4.5:1 or more at rest and under the pointer on every ground (the pre-tag walk: 4.47:1)',
+    (variant, tone): void => {
+      const classes = buttonClass(variant, 'small');
+      const tints = [
+        ...classes.matchAll(
+          new RegExp(`(?:^|\\s)(?:hover:)?bg-\\[var\\(--color-${tone}\\)\\]/(\\d+)`, 'g'),
+        ),
+      ].map((match) => Number(match[1]) / 100);
+      expect(tints.length).toBeGreaterThan(0);
+      for (const ground of GROUNDS) {
+        for (const alpha of tints) {
+          const fill = over(token(tone), alpha, token(ground));
+          expect(contrast(token(tone), fill), `${ground} at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
 });

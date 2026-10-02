@@ -75,6 +75,8 @@ interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
   tracker?: TicketSnapshot;
   askedAt?: number;
   observedAt: number;
+  /** The owner the sweep read the employee under, which the seed is fenced by. */
+  startedUnder: string | null;
 }
 
 interface RuntimeHarness {
@@ -279,11 +281,14 @@ function runtimeHarness(
       );
       if (surface && record.polledAt !== undefined) surface.lastPolledAt = record.polledAt;
     },
-    seed: async (candidate: SeededCandidate): Promise<void> => {
-      seeds.set(
-        `${String(candidate.agentId)}:${candidate.sourceSystem}:${candidate.externalId}`,
-        candidate,
-      );
+    seed: async (
+      candidate: Omit<SeededCandidate, 'startedUnder'>,
+      startedUnder: string | null,
+    ): Promise<void> => {
+      seeds.set(`${String(candidate.agentId)}:${candidate.sourceSystem}:${candidate.externalId}`, {
+        ...candidate,
+        startedUnder,
+      });
     },
     withdraw: async (candidate): Promise<void> => {
       withdrawn.push({ externalId: candidate.externalId, leftQueue: candidate.leftQueue });
@@ -761,6 +766,8 @@ describe('real surface intake', (): void => {
     ]);
     expect(disconnect).toHaveBeenCalledOnce();
     expect(harness.seeds.get('agent-intake:linear:issue-1')).toMatchObject({
+      // The owner the sweep read the employee under: the seed lands only while it still is.
+      startedUnder: 'owner',
       sourceCategory: 'ticket-queue',
       sourceSystem: 'linear',
       externalId: 'issue-1',
@@ -1316,7 +1323,7 @@ describe('real surface intake', (): void => {
 
   it('makes the intake runtime fake preserve the agent part of the deduplication tuple', async (): Promise<void> => {
     const harness = runtimeHarness([], [], new Map());
-    const candidate: Omit<SeededCandidate, 'agentId'> = {
+    const candidate: Omit<SeededCandidate, 'agentId' | 'startedUnder'> = {
       sourceCategory: 'ticket-queue',
       sourceSystem: 'linear',
       externalId: 'same-provider-id',
@@ -1326,8 +1333,8 @@ describe('real surface intake', (): void => {
       observedAt: 1,
     };
 
-    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-one') });
-    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-two') });
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-one') }, 'owner');
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-two') }, 'owner');
 
     expect(harness.seeds.size).toBe(2);
   });
@@ -4095,9 +4102,9 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
   it('seeds the other candidates when one fails, and names the one that did', async (): Promise<void> => {
     const harness = slackHarness();
     const seed = harness.runtime.seed;
-    harness.runtime.seed = async (candidate): Promise<void> => {
+    harness.runtime.seed = async (candidate, startedUnder): Promise<void> => {
       if (candidate.externalId.startsWith('CASKS')) throw new Error('seed write conflicted');
-      await seed(candidate);
+      await seed(candidate, startedUnder);
     };
     await expect(
       runIntakeSweep(harness.runtime, {

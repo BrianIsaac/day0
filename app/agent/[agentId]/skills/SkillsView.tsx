@@ -5,11 +5,23 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
+import { autonomousActionsOn } from '@/work/autonomy';
 import { useEmployee } from '../employee-context';
 import { useNow } from '../../../components/time';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
 import { ProposedSkillsPanel } from './ProposedSkillsPanel';
 import { RegisteredSkillsPanel } from './RegisteredSkillsPanel';
+
+/**
+ * The states that settle the last authoring verdict: the row registered, was rejected or given
+ * up, was retired, or was replaced by its revision. The verdict describes none of them.
+ */
+const VERDICT_SETTLED_STATES: ReadonlySet<string> = new Set([
+  'registered',
+  'rejected',
+  'retired',
+  'superseded',
+]);
 
 /**
  * The Skills tab (round two section 3.9): the skills the employee proposed, waiting on the
@@ -24,6 +36,9 @@ export function SkillsView() {
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
+  // A revision approved and not yet being written appears in neither list above.
+  const pendingRevisions = useQuery(api.skillControls.pendingRevisions, { agentId });
+  const adoptedSources = useQuery(api.skillVersions.adoptedSources, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -45,16 +60,16 @@ export function SkillsView() {
     api.skills.get,
     lastAttempt ? { skillId: lastAttempt.skillId } : 'skip',
   );
-  // A run holding the skill now, a registration and a rejection are all facts
-  // newer than the verdict, and each of them makes it a lie. A claim whose run
-  // died is none of them: it is left on the row by a run that never came back,
-  // so it is exactly the case the verdict is describing and must not hide it.
+  // A run holding the skill now, a registration, a rejection, a retire and a
+  // revision registering in the row's place are all facts newer than the
+  // verdict, and each of them makes it a lie. A claim whose run died is none
+  // of them: it is left on the row by a run that never came back, so it is
+  // exactly the case the verdict is describing and must not hide it.
   const authoringFailure =
     lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
-    attemptedSkill.state !== 'registered' &&
-    attemptedSkill.state !== 'rejected'
+    !VERDICT_SETTLED_STATES.has(attemptedSkill.state)
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
       : null;
   // A registration the manager started is said once the row says it too.
@@ -75,13 +90,23 @@ export function SkillsView() {
       />
       <RegisteredSkillsPanel
         skills={registeredSkills ?? []}
-        unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+        // An adoption in flight, stopped short or failed is drawn by the adoption card alone, whose
+        // controls check the offered version again or set the offer aside first; a Retry here
+        // would act on the row with the offer still on it (the wave 10 review, M3).
+        unregistered={[
+          ...(pendingRevisions ?? []),
+          ...(unverifiedSkills ?? []),
+          ...(failedSkills ?? []),
+        ].filter((skill) => skill.offeredVersionId === undefined)}
         authoringFailure={authoringFailure}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
         surfaceMode={surfaceMode}
         focusRef={skillsCard}
         loading={registeredSkills === undefined}
+        employee={agent.name}
+        autonomous={autonomousActionsOn(agent)}
+        adoptedFrom={adoptedSources ?? []}
       />
     </Columns>
   );

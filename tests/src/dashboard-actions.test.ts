@@ -374,7 +374,7 @@ const completeMetrics: AgentMetrics = {
   autonomyChanges: 1,
   auditTrail: { complete: 11, total: 11, fraction: 1 },
   pilot: {
-    skillReuse: { runs: 0, reused: 0, rate: null },
+    skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
     cycleTime: {
       ended: 0,
       medianToEndMs: null,
@@ -573,7 +573,7 @@ describe('the cross-item approval panel', (): void => {
     );
     // Nothing to see, only the live region that says what the last batch came to.
     expect(html).toBe(
-      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-xs leading-snug text-[var(--color-muted)]"></p>',
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-xs leading-snug break-words text-[var(--color-muted)]"></p>',
     );
   });
 });

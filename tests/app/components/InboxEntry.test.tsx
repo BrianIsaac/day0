@@ -125,7 +125,7 @@ describe('the ninth kind: an employee to take on', (): void => {
     expect(inboxEntryWords(transfer)).toEqual({
       ask: 'an employee to take on',
       about:
-        'sam@company.com asks you to become its manager. Expires 10 Oct 2026, 06:45, UTC time.',
+        'Its manager, sam@company.com, asks you to take it on. Expires 10 Oct 2026, 06:45, UTC time.',
       control: 'Review',
     });
   });

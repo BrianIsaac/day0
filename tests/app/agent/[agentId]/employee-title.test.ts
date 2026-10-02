@@ -10,21 +10,21 @@ const AGENT = 'j57agent' as Id<'agents'>;
 
 describe("the employee page's tab title (walk m16)", () => {
   it('names the employee before the tab, and Needs you on the page itself', async () => {
-    expect(await employeeTitle(AGENT, async () => 'Ada')).toEqual({
+    expect(await employeeTitle(AGENT, async () => ({ kind: 'employee', name: 'Ada' }))).toEqual({
       default: 'Ada · Needs you · Day0',
       template: 'Ada · %s · Day0',
     });
   });
 
   it('leaves the name out when the manager cannot read it, and still titles the tab', async () => {
-    expect(await employeeTitle(AGENT, async () => null)).toEqual({
+    expect(await employeeTitle(AGENT, async () => ({ kind: 'unnamed' }))).toEqual({
       default: 'Needs you · Day0',
       template: '%s · Day0',
     });
   });
 
   it('never fails the page over a name the backend could not give', async () => {
-    const unreachable = async (): Promise<string> => {
+    const unreachable = async (): Promise<never> => {
       throw new Error('fetch failed');
     };
     expect(await employeeTitle(AGENT, unreachable)).toEqual({
@@ -33,8 +33,15 @@ describe("the employee page's tab title (walk m16)", () => {
     });
   });
 
+  it('titles every tab of an employee the manager handed over by where it went, never by a tab of theirs (the v0.12.0 walk)', async () => {
+    expect(await employeeTitle(AGENT, async () => ({ kind: 'departed', name: 'Maya' }))).toEqual({
+      default: 'Maya was handed over · Day0',
+      template: 'Maya was handed over · Day0',
+    });
+  });
+
   it("hands Next's own redirect back to it rather than titling past it", async () => {
-    const redirecting = async (): Promise<string> => redirect('/sign-in');
+    const redirecting = async (): Promise<never> => redirect('/sign-in');
     await expect(employeeTitle(AGENT, redirecting)).rejects.toThrow('NEXT_REDIRECT');
   });
 });

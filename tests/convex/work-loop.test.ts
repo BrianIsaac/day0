@@ -1094,7 +1094,7 @@ describe('checking for new work on demand', (): void => {
       harness
         .withIdentity(managerIdentity('someone-else'))
         .mutation(api.workLoop.checkForNewWork, { agentId }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
 
     restoreSurfaceMode();
     useSurfaceMode('mock');

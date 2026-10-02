@@ -116,6 +116,7 @@ import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types
 import {
   sameSkillShape,
   skillOperationLabel,
+  skillNameFor,
   skillShapeFor,
   skillSurfacePhrase,
   type ShapeSurface,
@@ -177,6 +178,8 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
 } from '../src/surfaces/policy';
+import { notCallableItemReason } from '../src/work/skill-controls';
+import { proposeBehindParkedWork } from './skillControls';
 
 /**
  * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
@@ -429,6 +432,9 @@ async function recordingModelCalls<T>(
   }, fn);
 }
 
+/** The evaluation's answer when a `needs-skill` verdict's proposal threw and the item stopped. */
+const PROPOSAL_FAILED = 'proposal-failed';
+
 /**
  * Evaluate one discovered work item and store the verdict.
  *
@@ -452,8 +458,9 @@ async function recordingModelCalls<T>(
  *
  * Returns:
  *   The stored decision, `scope-judgement-unavailable` when the row was left
- *   parked, or a `noop-` reason when the step was not this run's or the row
- *   is gone.
+ *   parked, `proposal-failed` when a `needs-skill` verdict's proposal threw and
+ *   the item was stopped for Retry, or a `noop-` reason when the step was not
+ *   this run's or the row is gone.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -599,25 +606,54 @@ async function evaluateWorkItemHandler(
     charterId: charterRow._id,
   });
 
-  // For needs-skill, propose a new skill row immediately.
+  // For needs-skill, propose a new skill row immediately, carrying a sibling's
+  // verified skill of the shape when one fits this employee (10-A).
   if (storedVerdict.decision === 'needs-skill' && verdict.decision === 'needs-skill') {
     const required = inferRequiredPermissions(candidate);
     const writeScope = `${candidate.sourceSystem}:write`;
     const requiredScopes = [...new Set([...required, writeScope])];
     const shape = verdict.suggestedSkillShape;
-    const skillId = await ctx.runMutation(internal.skills.propose, {
+    const offeredVersionId = await ctx.runQuery(internal.skillAdoption.offerFor, {
       agentId,
-      workItemId: args.workItemId,
       name: verdict.suggestedSkillName,
-      description: skillDescriptionFor(shape),
-      rationale: verdict.suggestedSkillRationale,
-      requiredScopes,
       surfaceClass: shape.surfaceClass,
       operation: shape.operation,
     });
+    const proposed = await ctx
+      .runMutation(internal.skills.propose, {
+        agentId,
+        workItemId: args.workItemId,
+        name: verdict.suggestedSkillName,
+        description: skillDescriptionFor(shape),
+        rationale: verdict.suggestedSkillRationale,
+        requiredScopes,
+        surfaceClass: shape.surfaceClass,
+        operation: shape.operation,
+        ...(agent?.userId === undefined ? {} : { startedUnder: agent.userId }),
+        ...(offeredVersionId !== null ? { offeredVersionId } : {}),
+      })
+      .then(
+        (skillId) => ({ ok: true as const, skillId }),
+        (error: unknown) => ({
+          ok: false as const,
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    if (!proposed.ok) {
+      // The verdict has committed `needs-skill`: a proposal that throws (a handover since the
+      // read, two cards with one slug) would leave the card with nothing to press until the
+      // lease recovery, and for ever in mock mode. It stops now, with Retry (m7).
+      log.warn('skill proposal refused after its verdict; the item is stopped', {
+        workItemId: args.workItemId,
+        skill: verdict.suggestedSkillName,
+        reason: proposed.reason,
+      });
+      await ctx.runMutation(internal.work.stopUnproposedSkill, { workItemId: args.workItemId });
+      return { decision: PROPOSAL_FAILED };
+    }
     await ctx.runMutation(internal.work.setProposedSkill, {
       workItemId: args.workItemId,
-      skillId,
+      skillId: proposed.skillId,
     });
   }
 
@@ -807,6 +843,53 @@ export const draftPlanInternal = internalAction({
   },
 });
 
+/**
+ * Park an approved item the executor found no callable skill for at `needs-skill` behind the
+ * skill its shape needs (E-1), and ask the proposal step for that skill when no row of its name
+ * may still become callable. The item waits for the skill's registration, which re-queues it.
+ *
+ * @param ctx - The executor's action context.
+ * @param item - The approved item.
+ * @param candidate - The item as the matcher read it.
+ * @param shape - The shape the matcher looked for.
+ * @returns The executor's answer: not run, and why.
+ */
+async function parkBehindMissingSkill(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  candidate: WorkCandidate,
+  shape: SkillShape,
+): Promise<{ ok: false; reason: string }> {
+  const name = skillNameFor(shape);
+  const reason = notCallableItemReason(name);
+  const rationale = `No callable skill covers ${skillOperationLabel(shape)} for this approved item.`;
+  const parked = await ctx.runMutation(internal.skillControls.parkForMissingSkill, {
+    workItemId: item._id,
+    name,
+    reason,
+    rationale,
+    shape: { surfaceClass: shape.surfaceClass, operation: shape.operation },
+  });
+  if (!parked.parked) return { ok: false, reason: 'the item left plan-approved before its run' };
+  if (parked.behind === null) {
+    await proposeBehindParkedWork(ctx, {
+      agentId: item.agentId,
+      workItemIds: [item._id],
+      proposal: {
+        name,
+        description: skillDescriptionFor(shape),
+        rationale,
+        requiredScopes: [
+          ...new Set([...inferRequiredPermissions(candidate), `${candidate.sourceSystem}:write`]),
+        ],
+        surfaceClass: shape.surfaceClass,
+        operation: shape.operation,
+      },
+    });
+  }
+  return { ok: false, reason };
+}
+
 async function executeApprovedPlanHandler(
   ctx: ActionCtx,
   args: { workItemId: Id<'workItems'> },
@@ -838,18 +921,12 @@ async function executeApprovedPlanHandler(
   // the skill that runs is the skill the verdict promised.
   const shapeSurfaces: readonly ShapeSurface[] =
     SURFACE_MODE === 'real' ? await loadSurfaces(ctx, agentId) : [];
-  const pickedSkill = findMatchingSkillForCandidate(
-    candidate,
-    skills,
-    skillShapeFor(candidate, shapeSurfaces, SURFACE_MODE),
-  );
+  const shape = skillShapeFor(candidate, shapeSurfaces, SURFACE_MODE);
+  const pickedSkill = findMatchingSkillForCandidate(candidate, skills, shape);
   if (!pickedSkill) {
-    const reason = `no registered skill matches source surface ${candidate.sourceSystem}`;
-    await ctx.runMutation(internal.work.setFailed, {
-      workItemId: args.workItemId,
-      reason,
-    });
-    return { ok: false, reason };
+    // E-1: a skill retired, withdrawn, superseded or still being written since the plan was
+    // approved is waited for, not failed into a Retry that fails the same way again.
+    return await parkBehindMissingSkill(ctx, item, candidate, shape);
   }
   // Nothing above this line touches a model or an adapter, so a caller that
   // loses the claim costs a handful of reads and stops here.
@@ -1137,6 +1214,7 @@ async function holdDay0Actions(
       surfaces,
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
+      currentManager: agent.bossEmail,
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
@@ -1867,17 +1945,21 @@ async function applyCarriedReads(
     },
   );
   const applied = scrubKnownValues(rows, args.knownValues);
-  await logEvent(ctx, {
-    agentId: args.agent._id,
-    type: CARRIED_READS_APPLIED,
-    payload: {
-      workItemId: args.workItemId,
-      runId: args.runId,
-      indexes,
-      surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
-      landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+  await logEvent(
+    ctx,
+    {
+      agentId: args.agent._id,
+      type: CARRIED_READS_APPLIED,
+      payload: {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        indexes,
+        surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
+        landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+      },
     },
-  });
+    { startedUnder: args.agent.userId },
+  );
   return { ...args.initial, actions, applied };
 }
 
@@ -2534,6 +2616,7 @@ export const authorDependentActions = internalAction({
             surfaces,
             mode: 'real',
             autonomousActions: autonomousActionsOn(agent),
+            currentManager: agent.bossEmail,
             managerFeedback: feedback,
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
@@ -2547,11 +2630,20 @@ export const authorDependentActions = internalAction({
             heldElsewhere: held,
             closingGate,
             onAuditCorrection: async (removedIndices, reason) => {
-              await logEvent(ctx, {
-                agentId: item.agentId,
-                type: 'audit.corrected',
-                payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
-              });
+              await logEvent(
+                ctx,
+                {
+                  agentId: item.agentId,
+                  type: 'audit.corrected',
+                  payload: {
+                    workItemId: args.workItemId,
+                    runId: args.runId,
+                    removedIndices,
+                    reason,
+                  },
+                },
+                { startedUnder: agent.userId },
+              );
             },
           }),
         );
@@ -2586,16 +2678,20 @@ export const authorDependentActions = internalAction({
         const taken = newlyHeldWrites(output.actions, heldElsewhere, heldNow, surfaces);
         if (taken.length > 0) {
           authored = output;
-          await logEvent(ctx, {
-            agentId: item.agentId,
-            type: CLOSING_REAUTHORED,
-            payload: {
-              workItemId: args.workItemId,
-              runId: args.runId,
-              reason: HOLDER_CHANGED,
-              heldNow: taken.map((held) => held.externalId),
+          await logEvent(
+            ctx,
+            {
+              agentId: item.agentId,
+              type: CLOSING_REAUTHORED,
+              payload: {
+                workItemId: args.workItemId,
+                runId: args.runId,
+                reason: HOLDER_CHANGED,
+                heldNow: taken.map((held) => held.externalId),
+              },
             },
-          });
+            { startedUnder: agent.userId },
+          );
           heldElsewhere = heldNow;
           droppedWritesTo = taken;
           output = await authorUnder(heldNow, 'holder-changed');
@@ -2709,16 +2805,20 @@ export const authorDependentActions = internalAction({
         return { ok: false, reason: stop };
       }
       if (leftSaid.said.length > 0) {
-        await logEvent(ctx, {
-          agentId: item.agentId,
-          type: 'audit.corrected',
-          payload: {
-            workItemId: args.workItemId,
-            runId: args.runId,
-            removedIndices: [],
-            reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}`,
+        await logEvent(
+          ctx,
+          {
+            agentId: item.agentId,
+            type: 'audit.corrected',
+            payload: {
+              workItemId: args.workItemId,
+              runId: args.runId,
+              removedIndices: [],
+              reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}`,
+            },
           },
-        });
+          { startedUnder: agent.userId },
+        );
       }
       // A question this run put to the manager, here, in phase one or in an
       // earlier run, that nobody has answered: the writes the plan left to
@@ -3934,15 +4034,19 @@ async function executorCorrections(
     known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
   });
   if (scrubbed.redaction) {
-    await logEvent(ctx, {
-      agentId: args.item.agentId,
-      type: 'work.corrections-redaction-limited',
-      payload: {
-        workItemId: args.item._id,
-        runId: args.runId,
-        correctionIds: carried.map((row) => row._id),
+    await logEvent(
+      ctx,
+      {
+        agentId: args.item.agentId,
+        type: 'work.corrections-redaction-limited',
+        payload: {
+          workItemId: args.item._id,
+          runId: args.runId,
+          correctionIds: carried.map((row) => row._id),
+        },
       },
-    });
+      { startedUnder: args.agent.userId },
+    );
   }
   return scrubbed.entries;
 }

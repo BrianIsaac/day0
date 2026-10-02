@@ -58,6 +58,8 @@ export interface SkillRow {
   name: string;
   state: string;
   proposedFor?: string;
+  /** A colleague's verified version offered for adoption (10-A), whose card draws Adopt. */
+  offeredVersionId?: string;
 }
 
 /** A work item as the rehearsal reads it. */

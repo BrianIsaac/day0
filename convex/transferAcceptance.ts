@@ -1,5 +1,6 @@
 import { ConvexError, v, type Infer } from 'convex/values';
 import {
+  internalAction,
   internalMutation,
   mutation,
   query,
@@ -21,7 +22,9 @@ import {
   wakeReleasedClaims,
   type Boundaries,
 } from './reset';
+import { closeDeparturesOnReturn } from './retirements';
 import { handOverSurfaces, type HandedOverSurfaces } from './surfaces';
+import { copyVersionsForMove } from './skillVersions';
 import { runsInFlight } from './transferInFlight';
 import {
   departingEmployee,
@@ -38,11 +41,13 @@ import {
   voidDecisionRequestsForHandover,
 } from './work';
 import {
+  HANDOVER_SETTINGS_REASON,
   isTransferDue,
   transferSettleBy,
   transferStateRefusal,
   type ManagerTransferState,
 } from '../src/agent/manager-transfer';
+import type { TransferEndReason } from '../src/events/contract';
 import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { canonicalZone, deploymentZone } from '../src/lib/zone';
@@ -68,9 +73,6 @@ import { canonicalZone, deploymentZone } from '../src/lib/zone';
 
 /** The refusal for a documentation source among the unticked that is not the acceptor's own. */
 export const SOURCE_NOT_YOURS = 'A documentation source you unticked is not one of yours.';
-
-/** The reason the record gives for the settings a handover returns to their defaults. */
-const HANDED_OVER_REASON = 'handed over to a new manager';
 
 /** The most `credential.superseded` events of one employee the move redacts. */
 const SUPERSEDED_EVENT_LIMIT = 1_000;
@@ -249,7 +251,7 @@ async function settleEmployeeRow(
     await appendEvent(ctx, {
       agentId: agent._id,
       type: 'agent.autonomy-changed',
-      payload: { from: true, to: false, reason: HANDED_OVER_REASON },
+      payload: { from: true, to: false, reason: HANDOVER_SETTINGS_REASON },
       createdAt: now,
     });
   }
@@ -257,7 +259,7 @@ async function settleEmployeeRow(
     await appendEvent(ctx, {
       agentId: agent._id,
       type: 'agent.notifications-changed',
-      payload: { from: 'digest', to: 'per-run', reason: HANDED_OVER_REASON },
+      payload: { from: 'digest', to: 'per-run', reason: HANDOVER_SETTINGS_REASON },
       createdAt: now,
     });
   }
@@ -311,7 +313,9 @@ async function cutConnections(
 /**
  * Leave the old owner a departure row (decision D11): the boundary the employee's claims and
  * rejections keep for the old owner's other employees, read by every reader of a retirement
- * unchanged. Real mode only, as a single retire keeps one; mock mode keeps nothing.
+ * unchanged. Real mode only, as a single retire keeps one; mock mode keeps nothing. An employee
+ * handed back to an owner it left closes the boundary that owner kept for it
+ * (`closeDeparturesOnReturn`, U3-m6).
  */
 async function leaveDeparture(
   ctx: MutationCtx,
@@ -322,6 +326,7 @@ async function leaveDeparture(
   now: number,
 ): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
+  await closeDeparturesOnReturn(ctx, transfer.toOwnerKey, agent._id);
   await ctx.db.insert('retirements', {
     userId: transfer.fromOwnerKey,
     kind: 'transferred',
@@ -483,7 +488,9 @@ async function moveRefusal(
 /**
  * Move the employee to the manager who accepted its handover, in one transaction (the transfer
  * plan, sections 6.2 to 6.5). In order: the departure boundary is read before anything changes;
- * the connections are cut ({@link cutConnections}); the live claims are moved or released; the
+ * the connections are cut ({@link cutConnections}); the skill versions the employee holds are
+ * copied into the new owner's library, and its skills on a cut surface are due a re-check
+ * (`copyVersionsForMove`, K2); the live claims are moved or released; the
  * work in flight is settled ({@link settleWorkInFlight}); the old owner's credential names leave
  * the record; the employee row is written for the new owner and the identity file rendered for
  * them; the old owner keeps a departure row in real mode, and their employees a released claim
@@ -510,6 +517,12 @@ async function moveEmployeeInTransaction(
   if (SURFACE_MODE === 'real') assertKeepable(boundaries);
 
   const cut = await cutConnections(ctx, agent, transfer, now);
+  await copyVersionsForMove(ctx, {
+    agentId: agent._id,
+    toOwnerKey: transfer.toOwnerKey,
+    cutSlugs: cut.surfaces.cut.map((surface) => surface.slug),
+    now,
+  });
   const claims = await moveClaims(ctx, items, boundaries, transfer.toOwnerKey, now);
   const work = await settleWorkInFlight(ctx, agent, now);
   await redactSupersededCredentials(ctx, agent._id);
@@ -614,10 +627,11 @@ export const accept = mutation({
     if ((await runsInFlight(ctx.db, agent._id)) > 0) {
       const refusal = await moveRefusal(ctx, transfer, now);
       if (refusal !== null) throw new ConvexError(refusal);
-      await ctx.db.patch(transfer._id, {
-        state: 'accepting',
-        settleBy: transferSettleBy(now),
-        ...acceptance,
+      const settleBy = transferSettleBy(now);
+      await ctx.db.patch(transfer._id, { state: 'accepting', settleBy, ...acceptance });
+      // The deadline holds by itself: a paused cron sweep cannot keep a handover waiting (U3-m5).
+      await ctx.scheduler.runAt(settleBy, internal.transferAcceptance.attemptSettle, {
+        transferId: transfer._id,
       });
       return { agentId: agent._id, state: 'accepting' };
     }
@@ -627,6 +641,12 @@ export const accept = mutation({
   },
 });
 
+/** How an accepted handover that cannot move ends: why, and the words or failure behind it. */
+interface HandoverEnding {
+  readonly reason: TransferEndReason;
+  readonly detail: string;
+}
+
 /**
  * End an `accepting` request whose move cannot be made, rather than retry it at every sweep: the
  * employee stays its old manager's, and the request is `cancelled`, the one final state that says
@@ -635,32 +655,47 @@ export const accept = mutation({
  * figures run on unbroken. `TRANSFER_MOVES` (`src/agent/manager-transfer.ts`) keeps `accepting`
  * to `accepted` alone, so no caller can cancel an acceptance (the owner's cancel and the retire
  * both read it); this one write, the settle's own and never a caller's, steps outside the table
- * on purpose.
+ * on purpose. The ending is logged and, while the employee exists, appended to its record as
+ * `manager.transfer-ended` (decision 4): the old manager reads there why the handover ended. The
+ * request's `cancelReason` names an ask's cancel only and is left unset (its values are the
+ * schema's; recorded for the cockpit).
  */
 async function endUnmovable(
   ctx: MutationCtx,
   transfer: Doc<'managerTransfers'>,
-  refusal: string,
+  ending: HandoverEnding,
 ): Promise<void> {
   await ctx.db.patch(transfer._id, { state: 'cancelled' });
   log.error('accepted handover could not move; ended', {
     transferId: transfer._id,
     agentId: transfer.agentId,
-    reason: refusal,
+    reason: ending.reason,
+    detail: ending.detail,
+  });
+  if ((await ctx.db.get(transfer.agentId)) === null) return;
+  await appendEvent(ctx, {
+    agentId: transfer.agentId,
+    type: 'manager.transfer-ended',
+    payload: {
+      transferId: transfer._id,
+      fromAddress: transfer.fromAddress,
+      toAddress: transfer.toAddress,
+      reason: ending.reason,
+      detail: ending.detail,
+    },
+    createdAt: Date.now(),
   });
 }
 
 /**
  * Internal, operator-run only (`npx convex run transferAcceptance:endStuckHandover`, named in the
- * cockpit's redeploy runbook): end an `accepting` request whose settle keeps failing on something
- * `moveRefusal` does not test (a transaction limit, a throw inside the move), which `settleDue`
- * would otherwise retry every minute for ever while no run starts for the employee and it cannot
- * be retired (the wave 9 review's M3; decision 4). Ends it exactly as the settle ends an
- * unmovable request ({@link endUnmovable}): the employee stays its old manager's, the request
- * `cancelled`, its stamp kept. A request in any other state is left as it is.
- *
- * Writes the request's state and an error log line with the operator's reason; no event (the
- * contract's cancel reasons are closed until the next schema step).
+ * cockpit's redeploy runbook): end an `accepting` request at once. The request ends itself once
+ * its settle has failed {@link SETTLE_FAILURES_BEFORE_END} times ({@link recordSettleFailure});
+ * this is the operator's verb for the case that should not wait for that (the wave 9 review's M3;
+ * decision 4). Ends it exactly as the settle ends an unmovable request ({@link endUnmovable}):
+ * the employee stays its old manager's, the request `cancelled`, its stamp kept, and
+ * `manager.transfer-ended` with the operator's reason. A request in any other state is left as
+ * it is.
  */
 export const endStuckHandover = internalMutation({
   args: { transferId: v.id('managerTransfers'), reason: v.string() },
@@ -668,7 +703,7 @@ export const endStuckHandover = internalMutation({
   handler: async (ctx, args): Promise<'ended' | 'not-accepting'> => {
     const transfer = await ctx.db.get(args.transferId);
     if (transfer?.state !== 'accepting') return 'not-accepting';
-    await endUnmovable(ctx, transfer, `ended by the operator: ${args.reason}`);
+    await endUnmovable(ctx, transfer, { reason: 'operator', detail: args.reason });
     return 'ended';
   },
 });
@@ -698,12 +733,15 @@ async function settleInTransaction(
   if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
   const { toOwnerKey } = transfer;
   if (toOwnerKey === undefined) {
-    await endUnmovable(ctx, transfer, 'the accepted handover names no acceptor');
+    await endUnmovable(ctx, transfer, {
+      reason: 'unmovable',
+      detail: 'the accepted handover names no acceptor',
+    });
     return 'ended';
   }
   const refusal = await moveRefusal(ctx, transfer, now);
   if (refusal !== null) {
-    await endUnmovable(ctx, transfer, refusal);
+    await endUnmovable(ctx, transfer, { reason: 'unmovable', detail: refusal });
     return 'ended';
   }
   const due = transfer.settleBy === undefined || transfer.settleBy <= now;
@@ -726,6 +764,119 @@ export const settle = internalMutation({
   returns: settleOutcomeValidator,
   handler: async (ctx, args): Promise<Infer<typeof settleOutcomeValidator>> =>
     await settleInTransaction(ctx, args.transferId, Date.now()),
+});
+
+/**
+ * How many settles of one accepting request may fail before it ends itself (decision 4): the
+ * deadline's own attempt and the sweep's, one a minute, so within about five minutes of the
+ * deadline or of the last run's end.
+ */
+export const SETTLE_FAILURES_BEFORE_END = 5;
+
+/** The longest failure a settle-failed event keeps, past any refusal's words. */
+const SETTLE_FAILURE_CHARS = 500;
+
+/** What one attempt at a settle did: a settle's outcome, or a failure counted toward the end. */
+const attemptOutcomeValidator = v.union(settleOutcomeValidator, v.literal('failed'));
+
+/**
+ * Count one failed settle of an accepting request, and end the request once
+ * {@link SETTLE_FAILURES_BEFORE_END} have failed (decision 4). The failures are counted from the
+ * employee's record, where each is `manager.transfer-settle-failed` (the request has no field
+ * for a count: recorded for the cockpit), so the count survives the throw that rolled the settle
+ * back.
+ *
+ * Internal, for {@link attemptSettle}. Writes the failure's event, or the ending.
+ *
+ * @returns `failed` while the request waits for the next sweep, `ended`, or `not-accepting`.
+ */
+export const recordSettleFailure = internalMutation({
+  args: { transferId: v.id('managerTransfers'), reason: v.string() },
+  returns: attemptOutcomeValidator,
+  handler: async (ctx, args): Promise<Infer<typeof attemptOutcomeValidator>> => {
+    const transfer = await ctx.db.get(args.transferId);
+    if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
+    const reason = args.reason.slice(0, SETTLE_FAILURE_CHARS);
+    if ((await ctx.db.get(transfer.agentId)) === null) {
+      await endUnmovable(ctx, transfer, { reason: 'settle-failed', detail: reason });
+      return 'ended';
+    }
+    const earlier = await eventsOfType(ctx, transfer.agentId, 'manager.transfer-settle-failed', {
+      from: transfer.decidedAt ?? transfer.requestedAt,
+    }).take(SETTLE_FAILURES_BEFORE_END);
+    const attempt =
+      earlier.filter(
+        (event) => (event.payload as { transferId?: unknown }).transferId === transfer._id,
+      ).length + 1;
+    if (attempt >= SETTLE_FAILURES_BEFORE_END) {
+      await endUnmovable(ctx, transfer, { reason: 'settle-failed', detail: reason });
+      return 'ended';
+    }
+    await appendEvent(ctx, {
+      agentId: transfer.agentId,
+      type: 'manager.transfer-settle-failed',
+      payload: {
+        transferId: transfer._id,
+        fromAddress: transfer.fromAddress,
+        toAddress: transfer.toAddress,
+        attempt,
+        reason,
+      },
+      createdAt: Date.now(),
+    });
+    return 'failed';
+  },
+});
+
+/**
+ * What the record says of a failed settle that is not a refusal: the server's own message (a
+ * request id, a function path) is for the operator's log, not the manager's record.
+ */
+export const SETTLE_FAILED_ON_THE_SERVER = 'the move failed on the server';
+
+/**
+ * The words a failed settle carries on the record: a refusal's own, or
+ * {@link SETTLE_FAILED_ON_THE_SERVER} for any other failure.
+ *
+ * @param error - What the settle threw.
+ */
+export function settleFailureReason(error: unknown): string {
+  if (error instanceof ConvexError && typeof error.data === 'string') return error.data;
+  return SETTLE_FAILED_ON_THE_SERVER;
+}
+
+/**
+ * One attempt at a settle ({@link settle}), whose failure is counted rather than lost: a settle
+ * that throws rolls its own transaction back, so the count is written in a transaction of its
+ * own ({@link recordSettleFailure}), and the request ends itself after
+ * {@link SETTLE_FAILURES_BEFORE_END}.
+ *
+ * Internal; scheduled by the acceptance at the deadline and by {@link settleDue}. Writes what the
+ * settle or the count writes.
+ *
+ * @returns The settle's outcome, or `failed` / `ended` for a settle that threw.
+ */
+export const attemptSettle = internalAction({
+  args: { transferId: v.id('managerTransfers') },
+  returns: attemptOutcomeValidator,
+  handler: async (ctx, args): Promise<Infer<typeof attemptOutcomeValidator>> => {
+    let failure: unknown;
+    try {
+      return await ctx.runMutation(internal.transferAcceptance.settle, args);
+    } catch (error) {
+      failure = error;
+    }
+    const reason = settleFailureReason(failure);
+    log.warn('handover settle failed; counted toward its end', {
+      transferId: args.transferId,
+      reason,
+      error: failure instanceof Error ? failure.message : String(failure),
+    });
+    return await ctx.runMutation(internal.transferAcceptance.recordSettleFailure, {
+      transferId: args.transferId,
+      reason,
+    });
+  },
 });
 
 /** The most finishing requests one sweep reads, the soonest deadline first. */
@@ -759,9 +910,10 @@ async function finishingToSettle(
 
 /**
  * The settle's sweep (the cron's, every minute): each request {@link finishingToSettle} finds is
- * settled in a transaction of its own.
+ * settled in a transaction of its own, through {@link attemptSettle}, so a failure counts toward
+ * the request's end.
  *
- * Internal; the cron's. Writes nothing itself; schedules {@link settle}.
+ * Internal; the cron's. Writes nothing itself; schedules {@link attemptSettle}.
  *
  * @returns How many settles were scheduled.
  */
@@ -771,7 +923,7 @@ export const settleDue = internalMutation({
   handler: async (ctx): Promise<{ scheduled: number }> => {
     const finishing = await finishingToSettle(ctx.db, Date.now());
     for (const transfer of finishing) {
-      await ctx.scheduler.runAfter(0, internal.transferAcceptance.settle, {
+      await ctx.scheduler.runAfter(0, internal.transferAcceptance.attemptSettle, {
         transferId: transfer._id,
       });
     }

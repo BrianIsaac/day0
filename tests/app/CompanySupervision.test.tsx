@@ -4,8 +4,9 @@ import {
   CompanySupervision,
   CompanySupervisionCard,
   decisionsCell,
+  PILOT_FIGURES,
 } from '../../app/CompanySupervision';
-import type { AgentMetrics, OwnerMetrics } from '../../src/metrics/types';
+import type { AgentMetrics, OwnerMetrics, PilotFigures } from '../../src/metrics/types';
 import type { Id } from '../../convex/_generated/dataModel';
 
 const query = vi.hoisted(() => ({ result: undefined as unknown }));
@@ -70,7 +71,7 @@ function agentMetrics(overrides: {
     autonomyChanges: 0,
     auditTrail: { complete, total, fraction: total > 0 ? complete / total : null },
     pilot: {
-      skillReuse: { runs: 0, reused: 0, rate: null },
+      skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
       cycleTime: {
         ended: 0,
         medianToEndMs: null,
@@ -285,7 +286,7 @@ describe('the company supervision card', (): void => {
               metrics: {
                 ...employee.metrics,
                 pilot: {
-                  skillReuse: { runs: 4, reused: 1, rate: 0.25 },
+                  skillReuse: { runs: 4, reused: 1, adopted: 0, rate: 0.25 },
                   cycleTime: {
                     ended: 3,
                     medianToEndMs: 60_000,
@@ -323,6 +324,31 @@ describe('the company supervision card', (): void => {
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe('the skill reuse figure (A14, 10-A)', (): void => {
+  const [reuse] = PILOT_FIGURES;
+  const figures = (skillReuse: PilotFigures['skillReuse']): PilotFigures => ({
+    ...FIGURES.company.pilot,
+    skillReuse,
+  });
+
+  it('keeps its meaning and says the adopted runs beside it, once there are any', (): void => {
+    expect(reuse?.label).toBe('Skill reuse');
+    expect(reuse?.value(figures({ runs: 4, reused: 2, adopted: 1, rate: 0.5 }))).toBe(
+      '2 of 4 (50%), 1 adopted',
+    );
+    expect(reuse?.value(figures({ runs: 4, reused: 1, adopted: 0, rate: 0.25 }))).toBe(
+      '1 of 4 (25%)',
+    );
+    expect(reuse?.value(figures({ runs: 0, reused: 0, adopted: 0, rate: null }))).toBe('not yet');
+  });
+
+  it('defines the adopted runs as part of the reuse they are counted in', (): void => {
+    expect(reuse?.definition).toBe(
+      'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
+    );
   });
 });
 

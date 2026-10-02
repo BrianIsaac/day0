@@ -1,5 +1,4 @@
 import { ConvexError, v, type Infer } from 'convex/values';
-import type { UserIdentity } from 'convex/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -14,12 +13,14 @@ import {
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
 import { noticeSurfaceOf } from './transferNotice';
+import { afterwardsOf, afterwardsValidator } from './transferDepartures';
 import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
   assertOwnsAgent,
   getCaller,
   getCallerOrThrow,
+  signedInAsTheOneLocalManager,
   verifiedAddressOf,
   type Caller,
 } from './ownership';
@@ -34,6 +35,7 @@ import {
   DECLINE_REASON_TOO_LONG,
   EVALUATION_ADDRESS_TRANSFER_REFUSAL,
   EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  isDepartureListed,
   isTransferDue,
   LOCAL_DEV_TRANSFER_REFUSAL,
   MANAGER_TRANSFER_STATES,
@@ -59,9 +61,8 @@ import {
   transferStateRefusal,
   UNVERIFIED_FOR_ASK,
 } from '../src/agent/manager-transfer';
-import { DEV_NO_AUTH_ISSUER } from '../src/lib/dev-auth-issuer';
 import { log } from '../src/lib/logger';
-import { resolveDeploymentProfile, SURFACE_MODE } from '../src/lib/surface-mode';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { agentZone } from '../src/lib/zone';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -142,44 +143,15 @@ const departureValidator = v.object({
   state: v.union(...DEPARTURE_STATES.map((state) => v.literal(state))),
   decidedAt: v.number(),
   declineReason: v.optional(v.string()),
+  /** For an accepted request: what became of the employee since, when it is not with them still. */
+  afterwards: v.optional(afterwardsValidator),
 });
-
-/** Where a departed employee went, as its old manager's link to it reads it. */
-const departureOfValidator = v.union(
-  v.null(),
-  v.object({
-    transferId: v.id('managerTransfers'),
-    agentName: v.string(),
-    toAddress: v.string(),
-    decidedAt: v.number(),
-  }),
-);
 
 /** An open request as the old manager reads it. */
 export type OpenTransfer = Infer<typeof openTransferValidator>;
 
 /** An open request as the account it names reads it. */
 export type IncomingTransfer = Infer<typeof incomingTransferValidator>;
-
-/** An issuer URL compared the way two spellings of one issuer should compare. */
-function issuerKey(issuer: string): string {
-  return issuer.trim().replace(/\/+$/, '');
-}
-
-/**
- * Whether no second account can exist on this deployment for this caller: it
- * signed in through the local issuer, which signs every browser in as one
- * subject, and the profile is `local-dev`. Under `customer-local` the local
- * account is one more manager beside the customer's issuer (the transfer
- * plan, section 8), and a Clerk caller on the hosted demo, whose profile is
- * unset, is its own account.
- */
-function signedInAsTheOneLocalManager(identity: UserIdentity): boolean {
-  return (
-    issuerKey(identity.issuer) === issuerKey(DEV_NO_AUTH_ISSUER) &&
-    resolveDeploymentProfile() === 'local-dev'
-  );
-}
 
 /** Whether a request is open now: asked and not yet past its expiry, or accepting. */
 function isOpenNow(transfer: Doc<'managerTransfers'>, now: number): boolean {
@@ -452,6 +424,7 @@ async function askInTransaction(
   }
   await assertWithinBounds(ctx, caller.ownerKey, toAddress, now);
 
+  const expiresAt = transferExpiresAt(now);
   const transferId = await ctx.db.insert('managerTransfers', {
     agentId: agent._id,
     agentName,
@@ -461,8 +434,11 @@ async function askInTransaction(
     ...(note !== undefined ? { note } : {}),
     state: 'asked',
     requestedAt: now,
-    expiresAt: transferExpiresAt(now),
+    expiresAt,
   });
+  // The request expires at its own time, so no page shows it open past it (U2-m7); the sweep
+  // stays as the backstop for a request written before this job existed.
+  await ctx.scheduler.runAt(expiresAt, internal.managerTransfers.expireOne, { transferId });
   await appendEvent(ctx, {
     agentId: agent._id,
     type: 'manager.transfer-asked',
@@ -655,6 +631,24 @@ export const expireDue = internalMutation({
 });
 
 /**
+ * Internal, scheduled by the ask at the request's expiry (U2-m7): expire it as the sweep would,
+ * if it is still asked and due; a request answered or cancelled since is left as it is.
+ *
+ * @returns Whether it expired the request.
+ */
+export const expireOne = internalMutation({
+  args: { transferId: v.id('managerTransfers') },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const transfer = await ctx.db.get(args.transferId);
+    const now = Date.now();
+    if (transfer === null || !isTransferDue(transfer, now)) return false;
+    await expireInTransaction(ctx, transfer, now);
+    return true;
+  },
+});
+
+/**
  * Public, owner-guarded (`assertOwnsAgent`): the employee's open request, or
  * null, for the People card and the header; an accepting one with the runs the
  * move waits for, so the card never counts them by a rule of its own (U4-m4).
@@ -704,9 +698,12 @@ export async function incomingTransfersOf(
 ): Promise<IncomingTransfer[]> {
   const address = verifiedAddressOf(caller);
   if (address === undefined) return [];
+  // Newest first, so asked rows past their expiry that the sweep has not yet written cannot
+  // fill the read ahead of a live one (U2-m5); the list is put oldest first below.
   const asked = await ctx.db
     .query('managerTransfers')
     .withIndex('by_to_address_state', (q) => q.eq('toAddress', address).eq('state', 'asked'))
+    .order('desc')
     .take(INCOMING_READ_LIMIT);
   const named = asked.filter(
     (transfer) => transfer.fromOwnerKey !== caller.ownerKey && !isTransferDue(transfer, now),
@@ -783,6 +780,73 @@ export const arriving = query({
   },
 });
 
+/** A handover the caller accepted that ended without the move, as the acceptor's home says it. */
+const endedHandoverValidator = v.object({
+  transferId: v.id('managerTransfers'),
+  agentName: v.string(),
+  fromAddress: v.string(),
+  /** When the caller accepted it. */
+  acceptedAt: v.number(),
+});
+
+/**
+ * Public, by verified address and owner key: the handovers the caller accepted that ended
+ * without the move in the last 30 days (decision 4: the settle's automatic end, or the
+ * operator's), so the acceptor's home says the employee is not coming, as the old manager's
+ * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`); one whose employee
+ * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
+ * anonymous caller, or one without a verified address, has none. Reads at most
+ * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
+ */
+export const endedForMe = query({
+  args: {},
+  returns: v.array(endedHandoverValidator),
+  handler: async (ctx): Promise<Infer<typeof endedHandoverValidator>[]> => {
+    const caller = await getCaller(ctx);
+    const address = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || address === undefined) return [];
+    const since = Date.now() - TRANSFER_DEPARTURES_WINDOW_MS;
+    const cancelled = await requestsInState(ctx, { toAddress: address }, 'cancelled');
+    const ended = cancelled.filter(
+      (transfer) =>
+        transfer.toOwnerKey === caller.ownerKey &&
+        transfer.cancelReason === undefined &&
+        transfer.decidedAt !== undefined &&
+        transfer.decidedAt >= since,
+    );
+    const standing = await Promise.all(
+      ended.map(async (transfer) => ((await endingStillTrue(ctx, transfer)) ? [transfer] : [])),
+    );
+    return standing.flat().map((transfer) => ({
+      transferId: transfer._id,
+      agentName: transfer.agentName,
+      fromAddress: transfer.fromAddress,
+      acceptedAt: transfer.decidedAt ?? transfer.requestedAt,
+    }));
+  },
+});
+
+/** The request states a later handover of the same employee may be in. */
+const LATER_REQUEST_STATES = ['asked', 'accepting', 'accepted'] as const;
+
+/**
+ * Whether an ended handover still says what is so: the employee exists and is still with the
+ * manager who asked, and no later request of it was made. Otherwise the acceptor's line would say
+ * an employee is not coming that is on their roster, retired, or asked for again (the second
+ * pass).
+ */
+async function endingStillTrue(ctx: QueryCtx, transfer: Doc<'managerTransfers'>): Promise<boolean> {
+  const agent = await ctx.db.get(transfer.agentId);
+  if (agent === null || agent.userId !== transfer.fromOwnerKey) return false;
+  const later = await Promise.all(
+    LATER_REQUEST_STATES.map(
+      async (state) => await requestsInState(ctx, { agentId: transfer.agentId }, state),
+    ),
+  );
+  return !later.flat().some((request) => request._creationTime > transfer._creationTime);
+}
+
 /** One handover that moved the employee: who it moved from, and when they accepted. */
 const earlierManagerValidator = v.object({ fromAddress: v.string(), decidedAt: v.number() });
 
@@ -812,7 +876,10 @@ export const earlierManagers = query({
  * declined or expired in the last 30 days, newest answer first, for the old
  * manager's notices (the transfer plan, section 7.4) and the People card's
  * last answer (section 7.1). An asked request past its expiry reads as
- * expired at its expiry. An anonymous caller has none. Writes nothing.
+ * expired at its expiry; an accepted one says what became of the employee
+ * since, so the notice never says it reports to someone it left or was
+ * retired by (the v0.12.0 walk), or that it came back to the caller since. An
+ * anonymous caller has none. Writes nothing.
  */
 export const departures = query({
   args: {},
@@ -830,57 +897,37 @@ export const departures = query({
           await requestsInState(ctx, { fromOwnerKey: caller.ownerKey }, state, createdSince),
       ),
     );
-    return perState
+    const answered = perState
       .flat()
-      .flatMap((transfer): Infer<typeof departureValidator>[] => {
+      .flatMap((transfer) => {
         const state = stateNow(transfer, now);
         if (state !== 'accepted' && state !== 'declined' && state !== 'expired') return [];
         const decidedAt =
           transfer.state === 'asked'
             ? transfer.expiresAt
             : (transfer.decidedAt ?? transfer.expiresAt);
-        if (decidedAt < since) return [];
-        return [
-          {
-            transferId: transfer._id,
-            agentId: transfer.agentId,
-            agentName: transfer.agentName,
-            toAddress: transfer.toAddress,
-            state,
-            decidedAt,
-            ...(transfer.declineReason !== undefined
-              ? { declineReason: transfer.declineReason }
-              : {}),
-          },
-        ];
+        return isDepartureListed(decidedAt, now) ? [{ transfer, state, decidedAt }] : [];
       })
       .sort((left, right) => right.decidedAt - left.decidedAt)
       .slice(0, DEPARTURES_LIMIT);
-  },
-});
-
-/**
- * Public, for the account that asked: where an employee it handed over went,
- * for the old link to its page, which the account no longer owns (the
- * transfer plan, section 7.4). Answers only the caller's own accepted
- * requests, the newest; null for an anonymous caller or an employee it never
- * handed over. Writes nothing.
- */
-export const departureOf = query({
-  args: { agentId: v.id('agents') },
-  returns: departureOfValidator,
-  handler: async (ctx, args): Promise<Infer<typeof departureOfValidator>> => {
-    const caller = await getCaller(ctx);
-    if (!caller) return null;
-    const accepted = await requestsInState(ctx, { agentId: args.agentId }, 'accepted');
-    const own = accepted.find((transfer) => transfer.fromOwnerKey === caller.ownerKey);
-    if (!own) return null;
-    return {
-      transferId: own._id,
-      agentName: own.agentName,
-      toAddress: own.toAddress,
-      decidedAt: own.decidedAt ?? own.requestedAt,
-    };
+    return await Promise.all(
+      answered.map(async ({ transfer, state, decidedAt }) => {
+        const afterwards =
+          state === 'accepted' ? await afterwardsOf(ctx, transfer, caller.ownerKey) : undefined;
+        return {
+          transferId: transfer._id,
+          agentId: transfer.agentId,
+          agentName: transfer.agentName,
+          toAddress: transfer.toAddress,
+          state,
+          decidedAt,
+          ...(transfer.declineReason !== undefined
+            ? { declineReason: transfer.declineReason }
+            : {}),
+          ...(afterwards === undefined ? {} : { afterwards }),
+        };
+      }),
+    );
   },
 });
 
@@ -898,6 +945,7 @@ export const noteOf = internalQuery({
 /**
  * Internal, for {@link scrubNote}: replace the stored note with its scrubbed
  * form, or withhold it, but only while it is still the note that was scrubbed.
+ * A withheld note appends `manager.transfer-note-withheld` to the employee's record.
  */
 export const replaceNote = internalMutation({
   args: {
@@ -910,6 +958,16 @@ export const replaceNote = internalMutation({
     const transfer = await ctx.db.get(args.transferId);
     if (transfer?.note !== args.scrubbedFrom) return null;
     await ctx.db.patch(args.transferId, { note: args.note });
+    // A note withheld, not scrubbed, is said on the old manager's record (U2-m8), so the person
+    // who wrote it knows the named manager will not read it.
+    if (args.note === undefined && (await ctx.db.get(transfer.agentId)) !== null) {
+      await appendEvent(ctx, {
+        agentId: transfer.agentId,
+        type: 'manager.transfer-note-withheld',
+        payload: requestEventOf(transfer),
+        createdAt: Date.now(),
+      });
+    }
     return null;
   },
 });

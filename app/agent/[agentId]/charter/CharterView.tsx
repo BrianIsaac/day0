@@ -8,6 +8,7 @@ import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
 import { actorAt, CharterAside } from './CharterAside';
 import { CharterCard } from './CharterCard';
+import { charterActors } from './charter-actors';
 
 /**
  * The Charter tab: the charter the one-to-one drafted, for review while it waits on the manager
@@ -76,6 +77,7 @@ export function CharterView() {
         name={agent.name}
         autonomous={agent.autonomousActions === true}
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
+        actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />
     </Columns>
   );

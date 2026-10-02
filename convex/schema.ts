@@ -51,6 +51,20 @@ export const oneToOneTurnValidator = v.object({
  * `events` is the feed driving the live UI; the server patches a row's payload in
  * place when a later phase completes it, so it is not strictly append-only.
  */
+/** A page an authoring run read, as a skill version records it (10-K). */
+export const readRefValidator = v.object({
+  sourceId: v.id('docSources'),
+  ref: v.string(),
+  title: v.string(),
+});
+
+/** The tools a skill version needs on one surface, with that surface's class (10-K). */
+export const surfaceToolsValidator = v.object({
+  slug: v.string(),
+  surfaceClass: v.optional(v.string()),
+  tools: v.array(v.string()),
+});
+
 export default defineSchema({
   agents: defineTable({
     bossEmail: v.string(),
@@ -1149,6 +1163,10 @@ export default defineSchema({
       v.literal('registered'),
       v.literal('rejected'),
       v.literal('failed'),
+      /** Taken out of one employee's use by the manager; its version and other holders stay. */
+      v.literal('retired'),
+      /** Replaced by the revision that registered after it (`revisionOf` on the newer row). */
+      v.literal('superseded'),
     ),
     proposedFor: v.optional(v.id('workItems')),
     rationale: v.optional(v.string()),
@@ -1188,9 +1206,90 @@ export default defineSchema({
     refusedSmokeTest: v.optional(v.string()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
+    // ---- The owner's skill library (10-K; the enhancements plan, section 4.1) ----
+    /** The library version this row was verified as. Absent on a builtin, an unshaped row, a
+     * row of an owner-less employee and a row not registered yet. */
+    versionId: v.optional(v.id('skillVersions')),
+    /** How many execution claims named this row, and when the newest did (`claimForExecution`).
+     * Backfilled once as the work items that named it; absent on a row never used. */
+    useCount: v.optional(v.number()),
+    lastUsedAt: v.optional(v.number()),
+    /** Authoring runs that wrote a body for this row ("Attempt n of 3"), counted at the claim. */
+    authoringAttempts: v.optional(v.number()),
+    /** The "Re-check due" chip: stamped by a trigger, cleared only by a passing re-check. The
+     * employee keeps running the verified body meanwhile. */
+    recheckDueAt: v.optional(v.number()),
+    recheckReason: v.optional(v.string()),
+    /** Why and when the row left its employee's use (`retired`). */
+    retiredAt: v.optional(v.number()),
+    retiredReason: v.optional(v.string()),
+    /** A proposal's adoption offer: the owner's version another employee verified (10-A). */
+    offeredVersionId: v.optional(v.id('skillVersions')),
+    /** When the row registered as a version another employee wrote: an adopted skill, which the
+     * reuse figure splits out (K7). */
+    adoptedAt: v.optional(v.number()),
+    /** The row a revision replaces at its registration; the replaced row runs until then. */
+    revisionOf: v.optional(v.id('skills')),
   })
     .index('by_agent_name', ['agentId', 'name'])
-    .index('by_agent_state', ['agentId', 'state']),
+    .index('by_agent_state', ['agentId', 'state'])
+    /** Every holder of a version: a withdrawal, a newer version's re-check stamp, a transfer. */
+    .index('by_version', ['versionId']),
+
+  /**
+   * The owner's skill library (K1): what a verified skill is, apart from which employee holds it.
+   *
+   * A `skills` row is what one employee holds and runs, with its own copy of the body it was
+   * verified with; a version is the owner's record of that body, its passing smoke test and what
+   * it needs, numbered per name. Every lookup leads with the owner key by index
+   * (`convex/skillVersions.ts`, `ownerVersions`), so no lookup can cross owners. Retiring an
+   * author keeps its versions (clearing `authorAgentId`); deleting the owner's data deletes them;
+   * a handover copies the versions the moving employee holds into the new owner's library.
+   */
+  skillVersions: defineTable({
+    /** The owner key (`ownerKeyOf`); every index leads with it. */
+    userId: v.string(),
+    name: v.string(),
+    description: v.string(),
+    surfaceClass: v.string(),
+    operation: v.string(),
+    /** 1, 2, ... per (owner, name). */
+    version: v.number(),
+    /** SKILL.md as registered, redacted as the holder row keeps it. */
+    body: v.string(),
+    /** The smoke test that passed with this body. Absent on a version registered before the
+     * check was kept, which is not offerable until a re-check keeps one (K3). */
+    smokeTest: v.optional(v.string()),
+    /** `versionBodyHash(body, smokeTest)` (`src/work/skill-library.ts`). */
+    bodyHash: v.string(),
+    requiredScopes: v.array(v.string()),
+    /** The tools SKILL.md names that the smoke harness allowed: what an adopter's approved
+     * allowlist must hold. Empty in mock mode and on a backfilled version. */
+    harnessTools: v.array(v.string()),
+    /** The same tools surface by surface, with each surface's class, so an adopter's surface of
+     * that class is held to the tools listed for it. Absent where `harnessTools` is empty. */
+    harnessToolsBySurface: v.optional(v.array(surfaceToolsValidator)),
+    /** The surface slug the author's row targeted, where it had one. */
+    targetSurface: v.optional(v.string()),
+    /** The employee that wrote it; absent once that employee is retired or handed over. */
+    authorAgentId: v.optional(v.id('agents')),
+    /** The author's name, kept for the adoption card after the author leaves. */
+    authorName: v.string(),
+    /** The pages the authoring run read, for the page-change triggers of waves 13 and 14. */
+    readRefs: v.array(readRefValidator),
+    verifiedAt: v.number(),
+    /** The version a revision replaced, and when this one was itself replaced. */
+    supersedes: v.optional(v.id('skillVersions')),
+    supersededAt: v.optional(v.number()),
+    /** Withdrawn from every employee (10-C's Withdraw, A12). */
+    revokedAt: v.optional(v.number()),
+    revokedReason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_owner_shape', ['userId', 'surfaceClass', 'operation'])
+    .index('by_owner_name_version', ['userId', 'name', 'version'])
+    /** The versions one employee wrote: its retire and its handover clear the author. */
+    .index('by_author', ['authorAgentId']),
 
   /**
    * The lease on the verification sandbox: at most one row, the skill whose

@@ -444,6 +444,52 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('counts every skill that waits on the manager on the Skills tab, not the proposals alone (the wave 10 review, C-m1)', async (): Promise<void> => {
+    const skill = (id: string, state: string, fields: Record<string, unknown> = {}) => ({
+      _id: id,
+      name: `skill-${id}`,
+      state,
+      ...fields,
+    });
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'skills:proposed': [skill('s1', 'proposed', { offeredVersionId: 'v1' })],
+      // A third failed attempt, whose only move is the manager's Give up, and a failed adoption.
+      'skills:verificationFailed': [
+        skill('s2', 'failed', { authoringAttempts: 3 }),
+        skill('s3', 'failed', { offeredVersionId: 'v1' }),
+      ],
+      // One parked with nothing holding it (Retry is the manager's), one a live run holds.
+      'skills:awaitingVerification': [
+        skill('s4', 'authoring'),
+        skill('s5', 'authoring', { authoringRunId: 'run-1', authoringClaimedAt: Date.now() }),
+      ],
+    };
+    const view = mount(page());
+    await settle();
+    const skills = [...view.container.querySelectorAll('[role="tab"]')].find((candidate) =>
+      candidate.textContent?.startsWith('Skills'),
+    );
+    expect(skills?.textContent).toBe('Skills 4');
+    view.unmount();
+  });
+
+  it('draws no Skills badge until every list it counts has loaded (the second pass)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'skills:proposed': [{ _id: 's1', name: 'skill-s1', state: 'proposed' }],
+    };
+    const view = mount(page());
+    await settle();
+    const skills = [...view.container.querySelectorAll('[role="tab"]')].find((candidate) =>
+      candidate.textContent?.startsWith('Skills'),
+    );
+    expect(skills?.textContent).toBe('Skills');
+    view.unmount();
+  });
+
   it('counts a stopped run the inbox lists, as the queue files it under Needs you (D7, m5)', async (): Promise<void> => {
     backend.queries = {
       'agents:get': row('active'),
@@ -561,6 +607,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
       'managerTransfers:openForAgent': null,
+      'transferDepartures:keptAtRetire': { requests: 0 },
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { events: 3 },
@@ -641,6 +688,10 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(back?.textContent).toBe('Back to the one-to-one');
     // The inline-link look the rest of the page's links in running text take (second review w4).
     expect(back?.className).toContain('decoration-[var(--color-link-line)]');
+    // A grid item stretches across the column, and the button's centring then sat the words in
+    // the middle of the page: held to the start, it lines up with the tab below (the wave 9
+    // pre-tag's recorded nit, seen on the v0.12.0 walk).
+    expect(back?.className).toContain('justify-self-start');
     view.unmount();
   });
 
@@ -655,9 +706,9 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     await settle();
     expect(view.container.textContent).toContain('the people page');
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
-    expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
-      'Back to the one-to-one',
-    );
+    const back = view.container.querySelector('a[href="/agent/agent-1"]');
+    expect(back?.textContent).toBe('Back to the one-to-one');
+    expect(back?.className).toContain('justify-self-start');
     view.unmount();
   });
 
@@ -696,6 +747,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
       'managerTransfers:openForAgent': null,
+      'transferDepartures:keptAtRetire': { requests: 0 },
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { voiceSessions: 1, events: 2 },

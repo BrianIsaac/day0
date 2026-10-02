@@ -29,6 +29,7 @@ import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import {
+  GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
   stopRunsForHandover,
@@ -372,7 +373,7 @@ describe('batched decisions', (): void => {
           { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
         ],
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   async function batchOnChannel(harness: Harness): Promise<{
@@ -1276,7 +1277,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(managerIdentity('stranger')).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(
@@ -2464,7 +2465,7 @@ describe('approving a plan with answers', (): void => {
         workItemId,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
     expect((await readItem(harness, other)).state).toBe('plan-pending');
     expect(
@@ -3018,7 +3019,7 @@ describe('the exact-action gate', (): void => {
         pendingRunId: runId,
         approvedIndexes: [0],
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -3449,7 +3450,7 @@ describe('the exact-action gate', (): void => {
         workItemId,
         confirmed: true,
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
 
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
@@ -5673,6 +5674,80 @@ describe('the execution claim and the skill body it runs', (): void => {
       skillBodyHash: skillBodyHash('Comment, then close.'),
     });
   });
+
+  it('claimForExecution counts a use and refuses a retired row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    await harness.run(async (ctx) => await ctx.db.patch(skillId, { useCount: 2 }));
+
+    expect(
+      (await harness.mutation(internal.work.claimForExecution, { workItemId, skillId })).claimed,
+    ).toBe(true);
+
+    const used = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(used?.useCount).toBe(3);
+    expect(used?.lastUsedAt).toBeGreaterThan(0);
+
+    for (const [state, reason] of [
+      ['retired', 'the skill was retired, so it no longer runs'],
+      ['superseded', 'the skill was replaced by its revision, so this run did not start'],
+    ] as const) {
+      const retired = await seedApproved(harness, { state, body: 'Comment, then close.' });
+      expect(
+        await harness.mutation(internal.work.claimForExecution, {
+          workItemId: retired.workItemId,
+          skillId: retired.skillId,
+        }),
+      ).toEqual({ claimed: false, reason });
+      expect((await readItem(harness, retired.workItemId)).state).toBe('plan-approved');
+      expect(
+        (await harness.run(async (ctx) => await ctx.db.get(retired.skillId)))?.useCount,
+      ).toBeUndefined();
+    }
+  });
+
+  it('records the library version the run claimed, and whether it was adopted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    const versionId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'update-linear-ticket',
+        description: 'Comment on and close a linear ticket.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 3,
+        body: 'Comment, then close.',
+        bodyHash: skillBodyHash('Comment, then close.'),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(skillId, { versionId: id, adoptedAt: 4 });
+      return id;
+    });
+
+    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    const row = await readItem(harness, workItemId);
+    const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
+      (entry) => entry._id === row.executionRunId,
+    );
+    expect(event?.payload).toMatchObject({
+      skillVersionId: versionId,
+      skillVersion: 3,
+      skillAdopted: true,
+    });
+  });
 });
 
 describe('the cap count behind every evaluation (P9-1)', (): void => {
@@ -6280,6 +6355,39 @@ describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
       }),
     ).resolves.toEqual({ recovered: 'ignored' });
     expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+    // The evaluation's own stop leaves it alone too (m7).
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+  });
+
+  it('stops a needs-skill row with no proposal at once, in mock mode as in real, naming the skill (m7)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'discovered');
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { plan: undefined }));
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'no registered skill closes a Linear ticket',
+        suggestedSkillName: 'linear-close',
+        suggestedSkillRationale: 'closing tickets is the charter work',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'close' },
+      },
+    });
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'failed' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe(
+      'stopped: evaluation found this item needs the skill "linear-close", but its proposal was never recorded; Retry evaluates the item again',
+    );
   });
 
   it('stops a phase-one run that emitted nothing to decide instead of parking it', async (): Promise<void> => {
@@ -6911,7 +7019,7 @@ describe('work.needsYou', (): void => {
 
       await expect(
         harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId: theirs }),
-      ).rejects.toThrow('forbidden');
+      ).rejects.toThrow('This employee is not yours.');
       await expect(harness.query(api.work.needsYouForAgent, { agentId: theirs })).rejects.toThrow();
     });
   });
@@ -6999,7 +7107,7 @@ describe('work.dismissFailed (N7)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.work.dismissFailed, { workItemId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
     const refusal = harness
       .withIdentity(OWNER)
@@ -7062,7 +7170,7 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 
@@ -7555,5 +7663,138 @@ describe('an approved write whose surface waits for its connection (U-3)', (): v
     await expect(
       harness.mutation(internal.work.claimApprovedActions, { workItemId }),
     ).resolves.toMatchObject({ claimed: true });
+  });
+});
+
+describe('the plan-grounding read across a handover (U3-m2)', (): void => {
+  /** When the draft step was claimed, in every case here. */
+  const DRAFT_CLAIMED_AT = Date.UTC(2026, 9, 2, 9, 0);
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  /** Seed Maya's claimed item, its draft step claimed at {@link DRAFT_CLAIMED_AT}. */
+  async function seedDraft(harness: TestConvex<typeof schema>): Promise<{
+    readonly agentId: Id<'agents'>;
+    readonly workItemId: Id<'workItems'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close REVOPS-1',
+        contentSummary: 'Close REVOPS-1',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+        state: 'claimed',
+        draftClaimedAt: DRAFT_CLAIMED_AT,
+      });
+      return { agentId, workItemId };
+    });
+  }
+
+  /** The move's record of the handover, as `recordMove` appends it, at the clock's now. */
+  async function recordHandover(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'manager.transferred',
+        payload: { fromAddress: MANAGER_ADDRESS, toAddress: fixtureAddressOf('colleague') },
+        createdAt: Date.now(),
+      });
+    });
+  }
+
+  /** The grounding read's event, read back. */
+  async function groundingEvent(
+    harness: TestConvex<typeof schema>,
+    eventId: Id<'events'>,
+  ): Promise<Doc<'events'>> {
+    const event = await harness.run(async (ctx) => await ctx.db.get(eventId));
+    if (event === null) throw new Error('grounding event missing');
+    return event;
+  }
+
+  const READ = { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } };
+
+  it('records the read and its ledger row for a draft under the employee’s owner', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(DRAFT_CLAIMED_AT + 1_000);
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedDraft(harness);
+
+    const eventId = await harness.mutation(internal.work.beginPlanGroundingRead, {
+      workItemId,
+      action: READ,
+    });
+    await harness.mutation(internal.work.finishPlanGroundingRead, {
+      eventId,
+      applied: { ok: true, effect: 'REVOPS-1: open' },
+    });
+
+    expect((await groundingEvent(harness, eventId)).payload).toMatchObject({
+      workItemId,
+      applied: { ok: true, effect: 'REVOPS-1: open' },
+    });
+  });
+
+  it('refuses to begin a read for a draft that began before the employee was handed over', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(DRAFT_CLAIMED_AT + 1_000);
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedDraft(harness);
+    await recordHandover(harness, agentId);
+
+    await expect(
+      harness.mutation(internal.work.beginPlanGroundingRead, { workItemId, action: READ }),
+    ).rejects.toThrow('handed over');
+    const reads = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) =>
+            q.eq('agentId', agentId).eq('type', 'work.plan-grounding-read'),
+          )
+          .collect(),
+    );
+    expect(reads).toEqual([]);
+  });
+
+  it('refuses the ledger row of a read the employee was handed over during, so the draft goes on without it', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(DRAFT_CLAIMED_AT + 1_000);
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedDraft(harness);
+    const eventId = await harness.mutation(internal.work.beginPlanGroundingRead, {
+      workItemId,
+      action: READ,
+    });
+    vi.setSystemTime(DRAFT_CLAIMED_AT + 2_000);
+    await recordHandover(harness, agentId);
+
+    // Refused, not ignored: the draft's read catches it and drafts without the record
+    // (`readCandidateRecord`), so the old owner's read reaches neither the record nor the plan.
+    await expect(
+      harness.mutation(internal.work.finishPlanGroundingRead, {
+        eventId,
+        applied: { ok: true, effect: 'REVOPS-1: the old owner’s ticket text' },
+      }),
+    ).rejects.toThrow(GROUNDING_READ_AFTER_HANDOVER);
+
+    expect((await groundingEvent(harness, eventId)).payload).not.toHaveProperty('applied');
   });
 });

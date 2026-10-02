@@ -1,6 +1,6 @@
 {
   "name": "day0",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -28,6 +28,7 @@
     "redaction:record": "tsx --env-file-if-exists=.env.local scripts/redaction-record.ts",
     "sync:env": "./scripts/sync-convex-env.sh",
     "check:setup": "tsx scripts/check-setup.ts",
+    "check:sign-in": "tsx scripts/check-sign-in.ts",
     "fixtures:substitute": "tsx scripts/fixture-substitution.ts",
     "demo:bed": "tsx scripts/demo-bed.ts",
     "test": "vitest run",
@@ -71,6 +72,7 @@
     "convex": "^1.37.0",
     "next": "^16.2.6",
     "openai": "^6.37.0",
+    "openid-client": "^6.8.8",
     "react": "19.3.0-canary-3f0b9e61-20260317",
     "react-dom": "19.3.0-canary-3f0b9e61-20260317",
     "server-only": "^0.0.1",

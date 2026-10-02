@@ -78,6 +78,23 @@ describe('the profile list and the compose file agree', (): void => {
     expect([...defined].sort()).toEqual(Object.keys(PROFILES).sort());
   });
 
+  it('says what every profile starts, the test issuer beside fake Slack included (10-S)', (): void => {
+    expect(PROFILES.test).toContain('fake Slack');
+    expect(PROFILES.test).toContain('test OpenID Connect issuer');
+    const components = readFileSync(
+      new URL('../../docs/running/components.md', import.meta.url),
+      'utf8',
+    );
+    // Every service the test profile starts is on the components page an enterprise reads.
+    const testServices = [
+      ...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['test'\]$/gm),
+    ].map((match: RegExpMatchArray): string => match[1]);
+    expect(testServices.sort()).toEqual(['fake-oidc', 'fake-slack']);
+    for (const service of testServices) {
+      expect(components, service).toContain(`| \`${service}\` | \`test\` |`);
+    }
+  });
+
   it('puts day0 itself, and nothing else, in the base profile', (): void => {
     const services = [
       ...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['([a-z-]+)'\]$/gm),

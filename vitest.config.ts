@@ -56,6 +56,7 @@ export default defineConfig({
             'tests/*.test.ts',
             'tests/setup/**/*.test.ts',
             'tests/fake-slack/**/*.test.ts',
+            'tests/fake-oidc/**/*.test.ts',
             'tests/looker-tile/**/*.test.ts',
             'tests/src/**/*.test.ts',
             'tests/app/**/*.test.ts',

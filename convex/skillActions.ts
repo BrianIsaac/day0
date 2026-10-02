@@ -47,6 +47,12 @@ import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { errorMessage } from '../src/lib/errors';
+import {
+  harnessToolsBySurface,
+  harnessToolsNamed,
+  type NamedHarnessSurface,
+} from '../src/work/skill-library';
+import { holdsParkedStoredCopy, parkedCheckLog } from '../src/work/skill-adoption';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -161,7 +167,8 @@ export function authorSystemFor(mode: SurfaceMode): string {
   return mode === 'real' ? AUTHOR_SYSTEM_REAL : AUTHOR_SYSTEM;
 }
 
-const skillAuthorAgent = makeAgent('day0-skill-author', authorSystemFor(SURFACE_MODE));
+/** The skill author, one agent for every authoring call and the stored verification's kept check. */
+export const skillAuthorAgent = makeAgent('day0-skill-author', authorSystemFor(SURFACE_MODE));
 
 /** What the author prompt needs from a skill row. */
 export interface AuthorPromptSkill {
@@ -185,6 +192,27 @@ const PATH_VERBS: Record<string, string> = {
 };
 
 /**
+ * What a real-mode author is told when the employee has no connected chat surface on a path a reply
+ * can take, in place of naming one: the cause of the walk's refused first drafts was the prompt teaching a
+ * reply the employee could not send (m11), so the prompt says there is none rather than any check
+ * filtering the draft's words afterwards.
+ */
+const NO_CHAT_LINE =
+  '  This employee has no connected chat surface Day0 can send a reply on, so it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.';
+
+/**
+ * The connected chat surface a reply goes to, by a path the gate can reach, if any.
+ *
+ * @param connected - The agent's connected surfaces.
+ */
+function connectedChatSurface(connected: readonly SurfaceRecord[]): SurfaceRecord | undefined {
+  return connected.find(
+    (surface): boolean =>
+      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
+  );
+}
+
+/**
  * Which connected surface `<reply-surface>` is on this deployment, for a
  * real-mode author.
  *
@@ -193,29 +221,20 @@ const PATH_VERBS: Record<string, string> = {
  * takes, and names the target surface's verb beside it, so the author reads
  * that the ticket surface cannot carry a `chat.postMessage` rather than
  * inferring it. The executor binds the input per run; the slug here is for
- * the smoke test's cases.
+ * the smoke test's cases. With no chat surface connected it says there is no
+ * reply to send instead (m11).
  *
- * Args:
- *   skill: The proposed skill, for its target surface.
- *   surfaces: The agent's surfaces.
- *   now: Clock for the connection verdict.
- *
- * Returns:
- *   One prompt line, or none when no chat surface is connected.
+ * @param skill - The proposed skill, for its target surface.
+ * @param connected - The agent's connected surfaces.
+ * @param chat - The connected chat surface, if any, as {@link connectedChatSurface} finds it.
+ * @returns One prompt line.
  */
 function replySurfaceLines(
   skill: AuthorPromptSkill,
-  surfaces: readonly SurfaceRecord[],
-  now: number,
+  connected: readonly SurfaceRecord[],
+  chat: SurfaceRecord | undefined,
 ): string[] {
-  const connected = surfaces.filter(
-    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
-  );
-  const chat = connected.find(
-    (surface): boolean =>
-      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
-  );
-  if (!chat?.path) return [];
+  if (!chat?.path) return [NO_CHAT_LINE];
   const input = `\`<${REPLY_SURFACE_INPUT}>\``;
   const target = connected.find(
     (surface): boolean => surface.slug === skill.targetSurface && surface.slug !== chat.slug,
@@ -237,13 +256,17 @@ function shapeSection(
 ): string[] {
   if (!skill.surfaceClass || !skill.operation) return [];
   const shape = { surfaceClass: skill.surfaceClass, operation: skill.operation };
+  const connected = surfaces.filter(
+    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
+  );
+  const chat = connectedChatSurface(connected);
   return [
     `Shape: ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)} (${skillNameFor(shape)}).`,
     'The rationale names the first work item; it is an instance, and none of its identifiers, figures or quoted words belong in the skill.',
     '',
     'Execution inputs the executor can supply, to declare under `## Inputs` as the procedure needs them:',
-    ...executionInputLines(mode),
-    ...(mode === 'real' ? replySurfaceLines(skill, surfaces, now) : []),
+    ...executionInputLines(mode, { chatConnected: chat !== undefined }),
+    ...(mode === 'real' ? replySurfaceLines(skill, connected, chat) : []),
   ];
 }
 
@@ -273,19 +296,26 @@ function withoutPageMarkers(text: string): string {
   return text.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 }
 
+/** One linked page as the author prompt carries it: the page, and its text inside its markers. */
+interface LinkedRunbookPage<Page extends AuthorRunbookPage> {
+  readonly page: Page;
+  readonly excerpt: string;
+}
+
 /**
- * The linked pages for the target surface, each inside its markers.
+ * The linked pages for the target surface, each inside its markers: the pages the authoring run
+ * reads, which registration records on the version (`readRefs`).
  *
  * @param skill - The proposed skill; only its target surface is read.
  * @param surfaces - The agent's surfaces, for the target's display name.
  * @param pages - The agent's redacted documentation.
- * @returns The page excerpts, most relevant first, within the character budget.
+ * @returns The pages and their excerpts, most relevant first, within the character budget.
  */
-function linkedRunbookExcerpts(
+export function linkedRunbookExcerpts<Page extends AuthorRunbookPage>(
   skill: AuthorPromptSkill,
   surfaces: readonly SurfaceRecord[],
-  pages: readonly AuthorRunbookPage[],
-): string[] {
+  pages: readonly Page[],
+): LinkedRunbookPage<Page>[] {
   if (!skill.targetSurface) return [];
   const target = skill.targetSurface.toLowerCase();
   const connected = surfaces.find((surface) => surface.slug.toLowerCase() === target);
@@ -307,7 +337,7 @@ function linkedRunbookExcerpts(
     .slice(0, MAX_LINKED_RUNBOOKS);
 
   let remaining = MAX_LINKED_RUNBOOK_CHARS;
-  const excerpts: string[] = [];
+  const excerpts: LinkedRunbookPage<Page>[] = [];
   for (const page of relevant) {
     if (remaining <= 0) break;
     const opening = `${PAGE_OPENING(withoutPageMarkers(page.ref))}\n### ${withoutPageMarkers(page.title)}\n`;
@@ -317,7 +347,7 @@ function linkedRunbookExcerpts(
       Math.max(0, remaining - opening.length - closing.length),
     );
     const excerpt = `${opening}${markdown}${closing}`;
-    excerpts.push(excerpt);
+    excerpts.push({ page, excerpt });
     remaining -= excerpt.length;
   }
   return excerpts;
@@ -332,7 +362,7 @@ function linkedRunbookSection(
   surfaces: readonly SurfaceRecord[],
   pages: readonly AuthorRunbookPage[],
 ): string {
-  const excerpts = linkedRunbookExcerpts(skill, surfaces, pages);
+  const excerpts = linkedRunbookExcerpts(skill, surfaces, pages).map((linked) => linked.excerpt);
   if (excerpts.length === 0) return '';
   return [
     'Linked, already-redacted team documentation for the target surface:',
@@ -588,7 +618,7 @@ export async function holdSandboxLease(
  * whichever decision replaced this run: another run's, or the boss's own
  * rejection.
  */
-const SUPERSEDED =
+export const SUPERSEDED =
   'this authoring run no longer holds the skill - it was rejected or taken over, ' +
   "so this run's result was discarded";
 
@@ -600,7 +630,7 @@ const SUPERSEDED =
  * waiting. All three in one fenced transaction - a failing run that has lost
  * its claim writes none of them.
  */
-async function recordAuthoringFailure(
+export async function recordAuthoringFailure(
   ctx: ActionCtx,
   skillId: Id<'skills'>,
   runId: Id<'events'>,
@@ -609,6 +639,8 @@ async function recordAuthoringFailure(
     reason: string;
     eventType: 'skill.author-failed' | 'skill.verification-failed';
     refusedDraft?: { body: string; smokeTest: string };
+    /** The row's body is a parked copy of a stored version that may not register: it goes. */
+    dropsStoredCopy?: boolean;
   },
 ): Promise<{ ok: false; reason: string }> {
   const { refusedDraft, ...failure } = args;
@@ -669,7 +701,7 @@ async function redactAuthoredDraft(
  * Returns:
  *   The redacted texts, in the order given.
  */
-async function redactAuthoringTexts(
+export async function redactAuthoringTexts(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
   texts: readonly string[],
@@ -695,7 +727,7 @@ async function redactAuthoringTexts(
  * first-try failure is diagnosed from; bounded because the retry prompt
  * carries it back beside the refused draft.
  */
-const FAILED_VERIFICATION_LOG_CHARS = 2_000;
+export const FAILED_VERIFICATION_LOG_CHARS = 2_000;
 
 /**
  * Run the authoring call with its model-call report on the ledger, in real
@@ -709,7 +741,7 @@ const FAILED_VERIFICATION_LOG_CHARS = 2_000;
  * @param fn - The authoring call.
  * @returns What the call returned.
  */
-async function recordingAuthoringCalls<T>(
+export async function recordingAuthoringCalls<T>(
   ctx: ActionCtx,
   skill: Pick<Doc<'skills'>, '_id' | 'agentId' | 'proposedFor'>,
   fn: () => Promise<T>,
@@ -781,7 +813,22 @@ async function authorAndRegister(
   // panels, with nothing to press. Record the failure instead: `failed` is
   // listed, carries the reason, and offers Retry.
   let authored: AuthoredSkill;
+  // A parked copy of a stored version registers under that version's checks or not at all (the
+  // wave 10 review, B1): its own draft is the employee's, the copy is the library's.
+  let storedVersionId: Id<'skillVersions'> | undefined;
   if (skill.state === 'authoring' && skill.pendingSmokeTest && skill.body) {
+    if (holdsParkedStoredCopy(skill)) {
+      const refusal = await parkedCopyRefusal(ctx, skill);
+      if (refusal !== undefined) {
+        return await recordAuthoringFailure(ctx, skillId, runId, {
+          rowReason: storedCopyRefusedReason(refusal),
+          reason: refusal,
+          eventType: 'skill.verification-failed',
+          dropsStoredCopy: true,
+        });
+      }
+      storedVersionId = skill.offeredVersionId;
+    }
     authored = { body: skill.body, smokeTest: skill.pendingSmokeTest };
   } else {
     const userPrompt = buildAuthorPrompt(
@@ -856,6 +903,10 @@ async function authorAndRegister(
     });
   }
 
+  // The pages the prompt carried: the gate reads their text, and the
+  // registration records which they were (`readRefs`).
+  const linkedPages = linkedRunbookExcerpts(skill, surfaceRows.map(toSurfaceRecord), pageRows);
+
   // The static gate before any sandbox spends a run: a body that repeats
   // the first work item's values, or breaks the placeholder contract the
   // executor binds by, is not a reusable procedure whatever its smoke test
@@ -871,9 +922,7 @@ async function authorAndRegister(
     // The pages alone, without the prompt's framing, whose own words would
     // otherwise read as documented controls.
     documentedProcedure:
-      SURFACE_MODE === 'real'
-        ? linkedRunbookExcerpts(skill, surfaceRows.map(toSurfaceRecord), pageRows).join('\n')
-        : '',
+      SURFACE_MODE === 'real' ? linkedPages.map((linked) => linked.excerpt).join('\n') : '',
   });
   if (issues.length > 0) {
     const reason = `the authored skill is not a reusable procedure: ${issues.join('; ')}`;
@@ -907,6 +956,9 @@ async function authorAndRegister(
     name: skill.name,
     runId,
   });
+  // A stored copy parked again keeps the mark that says it is one (holdsParkedStoredCopy).
+  const parkedLog = (log: string, reason: string): string =>
+    storedVersionId !== undefined ? parkedCheckLog(reason) : noted(log);
   if (!lease.held) {
     const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
     const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
@@ -919,18 +971,24 @@ async function authorAndRegister(
       sandboxId: '(skipped)',
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(reason),
+      verificationLog: parkedLog(reason, reason),
       reason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };
     return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
   }
+  const contract = smokeHarnessContract(
+    body,
+    surfaceRows.map(toSurfaceRecord),
+    skill.targetSurface,
+    Date.now(),
+  );
   try {
     const verification = await verifyAuthoredSkill(
       { skillName: skill.name, skillBody: body, smokeTest },
       authorAndVerifySkill,
       SURFACE_MODE,
-      smokeHarnessContract(body, surfaceRows.map(toSurfaceRecord), skill.targetSurface, Date.now()),
+      contract,
     );
     if (!verification.ok) {
       return await recordAuthoringFailure(ctx, skillId, runId, {
@@ -1020,7 +1078,7 @@ async function authorAndRegister(
       sandboxId,
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(verificationLog),
+      verificationLog: parkedLog(verificationLog, skipReason),
       reason: skipReason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };
@@ -1031,13 +1089,74 @@ async function authorAndRegister(
   // requeue of the work item that asked for the skill either all land or none
   // of them do. Anything that fails here leaves the row in a state the skills
   // panel lists and the next claim accepts.
-  const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
+  const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
     skillId: skillId,
     runId,
     body,
     verificationLog: noted(verificationLog),
+    smokeTest,
+    harnessTools: harnessToolsNamed(body, contract.surfaces),
+    harnessToolsBySurface: harnessToolsBySurface(
+      body,
+      namedHarnessSurfaces(contract, surfaceRows.map(toSurfaceRecord)),
+    ),
+    readRefs: linkedPages.map(({ page }) => ({
+      sourceId: page.sourceId,
+      ref: page.ref,
+      title: page.title,
+    })),
+    ...(storedVersionId !== undefined ? { storedVersionId } : {}),
   });
-  if (!registered) return { ok: false, reason: SUPERSEDED };
+  if (registered) return { ok: true };
+  if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
+  return await recordAuthoringFailure(ctx, skillId, runId, {
+    rowReason: storedCopyRefusedReason(refusal),
+    reason: refusal,
+    eventType: 'skill.verification-failed',
+    dropsStoredCopy: true,
+  });
+}
 
-  return { ok: true };
+/**
+ * Why a row's parked copy of a stored version may not be checked: its offer is gone (a handover,
+ * a Withdraw or a later evaluation took it), or the version offered is no longer one the row may
+ * register as. Undefined when the copy may be checked, under the version's checks again at
+ * registration.
+ */
+async function parkedCopyRefusal(
+  ctx: ActionCtx,
+  skill: Doc<'skills'>,
+): Promise<string | undefined> {
+  if (skill.offeredVersionId === undefined) return 'the skill it copied is no longer offered';
+  const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
+    skillId: skill._id,
+    versionId: skill.offeredVersionId,
+  });
+  return target.kind === 'refused' ? target.reason : undefined;
+}
+
+/** The row's line for a stored version's copy that was refused, around the refusal. */
+export function storedCopyRefusedReason(refusal: string): string {
+  return `the stored skill was not registered: ${refusal}`;
+}
+
+/**
+ * The harness contract's connected surfaces with each one's class, for the per-surface tools a
+ * version records.
+ *
+ * @param contract - The harness contract the verification ran under.
+ * @param surfaces - The employee's surfaces, for their classes.
+ */
+export function namedHarnessSurfaces(
+  contract: SmokeHarnessContract,
+  surfaces: readonly SurfaceRecord[],
+): NamedHarnessSurface[] {
+  return contract.surfaces.map((surface) => {
+    const surfaceClass = surfaces.find((record) => record.slug === surface.slug)?.class;
+    return {
+      slug: surface.slug,
+      allowedTools: surface.allowedTools,
+      ...(surfaceClass !== undefined ? { surfaceClass } : {}),
+    };
+  });
 }

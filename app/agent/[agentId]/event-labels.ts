@@ -50,6 +50,13 @@ function listed(value: unknown): string | undefined {
   return names.length > 0 ? names.join(', ') : undefined;
 }
 
+/** ` v2 by Priya` for a library version an adoption event names, or what of it the row carries. */
+function byVersion(payload: { readonly version?: unknown; readonly authorName?: unknown }): string {
+  const version = typeof payload.version === 'number' ? ` v${payload.version}` : '';
+  const author = text(payload.authorName);
+  return `${version}${author ? ` by ${author}` : ''}`;
+}
+
 /** How long a duration reads in the feed: `90 s`, `4 min`, `2 h`. */
 function duration(ms: unknown): string | undefined {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return undefined;
@@ -166,9 +173,21 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
           : ''
     }`,
   'manager.transfer-declined': (payload) =>
-    `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
+    `handover declined by ${text(payload.toAddress) ?? 'the named manager'}`,
   'manager.transfer-expired': (payload) =>
     `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
+  'manager.transfer-settle-failed': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} not finished yet`,
+  'manager.transfer-ended': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} ended${
+      payload.reason === 'operator' ? ' by the operator' : ', it could not finish'
+    }`,
+  'manager.transfer-note-withheld': (payload) =>
+    `handover note to ${text(payload.toAddress) ?? 'the named manager'} withheld`,
+  'manager.transfer-notice': (payload) =>
+    `handover notice to ${text(payload.toAddress) ?? 'the named manager'} ${
+      payload.delivered === true ? 'sent' : 'not sent'
+    }`,
   'manager.transferred': (payload) => {
     const from = text(payload.fromAddress);
     const to = text(payload.toAddress);
@@ -225,19 +244,59 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `built-in skill installed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.proposed': (payload) => `skill proposed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.approved': (payload) => `skill approved: ${text(payload.name) ?? 'unnamed'}`,
-  'skill.rejected': (payload) => `skill rejected: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.rejected': (payload) =>
+    payload.offerWithdrawn === undefined
+      ? `skill rejected: ${text(payload.name) ?? 'unnamed'}`
+      : `skill adoption ended, version withdrawn: ${text(payload.name) ?? 'unnamed'}`,
   'skill.revision-requested': (payload) =>
-    `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
+    typeof payload.revisionId === 'string'
+      ? `skill revision asked for: ${text(payload.name) ?? 'unnamed'}`
+      : `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
   'skill.retired': (payload) =>
-    `skill retired: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+    `skill retired${payload.withdrawn === true ? ', withdrawn from every employee' : ''}: ${
+      text(payload.name) ?? 'unnamed'
+    }${because(payload.reason)}`,
+  'skill.revoked': (payload) => {
+    const holders = Array.isArray(payload.holders)
+      ? payload.holders.flatMap((holder: { agentName?: unknown }) => text(holder.agentName) ?? [])
+      : [];
+    return `skill withdrawn from every employee: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }${holders.length > 0 ? `, ${holders.join(', ')}` : ''}${because(payload.reason)}`;
+  },
+  'skill.rechecked': (payload) =>
+    `skill re-checked: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
+  'skill.superseded': (payload) =>
+    `skill superseded by its revision: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
+  'skill.given-up': (payload) =>
+    `skill given up: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.attempts === 'number'
+        ? ` after ${payload.attempts} ${payload.attempts === 1 ? 'attempt' : 'attempts'}`
+        : ''
+    }`,
   'skill.authoring-superseded': (payload) =>
     `skill authoring taken over: ${text(payload.name) ?? 'unnamed'}${
       duration(payload.heldForMs) ? `, the last run held it ${duration(payload.heldForMs)}` : ''
     }`,
   'skill.authoring-claimed': (payload) =>
-    `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
+    payload.purpose === 'verify-stored'
+      ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
+      : `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring': 'skill being checked in the sandbox',
-  'skill.registered': (payload) => `skill registered: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.registered': (payload) =>
+    `skill registered: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
+  'skill.recheck-due': (payload) =>
+    `skill re-check due: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+  'skill.adoption-offered': (payload) =>
+    `skill adoption offered: ${text(payload.name) ?? 'unnamed'}${byVersion(payload)}`,
+  'skill.adopted': (payload) =>
+    `skill adopted: ${text(payload.name) ?? 'unnamed'}${byVersion(payload)}`,
   'skill.failed': (payload) =>
     `skill failed: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.author-failed': (payload) =>
@@ -329,6 +388,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     const trigger = text(payload.trigger);
     return `sent back to be evaluated again${trigger ? `: ${REQUEUE_TRIGGER_WORDS[trigger] ?? trigger}` : ''}`;
   },
+  'work.waiting-for-skill': (payload) =>
+    `waiting for a skill again: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'work.reevaluation': (payload) =>
     `${counted(payload.readmitted, 'parked item') ?? 'parked items'} sent back to be evaluated: ${
       REQUEUE_TRIGGER_WORDS[text(payload.trigger) ?? ''] ?? 'a policy changed'
@@ -489,11 +550,15 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.provider-reconciled': 'landed',
   'charter.approved': 'landed',
   'skill.registered': 'landed',
+  'skill.rechecked': 'landed',
   'skill.builtin-installed': 'landed',
   'surface.connected': 'landed',
   'work.actions-rejected': 'refused',
   'work.claim-refused': 'refused',
   'skill.rejected': 'refused',
+  'skill.retired': 'withheld',
+  'skill.revoked': 'withheld',
+  'skill.given-up': 'withheld',
   'skill.authoring-refused': 'refused',
   'skill.verification-failed': 'refused',
   'surface.rejected': 'refused',
@@ -509,9 +574,12 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.cancelled': 'withheld',
   'manager.transfer-cancelled': 'withheld',
   'manager.transfer-expired': 'withheld',
+  'manager.transfer-ended': 'withheld',
+  'manager.transfer-note-withheld': 'withheld',
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',
+  'work.waiting-for-skill': 'held',
   'surface.proposed': 'held',
 };
 

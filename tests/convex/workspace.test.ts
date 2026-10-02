@@ -76,9 +76,11 @@ describe('the workspace files', (): void => {
       }),
     ).rejects.toThrow('unknown NOTES.md');
     const stranger = harness.withIdentity(managerIdentity('someone-else'));
-    await expect(stranger.query(api.workspace.read, { agentId })).rejects.toThrow('forbidden');
+    await expect(stranger.query(api.workspace.read, { agentId })).rejects.toThrow(
+      'This employee is not yours.',
+    );
     await expect(
       stranger.mutation(api.workspace.writeFile, { agentId, fileName: 'SOUL.md', content: 'x' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });

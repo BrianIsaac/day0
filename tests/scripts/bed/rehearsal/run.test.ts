@@ -264,6 +264,7 @@ describe('the cards phase against the split page (M5)', (): void => {
       lastAgentMessage: unused,
       approveCharter: unused,
       approveSkill: unused,
+      decideOffer: unused,
       approvePlan: unused,
       approveAll: unused,
       takeAnyway: unused,

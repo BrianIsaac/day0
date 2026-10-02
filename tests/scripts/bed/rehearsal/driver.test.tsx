@@ -54,6 +54,8 @@ import {
   EMPLOYEE_TAB_SEGMENTS,
   lastEmployeeTurn,
   nextTurnStep,
+  OFFER_CHOICES,
+  offerChoiceName,
   REPLY_PLACEHOLDER,
   surfaceCard,
   TAKE_IT_ANYWAY,
@@ -73,6 +75,7 @@ import { AgentZoneContext } from '../../../../app/components/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { DRAWN, EMPLOYEE, QUESTION, SURFACES, ZONE } from '../../../fixtures/work/drawn-states';
+import { asEmployee } from '../../../fixtures/dom/employee';
 import { mount, press, settle, unmountAll } from '../../../fixtures/dom/press';
 
 /*
@@ -299,13 +302,15 @@ describe('the dashboard driver', (): void => {
       requiredScopes: [],
     } as unknown as Doc<'skills'>;
     const view = mount(
-      <ProposedSkillsPanel
-        name="Mira"
-        itemTitles={new Map()}
-        skills={[skill]}
-        surfaces={[]}
-        onAuthoringAttempt={(): void => undefined}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[skill]}
+          surfaces={[]}
+          onAuthoringAttempt={(): void => undefined}
+        />,
+      ),
     );
     // Playwright's filter: the list item holding an element whose text is the name, exactly.
     const items = byRole(document, 'listitem', /.*/).filter((item) =>
@@ -313,6 +318,52 @@ describe('the dashboard driver', (): void => {
     );
     expect(items).toHaveLength(1);
     oneByRole(items[0] as HTMLElement, 'button', APPROVE_SKILL);
+    view.unmount();
+  });
+
+  it('decides an offered proposal by each of its three controls: Adopt, Write a new one instead and Decline (10-A)', (): void => {
+    const skill = {
+      _id: 'skill-1',
+      _creationTime: 0,
+      agentId: 'agent-1',
+      name: 'kanban-comment-and-close',
+      description: 'Comment on a ticket and close it.',
+      sourceType: 'agent-authored',
+      createdAt: 0,
+      state: 'proposed',
+      requiredScopes: [],
+      offeredVersionId: 'version-1',
+    } as unknown as Doc<'skills'>;
+    backend.queries['skillAdoption:adoptions'] = [
+      {
+        skillId: 'skill-1',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket and close it.',
+        state: 'offered',
+        rowState: 'proposed',
+        versionId: 'version-1',
+        version: 1,
+        authorName: 'Priya',
+        verifiedAt: Date.UTC(2026, 8, 18),
+        missingScopes: [],
+      },
+    ];
+    const view = mount(
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[skill]}
+          surfaces={[]}
+          onAuthoringAttempt={(): void => undefined}
+        />,
+      ),
+    );
+    for (const choice of OFFER_CHOICES) {
+      oneByRole(document, 'button', offerChoiceName(choice, skill.name));
+    }
+    // An offered proposal draws no plain approval, which is why it needs a verb of its own.
+    expect(byRole(document, 'button', APPROVE_SKILL)).toEqual([]);
     view.unmount();
   });
 

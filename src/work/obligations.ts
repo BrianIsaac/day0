@@ -387,11 +387,16 @@ export function isWithheldForAnswer(reason: string): boolean {
 export function openQuestionStopReason(
   open: Pick<OpenManagerQuestion, 'question' | 'steps'>,
 ): string {
-  const steps = open.steps.map((step) => `step ${step}`).join(' and ');
+  const numbers = STEP_LIST.format(open.steps.map(String));
+  const steps = open.steps.length === 1 ? `step ${numbers}` : `steps ${numbers}`;
   return `${OPEN_QUESTION_STOP_START}${steps}${OPEN_QUESTION_STOP_TURN}${open.question}`;
 }
 
-const OPEN_QUESTION_STOP_START = 'the approved plan leaves step ';
+const STEP_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
+
+// Rows recorded before v0.13.0 read "leaves step step 2 and step 3" (the real-Linear walk, m9);
+// the start stops before the step words, so `isOpenQuestionStop` still recognises them.
+const OPEN_QUESTION_STOP_START = 'the approved plan leaves ';
 const OPEN_QUESTION_STOP_TURN =
   " to the manager's answer, and the question put to the manager is still open: ";
 

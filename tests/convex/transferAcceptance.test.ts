@@ -849,6 +849,61 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
     });
   });
 
+  it('closes the old owner’s departure boundary when the employee is handed back to them (U3-m6)', async (): Promise<void> => {
+    const office = await seedOffice();
+    const tomasAsks = await office.harness.run(async (ctx) => {
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-7'),
+        state: 'completed',
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-7',
+        agentId: office.maya,
+        workItemId: held,
+        claimedAt: 1,
+      });
+      return await ctx.db.insert('workItems', {
+        ...workItemFields(office.tomas, 'REVOPS-7'),
+        state: 'discovered',
+      });
+    });
+    await acceptAsColleague(office);
+    const back = await office.harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId: office.maya,
+          agentName: 'Maya',
+          fromOwnerKey: 'colleague',
+          fromAddress: COLLEAGUE_ADDRESS,
+          toAddress: MANAGER_ADDRESS,
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+
+    await office.harness
+      .withIdentity(OWNER)
+      .mutation(api.transferAcceptance.accept, { transferId: back });
+
+    const departures = await office.harness.run(
+      async (ctx) => await ctx.db.query('retirements').collect(),
+    );
+    const ownersFirst = departures.find(
+      (row) => row.userId === 'owner' && row.transferId === office.transferId,
+    );
+    expect(ownersFirst).toMatchObject({ kind: 'transferred', claims: [], rejections: [] });
+    await office.harness.mutation(internal.work.setVerdict, {
+      workItemId: tomasAsks,
+      verdict: { decision: 'claim', value: 1, risk: 0, requiredPermissions: [] },
+    });
+    expect(await office.harness.run(async (ctx) => await ctx.db.get(tomasAsks))).toMatchObject({
+      state: 'skipped',
+      skipReason: expect.stringContaining('Maya holds it'),
+    });
+  });
+
   it('releases a moving claim the new owner already holds, names it in the outcome, and keeps the old owner’s copy', async (): Promise<void> => {
     const office = await seedOffice();
     const moving = await office.harness.run(async (ctx) => {
@@ -1210,5 +1265,155 @@ describe('accept: the refusals, each before anything moves', (): void => {
         .withIdentity(managerIdentity('bystander'))
         .mutation(api.transferAcceptance.accept, { transferId: office.transferId }),
     ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
+  });
+});
+
+describe('the skill library at a move (10-K, K2)', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+  });
+
+  /** One version of the old owner's library, written by one of its employees. */
+  function versionFields(
+    name: string,
+    body: string,
+    author: { readonly id: Id<'agents'>; readonly name: string },
+    readRef: Id<'docSources'>,
+  ): Omit<Doc<'skillVersions'>, '_id' | '_creationTime'> {
+    return {
+      userId: 'owner',
+      name,
+      description: `${name}, verified.`,
+      surfaceClass: name.split('-')[0]!,
+      operation: name.split('-').slice(1).join('-'),
+      version: 1,
+      body,
+      smokeTest: 'CASES = []',
+      bodyHash: `sha256:${name}`,
+      requiredScopes: [],
+      harnessTools: [],
+      authorAgentId: author.id,
+      authorName: author.name,
+      readRefs: [{ sourceId: readRef, ref: 'runbook.md', title: 'Owner runbook page' }],
+      verifiedAt: 1,
+      createdAt: 1,
+    };
+  }
+
+  it("the mover's versions are copied and no version names the old owner", async (): Promise<void> => {
+    const office = await seedOffice();
+    const seeded = await office.harness.run(async (ctx) => {
+      const mayas = await ctx.db.insert(
+        'skillVersions',
+        versionFields(
+          'kanban-comment-and-close',
+          '# Close',
+          { id: office.maya, name: 'Maya' },
+          office.ownerSource,
+        ),
+      );
+      const tomass = await ctx.db.insert(
+        'skillVersions',
+        versionFields(
+          'chat-thread-reply',
+          '# Reply',
+          { id: office.tomas, name: 'Tomas' },
+          office.ownerSource,
+        ),
+      );
+      const holding = (
+        agentId: Id<'agents'>,
+        name: string,
+        targetSurface: string,
+        versionId: Id<'skillVersions'>,
+      ): Omit<Doc<'skills'>, '_id' | '_creationTime'> => ({
+        agentId,
+        name,
+        description: `${name}, verified.`,
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface,
+        versionId,
+        createdAt: 1,
+      });
+      const own = await ctx.db.insert(
+        'skills',
+        holding(office.maya, 'kanban-comment-and-close', 'linear', mayas),
+      );
+      const adopted = await ctx.db.insert('skills', {
+        ...holding(office.maya, 'chat-thread-reply', 'slack', tomass),
+        adoptedAt: 2,
+      });
+      const tomasOwn = await ctx.db.insert(
+        'skills',
+        holding(office.tomas, 'chat-thread-reply', 'slack', tomass),
+      );
+      // Due a re-check because the old library has a newer version of it: a chip naming the old
+      // library's numbers.
+      await ctx.db.patch(adopted, {
+        recheckDueAt: 3,
+        recheckReason: 'v4 is verified; this runs v1',
+      });
+      const offered = await ctx.db.insert('skills', {
+        ...holding(office.maya, 'kanban-other', 'linear', tomass),
+        state: 'proposed',
+        versionId: undefined,
+        offeredVersionId: tomass,
+      });
+      return { mayas, tomass, own, adopted, tomasOwn, offered };
+    });
+
+    await acceptAsColleague(office);
+
+    const after = await office.harness.run(async (ctx) => ({
+      versions: await ctx.db.query('skillVersions').collect(),
+      own: await ctx.db.get(seeded.own),
+      adopted: await ctx.db.get(seeded.adopted),
+      tomasOwn: await ctx.db.get(seeded.tomasOwn),
+      offered: await ctx.db.get(seeded.offered),
+    }));
+    const copies = after.versions.filter((version) => version.userId === 'colleague');
+    expect(copies.map((copy) => copy.name).sort()).toEqual([
+      'chat-thread-reply',
+      'kanban-comment-and-close',
+    ]);
+    // Every version the moved employee holds is the new owner's, and none names the old owner:
+    // not its key, not one of its employees, not a page of its documentation.
+    const held = [after.own, after.adopted].map(
+      (row) => after.versions.find((version) => version._id === row?.versionId)!,
+    );
+    for (const version of held) {
+      expect(version.userId).toBe('colleague');
+      expect(['Tomas', 'Priya']).not.toContain(version.authorName);
+      expect([undefined, office.maya]).toContain(version.authorAgentId);
+      expect(version.authorAgentId).not.toBe(office.tomas);
+      expect(version.readRefs).toEqual([]);
+      expect(JSON.stringify(version)).not.toContain(String(office.ownerSource));
+    }
+    expect(held[0]).toMatchObject({ authorAgentId: office.maya, authorName: 'Maya', version: 1 });
+    expect(after.offered?.offeredVersionId).toBeUndefined();
+    // The old owner's versions stay with their other holder, no longer naming the mover.
+    const mayas = after.versions.find((version) => version._id === seeded.mayas);
+    expect(mayas).toMatchObject({ userId: 'owner', authorName: 'Maya' });
+    expect(mayas?.authorAgentId).toBeUndefined();
+    expect(after.versions.find((version) => version._id === seeded.tomass)).toMatchObject({
+      userId: 'owner',
+      authorAgentId: office.tomas,
+    });
+    expect(after.tomasOwn?.versionId).toBe(seeded.tomass);
+    // Both of the employee's surfaces were cut, so both of its skills are due a re-check.
+    expect(after.own?.recheckReason).toBe(
+      'its connection to linear was cut when the employee was handed over',
+    );
+    // Already due, with a reason naming the old library's numbers: the stamp stays, the reason
+    // no longer names them.
+    expect(after.adopted).toMatchObject({
+      recheckDueAt: 3,
+      recheckReason: 'it was due a re-check when the employee was handed over',
+    });
+    expect(held[1]).toMatchObject({ authorName: 'a colleague under the previous manager' });
+    expect(after.tomasOwn?.recheckDueAt).toBeUndefined();
   });
 });

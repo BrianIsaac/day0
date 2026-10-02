@@ -63,8 +63,11 @@ export interface AgentMetrics {
  * from an exported trace.
  */
 export interface PilotFigures {
-  /** Of the distinct (work item, skill) runs, those run with a skill made for another item. */
-  skillReuse: { runs: number; reused: number; rate: number | null };
+  /**
+   * Of the distinct (work item, skill) runs, those run with a skill made for another item; of
+   * those, the runs of a skill adopted from another employee (A14: every adopted run is reuse).
+   */
+  skillReuse: { runs: number; reused: number; adopted: number; rate: number | null };
   /**
    * From the ask (`observedAt`: the provider's own time when intake had one)
    * to the item's first terminal event, and to its first completion.

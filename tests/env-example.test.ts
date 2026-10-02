@@ -1,9 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_PROFILE_VAR,
+  CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR,
   CUSTOMER_OIDC_AUDIENCE_VAR,
+  CUSTOMER_OIDC_CLIENT_SECRET_VAR,
   CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
   CUSTOMER_OIDC_ISSUER_VAR,
+  CUSTOMER_SESSION_SECRET_VAR,
+  PUBLIC_URL_VAR,
 } from '../src/lib/customer-oidc';
 import { PRIVATE_HOSTS_VAR } from '../src/lib/private-hosts';
 
@@ -24,12 +29,22 @@ describe('.env.example', (): void => {
       CUSTOMER_OIDC_ISSUER_VAR,
       CUSTOMER_OIDC_AUDIENCE_VAR,
       CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
+      BROWSER_PROFILE_VAR,
+      CUSTOMER_OIDC_CLIENT_SECRET_VAR,
+      CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR,
+      CUSTOMER_SESSION_SECRET_VAR,
+      PUBLIC_URL_VAR,
       PRIVATE_HOSTS_VAR,
       'CONVEX_URL',
       'DAY0_APP_HOST',
     ]) {
       expect(DECLARED, name).toContain(name);
     }
+  });
+
+  it('declares the shared-skills switch, on by default (K4)', (): void => {
+    expect(DECLARED).toContain('DAY0_SHARED_SKILLS');
+    expect(EXAMPLE).toMatch(/^DAY0_SHARED_SKILLS=$/m);
   });
 
   it('declares every bind address and mirror the compose file reads', (): void => {

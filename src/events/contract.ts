@@ -266,6 +266,52 @@ export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
 export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
 /**
+ * The payload of `manager.transfer-note-withheld`: the owner-wide exact layer could not be applied
+ * to the handover note, so the note was withheld rather than kept unchecked (U2-m8).
+ */
+export type ManagerTransferNoteWithheldPayload = TransferRequestEvent;
+
+/**
+ * Why an accepted handover ended without the move (decision 4): the move would be refused
+ * (`unmovable`), its settle kept failing (`settle-failed`), or the operator ended it (`operator`).
+ */
+export const TRANSFER_END_REASONS = ['unmovable', 'settle-failed', 'operator'] as const;
+
+/** One of {@link TRANSFER_END_REASONS}. */
+export type TransferEndReason = (typeof TRANSFER_END_REASONS)[number];
+
+/**
+ * The payload of `manager.transfer-settle-failed`: one settle of an accepting request failed and
+ * is tried again at the next sweep, until the request ends itself.
+ */
+export interface ManagerTransferSettleFailedPayload extends TransferRequestEvent {
+  /** Which failure this is, from one. */
+  readonly attempt: number;
+  readonly reason: string;
+}
+
+/**
+ * The payload of `manager.transfer-ended`: an accepted handover ended without the move; the
+ * employee stays its old manager's.
+ */
+export interface ManagerTransferEndedPayload extends TransferRequestEvent {
+  readonly reason: TransferEndReason;
+  /** The refusal, the last failure, or the operator's words. */
+  readonly detail: string;
+}
+
+/**
+ * The payload of `manager.transfer-notice`: the one Slack DM a real-mode request sends the person
+ * it names (D7), delivered or not, and why not. Written once per request, when the notice was
+ * claimed, so the old manager's record says whether the named person was told.
+ */
+export interface ManagerTransferNoticePayload extends TransferRequestEvent {
+  readonly delivered: boolean;
+  /** Why it was not delivered: nobody the notice may reach, or the provider's failure. */
+  readonly reason?: string;
+}
+
+/**
  * The payload of `manager.transferred`: the employee moved to the manager who accepted its
  * handover (the transfer plan, section 7.6). What the move did, as counts and names, never a
  * credential's or a documentation source's label.
@@ -458,13 +504,79 @@ export interface SkillApprovedPayload extends SkillNamed {
 }
 
 /** The payload of `skill.rejected`. */
-export type SkillRejectedPayload = SkillNamed;
+export interface SkillRejectedPayload extends SkillNamed {
+  /**
+   * Set when nobody rejected the row: the version offered to it for adoption was withdrawn from
+   * every employee, which ended the adoption (the wave 10 review, M2).
+   */
+  readonly offerWithdrawn?: { readonly version: number };
+}
 
-/** The payload of `skill.revision-requested`. */
-export type SkillRevisionRequestedPayload = SkillNamed;
+/**
+ * The payload of `skill.revision-requested`: the manager asked for a revision. Since 10-C a
+ * revision is a new row (`revisionId`) written while the current one keeps running; a row an
+ * older release sent back in place names none.
+ */
+export interface SkillRevisionRequestedPayload extends SkillNamed {
+  readonly revisionId?: SkillId;
+}
 
-/** The payload of `skill.retired`. */
-export type SkillRetiredPayload = SkillReason;
+/**
+ * The payload of `skill.retired`: one employee's row taken out of its use, by the operator's
+ * `retireUnshaped` or the manager's Retire (10-C). The version and the other holders stay unless
+ * the retire was one employee's share of a withdrawal from every employee.
+ */
+export interface SkillRetiredPayload extends SkillReason {
+  /** The library version the row held, where it held one. */
+  readonly versionId?: Id<'skillVersions'>;
+  /** Set when the row was retired because its version was withdrawn from every employee. */
+  readonly withdrawn?: true;
+  /** The approved items that went back to waiting for a skill. */
+  readonly returnedItems?: readonly WorkItemId[];
+}
+
+/** One employee's row a withdrawal from every employee retired. */
+export interface SkillRevokedHolder {
+  readonly skillId: SkillId;
+  readonly agentId: Id<'agents'>;
+  readonly agentName: string;
+}
+
+/**
+ * The payload of `skill.revoked`: a version withdrawn from every employee who held it (A12),
+ * written once, on the ledger of the employee whose card the manager withdrew it from, naming
+ * every holder it retired. Each holder's own ledger carries its `skill.retired`.
+ */
+export interface SkillRevokedPayload extends SkillReason {
+  readonly versionId: Id<'skillVersions'>;
+  readonly version: number;
+  readonly holders: readonly SkillRevokedHolder[];
+}
+
+/**
+ * The payload of `skill.rechecked`: a callable skill passed its re-check and keeps running, as
+ * the version it names. `stillDue` when a trigger stamped it during the check, so the chip stays.
+ */
+export interface SkillRecheckedPayload extends SkillNamed {
+  readonly version?: number;
+  readonly versionId?: Id<'skillVersions'>;
+  readonly stillDue?: true;
+}
+
+/**
+ * The payload of `skill.superseded`: a row stopped running because its revision registered in
+ * the same transaction, as the version it names.
+ */
+export interface SkillSupersededPayload extends SkillNamed {
+  readonly revisionId: SkillId;
+  readonly version?: number;
+}
+
+/** The payload of `skill.given-up`: a failed skill ended by the manager's Give up. */
+export interface SkillGivenUpPayload extends SkillReason {
+  /** The authoring attempts it had made. */
+  readonly attempts: number;
+}
 
 /** The payload of `skill.authoring-superseded`. */
 export interface SkillAuthoringSupersededPayload extends SkillNamed {
@@ -474,6 +586,12 @@ export interface SkillAuthoringSupersededPayload extends SkillNamed {
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
+  /**
+   * What the claim is for: writing a body (`author`), or checking a stored version in the sandbox
+   * (`verify-stored`: an adoption, a Re-check now). Absent on a claim an older release wrote,
+   * which was always a writing.
+   */
+  readonly purpose?: 'author' | 'verify-stored';
 }
 
 /** The payload of `skill.authoring`. */
@@ -482,8 +600,49 @@ export interface SkillAuthoringPayload {
   readonly sandboxId: string;
 }
 
-/** The payload of `skill.registered`. */
-export type SkillRegisteredPayload = SkillNamed;
+/**
+ * The payload of `skill.registered`. A row the owner's library holds names the version it
+ * registered as; a builtin, an unshaped row and a row registered before 0.13.0 name none.
+ */
+export interface SkillRegisteredPayload extends SkillNamed {
+  readonly version?: number;
+  readonly versionId?: Id<'skillVersions'>;
+  /** Set when the row registered as a version another employee wrote. */
+  readonly adopted?: true;
+  /** The version a revision replaced, which its row stopped running in the same transaction. */
+  readonly supersedes?: { readonly skillId: SkillId; readonly version: number };
+}
+
+/**
+ * The payload of `skill.recheck-due`: a trigger stamped "Re-check due" on a registered skill
+ * (A13). The employee keeps running the verified body until a re-check passes.
+ */
+export interface SkillRecheckDuePayload extends SkillReason {
+  readonly versionId?: Id<'skillVersions'>;
+}
+
+/** A version of the owner's library as an adoption event names it (10-A). */
+interface SkillAdoptionVersion extends SkillNamed {
+  readonly versionId: Id<'skillVersions'>;
+  readonly version: number;
+  /** The version's author as the library keeps the name, after the author left too. */
+  readonly authorName: string;
+}
+
+/**
+ * The payload of `skill.adoption-offered`: a proposal offers a sibling's verified version for the
+ * employee to adopt instead of writing its own (A3).
+ */
+export interface SkillAdoptionOfferedPayload extends SkillAdoptionVersion {
+  readonly forWorkItem: WorkItemId;
+}
+
+/**
+ * The payload of `skill.adopted`: the manager adopted the offered version, beside the
+ * `skill.approved` that granted the scopes the employee lacked; the sandbox verifies it again
+ * under the employee's own contract before it runs.
+ */
+export type SkillAdoptedPayload = SkillAdoptionVersion;
 
 /** The payload of `skill.failed`. */
 export type SkillFailedPayload = SkillReason;
@@ -721,6 +880,19 @@ export interface WorkScopeSkipOverruledPayload extends WorkItemNamed {
   readonly basis: string;
   readonly namedBy?: string;
   readonly overruled?: string[];
+}
+
+/**
+ * The payload of `work.waiting-for-skill`: an approved item went back to `needs-skill` because the
+ * skill it would have run was taken out of use (Retire, Withdraw) or was not callable when its run
+ * began (E-1). Its approved plan went with it.
+ */
+export interface WorkWaitingForSkillPayload extends WorkItemNamed {
+  /** The row of the name that may still become callable, which the item waits behind. */
+  readonly skillId?: SkillId;
+  readonly name: string;
+  readonly reason: string;
+  readonly previousState: Doc<'workItems'>['state'];
 }
 
 /** The payload of `work.requeued`. */
@@ -989,6 +1161,11 @@ export interface WorkExecutionClaimedPayload extends WorkItemNamed {
   readonly skillId?: SkillId;
   readonly skillRegisteredAt?: number;
   readonly skillBodyHash?: string;
+  /** The library version the claimed row runs, when it holds one. */
+  readonly skillVersionId?: Id<'skillVersions'>;
+  readonly skillVersion?: number;
+  /** Set when the claimed row is an adopted skill: the reuse figure's adopted split (K7). */
+  readonly skillAdopted?: true;
   readonly proposedFor?: WorkItemId;
   readonly arm?: 'baseline';
   readonly trialId?: string;
@@ -1137,6 +1314,10 @@ export interface EventPayloads {
   'manager.transfer-cancelled': ManagerTransferCancelledPayload;
   'manager.transfer-declined': ManagerTransferDeclinedPayload;
   'manager.transfer-expired': ManagerTransferExpiredPayload;
+  'manager.transfer-notice': ManagerTransferNoticePayload;
+  'manager.transfer-note-withheld': ManagerTransferNoteWithheldPayload;
+  'manager.transfer-settle-failed': ManagerTransferSettleFailedPayload;
+  'manager.transfer-ended': ManagerTransferEndedPayload;
   'manager.transferred': ManagerTransferredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
@@ -1163,10 +1344,17 @@ export interface EventPayloads {
   'skill.rejected': SkillRejectedPayload;
   'skill.revision-requested': SkillRevisionRequestedPayload;
   'skill.retired': SkillRetiredPayload;
+  'skill.revoked': SkillRevokedPayload;
+  'skill.given-up': SkillGivenUpPayload;
+  'skill.rechecked': SkillRecheckedPayload;
+  'skill.superseded': SkillSupersededPayload;
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
+  'skill.recheck-due': SkillRecheckDuePayload;
+  'skill.adoption-offered': SkillAdoptionOfferedPayload;
+  'skill.adopted': SkillAdoptedPayload;
   'skill.failed': SkillFailedPayload;
   'skill.author-failed': SkillAuthorFailedPayload;
   'skill.verification-failed': SkillVerificationFailedPayload;
@@ -1208,6 +1396,7 @@ export interface EventPayloads {
   'work.discovered': WorkDiscoveredPayload;
   'work.scope-skip-overruled': WorkScopeSkipOverruledPayload;
   'work.requeued': WorkRequeuedPayload;
+  'work.waiting-for-skill': WorkWaitingForSkillPayload;
   'work.reevaluation': WorkReevaluationPayload;
   'work.claim-refused': WorkClaimRefusedPayload;
   'work.evaluated': WorkEvaluatedPayload;
@@ -1289,6 +1478,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'manager.transfer-cancelled',
   'manager.transfer-declined',
   'manager.transfer-expired',
+  'manager.transfer-notice',
+  'manager.transfer-note-withheld',
+  'manager.transfer-settle-failed',
+  'manager.transfer-ended',
   'manager.transferred',
   'charter.drafted',
   'charter.approved',
@@ -1315,10 +1508,17 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.rejected',
   'skill.revision-requested',
   'skill.retired',
+  'skill.revoked',
+  'skill.given-up',
+  'skill.rechecked',
+  'skill.superseded',
   'skill.authoring-superseded',
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
+  'skill.recheck-due',
+  'skill.adoption-offered',
+  'skill.adopted',
   'skill.failed',
   'skill.author-failed',
   'skill.verification-failed',
@@ -1360,6 +1560,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.discovered',
   'work.scope-skip-overruled',
   'work.requeued',
+  'work.waiting-for-skill',
   'work.reevaluation',
   'work.claim-refused',
   'work.evaluated',

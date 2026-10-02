@@ -103,7 +103,7 @@ describe('the employee route with an id that names no employee of the caller', (
     backend.queries = {
       ...refusedWith(new ConvexError(EMPLOYEE_NOT_YOURS)),
       'config:surfaceMode': { mode: 'mock' },
-      'managerTransfers:departureOf': null,
+      'transferDepartures:employeePage': { page: 'not-yours' },
     };
     const view = mount(route());
     await settle();
@@ -116,11 +116,14 @@ describe('the employee route with an id that names no employee of the caller', (
     backend.queries = {
       ...refusedWith(new ConvexError(EMPLOYEE_NOT_YOURS)),
       'config:surfaceMode': { mode: 'mock' },
-      'managerTransfers:departureOf': {
-        transferId: 'transfer-1',
-        agentName: 'Maya',
-        toAddress: 'lead@kestrel.example',
-        decidedAt: Date.UTC(2026, 9, 2, 11),
+      'transferDepartures:employeePage': {
+        page: 'departed',
+        departure: {
+          transferId: 'transfer-1',
+          agentName: 'Maya',
+          toAddress: 'lead@kestrel.example',
+          decidedAt: Date.UTC(2026, 9, 2, 11),
+        },
       },
     };
     const view = mount(route());
@@ -129,12 +132,12 @@ describe('the employee route with an id that names no employee of the caller', (
     expect(heading?.textContent).toBe('Maya was handed over');
     expect(document.activeElement).toBe(heading);
     expect(view.container.textContent).toContain(
-      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
+      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your home lists the handover for 30 days.',
     );
     expect(view.container.textContent).not.toContain('not yours');
     expect(view.container.querySelector('a')?.getAttribute('href')).toBe('/');
     expect(backend.asked).toContainEqual({
-      name: 'managerTransfers:departureOf',
+      name: 'transferDepartures:employeePage',
       args: { agentId: 'agent-1' },
     });
     view.unmount();
@@ -149,7 +152,7 @@ describe('the employee route with an id that names no employee of the caller', (
     await settle();
     expect(view.container.textContent).toContain('loading employee');
     view.unmount();
-    backend.queries['managerTransfers:departureOf'] = null;
+    backend.queries['transferDepartures:employeePage'] = { page: 'not-yours' };
     const refused = mount(route());
     await settle();
     expect(refused.container.querySelector('h1')?.textContent).toBe('No such employee');

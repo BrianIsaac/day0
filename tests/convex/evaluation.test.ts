@@ -80,7 +80,7 @@ describe('evaluation backend boundary', (): void => {
     ]);
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.evaluation.snapshot, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('refuses benchmark mutation outside mock mode', async (): Promise<void> => {

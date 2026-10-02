@@ -13,6 +13,7 @@ import {
   type LoggedEvent,
   type NewEvent,
 } from '../src/events/contract';
+import { log as logger } from '../src/lib/logger';
 
 /*
  * The two ways an event reaches the ledger, both typed by the event contract
@@ -68,32 +69,62 @@ export function eventsOfType(
   });
 }
 
+/** How an action's event is fenced: by the owner the action read the employee under. */
+export interface LogFence {
+  /**
+   * The employee's owner key when the action began. The event is appended only while the
+   * employee is still that owner's: an action still running when a handover moved it would
+   * otherwise write onto the new owner's record what it did under the old one (U3-m2).
+   */
+  readonly startedUnder?: string;
+}
+
 /**
  * Log one event from an action, in a transaction of its own, stamped when it lands.
  *
  * @param ctx - The action's context.
  * @param event - The event: a type the contract lists, with that type's payload.
+ * @param fence - The owner the action started under, when it read the employee as one.
  */
 export async function logEvent(
   ctx: Pick<ActionCtx, 'runMutation'>,
   event: LoggedEvent,
+  fence: LogFence = {},
 ): Promise<void> {
-  await ctx.runMutation(internal.eventLog.log, event);
+  await ctx.runMutation(internal.eventLog.log, {
+    ...event,
+    ...(fence.startedUnder === undefined ? {} : { startedUnder: fence.startedUnder }),
+  });
 }
 
 /**
  * Append the event an action logs, stamped when it lands. Internal; reached
  * only through `logEvent`, which types the payload. The type is checked
  * against the contract's list here as well, so nothing that calls this
- * mutation by name can write an unlisted one.
+ * mutation by name can write an unlisted one. With `startedUnder`, nothing is
+ * appended once the employee is gone or another owner's ({@link LogFence});
+ * the dropped event is logged for the operator.
  */
 export const log = internalMutation({
   args: {
     agentId: v.id('agents'),
     type: v.union(...EVENT_TYPES.map((type) => v.literal(type))),
     payload: v.any(),
+    startedUnder: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<void> => {
-    await ctx.db.insert('events', { ...args, createdAt: Date.now() });
+  returns: v.null(),
+  handler: async (ctx, { startedUnder, ...event }): Promise<null> => {
+    if (startedUnder !== undefined) {
+      const agent = await ctx.db.get(event.agentId);
+      if (agent?.userId !== startedUnder) {
+        logger.warn('event not logged: the employee changed owner during its action', {
+          agentId: event.agentId,
+          type: event.type,
+        });
+        return null;
+      }
+    }
+    await ctx.db.insert('events', { ...event, createdAt: Date.now() });
+    return null;
   },
 });

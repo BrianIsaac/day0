@@ -7,16 +7,18 @@ import {
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
-import { isEvaluationAgent } from './metrics';
+import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { agentZone, dayKey } from '../src/lib/zone';
 import {
+  ownerKeyDigest,
   sectionAfter,
   TRACE_FORMAT,
   TRACE_PAGE_ROWS,
   TRACE_SECTIONS,
   TRACE_VERSION,
+  type TraceHandover,
   type TraceHead,
   type TracePage,
   type TraceRetirement,
@@ -205,13 +207,15 @@ export const autonomyChanges = query({
  * describe an action (a ticket's author, requester and branch, which carries
  * its assignee's handle; the charter's manager and named colleagues; a
  * manager change's previous manager as well as the new one; both addresses
- * of a handover request), and a surface's live install claim (a single-use
+ * of a handover request; the colleague who wrote an adopted or offered skill,
+ * decision 4), and a surface's live install claim (a single-use
  * state nonce and the URL that spends it). The export's policy keeps names as
  * working material in text (U12 D1 (c)); a key whose whole value is a name has
  * none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
+  'authorName',
   'boss',
   'bossEmail',
   'createdBy',
@@ -276,6 +280,43 @@ async function retiredEmployees(
   );
 }
 
+/** The request states a handover is accepted in, moved or still waiting for its runs (D18). */
+const ACCEPTED_HANDOVER_STATES = ['accepting', 'accepted'] as const;
+
+/**
+ * An employee's accepted handovers for its trace's manifest, oldest first, read as
+ * `metrics:forOwner` reads them: so a recompute from the trace cuts each manager's figures at the
+ * acceptance. Each owner key goes as its digest salted with the export's time
+ * (`ownerKeyDigest`; decision 2, the wave 10 review, M6), since the file is made to be shared
+ * and names no account but the exporter's own. The per-account bounds keep an employee's
+ * requests far under one page.
+ */
+async function acceptedHandoversOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  exportedAt: number,
+): Promise<TraceHandover[]> {
+  const byState = await Promise.all(
+    ACCEPTED_HANDOVER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .take(TRACE_PAGE_ROWS),
+    ),
+  );
+  return handoversFromTransfers(byState.flat())
+    .toSorted((left, right) => left.acceptedAt - right.acceptedAt)
+    .map(
+      (handover): TraceHandover => ({
+        agentId: handover.agentId,
+        fromOwnerDigest: ownerKeyDigest(handover.fromOwnerKey, exportedAt),
+        toOwnerDigest: ownerKeyDigest(handover.toOwnerKey, exportedAt),
+        acceptedAt: handover.acceptedAt,
+      }),
+    );
+}
+
 /**
  * The head of an agent's trace: the manifest, the agent, the owner section
  * and the credential labels, and where the first page starts. Internal; the
@@ -288,13 +329,14 @@ export const exportHead = internalQuery({
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const { exportedAt } = args;
     const zone = agentZone(agent);
-    const [stamp, surfaces, retired] = await Promise.all([
+    const [stamp, surfaces, retired, handovers] = await Promise.all([
       ctx.db.query('deploymentVersions').order('desc').first(),
       ctx.db
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .take(TRACE_PAGE_ROWS),
       retiredEmployees(ctx, agent.userId),
+      acceptedHandoversOf(ctx, args.agentId, exportedAt),
     ]);
     const credentials = await Promise.all(
       [
@@ -314,6 +356,7 @@ export const exportHead = internalQuery({
         commit: stamp?.commit ?? null,
         pageRows: TRACE_PAGE_ROWS,
         eventTypes: EVENT_TYPES,
+        handovers,
       },
       agent: {
         id: agent._id,

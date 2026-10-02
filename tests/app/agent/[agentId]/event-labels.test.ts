@@ -38,13 +38,37 @@ describe('the live feed labels', (): void => {
       }),
       eventLabel({ type: 'manager.transfer-declined', payload: { ...request, hasReason: true } }),
       eventLabel({ type: 'manager.transfer-expired', payload: request }),
+      eventLabel({
+        type: 'manager.transfer-settle-failed',
+        payload: { ...request, attempt: 1, reason: 'x' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-ended',
+        payload: { ...request, reason: 'settle-failed', detail: 'x' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-ended',
+        payload: { ...request, reason: 'operator', detail: 'x' },
+      }),
+      eventLabel({ type: 'manager.transfer-note-withheld', payload: request }),
+      eventLabel({ type: 'manager.transfer-notice', payload: { ...request, delivered: true } }),
+      eventLabel({
+        type: 'manager.transfer-notice',
+        payload: { ...request, delivered: false, reason: 'nobody' },
+      }),
     ]).toEqual([
       'handover to priya@co.example asked',
       'handover to priya@co.example cancelled',
       'handover to priya@co.example cancelled at the retire',
       'handover to priya@co.example cancelled for another address',
-      'priya@co.example declined the handover',
+      'handover declined by priya@co.example',
       'handover to priya@co.example expired',
+      'handover to priya@co.example not finished yet',
+      'handover to priya@co.example ended, it could not finish',
+      'handover to priya@co.example ended by the operator',
+      'handover note to priya@co.example withheld',
+      'handover notice to priya@co.example sent',
+      'handover notice to priya@co.example not sent',
     ]);
   });
 
@@ -259,6 +283,125 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels the version a skill registered as, and a re-check due with its reason (10-K)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.registered',
+        payload: { name: 'kanban-comment-and-close', version: 2 },
+      }),
+    ).toBe('skill registered: kanban-comment-and-close v2');
+    expect(
+      eventLabel({
+        type: 'skill.recheck-due',
+        payload: { name: 'kanban-comment-and-close', reason: 'v3 is verified; this runs v2' },
+      }),
+    ).toBe('skill re-check due: kanban-comment-and-close (v3 is verified; this runs v2)');
+  });
+
+  it('labels an adoption offered and an adoption made with the version and its author (10-A)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.adoption-offered',
+        payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+      }),
+    ).toBe('skill adoption offered: kanban-comment-and-close v2 by Priya');
+    expect(
+      eventLabel({
+        type: 'skill.adopted',
+        payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+      }),
+    ).toBe('skill adopted: kanban-comment-and-close v2 by Priya');
+    expect(
+      eventLabel({ type: 'skill.adopted', payload: { name: 'kanban-comment-and-close' } }),
+    ).toBe('skill adopted: kanban-comment-and-close');
+  });
+
+  it('labels a revision written beside the running skill, and an older in-place one as it was (10-C)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.revision-requested',
+        payload: { name: 'kanban-comment-and-close', revisionId: 's2' },
+      }),
+    ).toBe('skill revision asked for: kanban-comment-and-close');
+    expect(
+      eventLabel({
+        type: 'skill.revision-requested',
+        payload: { name: 'kanban-comment-and-close' },
+      }),
+    ).toBe('skill sent back to be written again: kanban-comment-and-close');
+  });
+
+  it('labels a retire, a withdrawal from every employee and a Give up (10-C)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.retired',
+        payload: { name: 'kanban-comment-and-close', reason: 'it closes the wrong tickets' },
+      }),
+    ).toBe('skill retired: kanban-comment-and-close (it closes the wrong tickets)');
+    expect(
+      eventLabel({
+        type: 'skill.retired',
+        payload: { name: 'kanban-comment-and-close', reason: 'stale', withdrawn: true },
+      }),
+    ).toBe('skill retired, withdrawn from every employee: kanban-comment-and-close (stale)');
+    expect(
+      eventLabel({
+        type: 'skill.revoked',
+        payload: {
+          name: 'kanban-comment-and-close',
+          version: 2,
+          reason: 'stale',
+          holders: [
+            { skillId: 's1', agentId: 'a1', agentName: 'Priya' },
+            { skillId: 's2', agentId: 'a2', agentName: 'Mateo' },
+          ],
+        },
+      }),
+    ).toBe(
+      'skill withdrawn from every employee: kanban-comment-and-close v2, Priya, Mateo (stale)',
+    );
+    expect(
+      eventLabel({
+        type: 'skill.given-up',
+        payload: {
+          name: 'analytics-refresh-value',
+          reason: 'given up after 2 attempts',
+          attempts: 2,
+        },
+      }),
+    ).toBe('skill given up: analytics-refresh-value after 2 attempts');
+    expect(
+      eventLabel({
+        type: 'skill.rejected',
+        payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+      }),
+    ).toBe('skill adoption ended, version withdrawn: kanban-comment-and-close');
+    expect(
+      eventLabel({
+        type: 'skill.authoring-claimed',
+        payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+      }),
+    ).toBe('skill check started: kanban-comment-and-close');
+    expect(
+      eventLabel({
+        type: 'skill.rechecked',
+        payload: { name: 'kanban-comment-and-close', version: 2 },
+      }),
+    ).toBe('skill re-checked: kanban-comment-and-close v2');
+    expect(
+      eventLabel({
+        type: 'skill.superseded',
+        payload: { name: 'kanban-comment-and-close', version: 3 },
+      }),
+    ).toBe('skill superseded by its revision: kanban-comment-and-close v3');
+    expect(
+      eventLabel({
+        type: 'work.waiting-for-skill',
+        payload: { name: 'kanban-comment-and-close', reason: 'its skill was retired' },
+      }),
+    ).toBe('waiting for a skill again: kanban-comment-and-close (its skill was retired)');
+  });
+
   it('labels a dismissal as the manager setting a stopped item aside (m16)', (): void => {
     expect(eventLabel({ type: 'work.dismissed', payload: { workItemId: 'w1' } })).toBe(
       'dismissed by the manager',
@@ -306,6 +449,10 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'work.skipped' })).toBe('withheld');
     expect(recordKindOf({ type: 'work.actions-pending' })).toBe('held');
     expect(recordKindOf({ type: 'skill.proposed' })).toBe('held');
+    expect(recordKindOf({ type: 'skill.retired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'skill.revoked' })).toBe('withheld');
+    expect(recordKindOf({ type: 'skill.given-up' })).toBe('withheld');
+    expect(recordKindOf({ type: 'work.waiting-for-skill' })).toBe('held');
   });
 
   it('draws every line the Refused and withheld chip lists as refused or set aside, never noted (m34)', (): void => {
@@ -318,6 +465,7 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'manager.transfer-declined' })).toBe('refused');
     expect(recordKindOf({ type: 'manager.transfer-cancelled' })).toBe('withheld');
     expect(recordKindOf({ type: 'manager.transfer-expired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-ended' })).toBe('withheld');
     expect(recordKindOf({ type: 'manager.transfer-asked' })).toBe('noted');
   });
 

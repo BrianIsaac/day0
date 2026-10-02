@@ -40,6 +40,11 @@ export interface SyncServer {
   readonly Socket: new (url: string) => unknown;
   /** Whether nothing is on the wire: every socket opened and every answer delivered. */
   quiet(): boolean;
+  /**
+   * Answer every query the client holds again, in one transition: a write on the deployment
+   * changed what they read, as another manager's acceptance does.
+   */
+  rerun(): void;
 }
 
 interface QueryAdd {
@@ -144,6 +149,8 @@ export function syncServer(answer: Answer): SyncServer {
     return undefined;
   };
 
+  const open = new Set<{ deliver(data: string): void }>();
+
   class Socket {
     onopen: (() => void) | null = null;
     onmessage: ((event: { data: string }) => void) | null = null;
@@ -155,6 +162,7 @@ export function syncServer(answer: Answer): SyncServer {
     constructor(url: string) {
       this.url = url;
       inFlight += 1;
+      open.add(this);
       setTimeout(() => {
         inFlight -= 1;
         this.readyState = 1;
@@ -167,18 +175,32 @@ export function syncServer(answer: Answer): SyncServer {
       sent.push(message);
       const answerText = reply(message);
       if (answerText === undefined) return;
+      this.deliver(answerText);
+    }
+
+    /** Hands the client one message from the deployment, on a later turn of the event loop. */
+    deliver(data: string): void {
       inFlight += 1;
       setTimeout(() => {
         inFlight -= 1;
-        this.onmessage?.({ data: answerText });
+        this.onmessage?.({ data });
       }, 0);
     }
 
     close(): void {
       // The test ends the page; nothing reconnects to a deployment that is going away.
       this.readyState = 3;
+      open.delete(this);
     }
   }
 
-  return { sent, Socket, quiet: (): boolean => inFlight === 0 };
+  const rerun = (): void => {
+    const text = transition(
+      { querySet: version.querySet, identity: version.identity },
+      [...queries.keys()],
+    );
+    for (const socket of open) socket.deliver(text);
+  };
+
+  return { sent, Socket, quiet: (): boolean => inFlight === 0, rerun };
 }

@@ -1,4 +1,6 @@
+import { v } from 'convex/values';
 import { query } from './_generated/server';
+import { getCaller, verifiedAddressOf } from './ownership';
 import {
   resolveDeploymentProfile,
   SURFACE_MODE,
@@ -104,5 +106,42 @@ export const components = query({
       browser = false;
     }
     return { browser };
+  },
+});
+
+/** Who the caller is, as this deployment derived it from the caller's token. */
+const whoAmIValidator = v.union(
+  v.null(),
+  v.object({
+    ownerKey: v.string(),
+    issuer: v.string(),
+    subject: v.string(),
+    verifiedAddress: v.union(v.string(), v.null()),
+  }),
+);
+
+/**
+ * Who the caller is, as this deployment sees them: the owner key their rows are
+ * keyed on, the issuer and subject it was derived from, and the address their
+ * token proves, or null when it proves none. The live sign-in check
+ * (`pnpm check:sign-in`) ends on this line: it shows the token reached the
+ * deployment, was verified against the issuer's keys and passed the domain rule.
+ *
+ * Public and guarded to the caller: it answers only about the caller's own
+ * token, and null for an anonymous caller or one `getCaller` refuses. Writes
+ * nothing.
+ */
+export const whoAmI = query({
+  args: {},
+  returns: whoAmIValidator,
+  handler: async (ctx) => {
+    const caller = await getCaller(ctx);
+    if (!caller) return null;
+    return {
+      ownerKey: caller.ownerKey,
+      issuer: caller.issuer,
+      subject: caller.subject,
+      verifiedAddress: verifiedAddressOf(caller) ?? null,
+    };
   },
 });

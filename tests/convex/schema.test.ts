@@ -463,3 +463,185 @@ describe('manager transfer schema', (): void => {
     expect(read.note?.discardedAt).toBe(40);
   });
 });
+
+describe('skill library schema (10-K, N10: additive and optional)', (): void => {
+  it("stores an owner's version and reads it back by shape, by name and version, and by author", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        smokeTest: 'def run(inputs): return {"actions": []}',
+        bodyHash: 'sha256:00',
+        requiredScopes: ['linear:write'],
+        harnessTools: ['save_comment'],
+        harnessToolsBySurface: [
+          { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] },
+        ],
+        targetSurface: 'linear',
+        authorAgentId: agentId,
+        authorName: 'Priya',
+        readRefs: [{ sourceId, ref: 'linear.md', title: 'Linear runbook' }],
+        verifiedAt: 2,
+        createdAt: 2,
+      });
+      const byShape = await ctx.db
+        .query('skillVersions')
+        .withIndex('by_owner_shape', (q) =>
+          q.eq('userId', 'owner').eq('surfaceClass', 'kanban').eq('operation', 'comment-and-close'),
+        )
+        .collect();
+      const byName = await ctx.db
+        .query('skillVersions')
+        .withIndex('by_owner_name_version', (q) =>
+          q.eq('userId', 'owner').eq('name', 'kanban-comment-and-close').eq('version', 1),
+        )
+        .unique();
+      const byAuthor = await ctx.db
+        .query('skillVersions')
+        .withIndex('by_author', (q) => q.eq('authorAgentId', agentId))
+        .collect();
+      return { versionId, byShape, byName, byAuthor };
+    });
+    expect(read.byShape.map((row) => row._id)).toEqual([read.versionId]);
+    expect(read.byShape[0]?.harnessToolsBySurface).toEqual([
+      { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] },
+    ]);
+    expect(read.byName?._id).toBe(read.versionId);
+    expect(read.byAuthor.map((row) => row._id)).toEqual([read.versionId]);
+  });
+
+  it('keeps a version registered before the check was kept, with no smoke test and no author', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const version = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 2,
+        createdAt: 2,
+      });
+      return await ctx.db.get(id);
+    });
+    expect(version?.smokeTest).toBeUndefined();
+    expect(version?.authorAgentId).toBeUndefined();
+  });
+
+  it('gives a holder row its version, counts, re-check chip, retirement and revision, and the two new states', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 2,
+        createdAt: 2,
+      });
+      const holder = {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        body: '# Comment and close',
+        sourceType: 'agent-authored' as const,
+        createdAt: 3,
+      };
+      // A row v0.12.0 wrote carries none of the new fields and still reads.
+      const olderId = await ctx.db.insert('skills', { ...holder, state: 'registered' });
+      const retiredId = await ctx.db.insert('skills', {
+        ...holder,
+        state: 'retired',
+        versionId,
+        useCount: 2,
+        lastUsedAt: 4,
+        authoringAttempts: 1,
+        recheckDueAt: 5,
+        recheckReason: 'its check was not kept',
+        retiredAt: 6,
+        retiredReason: 'no longer needed',
+        adoptedAt: 3,
+      });
+      const supersededId = await ctx.db.insert('skills', {
+        ...holder,
+        state: 'superseded',
+        versionId,
+      });
+      const revisionId = await ctx.db.insert('skills', {
+        ...holder,
+        body: '',
+        state: 'approved',
+        revisionOf: supersededId,
+      });
+      const offeredId = await ctx.db.insert('skills', {
+        ...holder,
+        body: '',
+        state: 'proposed',
+        offeredVersionId: versionId,
+      });
+      const holders = await ctx.db
+        .query('skills')
+        .withIndex('by_version', (q) => q.eq('versionId', versionId))
+        .collect();
+      return {
+        older: await ctx.db.get(olderId),
+        retired: await ctx.db.get(retiredId),
+        revision: await ctx.db.get(revisionId),
+        offered: await ctx.db.get(offeredId),
+        holders: holders.map((row) => row._id),
+        retiredId,
+        supersededId,
+        versionId,
+      };
+    });
+    expect(read.older?.versionId).toBeUndefined();
+    expect(read.retired).toMatchObject({ state: 'retired', useCount: 2, retiredAt: 6 });
+    expect(read.revision?.revisionOf).toBe(read.supersededId);
+    expect(read.offered?.offeredVersionId).toBe(read.versionId);
+    expect(read.holders.sort()).toEqual([read.retiredId, read.supersededId].sort());
+  });
+});

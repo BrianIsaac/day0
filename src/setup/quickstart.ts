@@ -17,8 +17,11 @@
 /** The repository the quick start clones, and the page links as its source. */
 export const REPOSITORY_URL = 'https://github.com/BrianIsaac/day0';
 
+/** The hosted demo the guide describes as the first way to run it. */
+export const HOSTED_DEMO_URL = 'https://dayzer0.dev';
+
 /** This guide, hosted, so the README can send a reader to the same page. */
-export const SETUP_PAGE_URL = 'https://dayzer0.dev/setup';
+export const SETUP_PAGE_URL = `${HOSTED_DEMO_URL}/setup`;
 
 /**
  * Everything a newcomer types, in order. The fourth is real mode, and asks
@@ -96,6 +99,8 @@ export interface RunWay {
   title: string;
   /** What it costs the reader and what it gives, before the commands. */
   body: string;
+  /** The hosted way: where it runs, named on the page wherever the page is served. */
+  address?: RunWayLink;
   /** The hosted way: the two pages it goes to. */
   links?: readonly RunWayLink[];
   /** The two local ways: what to type, in order, from an empty directory. */
@@ -118,6 +123,7 @@ export const RUN_WAYS: readonly RunWay[] = [
   {
     id: 'hosted',
     title: WAY_NAMES.hosted,
+    address: { href: HOSTED_DEMO_URL, label: new URL(HOSTED_DEMO_URL).host },
     body: 'Nothing to install. Sign in and deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open the walkthrough, a recording of one run that needs no sign-in at all.',
     links: [
       { href: '/sign-in', label: 'Sign in and deploy an employee' },

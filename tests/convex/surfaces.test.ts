@@ -94,6 +94,27 @@ async function seedDeclared(
 }
 
 /**
+ * Store a credential of the fixture's owner, as the manager's landing does: a credential writer
+ * binds only a row of the employee's current owner (the wave 9 review's M5).
+ */
+async function seedOwnersCredential(
+  harness: TestConvex<typeof schema>,
+): Promise<Id<'credentials'>> {
+  return await harness.run(
+    async (ctx): Promise<Id<'credentials'>> =>
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Linear token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      }),
+  );
+}
+
+/**
  * Store a proposal for a surface as the orientation run would.
  *
  * Args:
@@ -236,7 +257,7 @@ describe('surface persistence', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .query(api.surfaces.listForAgent, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('never seeds a surface for a documentation location', async (): Promise<void> => {
@@ -1863,15 +1884,16 @@ describe('surface connection lifecycle metadata', (): void => {
         reason: 'credential missing',
       });
     });
+    const credentialId = await seedOwnersCredential(harness);
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
-      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialId,
       credentialKind: 'location',
       credentialLocation: 'entered by the manager',
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
-      credentialId: '10000credentials',
+      credentialId,
       credentialKind: 'location',
       credentialLocation: 'entered by the manager',
       credentialLanded: false,
@@ -2053,10 +2075,12 @@ describe('surface approval state machine', (): void => {
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     const other = harness.withIdentity(managerIdentity('other-owner'));
-    await expect(other.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow('forbidden');
+    await expect(other.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow(
+      'This employee is not yours.',
+    );
     expect(await readSurface(harness, surfaceId)).toMatchObject({ verdict: 'proposed' });
     await expect(other.mutation(api.surfaces.reject, { surfaceId, reason: 'no' })).rejects.toThrow(
-      'forbidden',
+      'This employee is not yours.',
     );
   });
 
@@ -2070,7 +2094,7 @@ describe('surface approval state machine', (): void => {
     await owner.mutation(api.surfaces.approve, { surfaceId });
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
-      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialId: await seedOwnersCredential(harness),
       credentialKind: 'value',
     });
     await harness.run(async (ctx) => {
@@ -2334,7 +2358,7 @@ describe('owner-triggered orientation', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .action(api.surfaces.reorient, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('refuses reorient outside real mode', async (): Promise<void> => {
@@ -2998,7 +3022,7 @@ describe('access expiry (Q5)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.surfaces.setAccessDays, { surfaceId: approved, days: 30 }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect((await readSurface(harness, approved)).expiresAt).toBe(ENDS_AT);
     expect(await payloads(harness, 'surface.access-set')).toEqual([
       { surfaceId: approved, by: 'approval', days: 90, expiresAt: ENDS_AT },
@@ -3644,7 +3668,7 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('takes a tool the manager removes off the stored list at once, before any probe', async (): Promise<void> => {
@@ -3726,5 +3750,133 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
       .withIdentity(managerIdentity())
       .mutation(api.surfaces.reject, { surfaceId, reason: 'not this route' });
     expect(await readSurface(harness, surfaceId)).not.toHaveProperty('approvedToolAllowlist');
+  });
+});
+
+describe('the re-check triggers on a surface (10-C, A13)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /**
+   * A connected Linear card with one registered skill acting on it and one acting elsewhere.
+   *
+   * Returns:
+   *   The harness, the surface, a probe that stores what it found, and the two skills.
+   */
+  async function connectedCardWithSkills(): Promise<{
+    harness: TestConvex<typeof schema>;
+    surfaceId: Id<'surfaces'>;
+    probe: (tools: string[], verifiedAt: number) => Promise<void>;
+    onLinear: Id<'skills'>;
+    elsewhere: Id<'skills'>;
+  }> {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 10 });
+    });
+    const probe = async (tools: string[], verifiedAt: number): Promise<void> => {
+      const reserved = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!reserved.reserved) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: reserved.generation,
+        toolAllowlist: tools,
+        toolArguments: tools.map((tool) => ({ tool, arguments: [] })),
+        verifiedAt,
+      });
+    };
+    await probe(['list_issues', 'save_comment'], 100);
+    const registered = async (name: string, targetSurface: string): Promise<Id<'skills'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId,
+            name,
+            description: name,
+            body: '# Procedure',
+            sourceType: 'agent-authored',
+            state: 'registered',
+            targetSurface,
+            registeredAt: 1,
+            createdAt: 1,
+          }),
+      );
+    return {
+      harness,
+      surfaceId,
+      probe,
+      onLinear: await registered('kanban-comment-and-close', 'linear'),
+      elsewhere: await registered('chat-thread-reply', 'slack'),
+    };
+  }
+
+  async function chip(
+    harness: TestConvex<typeof schema>,
+    skillId: Id<'skills'>,
+  ): Promise<Pick<Doc<'skills'>, 'recheckDueAt' | 'recheckReason'>> {
+    const row = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    return { recheckDueAt: row?.recheckDueAt, recheckReason: row?.recheckReason };
+  }
+
+  it('an approved allowlist change stamps Re-check due on the surface’s skills', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, onLinear, elsewhere } = await connectedCardWithSkills();
+    const owner = harness.withIdentity(managerIdentity());
+
+    // The same list again changes nothing the skill was checked against.
+    await owner.mutation(api.surfaces.approveTools, {
+      surfaceId,
+      tools: ['list_issues', 'save_comment'],
+    });
+    expect(await chip(harness, onLinear)).toEqual({
+      recheckDueAt: undefined,
+      recheckReason: undefined,
+    });
+
+    await owner.mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] });
+
+    expect(await chip(harness, onLinear)).toEqual({
+      recheckDueAt: expect.any(Number),
+      recheckReason: 'the tools you approved on linear changed',
+    });
+    expect(await chip(harness, elsewhere)).toEqual({
+      recheckDueAt: undefined,
+      recheckReason: undefined,
+    });
+    expect(await eventTypes(harness)).toContain('skill.recheck-due');
+  });
+
+  it('a reconnection stamps Re-check due on the surface’s skills, and a re-probe of a live connection does not', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe, onLinear, elsewhere } = await connectedCardWithSkills();
+
+    await probe(['list_issues', 'save_comment'], 200);
+    expect(await chip(harness, onLinear)).toEqual({
+      recheckDueAt: undefined,
+      recheckReason: undefined,
+    });
+
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      verdict: 'listed-dead',
+      reason: 'the server did not answer',
+    });
+    await probe(['list_issues', 'save_comment'], 300);
+
+    expect(await chip(harness, onLinear)).toEqual({
+      recheckDueAt: 300,
+      recheckReason: 'its connection to linear was made again',
+    });
+    expect(await chip(harness, elsewhere)).toEqual({
+      recheckDueAt: undefined,
+      recheckReason: undefined,
+    });
   });
 });

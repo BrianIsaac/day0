@@ -8,6 +8,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
+import { isOfferable } from '../../src/work/skill-library';
+import { USE_COUNT_SCAN_LIMIT } from '../../convex/skillVersions';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -169,7 +171,8 @@ describe('the upgrade migrations', (): void => {
       'credentials-superseded-at',
       'decision-batches-settled',
     ];
-    expect(MIGRATION_NAMES.slice(-secondStep.length)).toEqual(secondStep);
+    // Re-pinned behind the skill library's two backfills (0.13.0), which follow them.
+    expect(MIGRATION_NAMES.slice(-secondStep.length - 2, -2)).toEqual(secondStep);
     const harness = limitedHarness();
     await runAll(harness);
     const status = await harness.query(internal.migrations.status, {});
@@ -1104,19 +1107,21 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
+    // Re-pinned at 0.13.0, the skill library's release, from 0.6.0 and 0.10.0: a stamp names a
+    // release no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.6.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.13.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.13.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.6.0', previous: '0.6.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.13.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.13.0', previous: '0.13.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.10.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.10.0', previous: '0.6.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.14.0', previous: '0.13.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.10.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.14.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -1845,5 +1850,236 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
     });
     await runAll(harness);
     expect(await valueRefStatus(harness)).toMatchObject({ read: 1, changed: 0, remaining: 0 });
+  });
+});
+
+describe('the skill library backfills (10-K, K3)', (): void => {
+  /** A registered agent-authored skill as v0.12.0 left it: no version, no count, no kept check. */
+  async function registeredSkill(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    fields: Partial<Doc<'skills'>> = {},
+  ): Promise<Id<'skills'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          body: '# Comment and close',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          requiredScopes: ['tickets:write'],
+          createdAt: 1,
+          registeredAt: 2,
+          ...fields,
+        }),
+    );
+  }
+
+  /** Every row the two backfills write or read, to compare a second run against the first. */
+  async function libraryState(harness: Harness): Promise<unknown> {
+    return await harness.run(async (ctx) => ({
+      versions: await ctx.db.query('skillVersions').collect(),
+      skills: await ctx.db.query('skills').collect(),
+      recheckEvents: (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'skill.recheck-due',
+      ),
+    }));
+  }
+
+  it('the library backfill is safe to run twice and marks every backfilled version not offerable', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const mateo = await agent(harness, { userId: 'owner' });
+    // A second owner keeps the legacy employee ownerless through `agents-owner`.
+    await agent(harness, { userId: 'rival' });
+    const legacy = await agent(harness);
+    const first = await registeredSkill(harness, priya);
+    const sameBody = await registeredSkill(harness, mateo);
+    const otherBody = await registeredSkill(harness, mateo, {
+      name: 'kanban-comment-and-close',
+      body: '# Comment, then close once it reads back',
+    });
+    const builtin = await registeredSkill(harness, priya, {
+      name: 'message-boss',
+      sourceType: 'builtin',
+      surfaceClass: undefined,
+      operation: undefined,
+    });
+    const unshaped = await registeredSkill(harness, priya, {
+      name: 'linear-action-revops-7',
+      surfaceClass: undefined,
+      operation: undefined,
+    });
+    const ownerless = await registeredSkill(harness, legacy);
+    const failed = await registeredSkill(harness, priya, { name: 'kanban-other', state: 'failed' });
+
+    await runAll(harness);
+
+    const versions = await harness.run(
+      async (ctx) => await ctx.db.query('skillVersions').collect(),
+    );
+    expect(
+      versions.map((version) => [version.version, version.body, version.authorAgentId]),
+    ).toEqual([
+      [1, '# Comment and close', priya],
+      [2, '# Comment, then close once it reads back', mateo],
+    ]);
+    for (const version of versions) {
+      expect(isOfferable(version)).toBe(false);
+      expect(version.smokeTest).toBeUndefined();
+      expect(version).toMatchObject({
+        userId: 'owner',
+        verifiedAt: 2,
+        harnessTools: [],
+        readRefs: [],
+      });
+    }
+    const rows = await harness.run(async (ctx) =>
+      Promise.all(
+        [first, sameBody, otherBody, builtin, unshaped, ownerless, failed].map((id) =>
+          ctx.db.get(id),
+        ),
+      ),
+    );
+    const [one, two, three, ...outside] = rows;
+    // Two holders of one body share its version; each holder is due a re-check.
+    expect([one?.versionId, two?.versionId, three?.versionId]).toEqual([
+      versions[0]._id,
+      versions[0]._id,
+      versions[1]._id,
+    ]);
+    for (const holder of [one, two, three]) {
+      expect(holder?.recheckReason).toBe('its check was not kept');
+    }
+    for (const row of outside) {
+      expect(row?.versionId).toBeUndefined();
+      expect(row?.recheckDueAt).toBeUndefined();
+    }
+
+    // A second run, of the whole upgrade and of each backfill from its first page.
+    const before = await libraryState(harness);
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('migrations').collect()) {
+        if (row.name === 'skills-library' || row.name === 'skills-use-count') {
+          await ctx.db.delete(row._id);
+        }
+      }
+    });
+    const again = await harness.action(internal.migrations.runPending, {});
+    expect(again.migrations.map((row) => [row.name, row.changed])).toEqual([
+      ['skills-library', 0],
+      ['skills-use-count', 0],
+    ]);
+    expect(await libraryState(harness)).toEqual(before);
+  });
+
+  it('backfills the use count and the last use from the claims that named each skill, never lowering either', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const used = await registeredSkill(harness, priya);
+    const counted = await registeredSkill(harness, priya, { name: 'kanban-other', useCount: 9 });
+    const unused = await registeredSkill(harness, priya, { name: 'kanban-third' });
+    await harness.run(async (ctx) => {
+      const item = await ctx.db.insert('workItems', {
+        agentId: priya,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'tickets',
+        externalId: 'OPS-1',
+        title: 'OPS-1',
+        contentSummary: 'Done.',
+        contentRefs: [],
+        state: 'completed',
+        skillId: used,
+        observedAt: 1,
+        createdAt: 1,
+      });
+      // One item run twice (a Retry) is two uses; the other skill's claim is not this one's.
+      for (const [skillId, createdAt] of [
+        [used, 100],
+        [used, 300],
+        [counted, 200],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId: priya,
+          type: 'work.execution-claimed',
+          payload: { workItemId: item, skillId },
+          createdAt,
+        });
+      }
+    });
+
+    await runAll(harness);
+
+    const [one, two, three] = await harness.run(async (ctx) =>
+      Promise.all([used, counted, unused].map((id) => ctx.db.get(id))),
+    );
+    expect(one).toMatchObject({ useCount: 2, lastUsedAt: 300 });
+    expect(two).toMatchObject({ useCount: 9, lastUsedAt: 200 });
+    expect(three?.useCount).toBeUndefined();
+    expect(three?.lastUsedAt).toBeUndefined();
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations
+        .filter((row) => row.name.startsWith('skills-'))
+        .map((row) => [row.name, row.release, row.completedAt !== undefined]),
+    ).toEqual([
+      ['skills-library', '0.13.0', true],
+      ['skills-use-count', '0.13.0', true],
+    ]);
+  });
+
+  it('reads the newest claims first, so the last use is right when the count is a floor', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const used = await registeredSkill(harness, priya);
+    await harness.run(async (ctx) => {
+      for (let index = 0; index <= USE_COUNT_SCAN_LIMIT; index += 1) {
+        await ctx.db.insert('events', {
+          agentId: priya,
+          type: 'work.execution-claimed',
+          payload: { skillId: used },
+          createdAt: 1_000 + index,
+        });
+      }
+    });
+
+    await runAll(harness);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(used))).toMatchObject({
+      useCount: USE_COUNT_SCAN_LIMIT,
+      lastUsedAt: 1_000 + USE_COUNT_SCAN_LIMIT,
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'skills-use-count')?.note).toContain(
+      'each count is a floor',
+    );
+  });
+
+  it('backfills a library larger than one page, every holder once', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    for (let index = 0; index < 60; index += 1) {
+      await registeredSkill(harness, priya, {
+        name: `kanban-comment-and-close-${index}`,
+        body: `# Body ${index}`,
+      });
+    }
+
+    await runAll(harness);
+
+    const [versions, skills] = await harness.run(async (ctx) => [
+      await ctx.db.query('skillVersions').collect(),
+      await ctx.db.query('skills').collect(),
+    ]);
+    expect(versions).toHaveLength(60);
+    expect(skills.every((row) => row.versionId !== undefined)).toBe(true);
   });
 });

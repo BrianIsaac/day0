@@ -18,6 +18,7 @@ import {
   REPOSITORY_URL,
   RUN_WAYS,
   SETUP_PAGE_URL,
+  HOSTED_DEMO_URL,
   SETUP_SCRIPT,
   TIMING_CAVEAT,
   TRAPS,
@@ -75,6 +76,7 @@ describe('the quick-start commands', (): void => {
 
   it('send a reader to the guide on the hosted demo’s own domain', (): void => {
     expect(SETUP_PAGE_URL).toBe('https://dayzer0.dev/setup');
+    expect(SETUP_PAGE_URL).toBe(`${HOSTED_DEMO_URL}/setup`);
   });
 
   it('render as one fenced bash block, which is what a README carries', (): void => {

@@ -10,7 +10,7 @@ import {
 import type { Doc } from '@convex/_generated/dataModel';
 import { isStopped, stopDetail, isGateRefusalStop, GATE_REFUSAL_STOP } from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
-import { retryRequiresProviderReconciliation } from '@/work/reconciliation';
+import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
@@ -358,9 +358,17 @@ export function failedItemReason(item: {
     if (unconfirmed) {
       return `stopped after a write landed or may have; confirm the provider below before Retry: ${stopDetail(item.skipReason)}`;
     }
-    return landed
-      ? `stopped, a write landed before it stopped and nothing is left to decide: ${stopDetail(item.skipReason)}`
-      : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
+    if (landed) {
+      return `stopped, a write landed before it stopped and nothing is left to decide: ${stopDetail(item.skipReason)}`;
+    }
+    // No write landed, so every landed row is a read: the lead says so beside the landed list
+    // (the real-Linear walk's M1-w: "nothing landed" above "Landed: get_issue").
+    const reads = landedRowCount(item.output);
+    if (reads > 0) {
+      const counted = reads === 1 ? 'a read' : `${reads} reads`;
+      return `stopped after ${counted} landed; nothing was written and nothing is left to decide: ${stopDetail(item.skipReason)}`;
+    }
+    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }

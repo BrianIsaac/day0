@@ -378,8 +378,8 @@ describe('the surface that carries the reply', (): void => {
   );
 
   it('teaches a real-mode author which surface carries the reply, and leaves the mock lines as they were', (): void => {
-    expect(executionInputLines('mock')).toBe(EXECUTION_INPUT_LINES);
-    const real = executionInputLines('real');
+    expect(executionInputLines('mock', { chatConnected: true })).toBe(EXECUTION_INPUT_LINES);
+    const real = executionInputLines('real', { chatConnected: true });
     expect(real).toContain(
       "  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface's own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.",
     );
@@ -388,6 +388,21 @@ describe('the surface that carries the reply', (): void => {
     );
     expect(real.join('\n')).not.toContain('a reply in the thread on chat');
     expect(real[0]).toBe(EXECUTION_INPUT_LINES[0]);
+  });
+
+  it('teaches a real-mode author with no chat surface connected no reply input at all (the real-Linear walk, m11)', (): void => {
+    const lines = executionInputLines('real', { chatConnected: false });
+    const taught = lines.join('\n');
+    expect(taught).not.toContain('reply-channel');
+    expect(taught).not.toContain('reply-thread');
+    expect(taught).not.toContain(REPLY_SURFACE_INPUT);
+    expect(taught).not.toContain('Reply target:');
+    expect(lines).toContain(
+      '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket).',
+    );
+    expect(lines[0]).toBe(EXECUTION_INPUT_LINES[0]);
+    // The mock author's lines are the recorded runs' whatever is connected.
+    expect(executionInputLines('mock', { chatConnected: false })).toBe(EXECUTION_INPUT_LINES);
   });
 
   it('binds the reply surface from the surface the Reply target line is on', (): void => {

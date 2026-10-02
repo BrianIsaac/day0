@@ -36,6 +36,7 @@ KEYS=(
   DAY0_TEST_SLACK_AUTHORIZE_URL
   DAY0_EVALUATION_BED
   DAY0_OIDC_EMAIL_TRUSTED
+  DAY0_SHARED_SKILLS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
 )
 
@@ -58,6 +59,18 @@ OIDC_ISSUER=DAY0_OIDC_ISSUER
 OIDC_AUDIENCE=DAY0_OIDC_AUDIENCE
 PROFILE=DAY0_PROFILE
 CLERK_ISSUER=CLERK_JWT_ISSUER_DOMAIN
+
+# The customer-local profile's names the deployment reads beside its issuer:
+# who may sign in (`getCaller` refuses a customer caller outside the allowed
+# domains, and everyone while there are none). Set before the issuer and
+# cleared after it, with the profile and the audience; a list dropped from
+# .env.local is removed, since a stale one would keep admitting a domain the
+# operator took off. The client secret and the session secret are the app
+# server's alone and never pushed, nor is the browser's copy of the profile.
+# Wave 11 adds its customer-local names after these.
+CUSTOMER_LOCAL_KEYS=(
+  DAY0_OIDC_ALLOWED_DOMAINS
+)
 
 # Their absence is also meaningful, which is why they are removed rather than
 # skipped when empty: leaving a stale flag or issuer on the deployment would
@@ -108,6 +121,9 @@ CLEAR_WHEN_EMPTY=(
   # A stale trust flag would keep believing addresses the customer's issuer
   # never verified after the operator turned it off (D3).
   DAY0_OIDC_EMAIL_TRUSTED
+  # Unset means shared skills on (K4): a stale `false` would keep every offer
+  # off after the operator removed the switch.
+  DAY0_SHARED_SKILLS
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
@@ -288,6 +304,9 @@ else
 fi
 if [ -n "$oidc_issuer_value" ]; then
   sync_key "$PROFILE"
+  for key in "${CUSTOMER_LOCAL_KEYS[@]}"; do
+    sync_key "$key" "before the issuer"
+  done
   sync_key "$OIDC_AUDIENCE" "before the issuer that requires it"
   set_key "$OIDC_ISSUER" "$oidc_issuer_value"
 fi
@@ -298,6 +317,9 @@ fi
 if [ -z "$oidc_issuer_value" ]; then
   clear_key "$OIDC_ISSUER"
   sync_key "$OIDC_AUDIENCE" "after the issuer that required it"
+  for key in "${CUSTOMER_LOCAL_KEYS[@]}"; do
+    sync_key "$key" "after the issuer"
+  done
   sync_key "$PROFILE"
 fi
 if [ "$no_auth_flag_value" != "true" ]; then

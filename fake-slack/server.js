@@ -5,6 +5,28 @@ const botToken = 'xoxb-day0-fake-dedicated-token';
 const clientSecret = 'day0-fake-client-secret';
 const calls = new Map();
 const requestLog = [];
+// chat.postMessage counts per channel, never the text: a handover between two
+// managers shows as one post in each of their DMs.
+const postsByChannel = new Map();
+
+// The people besides the one manager, by address (FAKE_SLACK_PEOPLE,
+// comma-separated): each listed address is a Slack user of its own with a DM
+// of its own, so a lookup answers per address. Every other address is still
+// the one manager, as the fake has always answered. Wave 11 extends this.
+const people = new Map(
+  (process.env.FAKE_SLACK_PEOPLE || '')
+    .split(',')
+    .map((address) => address.trim().toLowerCase())
+    .filter((address) => address !== '')
+    .map((address, index) => [
+      address,
+      {
+        id: `U_DAY0_PERSON_${index + 1}`,
+        dm: `D_DAY0_PERSON_${index + 1}`,
+        name: address.split('@')[0],
+      },
+    ]),
+);
 
 function count(method) {
   calls.set(method, (calls.get(method) || 0) + 1);
@@ -33,7 +55,29 @@ function readArguments(url, request, body) {
   return merged;
 }
 
-const CHANNELS = ['D_DAY0_MANAGER', 'C_REVOPS', 'C_REVOPS_ASKS'];
+const CHANNELS = [
+  'D_DAY0_MANAGER',
+  'C_REVOPS',
+  'C_REVOPS_ASKS',
+  ...[...people.values()].map((person) => person.dm),
+];
+
+// A JSON body's fields, for the write methods that take one; nothing for any other body.
+function jsonArguments(request, body) {
+  if (
+    !String(request.headers['content-type'] || '')
+      .toLowerCase()
+      .startsWith('application/json')
+  ) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(body);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 function authorised(request, expected = botToken) {
   return request.headers.authorization === `Bearer ${expected}`;
@@ -47,11 +91,13 @@ const server = createServer(async (request, response) => {
       ok: true,
       calls: Object.fromEntries(calls),
       requestLog,
+      postsByChannel: Object.fromEntries(postsByChannel),
     });
   }
   if (url.pathname === '/reset' && request.method === 'POST') {
     calls.clear();
     requestLog.length = 0;
+    postsByChannel.clear();
     return json(response, 200, { ok: true });
   }
   if (url.pathname === '/oauth/v2/authorize' && request.method === 'GET') {
@@ -105,16 +151,26 @@ const server = createServer(async (request, response) => {
     return json(response, 200, { ok: true, user_id: 'U_DAY0_BOT', team_id: 'T_DAY0' });
   }
   if (method === 'users.lookupByEmail') {
-    if (!readArguments(url, request, body).get('email')) {
+    const email = readArguments(url, request, body).get('email');
+    if (!email) {
       return json(response, 200, { ok: false, error: 'users_not_found' });
     }
+    const person = people.get(email.trim().toLowerCase());
     return json(response, 200, {
       ok: true,
-      user: { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator', deleted: false },
+      user: person
+        ? { id: person.id, real_name: person.name, deleted: false }
+        : { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator', deleted: false },
     });
   }
   if (method === 'conversations.open') {
-    return json(response, 200, { ok: true, channel: { id: 'D_DAY0_MANAGER' } });
+    const users =
+      readArguments(url, request, body).get('users') || jsonArguments(request, body).users;
+    const person = [...people.values()].find((candidate) => candidate.id === users);
+    return json(response, 200, {
+      ok: true,
+      channel: { id: person ? person.dm : 'D_DAY0_MANAGER' },
+    });
   }
   if (method === 'conversations.list') {
     return json(response, 200, {
@@ -155,6 +211,7 @@ const server = createServer(async (request, response) => {
     if (typeof payload.text !== 'string' || payload.text.trim() === '') {
       return json(response, 200, { ok: false, error: 'invalid_arguments' });
     }
+    postsByChannel.set(payload.channel, (postsByChannel.get(payload.channel) || 0) + 1);
     const ts = `1787817600.${String(calls.get(method) || 1).padStart(6, '0')}`;
     return json(response, 200, {
       ok: true,

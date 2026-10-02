@@ -18,6 +18,7 @@ import { log } from '@/lib/logger';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import {
+  DAY_ONE_COMPLETE_TOOL,
   DAY_ONE_PROMPT_CACHE_KEY,
   dayOneSystemPrompt,
   dayOneTurnNote,
@@ -168,10 +169,9 @@ export async function POST(req: Request): Promise<Response> {
         }),
         tools: {
           dayOneComplete: tool({
-            description:
-              'Call this when all seven topics have been covered and the 1:1 is finished.',
+            description: DAY_ONE_COMPLETE_TOOL.description,
             inputSchema: z.object({
-              closingLine: z.string().describe('A friendly closing sentence the agent says.'),
+              closingLine: z.string().describe(DAY_ONE_COMPLETE_TOOL.closingLine),
             }),
           }),
         },

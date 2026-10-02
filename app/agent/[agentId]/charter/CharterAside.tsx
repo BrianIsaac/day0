@@ -3,7 +3,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { listedRules } from '@/agent/charter-constraints';
-import { sameManagerAddress } from '@/agent/manager-address';
+import { managerAt, type EarlierManager } from '../earlier-manager';
 import { Card } from '../../../components/Card';
 import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
@@ -101,15 +101,9 @@ export interface OneToOneHolder {
 /** Who acted on the charter at a time, in the page's words: "you", or an earlier manager's address. */
 export type ActorAt = (at: number) => string;
 
-/** One handover that moved the employee, as `managerTransfers.earlierManagers` lists it. */
-export interface EarlierManager {
-  readonly fromAddress: string;
-  readonly decidedAt: number;
-}
-
 /**
- * Who acted at a time: the manager who handed the employee over at the first handover after it,
- * or "you" when none followed or it came from the reader's own address.
+ * Who acted at a time, in the charter's words: "you", or the address of the earlier manager a
+ * later handover took the employee from ({@link managerAt}).
  *
  * @param earlier - The employee's handovers, oldest first; undefined while they load.
  * @param manager - The reader's address, the row's manager now.
@@ -119,17 +113,15 @@ export function actorAt(
   earlier: readonly EarlierManager[] | undefined,
   manager: string,
 ): string {
-  const handover = (earlier ?? []).find((moved) => moved.decidedAt > at);
-  return handover === undefined || sameManagerAddress(handover.fromAddress, manager)
-    ? 'you'
-    : handover.fromAddress;
+  const then = managerAt(at, earlier ?? [], manager);
+  return then.kind === 'reader' ? 'you' : then.address;
 }
 
 /** Whose one-to-one the first version was drafted from, in the versions list's words. */
 function draftedFromWords(heldBy: OneToOneHolder | undefined): string {
   return heldBy === undefined || heldBy.yours
     ? 'your one-to-one'
-    : `${heldBy.address}'s one-to-one`;
+    : `the one-to-one held by ${heldBy.address}`;
 }
 
 /** The versions list's lines for one row: an amendment is one line, the first version two. */
@@ -261,7 +253,7 @@ export function CharterAside({
           <p className="text-sm text-[var(--color-muted)] [overflow-wrap:anywhere]">
             {heldBy.yours
               ? 'You held the one-to-one this charter was drafted from. What you said was cleared when it was handed over.'
-              : `${heldBy.address} held the one-to-one this charter was drafted from. What they said stayed with them at the handover.`}
+              : `The one-to-one this charter was drafted from was held by ${heldBy.address}. What they said was cleared at the handover.`}
           </p>
         </Card>
       </>

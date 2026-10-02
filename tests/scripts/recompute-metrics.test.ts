@@ -207,33 +207,10 @@ describe('recomputing the supervision figures from an export', (): void => {
 
   it('reproduces metrics:forOwner for both managers after a handover, each within the spans they held the employee (D12)', async (): Promise<void> => {
     const harness = await companyBackend();
-    const colleague = 'company-colleague';
-    await harness.run(async (ctx): Promise<void> => {
-      const mateo = (await ctx.db.query('agents').collect()).find((row) => row.name === 'Mateo')!;
-      await ctx.db.patch(mateo._id, { userId: colleague, bossEmail: 'colleague@day0.local' });
-      await ctx.db.insert('managerTransfers', {
-        agentId: mateo._id,
-        agentName: 'Mateo',
-        fromOwnerKey: OWNER,
-        fromAddress: MANAGER_ADDRESS,
-        toAddress: 'colleague@day0.local',
-        toOwnerKey: colleague,
-        state: 'accepted',
-        requestedAt: 240_000,
-        expiresAt: 240_000 + 14 * 24 * 60 * 60 * 1000,
-        decidedAt: 250_000,
-      });
-      // A decision the new manager made after the move, which is theirs alone.
-      await ctx.db.insert('events', {
-        agentId: mateo._id,
-        type: 'work.plan-approved',
-        payload: { workItemId: 'later-item', decidedVia: 'dashboard' },
-        createdAt: 400_000,
-      });
-    });
+    await handOverMateo(harness);
     const directory = await exportDirectory(harness);
 
-    for (const owner of [OWNER, colleague]) {
+    for (const owner of [OWNER, COLLEAGUE]) {
       const live = await harness
         .withIdentity(managerIdentity(owner))
         .query(api.metrics.forOwner, {});
@@ -368,21 +345,58 @@ describe('recomputing the supervision figures from an export', (): void => {
   });
 });
 
-/** Every employee's trace of the owner, through the paged export actions, as the command line assembles them. */
+/** The manager Mateo is handed to. */
+const COLLEAGUE = 'company-colleague';
+
+/**
+ * Hand Mateo from the owner to a colleague, accepted at 250,000, with a decision the colleague
+ * made after the move, which is theirs alone.
+ */
+async function handOverMateo(harness: ReturnType<typeof convexTest>): Promise<void> {
+  await harness.run(async (ctx): Promise<void> => {
+    const mateo = (await ctx.db.query('agents').collect()).find((row) => row.name === 'Mateo')!;
+    await ctx.db.patch(mateo._id, { userId: COLLEAGUE, bossEmail: 'colleague@day0.local' });
+    await ctx.db.insert('managerTransfers', {
+      agentId: mateo._id,
+      agentName: 'Mateo',
+      fromOwnerKey: OWNER,
+      fromAddress: MANAGER_ADDRESS,
+      toAddress: 'colleague@day0.local',
+      toOwnerKey: COLLEAGUE,
+      state: 'accepted',
+      requestedAt: 240_000,
+      expiresAt: 240_000 + 14 * 24 * 60 * 60 * 1000,
+      decidedAt: 250_000,
+    });
+    await ctx.db.insert('events', {
+      agentId: mateo._id,
+      type: 'work.plan-approved',
+      payload: { workItemId: 'later-item', decidedVia: 'dashboard' },
+      createdAt: 400_000,
+    });
+  });
+}
+
+/**
+ * Every employee's trace, through the paged export actions, as the command line assembles them,
+ * each exported by the owner who holds the employee now: the only account the export lets.
+ */
 async function exportedTraces(harness: ReturnType<typeof convexTest>): Promise<AgentTrace[]> {
-  const owner = harness.withIdentity(managerIdentity(OWNER));
-  const agentIds = await harness.run(async (ctx) =>
-    (await ctx.db.query('agents').collect()).map((agent) => agent._id),
+  const employees = await harness.run(async (ctx) =>
+    (await ctx.db.query('agents').collect()).map((agent) => ({
+      agentId: agent._id,
+      holder: agent.userId ?? OWNER,
+    })),
   );
   return await Promise.all(
-    agentIds.map(
-      async (agentId) =>
-        await assembleTrace(agentId, {
-          head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
-          page: async ({ page }) =>
-            await owner.action(api.exportActions.exportPage, { agentId, ...page }),
-        }),
-    ),
+    employees.map(async ({ agentId, holder }) => {
+      const owner = harness.withIdentity(managerIdentity(holder));
+      return await assembleTrace(agentId, {
+        head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
+        page: async ({ page }) =>
+          await owner.action(api.exportActions.exportPage, { agentId, ...page }),
+      });
+    }),
   );
 }
 
@@ -397,6 +411,39 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     expect(recomputed.figures).toEqual(live);
     expect(recomputed.figures.excludedAgents).toBe(1);
     expect(recomputed.source).toMatchObject({ kind: 'traces' });
+  });
+
+  it('reproduces metrics:forOwner for both managers after a handover, from the traces, each within the spans they held the employee (the v0.12.0 walk)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await handOverMateo(harness);
+    const traces = await exportedTraces(harness);
+
+    for (const owner of [OWNER, COLLEAGUE]) {
+      const live = await harness
+        .withIdentity(managerIdentity(owner))
+        .query(api.metrics.forOwner, {});
+      expect(recomputeFromTraces(traces, { owner }).figures, owner).toEqual(live);
+    }
+    const old = recomputeFromTraces(traces, { owner: OWNER }).figures;
+    expect(old.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
+  });
+
+  it('counts an employee once when two of its traces are read, the newer export standing (second pass)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await handOverMateo(harness);
+    const traces = await exportedTraces(harness);
+    const mateo = traces.find((trace) => trace.agent.name === 'Mateo')!;
+    // An earlier export of the same employee, taken by the manager who held it then.
+    const earlier = {
+      ...mateo,
+      manifest: { ...mateo.manifest, exportedAt: mateo.manifest.exportedAt - 1, handovers: [] },
+      agent: { ...mateo.agent, userId: OWNER },
+    };
+    for (const owner of [OWNER, COLLEAGUE]) {
+      expect(recomputeFromTraces([earlier, ...traces], { owner }).figures, owner).toEqual(
+        recomputeFromTraces(traces, { owner }).figures,
+      );
+    }
   });
 
   it('reads trace files from the command line and prints its own date beside what it read', async (): Promise<void> => {
@@ -426,7 +473,7 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     writeFileSync(stray, JSON.stringify({ version: 1, events: [] }));
     const refused = capture();
     expect(runRecompute([stray], refused.io)).toBe(2);
-    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2 or 3)');
+    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2, 3 or 4)');
     const mixed = capture();
     expect(runRecompute([stray, directory], mixed.io)).toBe(2);
     expect(mixed.err.join('\n')).toContain('not both');
@@ -465,7 +512,7 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       writes: 12,
     });
     expect(figures.company.pilot).toEqual({
-      skillReuse: { runs: 3, reused: 0, rate: 0 },
+      skillReuse: { runs: 3, reused: 0, adopted: 0, rate: 0 },
       // One item's stop was retried by the manager and it then completed, so
       // its end is the completion (review m36), not the stop.
       cycleTime: {

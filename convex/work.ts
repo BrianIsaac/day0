@@ -123,6 +123,7 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { handedOverSince } from './handoverFence';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -1407,6 +1408,12 @@ const DISCOVERED_FROM_LIMIT = 32;
 
 /** Why an execution is not claimed with a skill a Revise has cleared. */
 const SKILL_UNDER_REVISION_REASON = 'the skill is being revised; it runs once it registers again';
+
+/** Why a claim found its skill taken out of use: retired by the manager, or replaced by its revision. */
+const SKILL_OUT_OF_USE_REASONS = {
+  retired: 'the skill was retired, so it no longer runs',
+  superseded: 'the skill was replaced by its revision, so this run did not start',
+} as const;
 
 /** The verdicts that park a row until a skill or a connection arrives; they check the claim and take none. */
 const PARKING_DECISIONS: ReadonlySet<string> = new Set(['needs-skill', 'defer']);
@@ -2752,15 +2759,39 @@ export const recoverUnproposedSkill = internalMutation({
       await eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH)
     ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
     if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
-    const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
-    const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
-    await failInTransaction(ctx, row, {
-      reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
-      stopped: true,
-    });
+    await stopUnproposedInTransaction(ctx, row);
     return { recovered: 'failed' };
   },
 });
+
+/**
+ * A `needs-skill` row's stop when the proposal its evaluation promised threw in that same
+ * evaluation: at once, rather than a lease later by {@link recoverUnproposedSkill}, and in either
+ * surface mode, so the card offers Retry instead of a proposal that was never written (the
+ * real-Linear walk, m7). A row that left `needs-skill`, or whose proposal landed, is left alone.
+ * Internal; the evaluating action's.
+ */
+export const stopUnproposedSkill = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'needs-skill' || row.proposedSkillId !== undefined) {
+      return { recovered: 'ignored' };
+    }
+    await stopUnproposedInTransaction(ctx, row);
+    return { recovered: 'failed' };
+  },
+});
+
+/** Stops a `needs-skill` row with no proposal, naming the skill it needed, so Retry evaluates it. */
+async function stopUnproposedInTransaction(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
+  const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
+  const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
+  await failInTransaction(ctx, row, {
+    reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
+    stopped: true,
+  });
+}
 
 /**
  * Record an evaluation's verdict. Internal; the evaluation stage's, which
@@ -2779,6 +2810,13 @@ export const setVerdict = internalMutation({
 });
 
 /**
+ * Why a grounding read is refused: the draft it grounds began under the owner the employee was
+ * handed away from, so its surfaces and its owner's values are that owner's (U3-m2).
+ */
+export const GROUNDING_READ_AFTER_HANDOVER =
+  'the employee was handed over to a new manager while this plan was being drafted';
+
+/**
  * Store a drafted plan, if the row is still waiting for one.
  *
  * Same shape as `claimForExecution`: two callers can both read `claimed`
@@ -2791,12 +2829,26 @@ export const setVerdict = internalMutation({
  * Record the one read that grounds a plan, before it is made, so the run id
  * the adapters key their idempotency on exists and the read is on the
  * timeline whatever happens next.
+ *
+ * Internal, for the draft's `readCandidateRecord`. Refused when the employee was handed over
+ * since the draft step was claimed (`draftClaimedAt`, which every real-mode draft claims before
+ * it reads): the draft read its surfaces and its owner's values under the old owner, and the
+ * read would be made with the old owner's connection onto the new owner's record. Writes the
+ * `work.plan-grounding-read` event.
+ *
+ * @throws Error with {@link GROUNDING_READ_AFTER_HANDOVER}; the draft goes on without the record.
  */
 export const beginPlanGroundingRead = internalMutation({
   args: { workItemId: v.id('workItems'), action: v.any() },
   handler: async (ctx, args): Promise<Id<'events'>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    if (
+      row.draftClaimedAt !== undefined &&
+      (await handedOverSince(ctx.db, row.agentId, row.draftClaimedAt))
+    ) {
+      throw new Error(GROUNDING_READ_AFTER_HANDOVER);
+    }
     return await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.plan-grounding-read',
@@ -2806,12 +2858,24 @@ export const beginPlanGroundingRead = internalMutation({
   },
 });
 
-/** Attach the ledger row to the grounding read's event. */
+/**
+ * Attach the ledger row to the grounding read's event.
+ *
+ * Internal, for the draft's `readCandidateRecord`. Refused when the employee was handed over
+ * since the read began (the event's own creation): the row is what the old owner's connection
+ * returned, and the record it would land on is the new owner's (U3-m2). The refusal is a throw,
+ * not a silent skip, so the caller's catch drafts the plan without the record as well.
+ *
+ * @throws Error with {@link GROUNDING_READ_AFTER_HANDOVER}.
+ */
 export const finishPlanGroundingRead = internalMutation({
   args: { eventId: v.id('events'), applied: v.any() },
   handler: async (ctx, args): Promise<void> => {
     const event = await ctx.db.get(args.eventId);
     if (!event) return;
+    if (await handedOverSince(ctx.db, event.agentId, event._creationTime)) {
+      throw new Error(GROUNDING_READ_AFTER_HANDOVER);
+    }
     await ctx.db.patch(args.eventId, {
       payload: { ...(event.payload as Record<string, unknown>), applied: args.applied },
     });
@@ -4852,9 +4916,11 @@ export const resumeStalledSteps = internalMutation({
  * unique per claim and derived from nothing the caller controls. Adapter
  * calls key their idempotency off it, so an external effect can be recognised
  * as already-applied if the run is interrupted before its completion lands.
- * The event records the skill's registration time and the hash of its body,
- * so the ledger says which body the run used; a skill sent back for revision
- * is refused.
+ * The event records the skill's registration time, the hash of its body and
+ * the library version it holds, with whether that version was adopted, so the
+ * ledger says which body the run used; a skill sent back for revision, retired
+ * or replaced by its revision is refused, and every claim counts a use on the
+ * skill ("used N times").
  */
 export const claimForExecution = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
@@ -4873,7 +4939,11 @@ export const claimForExecution = internalMutation({
       };
     }
     // The executor picked from the registered list before this transaction;
-    // a Revise in between cleared the body the run would otherwise use (P8-8).
+    // a Retire or a revision registering in between took the row out of use,
+    // and a Revise cleared the body the run would otherwise use (P8-8).
+    if (skill.state === 'retired' || skill.state === 'superseded') {
+      return { claimed: false, reason: SKILL_OUT_OF_USE_REASONS[skill.state] };
+    }
     if (skill.state !== 'registered' || skill.body === '') {
       return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
     }
@@ -4882,6 +4952,8 @@ export const claimForExecution = internalMutation({
     if (await isBeingHandedOver(ctx.db, item.agentId)) {
       return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
     }
+    const now = Date.now();
+    const version = skill.versionId === undefined ? null : await ctx.db.get(skill.versionId);
     const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
@@ -4890,11 +4962,15 @@ export const claimForExecution = internalMutation({
         skillId: args.skillId,
         ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
         skillBodyHash: skillBodyHash(skill.body),
+        ...(version !== null ? { skillVersionId: version._id, skillVersion: version.version } : {}),
+        ...(skill.adoptedAt !== undefined ? { skillAdopted: true as const } : {}),
         // The item the skill was made for: a run for any other item is a reuse (A9).
         ...(skill.proposedFor !== undefined ? { proposedFor: skill.proposedFor } : {}),
       },
-      createdAt: Date.now(),
+      createdAt: now,
     });
+    // "used N times": every claim is a use, counted in the claim's own transaction.
+    await ctx.db.patch(args.skillId, { useCount: (skill.useCount ?? 0) + 1, lastUsedAt: now });
     await ctx.db.patch(args.workItemId, {
       state: 'executing',
       skillId: args.skillId,
@@ -5412,22 +5488,45 @@ export async function stopRunsForHandover(
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
     .collect();
-  for (const row of running) {
+  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
+  return running.length;
+}
+
+/**
+ * Stop runs under way, in the caller's transaction, through the stop every run's end shares
+ * ({@link failInTransaction}): the run id and the apply attempt are cleared, so the run's own
+ * next mutation is refused and writes nothing, and the item fails with the reason and the Retry
+ * a stopped run offers. A run whose apply was claimed may have sent its approved rows, so its
+ * ledger records their outcome as unknown, as the apply's dead-man switch would
+ * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
+ * nothing it ran landed. A handover's deadline stops an employee's runs this way
+ * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
+ * (`skillControls.withdraw`; the wave 10 review, M4).
+ *
+ * @param ctx - The caller's mutation context.
+ * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
+ * @param reason - Why, in the words the item and the record carry after `stopped: `.
+ */
+export async function stopRunsInTransaction(
+  ctx: MutationCtx,
+  rows: readonly Doc<'workItems'>[],
+  reason: string,
+): Promise<void> {
+  for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
       const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         output: { ...output, applied },
         stopped: false,
       });
     } else {
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         ...(row.output !== undefined ? { output: row.output } : {}),
       });
     }
   }
-  return running.length;
 }
 
 /**

@@ -4,6 +4,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
 import { log } from '@/lib/logger';
+import { isEmployeeNotYours } from '@/agent/employee-access';
 
 interface Body {
   agentId: string;
@@ -57,7 +58,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     log.warn('charter synthesis failed', { reason: message });
     // A caller asking to end a call that is not its own gets a refusal it can
     // read, rather than an opaque 500 that looks like a server fault.
-    if (message.includes('finalisation denied') || message.includes('forbidden')) {
+    if (
+      isEmployeeNotYours(err) ||
+      message.includes('finalisation denied') ||
+      message.includes('forbidden')
+    ) {
       return NextResponse.json(
         { error: 'that voice session does not belong to this agent' },
         { status: 403 },

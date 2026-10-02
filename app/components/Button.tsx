@@ -21,15 +21,17 @@ export type ButtonVariant = (typeof BUTTON_VARIANTS)[number];
  */
 export type ButtonSize = 'small' | 'medium' | 'large';
 
+// The two tinted looks mark the pointer with a border in their tone, never a deeper tint: a
+// deeper tint takes their text under 4.5:1 on a tone fill (4.09:1 for approve at 30% on warn).
 const VARIANT: Readonly<Record<ButtonVariant, string>> = {
   primary:
     'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90',
   secondary:
     'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-fg)] hover:border-[var(--color-accent)]',
   approve:
-    'border-transparent bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30',
+    'border-transparent bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:border-[var(--color-ok)]',
   retry:
-    'border-transparent bg-[var(--color-warn)]/20 text-[var(--color-warn)] hover:bg-[var(--color-warn)]/30',
+    'border-transparent bg-[var(--color-warn)]/20 text-[var(--color-warn)] hover:border-[var(--color-warn)]',
   danger:
     'border-[var(--color-danger-line)] bg-transparent text-[var(--color-danger)] hover:border-[var(--color-danger)]',
   quiet: 'border-transparent bg-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]',

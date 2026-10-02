@@ -60,6 +60,72 @@ describe('the charter as one document', (): void => {
     expect(html).toContain('<b class="font-semibold">Priya</b>, segment and pipeline');
   });
 
+  it('names the manager it reports to and sends a handover to People, never to the header', (): void => {
+    const html = render(
+      <CharterDocument
+        body={body}
+        manager="sam@kestrel.example"
+        peopleHref="/agent/agent-1/people"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html).not.toContain('change it there');
+    expect(html).not.toContain('named in the header');
+    // The address on its own line, never opening a sentence; the sentence names no control
+    // People may not offer (an evaluation employee, an unverified sign-in; second pass).
+    expect(html).toContain('<p class="font-mono [overflow-wrap:anywhere]">sam@kestrel.example</p>');
+    expect(html).toMatch(
+      /<p>Handovers to another manager are on <a [^>]*href="\/agent\/agent-1\/people"[^>]*>People<\/a>\.<\/p>/,
+    );
+  });
+
+  it('names who struck, answered and added on the record, as the actors say', (): void => {
+    const approved: CharterCardBody = {
+      ...body,
+      proposedBoundaries: {
+        ...body.proposedBoundaries,
+        willDo: ['Triage tier-2 asks.', 'Draft tier-2 answers.'],
+        willNotDo: ['Edit Salesforce records.'],
+      },
+      openQuestions: [],
+      answeredQuestions: [
+        {
+          question: 'What topic Sara should be contacted about.',
+          answer: 'Ad-hoc asks.',
+          answeredAt: '2026-09-29T14:38:00.000Z',
+        },
+      ],
+    };
+    const html = render(
+      <CharterDocument
+        body={approved}
+        actors={{
+          struck: () => 'sam@kestrel.example',
+          answered: () => 'sam@kestrel.example',
+          added: () => 'you',
+        }}
+        strikes={{
+          pending: false,
+          changes: [
+            { field: 'willNotDo', text: 'Own forecasting work assigned to Aman.' },
+            {
+              field: 'willDo',
+              text: 'Triage owned, prioritized tier-2 asks.',
+              rewrittenAs: 'Triage tier-2 asks.',
+            },
+          ],
+        }}
+      />,
+    );
+    expect(html).toMatch(
+      /<s[^>]*>Own forecasting work assigned to Aman\.<\/s> struck by sam@kestrel\.example/,
+    );
+    expect(html).toMatch(/\(before the strike by sam@kestrel\.example: <s[^>]*>Triage owned/);
+    expect(html).toMatch(/answered by sam@kestrel\.example at [^<]*14:38/);
+    expect(html).not.toContain('by you');
+    expect(html).not.toContain('your strike');
+  });
+
   it("strikes in place the clauses a draft's strikes will take out, and says so", (): void => {
     const html = render(
       <CharterDocument

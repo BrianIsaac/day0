@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { clipRoleLine } from '../../convex/agents';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { autonomousActionsOn } from '../../src/work/autonomy';
@@ -562,7 +561,7 @@ describe('agent surface grants', (): void => {
         agentId,
         scope: 'linear:read',
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.revokeScope, {
@@ -718,7 +717,7 @@ describe('the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow('not authenticated');
@@ -817,7 +816,7 @@ describe('the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' }),
@@ -920,7 +919,7 @@ describe('the agent’s zone and mode (N12)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setZone, { agentId, zone: 'Nowhere/Else' }),
@@ -1804,33 +1803,6 @@ describe('the employee roster', (): void => {
     expect(afterUnlink.every((row) => row.docSourceCount === 99)).toBe(true);
   });
 
-  it('clips a long role line at a word boundary to 90 characters', (): void => {
-    const cases: Array<[string, string]> = [
-      [
-        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
-        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
-      ],
-      [
-        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices, and prepare the close pack.',
-        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices\u2026',
-      ],
-      [
-        '  Close the month,\n every month,   for the finance team. ',
-        'Close the month, every month, for the finance team.',
-      ],
-      [`${'a'.repeat(44)} ${'b'.repeat(45)}`, `${'a'.repeat(44)} ${'b'.repeat(45)}`],
-      ['x'.repeat(120), `${'x'.repeat(89)}\u2026`],
-    ];
-    for (const [text, expected] of cases) {
-      expect(clipRoleLine(text)).toBe(expected);
-      expect(clipRoleLine(text).length).toBeLessThanOrEqual(90);
-    }
-  });
-
-  it('does not split a surrogate pair when one long role word must be clipped', (): void => {
-    const glyph = '\u{1F600}';
-    expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
-  });
   it('counts a new stop under needs-you even when older rejected rows fill the stopped read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await deployEmployee(harness, 'owner', 'Mira');
@@ -2198,7 +2170,7 @@ describe('agents.managerStanding (D17)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .query(api.agents.managerStanding, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(harness.query(api.agents.managerStanding, { agentId })).rejects.toThrow();
   });
 });
@@ -2293,7 +2265,7 @@ describe('agents.adoptManagerAddress (Make it you, D17)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.adoptManagerAddress, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness
         .withIdentity(managerIdentity('owner', { emailVerified: false }))
@@ -2436,5 +2408,142 @@ describe('agents.adoptManagerAddress (Make it you, D17)', (): void => {
 describe("the module's runtime imports", (): void => {
   it('never lead back to the module, so its initialisation order does not depend on load order (m25)', (): void => {
     expect(runtimeCycleThrough('convex/agents.ts')).toBeNull();
+  });
+});
+
+describe('the old manager’s authority while a handover is open (U3-m3, U5-m4)', (): void => {
+  /** A request of the employee's in `state`, naming the colleague. */
+  async function seedTransfer(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    state: 'asked' | 'accepting',
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        state,
+        requestedAt: Date.now(),
+        expiresAt: Date.now() + 86_400_000,
+        ...(state === 'accepting'
+          ? { decidedAt: Date.now(), toOwnerKey: 'colleague', settleBy: Date.now() + 900_000 }
+          : {}),
+      });
+    });
+  }
+
+  /** The employee's active grants, by scope. */
+  async function activeScopes(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<string[]> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((grant) => grant.revokedAt === undefined)
+        .map((grant) => grant.scope),
+    );
+  }
+
+  const ACCEPTED = "Maya's handover to colleague@day0.local was already accepted";
+
+  it('refuses a scope the old manager grants once the new one has accepted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.grantScopes, { agentId, scopes: ['linear:write'] }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+    expect(await activeScopes(harness, agentId)).toEqual([]);
+  });
+
+  it('grants a scope while the handover is only asked: the employee is still the old manager’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.grantScopes, { agentId, scopes: ['linear:write'] }),
+    ).resolves.toEqual({ added: 1 });
+  });
+
+  it('refuses switching autonomous actions on once the new manager has accepted, and lets it go off', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'accepting');
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+    expect(
+      autonomousActionsOn((await harness.run(async (ctx) => await ctx.db.get(agentId)))!),
+    ).toBe(false);
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+    });
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: false }),
+    ).resolves.toMatchObject({ autonomousActions: false, changed: true });
+  });
+
+  it('refuses Make it you while a handover is asked, in the open request’s words', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toMatchObject({
+      data: 'Maya already has a handover open to colleague@day0.local. Change the address or cancel it first.',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.bossEmail).toBe(
+      'old@day0.local',
+    );
+  });
+
+  it('refuses Make it you once the new manager has accepted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+  });
+
+  it('lets Make it you through once an asked request has expired', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'old@day0.local',
+        toAddress: 'colleague@day0.local',
+        state: 'asked',
+        requestedAt: 1,
+        expiresAt: 2,
+      });
+    });
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).resolves.toMatchObject({ changed: true });
   });
 });

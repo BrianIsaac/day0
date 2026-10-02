@@ -5,6 +5,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
   AGENT_KEYED_TABLES,
+  OWNER_LIBRARY_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
   retireDuringHandoverRefusal,
@@ -132,11 +133,17 @@ describe('reset completeness', (): void => {
     // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
     const security = readFileSync(new URL('../../SECURITY.md', import.meta.url), 'utf8');
     expect(security).toContain(`in the ${enumerated} enumerated related tables`);
+    // And the owner's skill library, which the deletion deletes whole (10-K; the cockpit's item).
+    expect(security).toContain("and the caller's skill library (`skillVersions`)");
     // What a deletion keeps, said now (the wave 9 review's decision 7): the handover requests.
     expect(security).toContain(
       'It keeps the two record tables that outlive an employee: `retirements`, and `managerTransfers`',
     );
     expect(security).toContain("the handover note and a decline's reason");
+    // And what it scrubs from them (decision 7, wave 10).
+    expect(security).toContain(
+      "The deletion clears the handover note and a decline's reason from every request the caller asked or was named in",
+    );
     expect(readme).toContain('| `externalClaims` |');
     expect(readme).toContain('| `corrections` |');
   });
@@ -644,6 +651,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -787,6 +798,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -843,7 +858,7 @@ describe('retire in real mode', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.reset.retire, { agentId: retiring }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
   });
 });
@@ -1101,5 +1116,174 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
     ).resolves.toMatchObject({ deleted: 0 });
 
     expect(await transferOf(harness, transferId)).toMatchObject({ state: 'accepting' });
+  });
+});
+
+describe('the skill library at a retire and a deletion (10-K)', (): void => {
+  /** Two employees of one owner, the first the author of a version the second also holds. */
+  async function seedLibrary(harness: TestConvex<typeof schema>): Promise<{
+    author: Id<'agents'>;
+    holder: Id<'agents'>;
+    versionId: Id<'skillVersions'>;
+    held: Id<'skills'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const employee = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+      const author = await employee('Priya');
+      const holder = await employee('Mateo');
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Ticket comment-and-close.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        smokeTest: 'CASES = []',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorAgentId: author,
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      const holding = {
+        name: 'kanban-comment-and-close',
+        description: 'Ticket comment-and-close.',
+        body: '# Comment and close',
+        sourceType: 'agent-authored' as const,
+        state: 'registered' as const,
+        versionId,
+        createdAt: 1,
+      };
+      await ctx.db.insert('skills', { ...holding, agentId: author });
+      const held = await ctx.db.insert('skills', { ...holding, agentId: holder, adoptedAt: 2 });
+      return { author, holder, versionId, held };
+    });
+  }
+
+  it("an employee's retire keeps the owner's versions and clears their author", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { author, versionId, held } = await seedLibrary(harness);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: author });
+
+    const version = await harness.run(async (ctx) => await ctx.db.get(versionId));
+    expect(version).not.toBeNull();
+    expect(version?.authorAgentId).toBeUndefined();
+    expect(version?.authorName).toBe('Priya');
+    // The other holder keeps running the version.
+    expect(await harness.run(async (ctx) => await ctx.db.get(held))).toMatchObject({
+      state: 'registered',
+      versionId,
+    });
+  });
+
+  it("the whole-owner deletion deletes the owner's library and no other owner's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedLibrary(harness);
+    const theirs = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skillVersions', {
+          userId: 'rival',
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 1,
+          body: '# Theirs',
+          bodyHash: 'sha256:01',
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Tomas',
+          readRefs: [],
+          verifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    expect([...OWNER_LIBRARY_TABLES]).toEqual(['skillVersions']);
+    const left = await harness.run(async (ctx) => await ctx.db.query('skillVersions').collect());
+    expect(left.map((version) => version._id)).toEqual([theirs]);
+  });
+});
+
+describe('deleteMyData and the handover requests it keeps (decision 7)', (): void => {
+  /** One handover request between two parties, with a note and a decline's reason. */
+  async function seedRequest(
+    harness: TestConvex<typeof schema>,
+    parties: {
+      readonly fromOwnerKey: string;
+      readonly fromAddress: string;
+      readonly toAddress: string;
+    },
+  ): Promise<Id<'managerTransfers'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: parties.fromAddress,
+        name: 'Maya',
+        userId: parties.fromOwnerKey,
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        ...parties,
+        note: 'Maya covers the Finance Ops close; ask Priya Nair about the vault.',
+        declineReason: 'I am leaving the company in March.',
+        state: 'declined',
+        requestedAt: 1,
+        expiresAt: 2,
+        decidedAt: 2,
+      });
+    });
+  }
+
+  it('scrubs the note and the decline’s reason on every request the owner asked or was named in, and keeps the rows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await seedRequest(harness, {
+      fromOwnerKey: 'owner',
+      fromAddress: MANAGER_ADDRESS,
+      toAddress: 'colleague@day0.local',
+    });
+    const named = await seedRequest(harness, {
+      fromOwnerKey: 'colleague',
+      fromAddress: 'colleague@day0.local',
+      toAddress: MANAGER_ADDRESS,
+    });
+    const others = await seedRequest(harness, {
+      fromOwnerKey: 'colleague',
+      fromAddress: 'colleague@day0.local',
+      toAddress: 'third@day0.local',
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    const [askedRow, namedRow, othersRow] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(asked), ctx.db.get(named), ctx.db.get(others)]),
+    );
+    for (const row of [askedRow, namedRow]) {
+      expect(row).toMatchObject({ state: 'declined' });
+      expect(row?.note).toBeUndefined();
+      expect(row?.declineReason).toBeUndefined();
+    }
+    expect(askedRow).toMatchObject({
+      fromAddress: MANAGER_ADDRESS,
+      toAddress: 'colleague@day0.local',
+    });
+    expect(othersRow?.note).toEqual(expect.stringContaining('Finance Ops'));
+    expect(othersRow?.declineReason).toEqual(expect.any(String));
   });
 });

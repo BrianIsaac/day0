@@ -9,8 +9,15 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict, requeueBehindRegisteredSkill, skillRejectedReason } from './work';
-import { scheduleNextStep } from './workLoop';
+import { applyVerdict, requeueBehindRegisteredSkill } from './work';
+import {
+  moveWaitingWork,
+  requeueWaitingWork,
+  waitingMove,
+  waitingProgress,
+  waitingRows,
+  waitingScope,
+} from './waitingWork';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -21,7 +28,18 @@ import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
 import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
+import { assertNotBeingHandedOver } from './handoverFence';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
+import {
+  recordRegisteredVersion,
+  STORED_COPY_CLEARED,
+  storedVersionRefusal,
+} from './skillVersions';
+import { recordOffer } from './skillAdoption';
+import { readRefValidator, surfaceToolsValidator } from './schema';
+import { countsAsAuthoringAttempt, MAX_AUTHORING_ATTEMPTS } from '../src/work/skill-library';
+import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
+import { openRevision } from './skillControls';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -70,6 +88,41 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
  * is the race this claim exists to close.
  */
 const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
+
+/**
+ * Where a stored body's verification may start (`storedVerification.verifyStoredSkill`): the claimable
+ * states, for an adoption approved and a retry of one, and `registered`, for a re-check of a
+ * callable skill, which is checked again without being taken out of use.
+ */
+const STORED_VERIFICATION_STATES = [...CLAIMABLE_STATES, 'registered'] as const;
+
+/**
+ * Why a claim found a row in a state it may not take, in the words the run reports.
+ *
+ * @param state - The row's state.
+ * @param claimable - The states the claim could take.
+ */
+function unclaimableReason(
+  state: Doc<'skills'>['state'],
+  claimable: readonly Doc<'skills'>['state'][],
+): string {
+  switch (state) {
+    case 'registered':
+      return 'this skill is already registered';
+    case 'rejected':
+      return 'this skill was rejected';
+    case 'retired':
+      return 'this skill was retired';
+    case 'superseded':
+      return 'this skill was superseded by a revision';
+    case 'proposed':
+    case 'approved':
+    case 'authoring':
+    case 'verified':
+    case 'failed':
+      return `skill state is ${state}; expected one of ${claimable.join(', ')}`;
+  }
+}
 
 /** Where the boss may still reject. `registered` is out: a callable skill whose
  * source work has already been requeued is not a proposal any more. */
@@ -126,280 +179,10 @@ export const AUTHORING_DEFERRAL_MS = 5 * 60 * 1000;
 export const MAX_AUTHORING_DEFERRALS = 3;
 
 /**
- * Which of the employee's rows a skill's transition reaches.
- *
- * `queued` also takes the rows registration already sent back to `discovered`;
- * `sameName` also takes rows parked behind another proposal of this name, or
- * behind none yet. The row the skill was proposed for is always read in both
- * states, as it was when it was the only row this looked at.
- */
-interface WaitingScope {
-  queued?: boolean;
-  sameName?: boolean;
-}
-
-/**
- * Every row of the employee that is waiting for this skill, in discovery order.
- *
- * The first evaluation to need a skill proposes it and becomes `proposedFor`;
- * every later item of the same shape is linked to that proposal through
- * `proposedSkillId` and waits beside it. A transition that reached only
- * `proposedFor` left the others parked at `needs-skill` behind a skill that
- * had registered, with nothing on the card to move them.
- *
- * A row linked to a different proposal is not waiting for this one, whoever
- * it was first proposed for. The exception is registration: a callable skill
- * of this name serves a row parked behind an earlier, failed proposal of the
- * same name, and a row whose verdict names the skill but whose link has not
- * landed yet.
- *
- * Args:
- *   ctx: Mutation context.
- *   skill: The skill whose transition is being applied.
- *   scope: How far the transition reaches.
- *
- * Returns:
- *   The waiting rows, oldest first.
- */
-async function waitingRows(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  scope: WaitingScope = {},
-): Promise<Doc<'workItems'>[]> {
-  const waitsForThis = waitingPredicate(ctx, skill, scope);
-  const source = await waitingSource(ctx, skill);
-  const rows: Doc<'workItems'>[] = [];
-  const states = scope.queued
-    ? (['discovered', 'needs-skill'] as const)
-    : (['needs-skill'] as const);
-  for (const state of states) {
-    for await (const row of ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', skill.agentId).eq('state', state))) {
-      if (await waitsForThis(row)) rows.push(row);
-    }
-  }
-  if (!scope.queued && source?.state === 'discovered' && (await waitsForThis(source))) {
-    rows.push(source);
-  }
-  return rows.sort((a, b) => a._creationTime - b._creationTime);
-}
-
-/**
- * The row a skill was proposed for, refused when it belongs to another employee.
- *
- * Args:
- *   ctx: Mutation context.
- *   skill: The skill.
- *
- * Returns:
- *   The source row, or null when the skill has none or it is gone.
- */
-async function waitingSource(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-): Promise<Doc<'workItems'> | null> {
-  const source = skill.proposedFor ? await ctx.db.get(skill.proposedFor) : null;
-  if (source && source.agentId !== skill.agentId) {
-    throw new Error('skill and work item belong to different agents');
-  }
-  return source;
-}
-
-/**
- * Whether one row of the employee is waiting for this skill; see `waitingRows`.
- *
- * Args:
- *   ctx: Mutation context.
- *   skill: The skill whose transition is being applied.
- *   scope: How far the transition reaches.
- *
- * Returns:
- *   The test, which reads another proposal at most once per call site.
- */
-function waitingPredicate(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  scope: WaitingScope,
-): (row: Doc<'workItems'>) => Promise<boolean> {
-  const sameNameSkill = new Map<Id<'skills'>, boolean>();
-  const namesThisSkill = async (skillId: Id<'skills'>): Promise<boolean> => {
-    const known = sameNameSkill.get(skillId);
-    if (known !== undefined) return known;
-    const other = await ctx.db.get(skillId);
-    const same = other?.agentId === skill.agentId && other.name === skill.name;
-    sameNameSkill.set(skillId, same);
-    return same;
-  };
-  return async (row: Doc<'workItems'>): Promise<boolean> => {
-    if (row.proposedSkillId === skill._id) return true;
-    if (row.proposedSkillId) {
-      return scope.sameName === true && (await namesThisSkill(row.proposedSkillId));
-    }
-    if (row._id === skill.proposedFor) return true;
-    return (
-      scope.sameName === true &&
-      (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName ===
-        skill.name
-    );
-  };
-}
-
-/** Waiting rows one transaction moves; the rest continue by schedule, as `reevaluatePending` does. */
-export const WAITING_BATCH = 25;
-
-/** Rows of one state one transaction reads while looking for the ones waiting. */
-const WAITING_SCAN = 200;
-
-const waitingState = v.union(v.literal('discovered'), v.literal('needs-skill'));
-
-/** What a skill's transition does to each row waiting for it. */
-const waitingMove = v.union(
-  v.object({
-    kind: v.literal('verdict'),
-    verdict: v.object({ decision: v.string(), reason: v.string() }),
-  }),
-  v.object({ kind: v.literal('cancel') }),
-);
-type WaitingMove = typeof waitingMove.type;
-
-const waitingScope = v.object({
-  queued: v.optional(v.boolean()),
-  sameName: v.optional(v.boolean()),
-});
-
-/** Where a batched walk stopped: the state being read and the last row read in it. */
-const waitingProgress = v.object({
-  state: waitingState,
-  after: v.optional(v.number()),
-  /** The source row was moved first, from `discovered`, and is not moved again. */
-  skipSource: v.boolean(),
-});
-type WaitingProgress = typeof waitingProgress.type;
-
-/**
- * Move every work item waiting for this skill, a batch per transaction.
- *
- * The first batch lands in the transaction of the skill write that caused
- * it, and the continuation is scheduled in that same transaction, so a
- * callable skill with work still parked behind it, or parked work whose skill
- * never landed, lasts only until the continuation runs; nothing is left for a
- * later write to find. A continuation stops once the skill has left the state
- * this transition put it in: the next transition walks the rows itself.
- *
- * The needs-skill rows are read before the discovered ones, so a row this
- * walk moves into a later state is never read twice. Each row takes the move
- * the first one takes, oldest first within a state; the work-in-progress cap
- * is the loop's, which evaluates the queue's next row when a slot is free.
- *
- * Args:
- *   ctx: Mutation context.
- *   skill: The skill as the transition left it.
- *   move: The verdict each waiting row takes, or `cancel` for a rejection.
- *   scope: How far the transition reaches.
- *   from: Where an earlier batch stopped; absent for the first.
- *
- * Returns:
- *   How many rows this batch moved.
- */
-async function moveWaitingWork(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  move: WaitingMove,
-  scope: WaitingScope = {},
-  from?: WaitingProgress,
-): Promise<number> {
-  const waitsForThis = waitingPredicate(ctx, skill, scope);
-  const apply = async (row: Doc<'workItems'>): Promise<boolean> => {
-    if (move.kind === 'verdict') {
-      await applyVerdict(ctx, row._id, move.verdict);
-      return true;
-    }
-    if (row.state !== 'needs-skill') return false;
-    const skipReason = skillRejectedReason(skill.name);
-    await ctx.db.patch(row._id, { state: 'cancelled', skipReason });
-    // The item's terminal event, as every terminal transition writes one (A9's cycle time).
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.cancelled',
-      payload: { workItemId: row._id, skillId: skill._id, reason: skipReason },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...row, state: 'cancelled' });
-    return true;
-  };
-
-  let moved = 0;
-  let skipSource = from?.skipSource ?? false;
-  if (from === undefined) {
-    const source = await waitingSource(ctx, skill);
-    if (!scope.queued && source?.state === 'discovered' && (await waitsForThis(source))) {
-      skipSource = await apply(source);
-      if (skipSource) moved += 1;
-    }
-  }
-
-  const states = scope.queued
-    ? (['needs-skill', 'discovered'] as const)
-    : (['needs-skill'] as const);
-  let stateIndex = from === undefined ? 0 : states.findIndex((state) => state === from.state);
-  // A continuation always carries a state of its own walk; any other is not this walk's to read.
-  if (stateIndex < 0) return moved;
-  let after = from?.after;
-  for (; stateIndex < states.length; stateIndex += 1, after = undefined) {
-    const state = states[stateIndex];
-    const page = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => {
-        const inState = q.eq('agentId', skill.agentId).eq('state', state);
-        return after === undefined ? inState : inState.gt('_creationTime', after);
-      })
-      .take(WAITING_SCAN);
-    for (const row of page) {
-      if (moved === WAITING_BATCH) {
-        await continueLater(ctx, skill, move, scope, { state, after, skipSource });
-        return moved;
-      }
-      after = row._creationTime;
-      if (skipSource && row._id === skill.proposedFor) continue;
-      if ((await waitsForThis(row)) && (await apply(row))) moved += 1;
-    }
-    if (page.length === WAITING_SCAN) {
-      await continueLater(ctx, skill, move, scope, { state, after, skipSource });
-      return moved;
-    }
-  }
-  return moved;
-}
-
-/**
- * Schedule the next batch of a walk, fenced on the state the transition wrote.
- *
- * The skill is read again because callers hold the row as it was before
- * their own write.
- */
-async function continueLater(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  move: WaitingMove,
-  scope: WaitingScope,
-  from: WaitingProgress,
-): Promise<void> {
-  const current = await ctx.db.get(skill._id);
-  if (!current) return;
-  await ctx.scheduler.runAfter(0, internal.skills.continueWaitingWork, {
-    skillId: skill._id,
-    skillState: current.state,
-    move,
-    scope,
-    from,
-  });
-}
-
-/**
  * The next batch of a walk over the rows waiting for a skill.
  *
- * Internal; scheduled by `moveWaitingWork` only. Does nothing once the skill
+ * Internal; scheduled by `waitingWork.moveWaitingWork` only, under this path, which every batch
+ * already scheduled names. Does nothing once the skill
  * has left the state the walk began in.
  */
 export const continueWaitingWork = internalMutation({
@@ -416,20 +199,6 @@ export const continueWaitingWork = internalMutation({
     return { moved: await moveWaitingWork(ctx, skill, args.move, args.scope, args.from) };
   },
 });
-
-/**
- * Put every work item waiting for this skill back where the boss can see what
- * it is waiting for, starting in the transaction of the skill write that
- * caused it; see `moveWaitingWork`.
- */
-async function requeueWaitingWork(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  verdict: { decision: string; reason: string },
-  scope: WaitingScope = {},
-): Promise<void> {
-  await moveWaitingWork(ctx, skill, { kind: 'verdict', verdict }, scope);
-}
 
 /**
  * The target surface named by the work, falling back to its intake source.
@@ -612,7 +381,35 @@ export const installBuiltin = internalMutation({
   },
 });
 
-/** Internal: proposes a skill for the manager, from the work that needed it. */
+/** Why a skill is not proposed: the employee changed owner during the evaluation that asked. */
+export const PROPOSAL_AFTER_HANDOVER =
+  'the employee was handed over to a new manager while this work was being evaluated';
+
+/**
+ * The states of a row that no longer holds its name for a proposal: a later item of the name
+ * proposes afresh beside it. A failed row is here because Retry belongs to its own card, not to
+ * a new item's evaluation.
+ */
+const ENDED_PROPOSAL_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
+  'rejected',
+  'failed',
+  'retired',
+  'superseded',
+]);
+
+/**
+ * Internal: proposes a skill for the manager, from the work that needed it. With
+ * `startedUnder`, the owner the evaluation read the employee under, the proposal is refused once
+ * the employee is gone or another owner's (the wave 9 review's U3-m2): it would land, out of the
+ * old owner's evaluation, as the new manager's to approve. The refused evaluation's verdict has
+ * already committed `needs-skill`, so the evaluating action stops the item at once
+ * (`work.stopUnproposedSkill`, the real-Linear walk's m7), with `work.recoverUnproposedSkill` a
+ * step lease later behind it should the action itself die, each naming the skill it needed; the
+ * new manager's Retry evaluates it again under the owner the employee has now (the wave 10
+ * review, FR-m3).
+ *
+ * @throws Error with {@link PROPOSAL_AFTER_HANDOVER}.
+ */
 export const propose = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -623,8 +420,17 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
     surfaceClass: v.optional(v.string()),
     operation: v.optional(v.string()),
+    startedUnder: v.optional(v.string()),
+    /**
+     * A sibling's verified version of the shape to offer for adoption, as
+     * `skillAdoption.offerFor` found it (10-A); absent when none is offered.
+     */
+    offeredVersionId: v.optional(v.id('skillVersions')),
   },
-  handler: async (ctx, args): Promise<Id<'skills'>> => {
+  handler: async (ctx, { startedUnder, ...args }): Promise<Id<'skills'>> => {
+    if (startedUnder !== undefined && (await ctx.db.get(args.agentId))?.userId !== startedUnder) {
+      throw new Error(PROPOSAL_AFTER_HANDOVER);
+    }
     const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
     const targetSurface = target.targetSurface;
     const requestedScopes =
@@ -636,15 +442,17 @@ export const propose = internalMutation({
     const proposedScopes = targetSurface
       ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
       : requestedScopes;
-    // The live row of this name, wherever it sits among rejected and failed
-    // ones: reading the oldest row alone meant that once a failed proposal
-    // existed, every later item inserted a fresh duplicate beside the live one.
+    // The live row of this name, wherever it sits among the rows that ended:
+    // reading the oldest row alone meant that once a failed proposal existed,
+    // every later item inserted a fresh duplicate beside the live one. A
+    // retired or superseded row runs nothing and comes back through no
+    // control, so it ends a name as a rejection does.
     const existing = (
       await ctx.db
         .query('skills')
         .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
         .collect()
-    ).find((row: Doc<'skills'>): boolean => row.state !== 'rejected' && row.state !== 'failed');
+    ).find((row: Doc<'skills'>): boolean => !ENDED_PROPOSAL_STATES.has(row.state));
     if (existing) {
       if (existing.state === 'registered') {
         // The late verdict's one way back: the verdict write parked it and
@@ -673,6 +481,8 @@ export const propose = internalMutation({
           surfaceClass: existing.surfaceClass ?? args.surfaceClass,
           operation: existing.operation ?? args.operation,
         });
+        // The latest evaluation's offer stands: a new one is said, a withdrawn one goes.
+        await recordOffer(ctx, existing, args.offeredVersionId);
       }
       return existing._id;
     }
@@ -705,6 +515,10 @@ export const propose = internalMutation({
       },
       createdAt: Date.now(),
     });
+    if (args.offeredVersionId !== undefined) {
+      const row = await ctx.db.get(id);
+      if (row !== null) await recordOffer(ctx, row, args.offeredVersionId);
+    }
     return id;
   },
 });
@@ -713,11 +527,15 @@ export const propose = internalMutation({
  * Public, owner-guarded: approves a proposed skill whose target surface is
  * connected, grants its required scopes and records the approval. Nothing is
  * scheduled here; the dashboard starts the authoring once this returns.
+ * Refused once a new manager has accepted the employee and it waits for its
+ * runs (U3-m3): the skill and its scopes would move with it after the new
+ * manager's preview, and the approval is theirs to give.
  */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
+    await assertNotBeingHandedOver(ctx.db, row.agentId);
     if (row.state !== 'proposed') {
       throw new Error(`cannot approve "${row.name}": it is ${row.state}, not proposed`);
     }
@@ -777,7 +595,13 @@ export const reject = mutation({
         `skill state is ${row.state}; expected one of ${REJECTABLE_STATES.join(', ')}`,
       );
     }
-    await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
+    // A declined adoption keeps nothing of the version it was offered (the second pass).
+    const adoption = row.offeredVersionId !== undefined || holdsParkedStoredCopy(row);
+    await ctx.db.patch(args.skillId, {
+      state: 'rejected',
+      ...RELEASED,
+      ...(adoption ? { offeredVersionId: undefined, ...STORED_COPY_CLEARED } : {}),
+    });
     // Every row still waiting for this proposal leaves `needs-skill` with the
     // reason on its card, a batch at a time. A row that has moved on, or is
     // now linked to a different proposal, is not this rejection's to cancel.
@@ -793,84 +617,22 @@ export const reject = mutation({
 });
 
 /**
- * Where a skill's source work may be for the skill to be revised: waiting, so
- * nothing can reach an approved plan and the executor's pick while the skill
- * is unregistered. A claimed or plan-pending row would be approved (by the
- * manager, or by the sweep under autonomy) and failed by the executor for
- * want of a registered skill, since neither approval nor the pick waits for
- * one under revision.
- */
-const REVISABLE_SOURCE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
-  'discovered',
-  'needs-skill',
-  'deferred',
-]);
-
-/**
- * Send an agent-authored skill back through authoring before its first use.
- * Public; the caller must own the skill. Clears the body, re-queues the rows
- * waiting for the skill and writes `skill.revision-requested`.
+ * Ask for a revision of an agent-authored skill (the enhancements plan, section 4.1, item 6).
+ * Public; the caller must own the skill. The name the Skills tab has always called; the control
+ * itself is `skillControls.askForRevision`, and both open the revision the same way
+ * (`skillControls.openRevision`).
  *
- * Registration makes a skill callable, so revision is deliberately narrower
- * than rejection: the manager may reopen only the proposal's own skill while
- * no execution has ever claimed it and its source work is still waiting
- * (`REVISABLE_SOURCE_STATES`). Once a work row names the skill under
- * `skillId`, its body is part of a durable run and this transition is
- * permanently closed.
+ * A revision is a new version, never an overwrite: a new row in `approved` with `revisionOf`
+ * this one is written and checked while this row keeps running, and at its registration this row
+ * becomes `superseded` in the same transaction. History is kept, so a skill an execution has
+ * already claimed can be revised, whatever its source work is doing. Writes
+ * `skill.revision-requested` naming the new row.
  */
 export const requestRevision = mutation({
   args: { skillId: v.id('skills') },
-  handler: async (ctx, args): Promise<{ ok: true }> => {
+  handler: async (ctx, args): Promise<{ ok: true; revisionId: Id<'skills'> }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    if (row.sourceType !== 'agent-authored' || row.state !== 'registered') {
-      throw new Error('only a registered agent-authored skill can be revised');
-    }
-    const executed = await ctx.db
-      .query('workItems')
-      .withIndex('by_skill', (q) => q.eq('skillId', args.skillId))
-      .first();
-    if (executed) {
-      throw new Error('cannot revise a skill after an execution has claimed it');
-    }
-    if (!row.proposedFor) {
-      throw new Error('cannot revise an authored skill without its source work');
-    }
-    const sourceWork = await ctx.db.get(row.proposedFor);
-    if (
-      !sourceWork ||
-      sourceWork.agentId !== row.agentId ||
-      !REVISABLE_SOURCE_STATES.has(sourceWork.state)
-    ) {
-      throw new Error('cannot revise while the source work has moved on');
-    }
-
-    await ctx.db.patch(args.skillId, {
-      state: 'approved',
-      body: '',
-      sandboxId: undefined,
-      verificationLog: undefined,
-      refusedBody: undefined,
-      refusedSmokeTest: undefined,
-      pendingSmokeTest: undefined,
-      registeredAt: undefined,
-      ...RELEASED,
-    });
-    await requeueWaitingWork(
-      ctx,
-      row,
-      {
-        decision: 'needs-skill',
-        reason: 'registered skill sent back for revision before first execution',
-      },
-      { queued: true },
-    );
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'skill.revision-requested',
-      payload: { skillId: args.skillId, name: row.name },
-      createdAt: Date.now(),
-    });
-    return { ok: true };
+    return { ok: true, revisionId: await openRevision(ctx, row) };
   },
 });
 
@@ -979,21 +741,41 @@ export const retireUnshaped = internalMutation({
  * A claim that has outlived the lease is taken over rather than honoured. The
  * skill stays listed and retryable throughout, so a run that dies mid-flight
  * costs a lease rather than the skill.
+ *
+ * An authoring claim that writes a body counts an attempt
+ * (`authoringAttempts`, "Attempt n of 3"); one that carries on an attempt
+ * already counted does not (`countsAsAuthoringAttempt`). A stored
+ * verification (`purpose: 'verify-stored'`, `storedVerification.verifyStoredSkill`)
+ * writes no body and counts nothing; it may also take a registered row, for a
+ * re-check, which stays registered and keeps running its verified body while
+ * the check runs.
  */
 export const claimAuthoringRun = internalMutation({
-  args: { skillId: v.id('skills') },
+  args: {
+    skillId: v.id('skills'),
+    /** Authoring (the default) or a stored body's verification. */
+    purpose: v.optional(v.union(v.literal('author'), v.literal('verify-stored'))),
+  },
   handler: async (ctx, args): Promise<AuthoringClaim> => {
     const row = await ctx.db.get(args.skillId);
     if (!row) throw new Error('skill not found');
-    if (!CLAIMABLE_STATES.includes(row.state as (typeof CLAIMABLE_STATES)[number])) {
+    const verifying = args.purpose === 'verify-stored';
+    const claimable: readonly Doc<'skills'>['state'][] = verifying
+      ? STORED_VERIFICATION_STATES
+      : CLAIMABLE_STATES;
+    if (!claimable.includes(row.state)) {
+      return { claimed: false, reason: unclaimableReason(row.state, claimable) };
+    }
+    // "Attempt 3 of 3": a failed draft that has spent its attempts is not authored again; the
+    // manager gives it up or asks for a revision (10-C). A stored verification writes no body.
+    if (
+      !verifying &&
+      row.state === 'failed' &&
+      (row.authoringAttempts ?? 0) >= MAX_AUTHORING_ATTEMPTS
+    ) {
       return {
         claimed: false,
-        reason:
-          row.state === 'registered'
-            ? 'this skill is already registered'
-            : row.state === 'rejected'
-              ? 'this skill was rejected'
-              : `skill state is ${row.state}; expected one of ${CLAIMABLE_STATES.join(', ')}`,
+        reason: `all ${MAX_AUTHORING_ATTEMPTS} attempts at this skill failed; give it up instead`,
       };
     }
     if (row.authoringRunId) {
@@ -1014,13 +796,21 @@ export const claimAuthoringRun = internalMutation({
     const runId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.authoring-claimed',
-      payload: { skillId: args.skillId, name: row.name, fromState: row.state },
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        fromState: row.state,
+        purpose: verifying ? 'verify-stored' : 'author',
+      },
       createdAt: Date.now(),
     });
     await ctx.db.patch(args.skillId, {
-      state: 'authoring',
+      state: verifying && row.state === 'registered' ? 'registered' : 'authoring',
       authoringRunId: runId,
       authoringClaimedAt: Date.now(),
+      ...(!verifying && countsAsAuthoringAttempt(row)
+        ? { authoringAttempts: (row.authoringAttempts ?? 0) + 1 }
+        : {}),
     });
     return { claimed: true, runId, skill: row };
   },
@@ -1063,9 +853,31 @@ export const recordAuthoringProgress = internalMutation({
 });
 
 /**
+ * Take the row a registering revision replaces out of use: the employee's own registered row
+ * named by `revisionOf` becomes `superseded` in the revision's transaction, and stops being
+ * picked once the revision is callable. Any run holding it is released, as every transition
+ * out of `registered` releases it, so a re-check in flight cannot register it again.
+ *
+ * @returns The superseded row, or undefined when the row is no revision or its original has
+ *   already left `registered`.
+ */
+async function supersedeReplacedRow(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+): Promise<Id<'skills'> | undefined> {
+  if (row.revisionOf === undefined) return undefined;
+  const replaced = await ctx.db.get(row.revisionOf);
+  if (replaced?.agentId !== row.agentId || replaced.state !== 'registered') return undefined;
+  // Released, so a re-check of the replaced row still in flight is fenced out of it.
+  await ctx.db.patch(replaced._id, { state: 'superseded', ...RELEASED });
+  return replaced._id;
+}
+
+/**
  * Everything that has to be true at once for a skill to count as registered:
- * the verified body is stored, the row becomes callable, and every work item
- * waiting for the skill goes back into the queue.
+ * the verified body is stored, the row becomes callable, the owner's library
+ * records it, and every work item waiting for the skill goes back into the
+ * queue.
  *
  * These used to be three mutations. A failure between the first and the second
  * left a `verified` row that no panel listed and no retry accepted; a failure
@@ -1076,6 +888,16 @@ export const recordAuthoringProgress = internalMutation({
  *
  * The run releases its claim here, which is what lets the next run - a retry
  * after a later problem - start at all.
+ *
+ * The library (K1): the passing smoke test is kept on the version, not thrown
+ * away, so the body can be verified again; the row is linked to the version it
+ * was verified as or to the next version of its name
+ * (`skillVersions.recordRegisteredVersion`), with the pages the authoring read.
+ * A pass is a passing re-check, so it clears "Re-check due". A revision that
+ * registers supersedes the row it replaces in this same transaction, so one of
+ * the two is callable at every moment. The smoke test is optional only for a
+ * run that began before this release; such a version is kept without its check
+ * and is not offerable until a re-check keeps one.
  */
 export const completeRegistration = internalMutation({
   args: {
@@ -1083,26 +905,112 @@ export const completeRegistration = internalMutation({
     runId: v.id('events'),
     body: v.string(),
     verificationLog: v.string(),
+    /** The smoke test that passed, as the sandbox ran it before the harness wrapped it. */
+    smokeTest: v.optional(v.string()),
+    /** The tools SKILL.md names that the harness's surfaces allowed. */
+    harnessTools: v.optional(v.array(v.string())),
+    /** The same tools surface by surface, with each surface's class. */
+    harnessToolsBySurface: v.optional(v.array(surfaceToolsValidator)),
+    /**
+     * The stored version a verification ran (`storedVerification.verifyStoredSkill`), checked again
+     * here: one withdrawn, or no longer the employee's owner's, while the run held the row is
+     * refused, and the run fails the row with the reason.
+     */
+    storedVersionId: v.optional(v.id('skillVersions')),
+    /** The pages the authoring run read (`linkedRunbookPages`). */
+    readRefs: v.optional(v.array(readRefValidator)),
   },
-  handler: async (ctx, args): Promise<{ registered: boolean }> => {
+  handler: async (ctx, args): Promise<{ registered: boolean; refusal?: string }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'register');
     if (!row) return { registered: false };
+    // Taken out of use while the run held it: nothing brings it back but its own control.
+    if (row.state === 'retired' || row.state === 'superseded') return { registered: false };
+    if (args.storedVersionId !== undefined) {
+      const refusal = await storedVersionRefusal(ctx.db, row, args.storedVersionId);
+      if (refusal !== undefined) return { registered: false, refusal };
+    }
+    const now = Date.now();
+    const body = redactTokenShapes(args.body);
+    const library = await recordRegisteredVersion(ctx, row, {
+      body,
+      smokeTest: args.smokeTest === undefined ? undefined : redactTokenShapes(args.smokeTest),
+      harnessTools: args.harnessTools ?? [],
+      ...(args.harnessToolsBySurface !== undefined
+        ? { harnessToolsBySurface: args.harnessToolsBySurface }
+        : {}),
+      readRefs: args.readRefs ?? [],
+      now,
+      stampsOlderHolders: true,
+    });
+    // A trigger that stamped the chip while this run was checking is about a change the run
+    // never saw, so its chip stays.
+    const stampedDuringRun =
+      row.recheckDueAt !== undefined &&
+      row.authoringClaimedAt !== undefined &&
+      row.recheckDueAt >= row.authoringClaimedAt;
+    const held = library.kind === 'outside' ? undefined : library;
     await ctx.db.patch(args.skillId, {
       state: 'registered',
-      body: redactTokenShapes(args.body),
+      body,
       verificationLog: redactTokenShapes(args.verificationLog),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
       pendingSmokeTest: undefined,
-      registeredAt: row.registeredAt ?? Date.now(),
+      registeredAt: row.registeredAt ?? now,
       authoringDeferrals: undefined,
+      // "Attempt n of 3" counts the draft being written; a registered body starts the next
+      // draft afresh (the record keeps the history; the wave 10 review, K-m4).
+      authoringAttempts: undefined,
+      versionId: held?.versionId,
+      adoptedAt: held?.adopted ? (row.adoptedAt ?? now) : undefined,
+      // The offer is answered once the row registers, whichever way.
+      offeredVersionId: undefined,
+      ...(stampedDuringRun ? {} : { recheckDueAt: undefined, recheckReason: undefined }),
       ...RELEASED,
     });
+    const replaced = await supersedeReplacedRow(ctx, row);
+    if (replaced !== undefined) {
+      // The replaced row's own line on the record: it stopped running in this transaction.
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'skill.superseded',
+        payload: {
+          skillId: replaced,
+          name: row.name,
+          revisionId: args.skillId,
+          ...(held !== undefined ? { version: held.version } : {}),
+        },
+        createdAt: now,
+      });
+    }
+    if (row.state === 'registered') {
+      // A row registered before its claim passed a re-check (Re-check now, or a stored check
+      // moving it onto a newer version): the record says so beside the registration.
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'skill.rechecked',
+        payload: {
+          skillId: args.skillId,
+          name: row.name,
+          ...(held !== undefined ? { version: held.version, versionId: held.versionId } : {}),
+          ...(stampedDuringRun ? { stillDue: true as const } : {}),
+        },
+        createdAt: now,
+      });
+    }
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.registered',
-      payload: { skillId: args.skillId, name: row.name },
-      createdAt: Date.now(),
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        ...(held !== undefined ? { version: held.version, versionId: held.versionId } : {}),
+        ...(held?.adopted ? { adopted: true as const } : {}),
+        ...(replaced !== undefined && held?.superseded !== undefined
+          ? { supersedes: { skillId: replaced, version: held.superseded.version } }
+          : {}),
+      },
+      createdAt: now,
     });
     await requeueWaitingWork(
       ctx,
@@ -1144,6 +1052,11 @@ export const failAuthoringRun = internalMutation({
     eventType: authoringFailureEventValidator,
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
+    /**
+     * The row's body is a parked copy of a stored version that may not register (the wave 10
+     * review, B1): it goes, so no later press checks it again.
+     */
+    dropsStoredCopy: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<{ recorded: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'fail');
@@ -1151,6 +1064,7 @@ export const failAuthoringRun = internalMutation({
     const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'failed',
+      ...(args.dropsStoredCopy === true ? { body: '' } : {}),
       verificationLog: redactTokenShapes(args.rowReason),
       refusedBody: args.refusedBody === undefined ? undefined : redactTokenShapes(args.refusedBody),
       refusedSmokeTest:

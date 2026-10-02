@@ -152,6 +152,34 @@ describe('recordWords', (): void => {
     expect(said('manager.transfer-expired', {})).toBe(
       'The handover to priya@company.com expired unanswered.',
     );
+    expect(said('manager.transfer-settle-failed', { attempt: 2, reason: 'too many' })).toBe(
+      'Maya could not be moved to priya@company.com yet (attempt 2); Day0 tries again each minute.',
+    );
+    expect(
+      said('manager.transfer-ended', {
+        reason: 'settle-failed',
+        detail: 'This employee has more than 1000 connections, more than one handover can move.',
+      }),
+    ).toBe(
+      'The handover to priya@company.com could not finish and was ended: This employee has more than 1000 connections, more than one handover can move; Maya stays with sam@company.com.',
+    );
+    expect(said('manager.transfer-ended', { reason: 'operator', detail: 'stuck' })).toBe(
+      'The handover to priya@company.com was ended by the operator: stuck; Maya stays with sam@company.com.',
+    );
+    expect(said('manager.transfer-note-withheld', {})).toBe(
+      'Your note to priya@company.com was withheld: Day0 could not check it for stored credentials.',
+    );
+    expect(said('manager.transfer-notice', { delivered: true })).toBe(
+      'Maya told priya@company.com in Slack that they were asked to take Maya on.',
+    );
+    expect(
+      said('manager.transfer-notice', {
+        delivered: false,
+        reason: 'the named address is a guest in the workspace',
+      }),
+    ).toBe(
+      'Maya did not tell priya@company.com in Slack about the handover: the named address is a guest in the workspace.',
+    );
   });
 
   it('says where a handed-over employee went, and what waits for its new manager to connect', (): void => {
@@ -195,6 +223,176 @@ describe('recordWords', (): void => {
     );
     expect(rejected('the plan changed')).toBe(
       'You rejected the held actions from the dashboard: the plan changed.',
+    );
+  });
+
+  it('says the library version a skill registered as, and why a skill is due a re-check (10-K)', (): void => {
+    expect(
+      recordWords(
+        { type: 'skill.registered', payload: { name: 'kanban-comment-and-close', version: 2 } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close passed its check and can be called as version 2.');
+    expect(
+      recordWords(
+        { type: 'skill.registered', payload: { name: 'kanban-comment-and-close' } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close passed its check and can be called.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.recheck-due',
+          payload: { name: 'kanban-comment-and-close', reason: 'its check was not kept' },
+        },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
+  });
+
+  it('says whose skill was offered for adoption, and that adopting it checks it again first (10-A)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.adoption-offered',
+          payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira was offered version 2 of the skill kanban-comment-and-close, written by Priya, to adopt.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.adopted',
+          payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You adopted version 2 of the skill kanban-comment-and-close, written by Priya, for Mira; the sandbox checks it again for Mira before it runs.',
+    );
+  });
+
+  it('says a revision is written beside the running skill, and an older in-place one as it was (10-C)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.revision-requested',
+          payload: { name: 'kanban-comment-and-close', revisionId: 's2' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You asked for a revision of the skill kanban-comment-and-close; it keeps running until the revision registers.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.revision-requested', payload: { name: 'kanban-comment-and-close' } },
+        subject,
+      ),
+    ).toBe('You sent the skill kanban-comment-and-close back to be written again.');
+  });
+
+  it('says a retire, a withdrawal from every employee and a Give up in the manager’s words (10-C)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.retired',
+          payload: { name: 'kanban-comment-and-close', reason: 'it closes the wrong tickets' },
+        },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close was retired: it closes the wrong tickets.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.retired',
+          payload: {
+            name: 'kanban-comment-and-close',
+            reason: 'it closes the wrong tickets',
+            withdrawn: true,
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close was retired when you withdrew it from every employee: it closes the wrong tickets.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.revoked',
+          payload: {
+            name: 'kanban-comment-and-close',
+            version: 2,
+            reason: 'it closes the wrong tickets',
+            holders: [
+              { skillId: 's1', agentId: 'a1', agentName: 'Priya' },
+              { skillId: 's2', agentId: 'a2', agentName: 'Mateo' },
+            ],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You withdrew version 2 of the skill kanban-comment-and-close from every employee who held it (Priya, Mateo): it closes the wrong tickets.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.given-up',
+          payload: {
+            name: 'analytics-refresh-value',
+            reason: 'given up after 3 attempts',
+            attempts: 3,
+          },
+        },
+        subject,
+      ),
+    ).toBe('You gave up on the skill analytics-refresh-value after 3 attempts.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.rejected',
+          payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The adoption of the skill kanban-comment-and-close ended: version 1 was withdrawn from every employee.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.rechecked', payload: { name: 'kanban-comment-and-close', version: 2 } },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close passed its re-check as version 2 and keeps running.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.superseded', payload: { name: 'kanban-comment-and-close', version: 3 } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close was replaced by its revision, version 3.');
+    expect(
+      recordWords(
+        {
+          type: 'work.waiting-for-skill',
+          payload: {
+            workItemId: 'w1',
+            name: 'kanban-comment-and-close',
+            reason:
+              'the skill kanban-comment-and-close was retired, so this waits for a skill again',
+            previousState: 'plan-approved',
+          },
+        },
+        { name: 'Mira', item: 'Close REVOPS-1' },
+      ),
+    ).toBe(
+      '“Close REVOPS-1” went back to waiting for the skill kanban-comment-and-close: the skill kanban-comment-and-close was retired, so this waits for a skill again.',
     );
   });
 
@@ -318,5 +516,147 @@ describe('what an evaluation and a plan approval say in the record (walk m15)', 
     ).toBe(
       "You approved the plan for “Priya asks for tracker update” from the dashboard, answering 1 charter question and the planner's note.",
     );
+  });
+});
+
+describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
+  /** An event older than the reader's tenure: the manager then was sam@company.com. */
+  const earlier = {
+    name: 'Mira',
+    item: 'Draft response for new tier-two RevOps ask',
+    manager: { kind: 'earlier', address: 'sam@company.com' },
+    reader: 'lead@company.com',
+  } as const;
+
+  it.each(EVENT_TYPES)(
+    'says %s without "you" or "your" when the manager then was another',
+    (type): void => {
+      for (const payload of [
+        {},
+        { name: 'chat-thread-reply', fromAddress: 'x@company.com' },
+        FULL,
+        { ...FULL, via: 'plan-approval', decidedVia: 'channel', reason: 'skip-overruled' },
+      ]) {
+        const words = recordWords({ type, payload }, earlier);
+        expect(words).not.toMatch(/\byou(rs?|rself)?\b/i);
+        expect(words).toMatch(/^[A-Z0-9“]/);
+        // The manager then is named once a sentence, and "they" after that.
+        expect(words.split('sam@company.com').length - 1).toBeLessThanOrEqual(1);
+      }
+    },
+  );
+
+  it('names the manager then as the one who decided, never opening on an address', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.approved',
+          payload: { name: 'kanban-comment-and-close', scopes: ['linear:write'] },
+        },
+        earlier,
+      ),
+    ).toBe(
+      "Mira's manager then, sam@company.com, approved the skill kanban-comment-and-close, granting linear:write.",
+    );
+    expect(
+      recordWords(
+        { type: 'permission.granted', payload: { scope: 'linear:write', source: 'skill' } },
+        earlier,
+      ),
+    ).toBe('Mira was granted linear:write with a skill sam@company.com approved.');
+    // The reader's own decisions still read "You".
+    expect(
+      recordWords(
+        { type: 'skill.approved', payload: { name: 'kanban-comment-and-close' } },
+        { ...earlier, manager: { kind: 'reader' } },
+      ),
+    ).toBe('You approved the skill kanban-comment-and-close.');
+  });
+
+  it('says an adoption under the manager then names its author as a colleague under the previous manager', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.adopted',
+          payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+        },
+        earlier,
+      ),
+    ).toBe(
+      "Mira's manager then, sam@company.com, adopted version 1 of the skill kanban-comment-and-close, written by a colleague under the previous manager, for Mira; the sandbox checks it again for Mira before it runs.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.adoption-offered',
+          payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+        },
+        earlier,
+      ),
+    ).not.toContain('Priya');
+  });
+
+  it('says the move turned autonomous actions off and set run notes, whoever reads it', (): void => {
+    for (const about of [earlier, { ...earlier, manager: { kind: 'reader' } } as const]) {
+      expect(
+        recordWords(
+          {
+            type: 'agent.autonomy-changed',
+            payload: { from: true, to: false, reason: 'handed over to a new manager' },
+          },
+          about,
+        ),
+      ).toBe('Autonomous actions were turned off when Mira was handed over.');
+      expect(
+        recordWords(
+          {
+            type: 'agent.notifications-changed',
+            payload: { from: 'digest', to: 'per-run', reason: 'handed over to a new manager' },
+          },
+          about,
+        ),
+      ).toBe('Run notes went back to one per run when Mira was handed over.');
+    }
+  });
+
+  it('says a withheld handover note to the manager it was addressed to as addressed to them', (): void => {
+    const withheld = {
+      type: 'manager.transfer-note-withheld',
+      payload: { fromAddress: 'sam@company.com', toAddress: 'lead@company.com' },
+    } as const;
+    expect(recordWords(withheld, earlier)).toBe(
+      'The note from sam@company.com to you was withheld: Day0 could not check it for stored credentials.',
+    );
+    expect(
+      recordWords(withheld, {
+        name: 'Mira',
+        manager: { kind: 'reader' },
+        reader: 'sam@company.com',
+      }),
+    ).toBe(
+      'Your note to lead@company.com was withheld: Day0 could not check it for stored credentials.',
+    );
+  });
+});
+
+describe('what the record says an authoring claim began (A-m9)', (): void => {
+  it('says a check of a stored version is checking, and an authoring is writing', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.authoring-claimed',
+          payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe('Mira started checking the skill kanban-comment-and-close in the sandbox.');
+    for (const payload of [
+      { name: 'kanban-comment-and-close', purpose: 'author' },
+      { name: 'kanban-comment-and-close' },
+    ]) {
+      expect(recordWords({ type: 'skill.authoring-claimed', payload }, { name: 'Mira' })).toBe(
+        'Mira started writing the skill kanban-comment-and-close.',
+      );
+    }
   });
 });

@@ -12,6 +12,7 @@ import {
   TRANSFER_ASK_WINDOW_MS,
   TRANSFER_CANCEL_REASONS,
   TRANSFER_DEPARTURES_WINDOW_MS,
+  isDepartureListed,
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
   TRANSFER_SETTLE_MS,
@@ -131,5 +132,14 @@ describe('the refusals the named manager reads', (): void => {
     expect(UNVERIFIED_FOR_TRANSFER).toBe(
       'Your sign-in does not carry a verified email address, so no handover can be addressed to you. Verify your address, then sign in again.',
     );
+  });
+});
+
+describe('isDepartureListed', () => {
+  it('keeps a handover for the old manager to read for thirty days from its answer, and not a moment past', () => {
+    const answered = Date.UTC(2026, 8, 1);
+    expect(isDepartureListed(answered, answered)).toBe(true);
+    expect(isDepartureListed(answered, answered + TRANSFER_DEPARTURES_WINDOW_MS)).toBe(true);
+    expect(isDepartureListed(answered, answered + TRANSFER_DEPARTURES_WINDOW_MS + 1)).toBe(false);
   });
 });

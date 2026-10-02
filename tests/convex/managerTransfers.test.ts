@@ -202,7 +202,7 @@ describe('managerTransfers.ask', (): void => {
       harness
         .withIdentity(WEI)
         .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
     ).rejects.toThrow();
@@ -955,11 +955,61 @@ describe('managerTransfers.openForAgent', (): void => {
     const maya = await employee(harness);
     await expect(
       harness.withIdentity(PRIYA).query(api.managerTransfers.openForAgent, { agentId: maya }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
+  });
+});
+
+describe('managerTransfers.expireOne: the request expires at its own time (U2-m7)', (): void => {
+  it('expires an unanswered request at its expiry with no sweep, so no page shows it open past it', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(TRANSFER_EXPIRY_MS));
+
+    expect(await request(harness, transferId)).toMatchObject({
+      state: 'expired',
+      decidedAt: Date.UTC(2026, 9, 15, 9),
+    });
+    expect(
+      await harness.withIdentity(OWNER).query(api.managerTransfers.openForAgent, { agentId: maya }),
+    ).toBeNull();
+  });
+
+  it('leaves a request answered before its expiry as it is', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    await harness.withIdentity(OWNER).mutation(api.managerTransfers.cancel, { transferId });
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(TRANSFER_EXPIRY_MS));
+
+    expect((await request(harness, transferId))?.state).toBe('cancelled');
   });
 });
 
 describe('managerTransfers.incoming', (): void => {
+  it('finds a live request behind a full read of stale ones the sweep has not yet written (U2-m5)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const stale = Date.now() - TRANSFER_EXPIRY_MS - DAY_MS;
+    for (let index = 0; index < 50; index += 1) {
+      await insertRequest(harness, { agentId: maya, requestedAt: stale + index });
+    }
+    const live = await insertRequest(harness, { agentId: maya });
+
+    const listed = await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {});
+
+    expect(listed.map((entry) => entry.transferId)).toEqual([live]);
+  });
+
   it('lists the asked requests naming the caller’s verified address, oldest first, with the employee’s name and zone', async (): Promise<void> => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
@@ -1029,6 +1079,79 @@ describe('managerTransfers.incoming', (): void => {
       await ctx.db.delete(maya);
     });
     expect(await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {})).toEqual([]);
+  });
+});
+
+describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is told a handover ended itself)', (): void => {
+  it('lists the handovers the caller accepted that ended without the move, to the acceptor only, for 30 days', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const juno = await employee(harness, 'Juno');
+    const acceptedAt = Date.now() - 60_000;
+    const ended = await insertRequest(harness, {
+      agentId: maya,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'priya',
+    });
+    // An ask its manager cancelled before any answer: never accepted.
+    await insertRequest(harness, { agentId: tomas, state: 'cancelled', cancelReason: 'owner' });
+    // Another account signed in with the same address accepted this one.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'another-priya',
+    });
+    // Ended more than 30 days ago.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+      toOwnerKey: 'priya',
+    });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([
+      { transferId: ended, agentName: 'Maya', fromAddress: MANAGER_ADDRESS, acceptedAt },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.endedForMe, {})).resolves.toEqual([]);
+  });
+});
+
+describe('managerTransfers.endedForMe once the story moved on (the second pass)', (): void => {
+  it('drops an ended handover once the employee is gone, is the caller’s after all, or has a later request', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const acceptedAt = Date.now() - 60_000;
+    const ended = async (agentId: Id<'agents'>): Promise<Id<'managerTransfers'>> =>
+      await insertRequest(harness, {
+        agentId,
+        state: 'cancelled',
+        decidedAt: acceptedAt,
+        toOwnerKey: 'priya',
+        requestedAt: acceptedAt - 1_000,
+      });
+    const stays = await employee(harness, 'Maya');
+    const came = await employee(harness, 'Tomas', { userId: 'priya' });
+    const retired = await employee(harness, 'Juno');
+    const askedAgain = await employee(harness, 'Wren');
+    const kept = await ended(stays);
+    await ended(came);
+    await ended(retired);
+    await ended(askedAgain);
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(retired);
+    });
+    await insertRequest(harness, { agentId: askedAgain, state: 'asked' });
+
+    const shown = await harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {});
+
+    expect(shown.map((transfer) => transfer.transferId)).toEqual([kept]);
   });
 });
 
@@ -1138,7 +1261,7 @@ describe('managerTransfers.earlierManagers', (): void => {
   });
 });
 
-describe('managerTransfers.departures and departureOf', (): void => {
+describe('managerTransfers.departures', (): void => {
   it('lists the asker’s requests answered in the last 30 days, newest first, and none cancelled, older or another account’s', async (): Promise<void> => {
     vi.useFakeTimers();
     const now = Date.UTC(2026, 10, 1);
@@ -1213,26 +1336,72 @@ describe('managerTransfers.departures and departureOf', (): void => {
     expect(await harness.query(api.managerTransfers.departures, {})).toEqual([]);
   });
 
-  it('says where a handed-over employee went, to the account that handed it over only', async (): Promise<void> => {
+  it('says what became of an employee another manager took on: retired, moved on, or with them still (the v0.12.0 walk)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 10, 1);
+    vi.setSystemTime(now);
     const harness = convexTest(schema, allConvexModules());
-    const maya = await employee(harness, 'Maya', { userId: 'priya' });
-    const transferId = await insertRequest(harness, {
-      agentId: maya,
+    const accepted = async (agentId: Id<'agents'>, daysAgo: number) =>
+      await insertRequest(harness, {
+        agentId,
+        state: 'accepted',
+        requestedAt: now - (daysAgo + 1) * DAY_MS,
+        decidedAt: now - daysAgo * DAY_MS,
+        toOwnerKey: 'priya',
+      });
+    const stays = await employee(harness, 'Maya', { userId: 'priya' });
+    const movedOn = await employee(harness, 'Wes', { userId: 'wei' });
+    const retired = await employee(harness, 'Wren', { userId: 'priya' });
+    const staysId = await accepted(stays, 1);
+    const movedOnId = await accepted(movedOn, 2);
+    const retiredId = await accepted(retired, 3);
+    await harness.run(async (ctx) => await ctx.db.delete(retired));
+
+    const departures = await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {});
+    expect(departures.map(({ transferId, afterwards }) => ({ transferId, afterwards }))).toEqual([
+      { transferId: staysId, afterwards: undefined },
+      { transferId: movedOnId, afterwards: 'moved-on' },
+      { transferId: retiredId, afterwards: 'retired' },
+    ]);
+  });
+
+  it('marks a handover the employee came back from since, retired by the reader or not, so it ends the line and is drawn nowhere (the wave 10 bed)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 10, 1);
+    vi.setSystemTime(now);
+    const harness = convexTest(schema, allConvexModules());
+    const rhea = await employee(harness, 'Rhea');
+    await insertRequest(harness, {
+      agentId: rhea,
       state: 'accepted',
-      decidedAt: 7_000,
+      requestedAt: now - 3 * DAY_MS,
+      decidedAt: now - 2 * DAY_MS,
       toOwnerKey: 'priya',
     });
+    await insertRequest(harness, {
+      agentId: rhea,
+      fromOwnerKey: 'priya',
+      fromAddress: PRIYA_ADDRESS,
+      toAddress: MANAGER_ADDRESS,
+      state: 'accepted',
+      requestedAt: now - 2 * DAY_MS,
+      decidedAt: now - DAY_MS,
+      toOwnerKey: OWNER_SUBJECT,
+    });
+    await harness.run(async (ctx) => await ctx.db.delete(rhea));
+
+    // Kept, so the People card's last answer is this acceptance, never an older decline.
     expect(
-      await harness.withIdentity(OWNER).query(api.managerTransfers.departureOf, { agentId: maya }),
-    ).toEqual({ transferId, agentName: 'Maya', toAddress: PRIYA_ADDRESS, decidedAt: 7_000 });
-    for (const other of [PRIYA, WEI]) {
-      expect(
-        await harness
-          .withIdentity(other)
-          .query(api.managerTransfers.departureOf, { agentId: maya }),
-      ).toBeNull();
-    }
-    expect(await harness.query(api.managerTransfers.departureOf, { agentId: maya })).toBeNull();
+      (await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {})).map(
+        ({ state, afterwards }) => ({ state, afterwards }),
+      ),
+    ).toEqual([{ state: 'accepted', afterwards: 'came-back' }]);
+    // The colleague's own handover back is still theirs to read, and says it was retired since.
+    expect(
+      (await harness.withIdentity(PRIYA).query(api.managerTransfers.departures, {})).map(
+        ({ afterwards }) => afterwards,
+      ),
+    ).toEqual(['retired']);
   });
 });
 
@@ -1303,10 +1472,20 @@ describe('the handover note in real mode', (): void => {
       toAddress: PRIYA_ADDRESS,
       note: 'Read the checklist.',
     });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // What the ask scheduled for now: the scrub, not the expiry fourteen days on (U2-m7).
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     expect((await request(harness, transferId))?.note).toBeUndefined();
     expect((await request(harness, transferId))?.state).toBe('asked');
+    // The old manager's record says the note was withheld (U2-m8).
+    const withheld = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'manager.transfer-note-withheld',
+      ),
+    );
+    expect(withheld.map((event) => event.payload)).toEqual([
+      { transferId, fromAddress: MANAGER_ADDRESS, toAddress: PRIYA_ADDRESS },
+    ]);
   });
 });
 

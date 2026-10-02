@@ -45,14 +45,19 @@ async function ready(base: string): Promise<void> {
 /**
  * Start the fake Slack service on its own port.
  *
+ * Args:
+ *   env: Settings for the fake, such as the people besides the manager (`FAKE_SLACK_PEOPLE`).
+ *
  * Returns:
  *   The service's base URL and the call that stops it.
  */
-export async function startFakeSlack(): Promise<FakeSlack> {
+export async function startFakeSlack(
+  env: Readonly<Record<string, string>> = {},
+): Promise<FakeSlack> {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const child: ChildProcess = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, FAKE_SLACK_PORT: String(port) },
+    env: { ...process.env, ...env, FAKE_SLACK_PORT: String(port) },
     stdio: 'ignore',
   });
   await ready(base);

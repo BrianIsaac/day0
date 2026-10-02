@@ -287,7 +287,7 @@ describe.each(STATES)(
           harness
             .withIdentity(managerIdentity('intruder'))
             .action(api.exportActions.exportForAgent, { agentId }),
-        ).rejects.toThrow('forbidden');
+        ).rejects.toThrow('This employee is not yours.');
         await expect(
           harness.action(api.exportActions.exportForAgent, { agentId }),
         ).rejects.toThrow();

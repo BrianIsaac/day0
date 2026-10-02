@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { PROPOSAL_AFTER_HANDOVER } from '../../convex/skills';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -255,7 +256,7 @@ describe('retiring a registered skill that predates shapes', (): void => {
 });
 
 describe('revising a registered authored skill', (): void => {
-  it('reopens only a never-executed authored skill and parks its source work', async (): Promise<void> => {
+  it('opens a revision beside the registered skill and leaves its source work where it is', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
@@ -277,33 +278,39 @@ describe('revising a registered authored skill', (): void => {
       return id;
     });
 
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-    ).resolves.toEqual({ ok: true });
+    const opened = await harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.requestRevision, { skillId });
 
-    const [skill, work, events] = await harness.run(async (ctx) => [
+    const [skill, revision, work, events] = await harness.run(async (ctx) => [
       await ctx.db.get(skillId),
+      await ctx.db.get(opened.revisionId),
       await ctx.db.get(workItemId),
       await ctx.db.query('events').collect(),
     ]);
-    expect(skill).toMatchObject({ state: 'approved', body: '' });
-    expect(skill?.registeredAt).toBeUndefined();
-    expect(skill?.sandboxId).toBeUndefined();
-    expect(skill?.verificationLog).toBeUndefined();
-    expect(work).toMatchObject({
-      state: 'needs-skill',
-      verdict: {
-        decision: 'needs-skill',
-        reason: 'registered skill sent back for revision before first execution',
-      },
+    // The registered row runs on, unchanged, until the revision registers in its place.
+    expect(skill).toMatchObject({
+      state: 'registered',
+      body: 'uses the wrong selector',
+      registeredAt: 2,
+      sandboxId: 'sandbox-1',
+      verificationLog: 'shape passed',
     });
+    expect(revision).toMatchObject({
+      state: 'approved',
+      name: 'bad-browser-contract',
+      body: '',
+      revisionOf: skillId,
+      proposedFor: workItemId,
+    });
+    expect(work?.state).toBe('discovered');
     expect(events.at(-1)).toMatchObject({
       type: 'skill.revision-requested',
-      payload: { skillId, name: 'bad-browser-contract' },
+      payload: { skillId, name: 'bad-browser-contract', revisionId: opened.revisionId },
     });
   });
 
-  it('refuses to reopen a skill after any execution has claimed it', async (): Promise<void> => {
+  it('opens a revision after an execution has claimed the skill, keeping the run’s history', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
@@ -322,14 +329,22 @@ describe('revising a registered authored skill', (): void => {
       return id;
     });
 
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-    ).rejects.toThrow('cannot revise a skill after an execution has claimed it');
-    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
+    const { revisionId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.requestRevision, { skillId });
+
+    const [skill, revision, work] = await harness.run(async (ctx) => [
+      await ctx.db.get(skillId),
+      await ctx.db.get(revisionId),
+      await ctx.db.get(workItemId),
+    ]);
+    expect(skill).toMatchObject({ state: 'registered', body: 'valid' });
+    expect(revision).toMatchObject({ state: 'approved', revisionOf: skillId });
+    expect(work).toMatchObject({ state: 'completed', skillId });
   });
 });
 
-describe('the Revise window while the source work waits', (): void => {
+describe('a revision whatever the source work is doing', (): void => {
   /**
    * Seed a registered authored skill whose source work is in a given state.
    *
@@ -363,40 +378,34 @@ describe('the Revise window while the source work waits', (): void => {
     return { skillId, workItemId };
   }
 
-  it.each(['deferred'] as const)(
-    'reopens the skill while its source work is %s and leaves that work where it is',
+  // History is kept: the current row runs on whatever its source work is doing, so the window
+  // the in-place revision needed is gone.
+  it.each([
+    'deferred',
+    'claimed',
+    'plan-pending',
+    'plan-approved',
+    'executing',
+    'completed',
+  ] as const)(
+    'opens a revision while the source work is %s and leaves that work where it is',
     async (state): Promise<void> => {
       useSurfaceMode('real');
       const harness = convexTest(schema, allConvexModules());
       const { skillId, workItemId } = await registeredWithSource(harness, state);
 
-      await expect(
-        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-      ).resolves.toEqual({ ok: true });
+      const { revisionId } = await harness
+        .withIdentity(OWNER)
+        .mutation(api.skills.requestRevision, { skillId });
 
-      const [skill, work] = await harness.run(async (ctx) => [
+      const [skill, revision, work] = await harness.run(async (ctx) => [
         await ctx.db.get(skillId),
+        await ctx.db.get(revisionId),
         await ctx.db.get(workItemId),
       ]);
-      expect(skill).toMatchObject({ state: 'approved', body: '' });
+      expect(skill).toMatchObject({ state: 'registered', body: 'Comment with the figures.' });
+      expect(revision).toMatchObject({ state: 'approved', revisionOf: skillId, body: '' });
       expect(work?.state).toBe(state);
-    },
-  );
-
-  // A claimed or plan-pending row would be approved and then failed by the
-  // executor, which picks only registered skills.
-  it.each(['claimed', 'plan-pending', 'plan-approved', 'executing', 'completed'] as const)(
-    'refuses once the source work is %s',
-    async (state): Promise<void> => {
-      useSurfaceMode('real');
-      const harness = convexTest(schema, allConvexModules());
-      const { skillId } = await registeredWithSource(harness, state);
-
-      await expect(
-        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-      ).rejects.toThrow('cannot revise while the source work has moved on');
-      const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
-      expect(skill?.state).toBe('registered');
     },
   );
 });
@@ -689,5 +698,329 @@ describe('skills that target a surface', (): void => {
         { scope: 'linear:write', source: 'skill' },
       ]),
     );
+  });
+});
+
+describe('registration and the library (10-K)', (): void => {
+  /** A shaped, approved skill of an owned employee. */
+  async function approvedSkill(harness: Harness): Promise<Id<'skills'>> {
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'approved',
+          proposedFor: workItemId,
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  it('registration keeps the passing smoke test', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const claimed = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!claimed.claimed) throw new Error(claimed.reason);
+
+    await harness.mutation(internal.skills.completeRegistration, {
+      skillId,
+      runId: claimed.runId,
+      body: '# Comment and close',
+      verificationLog: 'ok: true',
+      smokeTest: 'CASES = []\ndef run(inputs): return {"actions": []}',
+    });
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(row?.state).toBe('registered');
+    // Kept on the version, not on the row: `pendingSmokeTest` means a check not yet run.
+    expect(row?.pendingSmokeTest).toBeUndefined();
+    const version = await harness.run(async (ctx) => await ctx.db.get(row!.versionId!));
+    expect(version?.smokeTest).toBe('CASES = []\ndef run(inputs): return {"actions": []}');
+  });
+
+  it('claimAuthoringRun counts attempts', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const attempts = async (): Promise<number | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.authoringAttempts;
+
+    const first = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!first.claimed) throw new Error(first.reason);
+    expect(await attempts()).toBe(1);
+    // The first attempt fails; Retry is the second.
+    await harness.mutation(internal.skills.failAuthoringRun, {
+      skillId,
+      runId: first.runId,
+      rowReason: 'the static gate refused the draft',
+      reason: 'the static gate refused the draft',
+      eventType: 'skill.author-failed',
+    });
+    const second = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!second.claimed) throw new Error(second.reason);
+    expect(await attempts()).toBe(2);
+    // A provider outage defers the second attempt; its own retry carries it on, uncounted.
+    await harness.mutation(internal.skills.deferAuthoringRun, {
+      skillId,
+      runId: second.runId,
+      reason: 'the provider timed out',
+    });
+    const resumed = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    expect(resumed.claimed).toBe(true);
+    expect(await attempts()).toBe(2);
+    // A second caller while the run holds the skill is refused and counts nothing.
+    expect((await harness.mutation(internal.skills.claimAuthoringRun, { skillId })).claimed).toBe(
+      false,
+    );
+    expect(await attempts()).toBe(2);
+  });
+
+  it('refuses to author a retired or a superseded row, saying which', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    for (const state of ['retired', 'superseded'] as const) {
+      await harness.run(async (ctx) => await ctx.db.patch(skillId, { state }));
+      expect(await harness.mutation(internal.skills.claimAuthoringRun, { skillId })).toEqual({
+        claimed: false,
+        reason: `this skill was ${state === 'retired' ? 'retired' : 'superseded by a revision'}`,
+      });
+    }
+  });
+});
+
+describe('skills.reject and the work waiting for the skill (the wave 10 review, M9)', (): void => {
+  it('releases the claim a cancelled item holds on its provider item', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    const claim = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'needs-skill', proposedSkillId: skillId });
+      return await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:LIN-5',
+        agentId,
+        workItemId,
+        claimedAt: 1,
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+
+    const [item, released] = await harness.run(async (ctx) => [
+      await ctx.db.get(workItemId),
+      await ctx.db.get(claim),
+    ]);
+    expect(item?.state).toBe('cancelled');
+    expect(released?.releasedAt).toBeTypeOf('number');
+  });
+});
+
+describe('skills.approve while a handover waits for its runs (U3-m3)', (): void => {
+  /** A request of the employee's in `state`, naming the colleague. */
+  async function seedTransfer(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    state: 'asked' | 'accepting',
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        state,
+        requestedAt: Date.now(),
+        expiresAt: Date.now() + 86_400_000,
+        ...(state === 'accepting'
+          ? { decidedAt: Date.now(), toOwnerKey: 'colleague', settleBy: Date.now() + 900_000 }
+          : {}),
+      });
+    });
+  }
+
+  it('refuses the old manager’s approval once the new one has accepted, and leaves the skill proposed', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toMatchObject({
+      data: expect.stringContaining('handover to colleague@day0.local was already accepted'),
+    });
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.state).toBe('proposed');
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(grants.filter((grant) => grant.source === 'skill')).toEqual([]);
+  });
+
+  it('refuses the old manager’s request for a revision once the new one has accepted (the wave 10 review, M1)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'ticket-comment-and-close',
+          description: 'Close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          registeredAt: 2,
+          createdAt: 1,
+        }),
+    );
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+    ).rejects.toMatchObject({
+      data: expect.stringContaining('handover to colleague@day0.local was already accepted'),
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(rows.filter((row) => row.agentId === agentId)).toHaveLength(1);
+  });
+
+  it('lets the old manager approve while the handover is only asked', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('skills.propose from an evaluation a handover overtook (U3-m2)', (): void => {
+  /** The proposal the evaluation makes, as the owner it read the employee under. */
+  const proposal = (agentId: Id<'agents'>, workItemId: Id<'workItems'>, startedUnder: string) => ({
+    agentId,
+    workItemId,
+    name: 'update-linear-ticket',
+    description: 'Comment on and close a Linear ticket.',
+    rationale: 'No skill handles linear work yet.',
+    requiredScopes: ['boss:message', 'linear:read', 'linear:write'],
+    startedUnder,
+  });
+
+  it('proposes the skill while the employee is still the owner the evaluation read it under', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+
+    const skillId = await harness.mutation(
+      internal.skills.propose,
+      proposal(agentId, workItemId, 'owner'),
+    );
+
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('proposed');
+  });
+
+  it('proposes nothing once the employee was handed to another owner', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { userId: 'colleague' });
+    });
+
+    await expect(
+      harness.mutation(internal.skills.propose, proposal(agentId, workItemId, 'owner')),
+    ).rejects.toThrow(PROPOSAL_AFTER_HANDOVER);
+    expect(await harness.run(async (ctx) => await ctx.db.query('skills').collect())).toEqual([]);
+  });
+});
+
+describe('proposing a name a retired or superseded row holds (10-A)', (): void => {
+  for (const state of ['retired', 'superseded'] as const) {
+    it(`a ${state} row does not block a later proposal of its name`, async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+      const old = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId,
+            name: 'update-linear-ticket',
+            description: 'Comment on and close a Linear ticket.',
+            body: '# Comment and close',
+            sourceType: 'agent-authored',
+            state,
+            createdAt: 1,
+            registeredAt: 1,
+          }),
+      );
+
+      const proposed = await propose(harness, agentId, workItemId);
+
+      expect(proposed).not.toBe(old);
+      const row = await harness.run(async (ctx) => await ctx.db.get(proposed));
+      expect(row).toMatchObject({ state: 'proposed', proposedFor: workItemId });
+      expect((await harness.run(async (ctx) => await ctx.db.get(old)))?.state).toBe(state);
+    });
+  }
+});
+
+describe('the third failed attempt (10-C)', (): void => {
+  it('the third failed attempt withdraws Retry: the authoring claim refuses it, and a stored verification still may run', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const failed = async (attempts: number): Promise<Id<'skills'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId,
+            name: `kanban-comment-and-close-${attempts}`,
+            description: 'Comment and close.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'failed',
+            proposedFor: workItemId,
+            authoringAttempts: attempts,
+            createdAt: 1,
+          }),
+      );
+    const spent = await failed(3);
+    const second = await failed(2);
+
+    await expect(
+      harness.mutation(internal.skills.claimAuthoringRun, { skillId: spent }),
+    ).resolves.toEqual({
+      claimed: false,
+      reason: 'all 3 attempts at this skill failed; give it up instead',
+    });
+    const retried = await harness.mutation(internal.skills.claimAuthoringRun, {
+      skillId: second,
+    });
+    expect(retried.claimed).toBe(true);
+    expect((await harness.run(async (ctx) => await ctx.db.get(second)))?.authoringAttempts).toBe(3);
+    const stored = await harness.mutation(internal.skills.claimAuthoringRun, {
+      skillId: spent,
+      purpose: 'verify-stored',
+    });
+    expect(stored.claimed).toBe(true);
   });
 });

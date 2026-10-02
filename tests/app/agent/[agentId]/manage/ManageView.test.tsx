@@ -160,8 +160,11 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
   it('says what retiring does in each mode, and waits for the mode before offering it', (): void => {
     expect(manage([])).toContain('Day0 deletes its copy of any credential only Priya uses');
     expect(manage([], { mode: 'mock' })).toContain(
-      'Removes Priya and everything it made in the hosted office. Nothing is kept.',
+      'Removes Priya and everything it made in the hosted office.',
     );
+    // A retire keeps the handover requests that name the employee, which the dialog counts; the
+    // card no longer says nothing is kept (seen on the wave 10 bed).
+    expect(manage([], { mode: 'mock' })).not.toContain('Nothing is kept');
     expect(manage([], { mode: 'loading' })).toMatch(/<button[^>]*disabled=""[^>]*>Retire Priya…/);
   });
 
@@ -179,6 +182,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
       },
       'work:needsYouForAgent': { entries: [], total: 0 },
       'managerTransfers:openForAgent': null,
+      'transferDepartures:keptAtRetire': { requests: 0 },
     };
     backend.results = { 'reset:retire': { agentName: 'Mira' } };
     const view = mount(asEmployee(<ManageView />));

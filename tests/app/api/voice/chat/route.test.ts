@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OneToOneTurn } from '../../../../../src/agent/one-to-one-conversation';
-import { dayOneTurnNote } from '../../../../../src/agent/day-one-system-prompt';
+import {
+  DAY_ONE_COMPLETE_TOOL,
+  dayOneTurnNote,
+} from '../../../../../src/agent/day-one-system-prompt';
 
 vi.mock('../../../../../src/lib/dev-auth-server', () => ({
   establishCaller: async () => ({ ok: true, userId: 'dev-no-auth-subject' }),
@@ -282,7 +285,7 @@ describe('the Day-1 chat route', (): void => {
       reasoning_effort: 'low',
       // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles;
       // from v2: it asks only the question each turn's note names (the v0.11.0 walk).
-      prompt_cache_key: 'day0-day1-system-v3',
+      prompt_cache_key: 'day0-day1-system-v4',
     });
   });
 
@@ -327,7 +330,13 @@ describe('the Day-1 chat route', (): void => {
 
     const body = sent[0] as {
       messages: { role: string; content: string }[];
-      tools: { function: { name: string } }[];
+      tools: {
+        function: {
+          name: string;
+          description: string;
+          parameters: { properties: { closingLine: { description: string } } };
+        };
+      }[];
     };
     expect(body.messages[0].role).toBe('system');
     expect(body.messages[0].content).toContain('SEVEN topics');
@@ -336,6 +345,13 @@ describe('the Day-1 chat route', (): void => {
       { role: 'system', content: dayOneTurnNote(0) },
     ]);
     expect(body.tools.map((t) => t.function.name)).toContain('dayOneComplete');
+    // The close tool's own words: a closing line that drafts the charter and never thanks a
+    // second time (the v0.12.0 walk: the closing turn thanked twice).
+    const close = body.tools.find((t) => t.function.name === 'dayOneComplete')?.function;
+    expect(close?.description).toBe(DAY_ONE_COMPLETE_TOOL.description);
+    expect(close?.parameters.properties.closingLine.description).toBe(
+      DAY_ONE_COMPLETE_TOOL.closingLine,
+    );
   });
 
   it("tells the model the employee's own name and the topics' plain titles, never Day0, a slug or an em dash (walk m5)", async (): Promise<void> => {

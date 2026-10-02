@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 /**
  * The Skills tab in its states, checked with axe and for 44 px targets with every disclosure
  * open: a proposal with its adoption row, a proposal that cannot be approved yet, registered
- * skills built in and authored, and skills not callable, one with its refused line marked.
+ * skills built in and authored (used N times, Re-check due with its reason, a revision beside the
+ * running version), and skills not callable (Attempt n of 3 with Retry with the reasons and Give
+ * up, Retry withdrawn at the third), one with its refused line marked.
  */
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
@@ -59,8 +61,20 @@ function populated(): Record<string, unknown> {
       skill('kanban-comment-and-close', {
         state: 'registered',
         registeredAt: 1,
+        useCount: 2,
+        versionId: 'version-1',
+        recheckDueAt: 5,
+        recheckReason: 'the tools you approved on linear changed',
         requiredScopes: ['linear:read', 'linear:write'],
         body: '# Close\n\n## Inputs\n\n- `<record-id>`: the ticket.\n',
+      }),
+      skill('chat-thread-reply', { state: 'registered', registeredAt: 1, useCount: 1 }),
+    ],
+    'skillControls:pendingRevisions': [
+      skill('kanban-comment-and-close-revision', {
+        name: 'kanban-comment-and-close',
+        state: 'approved',
+        revisionOf: 'kanban-comment-and-close',
       }),
     ],
     'skills:awaitingVerification': [
@@ -72,8 +86,14 @@ function populated(): Record<string, unknown> {
       }),
     ],
     'skills:verificationFailed': [
+      skill('crm-update-record', {
+        state: 'failed',
+        authoringAttempts: 3,
+        verificationLog: 'the sandbox run refused the draft: smoke test exited 1',
+      }),
       skill('analytics-refresh-value', {
         state: 'failed',
+        authoringAttempts: 2,
         refusedBody: '# Refresh',
         refusedSmokeTest: 'def run(inputs: dict) -> dict:\n    return {"tile": inputs["tile-id"]',
         verificationLog:
@@ -100,6 +120,20 @@ describe('the Skills tab against the accessibility floor (N14)', (): void => {
     for (const disclosure of view.container.querySelectorAll('details')) disclosure.open = true;
     await settle();
     expect(view.container.textContent).toContain('Cannot approve yet');
+    for (const drawn of [
+      'Re-check due',
+      'Re-check now',
+      'used 2 times',
+      'Ask for a revision',
+      'Retire',
+      'Attempt 2 of 3',
+      'Retry with the reasons',
+      'Attempt 3 of 3',
+      'Give up',
+      'A revision is being written.',
+    ]) {
+      expect(view.container.textContent).toContain(drawn);
+    }
     expect(view.container.querySelector('mark')).not.toBeNull();
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     expect(underTarget(view.container)).toEqual([]);

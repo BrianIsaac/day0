@@ -22,6 +22,8 @@ import { CharterDocument } from './CharterDocument';
 import { CHANGES_REQUEST_ID } from './ChangesRequest';
 import { ConstraintList } from './RuleRow';
 import { documentStrikes } from './charter-document';
+import { READER_ACTED, type CharterActors } from './charter-actors';
+import { employeeTabHref } from '../employee-tabs';
 
 /** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
 export interface CharterCardBody {
@@ -47,12 +49,13 @@ export interface CharterCardBody {
  * the rules with their standing, the notes from drafting, and, on a draft, Approve with what it
  * does and the way to ask for changes; once approved, Amend behind its disclosure.
  *
- * The manager it names is the agent row's, the one the header changes
- * (U9 D3 (b)): the charter has no approval chain of its own to edit here.
+ * The manager it names is the agent row's, whom a handover on People changes
+ * (U9 D3 (b), D14): the charter has no approval chain of its own to edit here.
  *
  * @param name - The employee's name.
  * @param autonomous - Whether the employee's writes go ahead without asking.
  * @param approvedBy - Who approved it: "you", or the earlier manager a handover took it from.
+ * @param actors - Who struck, answered and added what the record shows; the reader, by default.
  */
 export function CharterCard({
   charter,
@@ -60,6 +63,7 @@ export function CharterCard({
   name = 'Your employee',
   autonomous = false,
   approvedBy = 'you',
+  actors = READER_ACTED,
 }: {
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
@@ -67,6 +71,7 @@ export function CharterCard({
   name?: string;
   autonomous?: boolean;
   approvedBy?: string;
+  actors?: CharterActors;
 }) {
   const approve = useMutation(api.charters.approve);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
@@ -149,12 +154,15 @@ export function CharterCard({
         <CharterDocument
           body={body}
           manager={manager}
+          peopleHref={employeeTabHref(charter.agentId, 'people')}
           strikes={documentStrikes(body, charter.approved)}
+          actors={actors}
         />
         <div className="grid gap-4 border-t border-[var(--color-border)] pt-5">
           <ConstraintList
             constraints={constraints}
             approved={charter.approved}
+            actors={actors}
             busy={change.busy}
             onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
             onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}

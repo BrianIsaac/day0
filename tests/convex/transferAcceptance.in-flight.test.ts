@@ -4,6 +4,12 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
+import {
+  SETTLE_FAILED_ON_THE_SERVER,
+  SETTLE_FAILURES_BEFORE_END,
+  settleFailureReason,
+} from '../../convex/transferAcceptance';
+import { ConvexError } from 'convex/values';
 import { HANDED_OVER_REQUEST_REASON } from '../../convex/work';
 import { HANDOVER_SESSION_FAILURE } from '../../convex/voice';
 import { TRANSFER_SETTLE_MS, transferExpiresAt } from '../../src/agent/manager-transfer';
@@ -194,9 +200,17 @@ async function accept(
     .mutation(api.transferAcceptance.accept, { transferId: handover.transferId, ...args });
 }
 
-/** Run every job the test's mutations scheduled, to the end. */
+/**
+ * Run every job the test's mutations scheduled that is due now, to the end: the settle an
+ * acceptance schedules at its deadline waits for the clock (`passDeadline`).
+ */
 async function drain(harness: Harness): Promise<void> {
-  await harness.finishAllScheduledFunctions(vi.runAllTimers);
+  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+}
+
+/** Let the clock reach an accepting request's deadline, running what falls due on the way. */
+async function passDeadline(harness: Harness): Promise<void> {
+  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(TRANSFER_SETTLE_MS));
 }
 
 /** Read one row back. */
@@ -207,6 +221,41 @@ async function read<Table extends 'agents' | 'managerTransfers' | 'workItems' | 
   const row = await harness.run(async (ctx) => (await ctx.db.get(id)) as Doc<Table> | null);
   if (row === null) throw new Error(`row ${id} is gone`);
   return row;
+}
+
+/**
+ * Give Maya more surfaces than a handover reads, so every settle throws inside the move after
+ * the acceptance (a refusal `moveRefusal` does not test).
+ */
+async function seedUnmovableSurfaces(handover: Handover): Promise<void> {
+  await handover.harness.run(async (ctx) => {
+    for (let index = 0; index <= 1_000; index += 1) {
+      await ctx.db.insert('surfaces', {
+        agentId: handover.maya,
+        slug: `system-${index}`,
+        displayName: `System ${index}`,
+        class: 'kanban',
+        verdict: 'declared',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      });
+    }
+  });
+}
+
+/** Maya's record, as type and payload. */
+async function recordOf(
+  handover: Handover,
+): Promise<{ readonly type: string; readonly payload: unknown }[]> {
+  return await handover.harness.run(async (ctx) =>
+    (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', handover.maya))
+        .collect()
+    ).map((event) => ({ type: event.type, payload: event.payload })),
+  );
 }
 
 afterEach((): void => {
@@ -530,6 +579,98 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
       }),
     ).resolves.toBe('not-accepting');
     expect(await read(handover.harness, handover.transferId)).toEqual(ended);
+  });
+
+  it('settles at its deadline with no sweep: a paused cron cannot hold a handover (U3-m5)', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const { workItemId } = await seedExecuting(handover, 'REVOPS-1');
+    await accept(handover);
+
+    await passDeadline(handover.harness);
+
+    expect(await read(handover.harness, workItemId)).toMatchObject({
+      state: 'failed',
+      skipReason: `${STOPPED_PREFIX}${HANDOVER_STOP_REASON}`,
+    });
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({
+      state: 'accepted',
+      decidedAt: ACCEPTED_AT,
+    });
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ userId: 'colleague' });
+  });
+
+  it('ends an accepting request itself, with its reason and an event, once its settle has failed enough times (decision 4)', async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    const approved = await seedItem(handover, 'REVOPS-2', 'plan-approved', {
+      plan: { steps: ['Close it'] },
+    });
+    await accept(handover);
+    await seedUnmovableSurfaces(handover);
+
+    for (let attempt = 1; attempt < SETTLE_FAILURES_BEFORE_END; attempt += 1) {
+      vi.setSystemTime(ACCEPTED_AT + TRANSFER_SETTLE_MS + attempt * 60_000);
+      await handover.harness.mutation(internal.transferAcceptance.settleDue, {});
+      await drain(handover.harness);
+      expect(await read(handover.harness, handover.transferId)).toMatchObject({
+        state: 'accepting',
+      });
+    }
+    vi.setSystemTime(ACCEPTED_AT + TRANSFER_SETTLE_MS + SETTLE_FAILURES_BEFORE_END * 60_000);
+    await handover.harness.mutation(internal.transferAcceptance.settleDue, {});
+    await drain(handover.harness);
+
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({
+      state: 'cancelled',
+      decidedAt: ACCEPTED_AT,
+    });
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ userId: 'owner' });
+    const record = await recordOf(handover);
+    expect(record.filter((event) => event.type === 'manager.transfer-settle-failed')).toHaveLength(
+      SETTLE_FAILURES_BEFORE_END - 1,
+    );
+    expect(record.filter((event) => event.type === 'manager.transfer-ended')).toEqual([
+      {
+        type: 'manager.transfer-ended',
+        payload: expect.objectContaining({
+          transferId: handover.transferId,
+          toAddress: fixtureAddressOf('colleague'),
+          reason: 'settle-failed',
+          detail: expect.stringContaining('connections'),
+        }),
+      },
+    ]);
+    // The employee is no longer being handed over: its approved plan may start again.
+    await expect(
+      handover.harness.mutation(internal.work.claimForExecution, {
+        workItemId: approved,
+        skillId: handover.skillId,
+      }),
+    ).resolves.toMatchObject({ claimed: true });
+  });
+
+  it('records why an unmovable request ended, and that the operator ended a stuck one', async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    await accept(handover);
+
+    await handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+      transferId: handover.transferId,
+      reason: 'the settle throws on a transaction limit',
+    });
+
+    expect(
+      (await recordOf(handover)).filter((event) => event.type === 'manager.transfer-ended'),
+    ).toEqual([
+      {
+        type: 'manager.transfer-ended',
+        payload: expect.objectContaining({
+          transferId: handover.transferId,
+          reason: 'operator',
+          detail: 'the settle throws on a transaction limit',
+        }),
+      },
+    ]);
   });
 
   it('leaves a request that is not accepting as it is when the operator tries to end it', async (): Promise<void> => {
@@ -1265,5 +1406,18 @@ describe('the stall sweep while a handover is finishing (resumeStalledSteps)', (
 
     expect(swept).toEqual({ rescheduled: 1 });
     expect(await read(handover.harness, stalled.workItemId)).toMatchObject({ state: 'failed' });
+  });
+});
+
+describe('settleFailureReason: what the record says of a failed settle', (): void => {
+  it('keeps a refusal’s own words and gives the server’s own message to the log only', (): void => {
+    expect(
+      settleFailureReason(new ConvexError('This employee has more than 1000 connections.')),
+    ).toBe('This employee has more than 1000 connections.');
+    expect(
+      settleFailureReason(
+        new Error('[Request ID: 0123abcd] Server Error in transferAcceptance:settle'),
+      ),
+    ).toBe(SETTLE_FAILED_ON_THE_SERVER);
   });
 });

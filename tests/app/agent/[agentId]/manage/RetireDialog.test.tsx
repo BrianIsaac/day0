@@ -70,6 +70,7 @@ const INBOX = {
 const READS = {
   'work:needsYouForAgent': INBOX,
   'managerTransfers:openForAgent': null,
+  'transferDepartures:keptAtRetire': { requests: 0 },
 };
 
 /** A handover of Mira to lead@day0.local, asked on 1 October 2026. */
@@ -314,6 +315,51 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     view.unmount();
   });
 
+  it('names the handover requests a retire keeps, never "Nothing", in the hosted office and in real mode (the v0.12.0 walk)', (): void => {
+    const mock: RetirePreview = {
+      ...REAL_PREVIEW,
+      mode: 'mock',
+      revoked: [],
+      kept: [],
+      keptClaims: 0,
+      tombstone: false,
+    };
+    const keptOf = (preview: RetirePreview, requests: number): readonly string[] =>
+      retireLines(preview, '', { requests }).find((line) => line.term === 'Kept')?.details ?? [];
+    expect(keptOf(mock, 2)).toEqual([
+      "2 handover requests: the managers' addresses, the employee's name and any note or reason, kept as the record of the managers they name.",
+    ]);
+    expect(keptOf(mock, 1)).toEqual([
+      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names.",
+    ]);
+    expect(keptOf(REAL_PREVIEW, 1)).toContain(
+      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names.",
+    );
+    expect(keptOf(REAL_PREVIEW, 0).join(' ')).not.toContain('handover');
+
+    backend.queries = {
+      ...READS,
+      'reset:retirePreview': mock,
+      'transferDepartures:keptAtRetire': { requests: 2 },
+    };
+    const { view } = open('mock');
+    expect(dialog().textContent).toContain('2 handover requests:');
+    expect(dialog().textContent).not.toContain('keeps no record');
+    view.unmount();
+  });
+
+  it('waits for the handover reads before it offers Retire', (): void => {
+    backend.queries = {
+      ...READS,
+      'reset:retirePreview': REAL_PREVIEW,
+      'transferDepartures:keptAtRetire': undefined,
+    };
+    const { view } = open();
+    typeInto(field(), retirePhrase('Mira'));
+    expect(retireButton().disabled).toBe(true);
+    view.unmount();
+  });
+
   it('waits for the handover read before it offers Retire', (): void => {
     backend.queries = {
       ...READS,
@@ -342,7 +388,8 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       [...(waiting?.nextElementSibling?.children ?? [])].map((detail) => detail.textContent),
     ).toEqual([
       '1 held write and 1 plan, discarded undecided.',
-      'The handover to lead@day0.local is cancelled.',
+      // Said before the retire, of what the retire does (the wave 9 review's U4-m7).
+      'Retiring cancels the handover to lead@day0.local.',
     ]);
     typeInto(field(), retirePhrase('Mira'));
     await press(document.body, 'Retire Mira');
@@ -359,14 +406,14 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     const { view } = open();
 
     expect(dialog().textContent).toContain(
-      'lead@day0.local has accepted Mira; it is theirs once its runs finish.',
+      'Mira was accepted by lead@day0.local; it is theirs once its runs finish.',
     );
     expect(field().disabled).toBe(true);
     expect(retireButton().disabled).toBe(true);
     expect(retireButton().getAttribute('aria-describedby')).toBeTruthy();
     expect(
       document.getElementById(retireButton().getAttribute('aria-describedby') ?? '')?.textContent,
-    ).toBe('lead@day0.local has accepted Mira; it is theirs once its runs finish.');
+    ).toBe('Mira was accepted by lead@day0.local; it is theirs once its runs finish.');
     // Said as it lands, and read before the field it disables.
     const reason = document.getElementById(retireButton().getAttribute('aria-describedby') ?? '');
     expect(reason?.getAttribute('role')).toBe('status');
@@ -377,11 +424,11 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     view.unmount();
   });
 
-  it('says the cancel under Nothing when nothing else waits', (): void => {
-    const waiting = retireLines(REAL_PREVIEW, '', HANDOVER).find(
+  it('says the cancel alone when nothing else waits, never under "Nothing." (second pass)', (): void => {
+    const waiting = retireLines(REAL_PREVIEW, '', { handover: HANDOVER, requests: 1 }).find(
       (line) => line.term === 'Waiting on you',
     );
-    expect(waiting?.details).toEqual(['Nothing.', 'The handover to lead@day0.local is cancelled.']);
+    expect(waiting?.details).toEqual(['Retiring cancels the handover to lead@day0.local.']);
   });
 
   it('says when no credential is bound only by the employee', (): void => {

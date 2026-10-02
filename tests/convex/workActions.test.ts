@@ -64,6 +64,7 @@ import {
 } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { versionBodyHash } from '../../src/work/skill-library';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   auditNoteClosing,
@@ -1651,8 +1652,7 @@ describe("writes the plan left to the manager's answer stop with the question (1
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toMatch(/^stopped: /);
     expect(stopped.skipReason).toContain('Which template should the notice use');
-    expect(stopped.skipReason).toContain('step 2');
-    expect(stopped.skipReason).toContain('step 3');
+    expect(stopped.skipReason).toContain('leaves steps 2 and 3 to');
     // The question went out once, the ticket was read, and nothing was written to it.
     expect(posts()).toHaveLength(1);
     expect(ticketWrites()).toEqual([]);
@@ -4908,6 +4908,159 @@ describe('a registered skill serves every later work item of its shape', (): voi
     });
     expect(proposed?.rationale).not.toContain('REVOPS-12');
     expect(proposed?.rationale).not.toContain('Charter');
+    expect(proposed?.offeredVersionId).toBeUndefined();
+  });
+
+  it('stops the item at once, with Retry, when the proposal its verdict promised throws (the real-Linear walk, m7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    // Two cards with one slug, as a staged card beside a declared one made on the walk: the
+    // proposal cannot say which surface the skill targets and throws.
+    await harness.run(async (ctx): Promise<void> => {
+      for (const credentialId of ['cred-sheet', 'cred-sheet-2']) {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'close-tracker',
+          displayName: 'Close tracker',
+          class: 'spreadsheet',
+          verdict: 'connected',
+          endpoint: 'https://sheets.example.test/close-tracker',
+          path: 'documented-api',
+          toolAllowlist: [],
+          credentialId,
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          whereFound: [],
+          createdAt: 1,
+        } as never);
+      }
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'proposal-failed' });
+    // Nothing waits a lease: the card offers Retry now, and no proposal was written.
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.proposedSkillId).toBeUndefined();
+    expect(row.skipReason).toBe(
+      'stopped: evaluation found this item needs the skill "spreadsheet-append-row", but its proposal was never recorded; Retry evaluates the item again',
+    );
+    expect(await proposedSkills(harness)).toEqual([]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+  });
+
+  it('needs-skill proposes with the offer when one passes (10-A)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const versionId = await harness.run(async (ctx): Promise<Id<'skillVersions'>> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'close-tracker',
+        displayName: 'Close tracker',
+        class: 'spreadsheet',
+        verdict: 'connected',
+        endpoint: 'https://sheets.example.test/close-tracker',
+        path: 'documented-api',
+        toolAllowlist: ['append_row'],
+        approvedToolAllowlist: ['append_row'],
+        discoveryEvidence: [
+          {
+            kind: 'charter',
+            ref: 'charter',
+            quote: 'keeps the Close tracker',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        credentialId: 'cred-sheet',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      const mateo = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const body = '# Append a row\nCall `append_row` with <row-values>.';
+      const smokeTest = 'print("ok")';
+      return await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'spreadsheet-append-row',
+        description: 'Row append on a spreadsheet surface.',
+        surfaceClass: 'spreadsheet',
+        operation: 'append-row',
+        version: 1,
+        body,
+        smokeTest,
+        bodyHash: versionBodyHash(body, smokeTest),
+        requiredScopes: ['close-tracker:read', 'close-tracker:write'],
+        harnessTools: ['append_row'],
+        harnessToolsBySurface: [
+          { slug: 'close-tracker', surfaceClass: 'spreadsheet', tools: ['append_row'] },
+        ],
+        authorAgentId: mateo,
+        authorName: 'Mateo',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'needs-skill' });
+
+    const proposed = (
+      await harness.run(async (ctx) => await ctx.db.query('skills').collect())
+    ).find((skill) => skill.name === 'spreadsheet-append-row');
+    expect(proposed).toMatchObject({
+      state: 'proposed',
+      targetSurface: 'close-tracker',
+      offeredVersionId: versionId,
+    });
+    expect((await readItem(harness, workItemId)).proposedSkillId).toBe(proposed?._id);
+    const offered = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'skill.adoption-offered',
+      ),
+    );
+    expect(offered.map((event) => event.payload)).toEqual([
+      {
+        skillId: proposed?._id,
+        name: 'spreadsheet-append-row',
+        versionId,
+        version: 1,
+        authorName: 'Mateo',
+        forWorkItem: workItemId,
+      },
+    ]);
   });
 });
 
@@ -7585,7 +7738,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
       expect(stopped.state).toBe('failed');
       expect(stopped.skipReason).toMatch(/^stopped: /);
       expect(stopped.skipReason).toContain(asked);
-      expect(stopped.skipReason).toContain('step 2 and step 3');
+      expect(stopped.skipReason).toContain('leaves steps 2 and 3 to');
       // The ticket was read and nothing was written to it; there was nowhere to post.
       expect(ticketWrites()).toEqual([]);
       expect(recorded.http).toEqual([]);
@@ -8835,5 +8988,148 @@ describe('a scheduled step whose row a reset deleted (step 47, P4-7)', (): void 
     await expect(
       harness.action(internal.workActions.draftPlanInternal, { workItemId }),
     ).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe('an approved item whose skill is not callable (E-1, 10-C)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** The item's skill taken out of use before the run began, as a Retire leaves it. */
+  async function seedWithoutCallableSkill(harness: Harness): Promise<Seeded> {
+    const seeded = await seed(harness, 'mock');
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(row._id, { state: 'retired', retiredReason: 'retired by the manager' });
+      }
+    });
+    return seeded;
+  }
+
+  it('an item with no callable skill parks behind the skill instead of failing', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const reason =
+      'the skill kanban-comment-and-close is not callable yet, so this waits for it to register';
+    expect(result).toEqual({ ok: false, reason });
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({
+      state: 'needs-skill',
+      verdict: {
+        decision: 'needs-skill',
+        reason,
+        suggestedSkillName: 'kanban-comment-and-close',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'comment-and-close' },
+      },
+    });
+    expect(parked.plan).toBeUndefined();
+    // The proposal step asked for the skill, and the item waits behind it.
+    const proposed = await harness.run(async (ctx) =>
+      (await ctx.db.query('skills').collect()).filter((row) => row.state === 'proposed'),
+    );
+    expect(proposed).toEqual([
+      expect.objectContaining({
+        agentId,
+        name: 'kanban-comment-and-close',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        proposedFor: workItemId,
+      }),
+    ]);
+    expect(parked.proposedSkillId).toBe(proposed[0]?._id);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.failed')).toEqual([]);
+    expect(events.filter((event) => event.type === 'work.execution-claimed')).toEqual([]);
+  });
+
+  it('never waits behind a retired row of the same name', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    const retired = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'retired',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          retiredReason: 'retired by the manager',
+          createdAt: 2,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('needs-skill');
+    expect(parked.proposedSkillId).not.toBe(retired);
+  });
+
+  it('proposes the skill afresh when the only row of its name was retired', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment on and close a ticket.',
+        body: '# Close',
+        sourceType: 'agent-authored',
+        state: 'retired',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        createdAt: 2,
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const linked = (await readItem(harness, workItemId)).proposedSkillId;
+    expect(linked).toBeDefined();
+    if (linked === undefined) return;
+    const proposal = await harness.run(async (ctx) => await ctx.db.get(linked));
+    expect(proposal).toMatchObject({ name: 'kanban-comment-and-close', state: 'proposed' });
+  });
+
+  it('waits behind a row of the name still being written rather than proposing another', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    const failing = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'failed',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          authoringAttempts: 1,
+          createdAt: 2,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'needs-skill',
+      proposedSkillId: failing,
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(rows.filter((row) => row.state === 'proposed')).toEqual([]);
   });
 });
