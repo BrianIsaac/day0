@@ -997,6 +997,74 @@ describe('supervision figures for a company of employees', (): void => {
     });
   }
 
+  it('counts the decisions on the employee page by the spans the reader held it, so a handover never credits the new manager with the old one’s (the v0.13.0 walk; D12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, {
+      name: 'Priya',
+      deployedAt: 100_000,
+      charterApprovedAt: 110_000,
+      decisions: [
+        { requestedAt: 200_000, decidedAt: 210_000, via: 'dashboard', outcome: 'approved' },
+        { requestedAt: 300_000, decidedAt: 305_000, via: 'dashboard', outcome: 'approved' },
+        { requestedAt: 400_000, decidedAt: 430_000, via: 'channel', outcome: 'rejected' },
+      ],
+    });
+    const before = await harness
+      .withIdentity(COMPANY_OWNER)
+      .query(api.metrics.forAgent, { agentId: priyaId });
+    expect(before.decisions).toMatchObject({ approved: 2, rejected: 1 });
+
+    await handOver(harness, priyaId, 500_000);
+    const atAcceptance = await harness
+      .withIdentity(SUCCESSOR)
+      .query(api.metrics.forAgent, { agentId: priyaId });
+    expect(atAcceptance.decisions).toMatchObject({
+      requested: 0,
+      approved: 0,
+      rejected: 0,
+      medianLatencyMs: null,
+    });
+    // What describes the employee rather than its manager's decisions stays its whole record.
+    expect(atAcceptance.charter).toEqual(before.charter);
+
+    // The new manager decides one plan, on an item the old manager's span left open.
+    await harness.run(async (ctx): Promise<void> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: priyaId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'PRIYA-OPEN',
+        title: 'Priya item open at the handover',
+        contentSummary: 'Synthetic company work.',
+        contentRefs: [],
+        state: 'plan-approved',
+        observedAt: 450_000,
+        createdAt: 450_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.decision-requesting',
+        payload: { workItemId, decisionId: 'successor-0', kind: 'plan' },
+        createdAt: 600_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.plan-approved',
+        payload: { workItemId, decidedVia: 'dashboard' },
+        createdAt: 612_000,
+      });
+    });
+    const after = await harness
+      .withIdentity(SUCCESSOR)
+      .query(api.metrics.forAgent, { agentId: priyaId });
+    expect(after.decisions).toMatchObject({
+      requested: 1,
+      approved: 1,
+      rejected: 0,
+      medianLatencyMs: 12_000,
+    });
+  });
+
   it('keeps an item the old owner completed in their figures when the new owner retries it (D12)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priyaId = await deployEmployee(harness, { ...THREE_EMPLOYEES[0], completedAt: 130_000 });
