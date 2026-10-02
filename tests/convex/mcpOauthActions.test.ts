@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { createIssuer } from '../../fake-oidc/issuer.js';
 import type { FakeIssuer } from '../../fake-oidc/issuer';
 import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { sealForOwner } from '../../src/lib/credential-crypto';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
@@ -855,5 +856,75 @@ describe('refreshing with rotation', (): void => {
     expect(failed?.payload.reason).toContain('invalid_grant');
     const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     expect(row?.generation).toBe(0);
+  });
+});
+
+describe('the deployment token store and Nango (11-AT)', (): void => {
+  const NANGO_KEY = '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17';
+
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A credential whose token Nango keeps: the row seals the connection, never the token. */
+  async function nangoHeld(harness: TestConvex<typeof schema>): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'location',
+          label: 'Tracker token (Nango)',
+          ...sealForOwner(
+            nangoLocation({ providerConfigKey: 'tracker-cc', connectionId: 'tracker' }),
+            { current: credentialKey },
+            ORGANISATION_OWNER_KEY,
+          ),
+          source: 'entered',
+          createdAt: 1,
+          tokenStore: 'nango',
+          issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        }),
+    );
+  }
+
+  it('answers a Nango-held credential with the token Nango holds, asked of the configured Nango', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NANGO_URL', 'http://nango-server:3003');
+    vi.stubEnv('DAY0_NANGO_SECRET_KEY', NANGO_KEY);
+    const asked: string[] = [];
+    vi.stubGlobal('fetch', async (input: URL | string): Promise<Response> => {
+      asked.push(String(input));
+      return Response.json({
+        credentials: {
+          type: 'OAUTH2_CC',
+          token: 'fake-cc-9',
+          client_secret: 'secret-abcdefghij',
+          expires_at: '2026-10-02T11:13:50.598Z',
+        },
+      });
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await nangoHeld(harness);
+    const { internal } = await liveApi();
+    await expect(
+      harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
+    ).resolves.toBe('fake-cc-9');
+    expect(asked).toEqual([
+      'http://nango-server:3003/connections/tracker?provider_config_key=tracker-cc',
+    ]);
+    const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    expect(row?.lastUsedAt).toBeTypeOf('number');
+  });
+
+  it('refuses a Nango-held credential on a deployment where Nango is not configured', async (): Promise<void> => {
+    vi.stubGlobal('fetch', async (): Promise<Response> => {
+      throw new Error('no request expected');
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await nangoHeld(harness);
+    const { internal } = await liveApi();
+    await expect(
+      harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
+    ).rejects.toThrow('Nango is not configured on this deployment');
   });
 });

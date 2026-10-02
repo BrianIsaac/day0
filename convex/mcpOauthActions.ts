@@ -47,6 +47,11 @@ import {
 } from '../src/surfaces/mcp-oauth';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import {
+  nangoConfigFrom,
+  nangoTokenBackend,
+  type NangoConfig,
+} from '../src/surfaces/nango-token-store';
+import {
   accessTokenFor,
   nativeTokenKeeper,
   runScheduledRefresh,
@@ -707,13 +712,28 @@ export function mcpTokenRefresher(deps: McpOauthDeps): TokenRefresher {
   };
 }
 
-/** The token store as this deployment composes it: the native keeper and the MCP client's refresher. */
+/**
+ * The token store's Nango backend on this deployment: the configured Nango (read at each ask, so
+ * a deployment without it refuses only the credentials Nango would hold), reached with the plain
+ * fetch, since it is the operator's own service on the compose file's private network.
+ */
+const nangoBackend = nangoTokenBackend({
+  fetch: async (input: URL, init: RequestInit): Promise<Response> => await fetch(input, init),
+  config: (): NangoConfig => nangoConfigFrom(process.env),
+  location: async (ctx, credentialId): Promise<string> =>
+    await decryptCredential(ctx, credentialId),
+});
+
+/**
+ * The token store as this deployment composes it: the native keeper with the MCP client's
+ * refresher, and Nango.
+ */
 function tokenStoreDeps(deps: McpOauthDeps): TokenStoreDeps {
   return {
     keeper: deps.store,
     refreshers: [mcpTokenRefresher(deps)],
     now: deps.now,
-    backends: [],
+    backends: [nangoBackend],
   };
 }
 
