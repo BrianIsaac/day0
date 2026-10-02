@@ -112,6 +112,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'surface.scope-reapproval-required': READS,
   'surface.configuration-token-revoked': NONE,
   'surface.app-unrecorded': NONE,
+  'surface.authorised': NONE,
+  'surface.authorisation-failed': NONE,
   'plan.obligations-judged': NONE,
   'plan.obligations-failed-open': NONE,
   'plan.obligations-disagreed': NONE,

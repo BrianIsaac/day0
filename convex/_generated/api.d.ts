@@ -34,6 +34,8 @@ import type * as intakeSeed from '../intakeSeed.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
 import type * as managerQuestions from '../managerQuestions.js';
 import type * as managerTransfers from '../managerTransfers.js';
+import type * as mcpOauth from '../mcpOauth.js';
+import type * as mcpOauthActions from '../mcpOauthActions.js';
 import type * as memoryProjection from '../memoryProjection.js';
 import type * as metrics from '../metrics.js';
 import type * as migrations from '../migrations.js';
@@ -103,6 +105,8 @@ declare const fullApi: ApiFromModules<{
   managerChannelActions: typeof managerChannelActions;
   managerQuestions: typeof managerQuestions;
   managerTransfers: typeof managerTransfers;
+  mcpOauth: typeof mcpOauth;
+  mcpOauthActions: typeof mcpOauthActions;
   memoryProjection: typeof memoryProjection;
   metrics: typeof metrics;
   migrations: typeof migrations;

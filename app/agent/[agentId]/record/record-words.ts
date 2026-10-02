@@ -592,6 +592,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
   'surface.app-unrecorded': (_, subject) =>
     `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
+  'surface.authorised': (p, subject) =>
+    `${decider(subject)} authorised ${connectionOf(subject)}${
+      text(p.issuer) ? ` at ${text(p.issuer)}` : ''
+    }`,
+  'surface.authorisation-failed': (p, subject) =>
+    `Authorising ${connectionOf(subject)} failed${because(p.reason)}`,
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

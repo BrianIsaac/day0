@@ -822,6 +822,15 @@ export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
 }
 
+/** The payload of `surface.authorised`: an MCP server's authorisation landed its tokens on the card. */
+export interface SurfaceAuthorisedPayload extends SurfaceNamed {
+  /** The authorisation server that issued the tokens. */
+  readonly issuer: string;
+}
+
+/** The payload of `surface.authorisation-failed`: an authorisation or a refresh did not land. */
+export type SurfaceAuthorisationFailedPayload = SurfaceReason;
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1386,6 +1395,8 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'surface.authorised': SurfaceAuthorisedPayload;
+  'surface.authorisation-failed': SurfaceAuthorisationFailedPayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1550,6 +1561,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'surface.authorised',
+  'surface.authorisation-failed',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
