@@ -41,6 +41,7 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
+import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
@@ -1951,8 +1952,12 @@ async function ownCredentialRows(
     .withIndex('by_credentialId', (q) => q.eq('credentialId', credential._id))
     .take(2);
   if (binders.some((binder) => binder._id !== surface._id)) {
-    // A key a colleague's card binds too (N1) is never ended by this one; only a pasted key can.
-    return credential.issuedBy === undefined ? [credential] : [];
+    // A key a colleague's card binds too (N1) is never ended by this one. A pasted key and the
+    // organisation's shared token are passed on all the same: the end never sends or revokes
+    // either, and writes the card's line for its system (the wave 11 review's M7).
+    return credential.issuedBy === undefined || sharedByOrganisation(credential)
+      ? [credential]
+      : [];
   }
   const refresh =
     credential.refreshCredentialId === undefined

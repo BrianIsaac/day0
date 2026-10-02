@@ -478,3 +478,83 @@ describe('an organisation connection revoked by the administrator (11-AR over 11
     ]);
   });
 });
+
+describe("a shared card's end once a second employee holds the shared token (the wave 11 review's M7)", (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    vi.useFakeTimers();
+    stubVendorNetwork();
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    restoreSurfaceMode();
+  });
+
+  it('writes the shared line for every card that ends, never revoking the token the others use', async (): Promise<void> => {
+    const harness = await realHarness();
+    const { cards, token } = await harness.run(async (ctx) => {
+      const token = await ctx.db.insert('credentials', {
+        userId: 'day0:organisation',
+        holder: 'organisation',
+        kind: 'oauth',
+        label: 'Linear app-actor token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        issuedBy: { system: 'linear', grant: 'client-credentials', clientId: 'day0-shared' },
+        createdAt: 1,
+      });
+      const cards: { agentId: Id<'agents'>; surfaceId: Id<'surfaces'> }[] = [];
+      for (const name of ['Maya', 'Leo']) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          path: 'mcp',
+          endpoint: 'https://mcp.linear.app/mcp',
+          credentialLanded: true,
+          credentialId: token,
+          credentialKind: 'oauth',
+          actsAs: { kind: 'shared-app', label: 'Day0' },
+          managerApprovedAt: 1,
+          createdAt: 1,
+        });
+        cards.push({ agentId, surfaceId });
+      }
+      return { cards, token };
+    });
+    const owner = harness.withIdentity(managerIdentity());
+
+    for (const card of cards) {
+      await owner.mutation(api.surfaces.disconnect, { surfaceId: card.surfaceId });
+    }
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    for (const card of cards) {
+      expect(await eventsOf(harness, card.agentId, 'credential.revoked-at-source')).toEqual([
+        expect.objectContaining({
+          surfaceId: card.surfaceId,
+          system: 'linear',
+          end: 'disconnect',
+          outcome: 'shared',
+        }),
+      ]);
+    }
+    const shared = await read(harness, token);
+    expect(shared?.revokedAt).toBeUndefined();
+    expect(shared?.sourceRevocation).toBeUndefined();
+  });
+});
