@@ -213,67 +213,104 @@ describe("the organisation's deployment tables (11-AK)", (): void => {
     }
   });
 
-  it("keeps every organisation row through a retire and the whole owner's deletion, its secret sealed as it was", async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    await seedOwner(harness);
-    const retiring = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it.each(['mock', 'real'] as const)(
+    "keeps every organisation row through a retire and the whole owner's deletion in %s mode, even one a card binds",
+    async (mode): Promise<void> => {
+      useSurfaceMode(mode);
+      // The modules are re-read under the mode, as the retire reads SURFACE_MODE at load.
+      const [{ default: modeSchema }, { allConvexModules: modeModules }, { api: modeApi }] =
+        await Promise.all([
+          import('../../convex/schema'),
+          import('./all-modules'),
+          import('../../convex/_generated/api'),
+        ]);
+      const harness = convexTest(modeSchema, modeModules());
+      await seedOwner(harness);
+      const { retiring, secret } = await harness.run(async (ctx) => {
+        const retiring = await ctx.db.insert('agents', {
           bossEmail: MANAGER_ADDRESS,
           name: 'Leo',
           userId: 'owner',
           state: 'active',
           createdAt: 1,
-        }),
-    );
-    const { secret } = await harness.run(async (ctx) => {
-      const secret = await ctx.db.insert('credentials', {
-        userId: ORGANISATION_OWNER_KEY,
-        holder: ORGANISATION_HOLDER,
-        kind: 'value',
-        label: 'Slack configuration refresh token',
-        source: 'entered',
+        });
+        const secret = await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'value',
+          label: 'Slack configuration refresh token',
+          source: 'entered',
+          ciphertext: 'sealed',
+          iv: 'iv',
+          createdAt: 1,
+        });
+        const connection = await ctx.db.insert('organisationConnections', {
+          system: 'slack',
+          displayName: 'Slack',
+          kind: 'slack-configuration',
+          mode: 'shared',
+          scopes: ['app_configurations:write'],
+          secretCredentialId: secret,
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('connectionEvents', {
+          organisationConnectionId: connection,
+          type: 'organisation.connection-landed',
+          payload: { system: 'slack' },
+          createdAt: 1,
+        });
+        // A shared-mode card on the organisation's token: the retire walks what the card binds.
+        await ctx.db.insert('surfaces', {
+          agentId: retiring,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          credentialId: secret,
+          credentialKind: 'value',
+          organisationConnectionId: connection,
+          actsAs: { kind: 'shared-app', label: 'Day0' },
+          provisioning: {
+            appId: 'A0DAY0',
+            appName: 'Day0',
+            clientId: 'client-1',
+            clientSecretCredentialId: secret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'http://localhost:3000/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+          },
+          createdAt: 1,
+        });
+        return { retiring, secret };
+      });
+      const organisationRows = async (): Promise<unknown> =>
+        await harness.run(async (ctx) => ({
+          organisationConnections: await ctx.db.query('organisationConnections').collect(),
+          connectionEvents: await ctx.db.query('connectionEvents').collect(),
+          secret: await ctx.db.get(secret),
+        }));
+      const before = await organisationRows();
+
+      const owner = harness.withIdentity(managerIdentity());
+      await owner.mutation(modeApi.reset.retire, { agentId: retiring });
+      expect(await organisationRows()).toEqual(before);
+      await owner.mutation(modeApi.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+      expect(await organisationRows()).toEqual(before);
+      expect(await harness.run(async (ctx) => await ctx.db.get(secret))).toMatchObject({
         ciphertext: 'sealed',
         iv: 'iv',
-        createdAt: 1,
       });
-      const connection = await ctx.db.insert('organisationConnections', {
-        system: 'slack',
-        displayName: 'Slack',
-        kind: 'slack-configuration',
-        mode: 'per-employee',
-        scopes: ['app_configurations:write'],
-        secretCredentialId: secret,
-        registeredBy: { via: 'setup-cli', at: 1 },
-        status: 'active',
-        createdAt: 1,
-      });
-      await ctx.db.insert('connectionEvents', {
-        organisationConnectionId: connection,
-        type: 'organisation.connection-landed',
-        payload: { system: 'slack' },
-        createdAt: 1,
-      });
-      return { secret };
-    });
-    const organisationRows = async (): Promise<unknown> =>
-      await harness.run(async (ctx) => ({
-        organisationConnections: await ctx.db.query('organisationConnections').collect(),
-        connectionEvents: await ctx.db.query('connectionEvents').collect(),
-        secret: await ctx.db.get(secret),
-      }));
-    const before = await organisationRows();
-
-    const owner = harness.withIdentity(managerIdentity());
-    await owner.mutation(api.reset.retire, { agentId: retiring });
-    expect(await organisationRows()).toEqual(before);
-    await owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
-    expect(await organisationRows()).toEqual(before);
-    expect(await harness.run(async (ctx) => await ctx.db.get(secret))).toMatchObject({
-      ciphertext: 'sealed',
-      iv: 'iv',
-    });
-  });
+    },
+  );
 });
 
 describe('credential retention on reset', (): void => {
