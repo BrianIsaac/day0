@@ -7,6 +7,7 @@ import {
   connectedForOrganisationWords,
   expectedCredential,
   mockActsAsWords,
+  moveOfferWords,
   reachedWords,
   stateChip,
   type OrganisationSystem,
@@ -265,5 +266,15 @@ describe("the manager's line for a system IT connected", (): void => {
         'UTC',
       ),
     ).toBe('Connected for your organisation by IT on 1 October');
+  });
+});
+
+describe('the move off a pasted key at its renewal (A27)', (): void => {
+  it('names whom the card would act as through the connection, and that the key keeps working', (): void => {
+    expect(
+      moveOfferWords({ kind: 'own-app', planned: true }, { employee: 'Maya', system: 'Linear' }),
+    ).toBe(
+      'IT connected Linear for your organisation: Maya can act as Maya, its own Linear app, instead of the pasted key, which keeps working until you move.',
+    );
   });
 });

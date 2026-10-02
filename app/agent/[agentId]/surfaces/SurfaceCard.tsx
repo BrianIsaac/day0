@@ -33,6 +33,8 @@ import {
   connectedForOrganisationWords,
   disconnectLines,
   expectedCredential,
+  moveOfferWords,
+  slackChannelsGoWords,
   identityChip,
   reachedWords,
   stateChip,
@@ -40,7 +42,7 @@ import {
 } from './card-words';
 import { CredentialField } from './CredentialField';
 import { DisconnectDialog } from './DisconnectDialog';
-import { ExpiryBlock } from './ExpiryBlock';
+import { ExpiryBlock, type MoveOffer, type Renewed } from './ExpiryBlock';
 import { ToolsRow } from './SurfaceControls';
 import {
   AccessRequestRow,
@@ -140,7 +142,7 @@ export interface SurfaceCardActions {
   readonly land: (label: string, plaintext: string) => void;
   /** Register or install the employee's own Slack app: with a pasted token, or through IT's. */
   readonly provision: (configurationToken?: string) => void;
-  readonly setDays: (days: number) => Promise<{ expiresAt: number }>;
+  readonly setDays: (days: number) => Promise<Renewed>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
   /** Connect through the organisation's connection, where the card's system has an issuer. */
   readonly connect?: () => void;
@@ -295,6 +297,25 @@ export function SurfaceCard({
   const approvedAccess =
     ACCESS_VERDICTS.has(surface.verdict) && surface.managerApprovedAt !== undefined;
   const ended = accessStanding(surface, context.now, zone).kind === 'ended';
+  // A27: a card still on a pasted key whose system IT has since connected is offered the move,
+  // through the connection's own issuer: Slack's app, else the card's Connect.
+  const onMove = slack ? (): void => actions.provision() : actions.connect;
+  const move: MoveOffer | undefined =
+    covering !== undefined &&
+    identity.kind === 'shared-key' &&
+    !identity.planned &&
+    surface.credentialId !== undefined &&
+    onMove !== undefined
+      ? {
+          words: moveOfferWords(
+            cardIdentity({ endpoint: surface.endpoint, path: surface.path }, covering, {
+              selfProvisions: false,
+            }),
+            identityNames,
+          ),
+          onMove,
+        }
+      : undefined;
   const connectable =
     actions.connect !== undefined &&
     covering !== undefined &&
@@ -389,7 +410,17 @@ export function SurfaceCard({
           />
         ) : null}
         <ToolsRow surface={surface} onApprove={actions.approveTools} />
-        <ExpiryBlock surface={surface} now={context.now} onSetDays={actions.setDays} />
+        <ExpiryBlock
+          surface={surface}
+          now={context.now}
+          onSetDays={actions.setDays}
+          endedNote={
+            slack && identity.kind === 'own-app'
+              ? slackChannelsGoWords(context.employeeName, 'Renewing')
+              : undefined
+          }
+          move={move}
+        />
         {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
           <ProvisioningRow
             error={failed('provision')}

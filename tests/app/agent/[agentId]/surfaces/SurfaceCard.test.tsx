@@ -452,4 +452,40 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       'Authorisation started 29 Sep 2026, 11:50 and not finished: Connect starts it again.',
     );
   });
+
+  it("says once a Slack own-app card's access ended that its bot left its channels, by RM4's rule", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        reason: 'expired',
+        managerApprovedAt: NOW - 100 * DAY,
+        expiresAt: NOW - DAY,
+        actsAs: { kind: 'own-app', label: 'Maya (Day0)' },
+      }),
+      { organisation: organisation({ system: 'slack' }) },
+    );
+    expect(markup).toContain(
+      "Slack: Maya's bot is switched off and removed from its channels. Renewing turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.",
+    );
+  });
+
+  it('offers a pasted-key card the move to its own identity in its last week, once IT connected the system (A27)', (): void => {
+    const markup = render(
+      listed({
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-1' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - 85 * DAY,
+        expiresAt: NOW + 3 * DAY,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { organisation: organisation({ system: 'linear' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).toContain(
+      'IT connected Linear for your organisation: Maya can act as Maya, its own Linear app, instead of the pasted key, which keeps working until you move.',
+    );
+    expect(markup).toMatch(/<button[^>]*>Move to its own identity<\/button>/);
+  });
 });

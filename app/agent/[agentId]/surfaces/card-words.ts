@@ -399,3 +399,15 @@ export function disconnectLines(
 export function slackChannelsGoWords(employee: string, restoredBy: string): string {
   return `Slack: ${employee}'s bot is switched off and removed from its channels. ${restoredBy} turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.`;
 }
+
+/**
+ * The move off a pasted key a card offers at its renewal once IT has connected its system (A27;
+ * the access plan, section 8 step 8): whom it would act as instead, and that the key keeps working
+ * until the manager moves it. The wave file's words, flagged as a product call.
+ *
+ * @param target - Whom the card would act as through the organisation's connection.
+ * @param names - The employee's name and the system's.
+ */
+export function moveOfferWords(target: CardIdentity, names: IdentityNames): string {
+  return `IT connected ${names.system} for your organisation: ${names.employee} can act as ${actsAsWords(target, names)}, instead of the pasted key, which keeps working until you move.`;
+}

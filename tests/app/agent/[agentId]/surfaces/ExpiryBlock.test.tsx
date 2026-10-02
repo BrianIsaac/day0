@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   ACCESS_PERIODS,
@@ -14,6 +14,7 @@ import {
 } from '../../../../../src/surfaces/access';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { focusedName, mount, press, said } from '../../../../fixtures/dom/press';
+import { underTarget } from '../../../../fixtures/dom/targets';
 
 describe('the access line and its renewal (Q5, U3 D5)', (): void => {
   const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
@@ -109,5 +110,112 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
       'Linear access now ends 8 Aug 2026, 16:05, earlier than it did.',
     ]);
     earlier.unmount();
+  });
+});
+
+describe('what a renewal needs next, and the move off a pasted key (11-AR; A26, A27, RM4)', (): void => {
+  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
+  const DAY = 24 * 60 * 60 * 1000;
+  const ended = (patch: Partial<ExpirySurface> = {}): ExpirySurface => ({
+    _id: 'surface-slack' as Id<'surfaces'>,
+    displayName: 'Slack',
+    verdict: 'approved',
+    reason: 'expired',
+    expiresAt: AT,
+    accessSetBy: 'approval',
+    ...patch,
+  });
+
+  it("says, once a Slack own-app card's access ended, that its bot left its channels and what renewing restores", (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended()}
+          now={AT + DAY}
+          onSetDays={async () => ({ expiresAt: AT })}
+          endedNote="Slack: Leo's bot is switched off and removed from its channels. Renewing turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again."
+        />
+      </AgentZoneContext>,
+    ).replace(/&#x27;/g, "'");
+    expect(markup).toContain("Slack: Leo's bot is switched off and removed from its channels.");
+    const running = renderToStaticMarkup(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended({ verdict: 'connected', reason: undefined })}
+          now={AT - 30 * DAY}
+          onSetDays={async () => ({ expiresAt: AT })}
+          endedNote="Slack: the bot left."
+        />
+      </AgentZoneContext>,
+    );
+    expect(running).not.toContain('Slack: the bot left.');
+  });
+
+  it('says after a renewal that the identity the expiry revoked is issued again on the card', async (): Promise<void> => {
+    const install = mount(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended()}
+          now={AT + DAY}
+          onSetDays={async () => ({ expiresAt: AT + 91 * DAY, reissue: 'install' as const })}
+        />
+      </AgentZoneContext>,
+    );
+    await press(install.container, 'Renew for 90 days');
+    expect(said(install.container)).toEqual([
+      'Renewed: Slack access now ends 27 Dec 2026, 16:05. The end revoked its access, so install its app again below.',
+    ]);
+    install.unmount();
+    const authorise = mount(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended({ displayName: 'Linear' })}
+          now={AT + DAY}
+          onSetDays={async () => ({ expiresAt: AT + 91 * DAY, reissue: 'authorise' as const })}
+        />
+      </AgentZoneContext>,
+    );
+    await press(authorise.container, 'Renew for 90 days');
+    expect(said(authorise.container)).toEqual([
+      'Renewed: Linear access now ends 27 Dec 2026, 16:05. The end revoked its access, so Connect it again below.',
+    ]);
+    authorise.unmount();
+  });
+
+  it("offers a pasted-key card's move to its own identity at its renewal, and keeps the key working meanwhile (A27)", async (): Promise<void> => {
+    const onMove = vi.fn();
+    const view = mount(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended({ displayName: 'Linear', verdict: 'connected', reason: undefined })}
+          now={AT - 2 * DAY}
+          onSetDays={async () => ({ expiresAt: AT + 88 * DAY, offer: 'own-identity' as const })}
+          move={{
+            words:
+              'IT connected Linear for your organisation: Maya can act as its own Linear app instead of the pasted key, which keeps working until you move.',
+            onMove,
+          }}
+        />
+      </AgentZoneContext>,
+    );
+    expect(view.container.textContent).toContain('which keeps working until you move.');
+    await press(view.container, 'Move to its own identity');
+    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('offers no move while the access runs far from its end', (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext value="UTC">
+        <ExpiryBlock
+          surface={ended({ displayName: 'Linear', verdict: 'connected', reason: undefined })}
+          now={AT - 60 * DAY}
+          onSetDays={async () => ({ expiresAt: AT })}
+          move={{ words: 'IT connected Linear.', onMove: (): void => undefined }}
+        />
+      </AgentZoneContext>,
+    );
+    expect(markup).not.toContain('Move to its own identity');
   });
 });
