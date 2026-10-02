@@ -43,6 +43,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
+import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
@@ -940,7 +941,9 @@ export const recordOrientationFailure = internalMutation({
 });
 
 /**
- * Attach an encrypted credential reference without exposing its value.
+ * Attach an encrypted credential reference without exposing its value, and write whom the card
+ * now acts as (`actsAs`, D2): a pasted value or location is a shared key named by its label, an
+ * installed app's token the employee's own app (`actsAsAtUpgrade`).
  *
  * Internal, for `surfaceActions.landCredential`. Refuses a credential that is not the employee's
  * current owner's (`assertCredentialOfOwner`): the action stored it under the owner it started
@@ -959,11 +962,17 @@ export const attachCredential = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     await assertCredentialOfOwner(ctx.db, surface.agentId, args.credentialId);
+    const credential = await ctx.db.get(args.credentialId);
     const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: args.credentialKind,
       credentialLocation: args.credentialLocation,
+      // The credential's own label names it; the owner check above has read the row.
+      actsAs: actsAsAtUpgrade(surface, {
+        kind: args.credentialKind,
+        label: credential?.label ?? '',
+      }),
       credentialLanded: false,
       verdict:
         approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')

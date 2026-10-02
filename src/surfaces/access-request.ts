@@ -84,3 +84,14 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
   if (card.path === 'mcp' && HOST_NAME.test(host)) return `${MCP_SYSTEM_PREFIX}${host}`;
   return undefined;
 }
+
+/**
+ * Why a card refuses a pasted credential: its system has an active organisation connection, so
+ * the card's credential comes from that connection, never from a paste (the access plan,
+ * section 4.1). Says nothing of the value.
+ *
+ * @param displayName - The system's name as the connection shows it.
+ */
+export function organisationConnectedRefusal(displayName: string): string {
+  return `${displayName} is connected for your organisation by IT, so this card connects through that connection, never a pasted key. Nothing was stored.`;
+}

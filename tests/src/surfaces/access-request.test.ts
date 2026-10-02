@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isOrganisationSystemKey,
+  organisationConnectedRefusal,
   organisationSystemOf,
 } from '../../../src/surfaces/access-request';
 
@@ -75,5 +76,13 @@ describe('the organisation system a card needs', (): void => {
     expect(
       organisationSystemOf({ ...card, endpoint: 'https://intranet.acme.test/api' }),
     ).toBeUndefined();
+  });
+});
+
+describe('the refusal of a pasted key on a system the organisation connected', (): void => {
+  it('names the system and says nothing was stored', (): void => {
+    expect(organisationConnectedRefusal('Linear')).toBe(
+      'Linear is connected for your organisation by IT, so this card connects through that connection, never a pasted key. Nothing was stored.',
+    );
   });
 });
