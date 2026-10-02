@@ -84,6 +84,8 @@ export interface DocumentationPage {
 /** A system the documentation names, with the pages that name it, in the order first named. */
 export interface DocumentedSystem {
   readonly system: string;
+  /** The first address that named it: an MCP server's is where the verb offers to connect. */
+  readonly address: string;
   readonly pages: readonly string[];
 }
 
@@ -105,7 +107,7 @@ function mcpPath(url: URL): boolean {
  * @returns Each system once, with every page that names it, in the order first named.
  */
 export function documentedSystems(pages: readonly DocumentationPage[]): DocumentedSystem[] {
-  const found = new Map<string, string[]>();
+  const found = new Map<string, { address: string; pages: string[] }>();
   for (const page of pages) {
     for (const match of page.markdown.matchAll(ADDRESS)) {
       const raw = match[0].replace(/[.,;:!?]+$/, '');
@@ -121,10 +123,14 @@ export function documentedSystems(pages: readonly DocumentationPage[]): Document
         ...(mcpPath(url) ? { path: 'mcp' } : {}),
       });
       if (system === undefined) continue;
-      const named = found.get(system) ?? [];
-      if (!named.includes(page.path)) named.push(page.path);
+      const named = found.get(system) ?? { address: url.href, pages: [] };
+      if (!named.pages.includes(page.path)) named.pages.push(page.path);
       found.set(system, named);
     }
   }
-  return [...found].map(([system, named]) => ({ system, pages: named }));
+  return [...found].map(([system, named]) => ({
+    system,
+    address: named.address,
+    pages: named.pages,
+  }));
 }

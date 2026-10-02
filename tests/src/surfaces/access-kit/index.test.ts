@@ -53,10 +53,14 @@ describe('the access kit', (): void => {
       { path: 'revops/wiki.md', markdown: 'See https://example.org/handbook for the rest.' },
     ]);
     expect(found).toEqual([
-      { system: 'slack', pages: ['revops/slack.md'] },
-      { system: 'linear', pages: ['revops/linear.md'] },
-      { system: 'mcp:mcp.acme.com', pages: ['revops/crm.md'] },
-      { system: 'github', pages: ['revops/code.md'] },
+      { system: 'slack', address: 'https://slack.com/api/', pages: ['revops/slack.md'] },
+      {
+        system: 'linear',
+        address: 'https://linear.app/acme/team/REV',
+        pages: ['revops/linear.md'],
+      },
+      { system: 'mcp:mcp.acme.com', address: 'https://mcp.acme.com/mcp', pages: ['revops/crm.md'] },
+      { system: 'github', address: 'https://github.com/acme/app', pages: ['revops/code.md'] },
     ]);
   });
 

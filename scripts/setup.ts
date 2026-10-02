@@ -89,6 +89,7 @@ import {
 import { writePrivateEnv } from './private-env';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
+import { parseAnswers, runAccess, type AccessFlags } from './setup-access';
 import { credentialKeyToAdopt, PROTECTED_PROJECTS, PROTECTED_VOLUMES } from './demo-bed';
 import {
   defaultModel,
@@ -163,8 +164,12 @@ export type SandboxChoice = 'local' | 'daytona';
 /**
  * The lifecycle verbs: stop for the day, come back, throw the project away,
  * copy its data out, put a copy back, upgrade to the checkout's release, or
- * hold and release the deployment's scheduled jobs; and `sign-in`, which adds
- * the company sign-in to an installation (`scripts/setup-sign-in.ts`).
+ * hold and release the deployment's scheduled jobs; `sign-in`, which adds
+ * the company sign-in to an installation (`scripts/setup-sign-in.ts`);
+ * `access`, which connects the organisation's systems with the customer's IT
+ * (`scripts/setup-access.ts`); and `install`, which runs the lifecycle verbs'
+ * target checks, then `sign-in`, `access` and the checks, stopping at the
+ * first that fails (B13).
  */
 export type SetupCommand =
   | 'stop'
@@ -175,7 +180,9 @@ export type SetupCommand =
   | 'upgrade'
   | 'pause'
   | 'unpause'
-  | 'sign-in';
+  | 'sign-in'
+  | 'access'
+  | 'install';
 
 /** The verbs, as the command line spells them. */
 const SETUP_COMMANDS: readonly SetupCommand[] = [
@@ -188,6 +195,8 @@ const SETUP_COMMANDS: readonly SetupCommand[] = [
   'pause',
   'unpause',
   'sign-in',
+  'access',
+  'install',
 ];
 
 /**
@@ -303,6 +312,10 @@ export interface SetupOptions {
   upgradePause?: string;
   /** `sign-in`: the provider and the answers given as flags; the rest are asked for. */
   signIn?: SignInFlags;
+  /** `access` and `install`: the administrators, the systems and their modes; secrets never. */
+  access?: AccessFlags;
+  /** `install`: the backend's public https address, for an install behind the customer's proxy. */
+  backendUrl?: string;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -365,6 +378,10 @@ export interface SetupIo {
    * (`src/lib/release.ts`). A test's disposable checkout names its own.
    */
   newestMigrationRelease?: string;
+  /** The network seam the access verb calls the deployment through; the global `fetch` by default. */
+  readonly fetch?: typeof fetch;
+  /** All of stdin, for `--secrets-stdin`; a terminal on stdin is refused, a pipe or a file read whole. */
+  readStdin?(): Promise<string>;
 }
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
@@ -389,6 +406,8 @@ const USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear | backup | upgrade | pause | unpause [options]
        pnpm setup:local restore <backup.tar.gz> [options]
        pnpm setup:local sign-in --provider <entra|okta|google> [sign-in options]
+       pnpm setup:local access [access options]
+       pnpm setup:local install --provider <entra|okta|google> [sign-in and access options]
 
   --mode <mock|real>            mock (default here): the seeded office, for the
                                 evaluation harness and the hosted demo's workspace;
@@ -460,6 +479,31 @@ The company sign-in, with the customer's IT (docs/running/sign-in-<provider>.md)
   It writes the customer-local block, pushes it, restarts the backend, runs the check
   and exits with the check's status.
 
+The organisation's systems, with the customer's IT (docs/running/install.md, access-<system>.md):
+  ./setup.sh access                       names the administrators, lists the systems the
+                                          documentation names, shows each one's recipe, asks for
+                                          what it produces (secrets hidden) and lands it as the
+                                          organisation's connection; then runs check:access and
+                                          writes the install record
+    --administrators <a@x,b@y>            who manages the organisation's connections (B8)
+    --systems <slack,linear,https://...>  the systems to connect instead of the documentation's
+    --connect-mode <slack=per-employee,linear=shared>
+                                          each system's mode instead of asking
+    --secrets-stdin                       read every answer from stdin as NAME=value lines
+                                          (SLACK_CONFIGURATION_TOKEN, LINEAR_CLIENT_SECRET, ...);
+                                          a secret is never a flag
+    --record <dir>                        where the install record goes (default
+                                          ~/day0-install/<project>)
+    --print-manifest <slack|linear>       print the kit's manifest for that system and stop
+  ./setup.sh install --provider entra     the lifecycle target checks, then sign-in, then access,
+                                          then check:setup and check:sign-in; stops at the first
+                                          that fails and says which. Takes both verbs' flags;
+                                          with --secrets-stdin the sign-in's client secret is
+                                          DAY0_OIDC_CLIENT_SECRET on stdin
+    --backend-url <https://...>           the backend's public address, for an install behind the
+                                          customer's proxy (written as NEXT_PUBLIC_CONVEX_URL and
+                                          kept by later pushes)
+
 Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the sync):
   ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
   ./setup.sh unpause                      each job runs again at its next turn
@@ -499,6 +543,13 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     '--client-id': 'clientId',
     '--allowed-domains': 'allowedDomains',
     '--public-url': 'publicUrl',
+  };
+  const accessFlags: Readonly<Record<string, Exclude<keyof AccessFlags, 'secretsStdin'>>> = {
+    '--administrators': 'administrators',
+    '--systems': 'systems',
+    '--connect-mode': 'connectModes',
+    '--record': 'record',
+    '--print-manifest': 'printManifest',
   };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {
     '--port': 'backend',
@@ -581,6 +632,12 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       };
     } else if (argument in signInFlags) {
       options.signIn = { ...options.signIn, [signInFlags[argument]]: take() };
+    } else if (argument in accessFlags) {
+      options.access = { ...options.access, [accessFlags[argument]]: take() };
+    } else if (argument === '--secrets-stdin') {
+      options.access = { ...options.access, secretsStdin: true };
+    } else if (argument === '--backend-url') {
+      options.backendUrl = take();
     } else if (argument in portFlags) {
       const value = take();
       const port = Number.parseInt(value, 10);
@@ -1208,7 +1265,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     CONVEX_PORT: String(backend),
     CONVEX_SITE_PROXY_PORT: String(site),
     CONVEX_DASHBOARD_PORT: String(dashboard),
-    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${backend}`,
+    NEXT_PUBLIC_CONVEX_URL: customerBackendUrl(input.existing) ?? `http://127.0.0.1:${backend}`,
     NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${site}`,
     CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${backend}`,
   };
@@ -1512,9 +1569,13 @@ export function backendIdentityRefusal(args: {
  * declaring 3211. Nothing in day0 reads the site URL, which is why this is
  * silent rather than broken, but the file is what a reader believes.
  *
+ * An install behind the customer's proxy keeps the backend's public address
+ * it wrote (`customerBackendUrl`), which the push rewrote all the same.
+ *
  * Args:
  *   values: The env file after the push.
  *   ports: The host ports this installation publishes.
+ *   before: The env file before the run, whose public backend address is kept.
  *
  * Returns:
  *   The addresses to put back; empty when the CLI left them alone.
@@ -1522,9 +1583,10 @@ export function backendIdentityRefusal(args: {
 export function publicUrlCorrections(
   values: Readonly<Record<string, string>>,
   ports: SetupPorts,
+  before: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   const wanted: Record<string, string> = {
-    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
+    NEXT_PUBLIC_CONVEX_URL: customerBackendUrl(before) ?? `http://127.0.0.1:${ports.backend}`,
     NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
   };
   const corrections: Record<string, string> = {};
@@ -3490,7 +3552,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         }
       }
       if (!pushed) return false;
-      const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
+      const corrections = publicUrlCorrections(readEnvValues(envPath), ports, existing);
       if (Object.keys(corrections).length > 0) {
         writeEnvValues(envPath, corrections);
         io.log(
@@ -5007,6 +5069,186 @@ function unfinishedPauseNote(io: SetupIo, target: LifecycleTarget, options: Setu
   );
 }
 
+/** The target refusal a verb prints, or undefined when the installation is this checkout's to act on. */
+function targetRefusal(io: SetupIo, options: SetupOptions, verb: SetupCommand): string | undefined {
+  try {
+    const target = lifecycleTarget(io, options, verb);
+    return typeof target === 'string' ? target : undefined;
+  } catch (error) {
+    return errorMessage(error);
+  }
+}
+
+/**
+ * Connect the organisation's systems (`scripts/setup-access.ts`), on an installation this
+ * checkout set up: the lifecycle verbs' target checks first. Printing a manifest needs none.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   The access check's exit status; 1 when the target or the verb refused.
+ */
+async function runAccessVerb(options: SetupOptions, io: SetupIo): Promise<number> {
+  if (options.access?.printManifest === undefined) {
+    const refusal = targetRefusal(io, options, 'access');
+    if (refusal !== undefined) {
+      io.log(`error: ${refusal}`);
+      return 1;
+    }
+  }
+  return await runAccess({ access: options.access ?? {}, dryRun: options.dryRun }, io);
+}
+
+/** The variable the sign-in verb reads its client secret from when nothing can be asked. */
+const SIGN_IN_SECRET = 'DAY0_OIDC_CLIENT_SECRET';
+
+/**
+ * The backend's public address an install behind the customer's proxy gave, kept by every later
+ * push and setup run: an https, non-loopback `NEXT_PUBLIC_CONVEX_URL` under the customer-local
+ * profile, which only `install --backend-url` writes. Anything else is the loopback address the
+ * setup derives from the ports.
+ *
+ * Args:
+ *   values: The env file's values before the run changed anything.
+ *
+ * Returns:
+ *   The address to keep, or undefined.
+ */
+export function customerBackendUrl(values: Readonly<Record<string, string>>): string | undefined {
+  if ((values.DAY0_PROFILE ?? '').trim() !== 'customer-local') return undefined;
+  const address = (values.NEXT_PUBLIC_CONVEX_URL ?? '').trim();
+  return address.startsWith('https://') && !isLoopback(address) ? address : undefined;
+}
+
+/**
+ * The backend's public address `--backend-url` names, or why it is not one.
+ *
+ * Args:
+ *   raw: The flag's value.
+ *
+ * Returns:
+ *   The origin, or the refusal.
+ */
+function backendUrlOf(raw: string): { url: string } | { refusal: string } {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return { refusal: `--backend-url "${raw}" is not an address.` };
+  }
+  if (url.protocol !== 'https:' || isLoopback(url.origin)) {
+    return {
+      refusal:
+        '--backend-url must be https and reached through the customer’s proxy: people’s browsers ' +
+        'call the backend there. Leave it out for an install used from this machine only.',
+    };
+  }
+  return { url: url.origin };
+}
+
+/**
+ * Install Day0 with the customer's IT, in one command (B13): the lifecycle verbs' target checks,
+ * the backend's public address when one is given, then `sign-in`, `access`, `check:setup` and
+ * `check:sign-in`, stopping at the first that fails and naming it. Each verb stays runnable
+ * alone, and a run after a stop keeps everything the steps before it wrote.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   0 when every step passed, else the failing step's status.
+ */
+async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
+  const started = io.now?.() ?? Date.now();
+  const refusal = targetRefusal(io, options, 'install');
+  if (refusal !== undefined) {
+    io.log(`error: ${refusal}`);
+    return 1;
+  }
+  const backend = options.backendUrl === undefined ? undefined : backendUrlOf(options.backendUrl);
+  if (backend !== undefined && 'refusal' in backend) {
+    io.log(`error: ${backend.refusal} Nothing was written.`);
+    return 1;
+  }
+  let answers: ReadonlyMap<string, string> | undefined;
+  if (options.access?.secretsStdin === true) {
+    try {
+      answers = parseAnswers((await io.readStdin?.()) ?? '');
+    } catch (error) {
+      io.log(`error: ${errorMessage(error)} Nothing was written.`);
+      return 1;
+    }
+  }
+  if (backend !== undefined && !options.dryRun) {
+    writeEnvValues(join(io.cwd, ENV_FILE), { NEXT_PUBLIC_CONVEX_URL: backend.url });
+    io.log(
+      `Wrote NEXT_PUBLIC_CONVEX_URL=${backend.url}: people's browsers reach the backend there.`,
+    );
+  }
+  const stopped = (step: string, status: number): number => {
+    io.log('');
+    io.log(
+      `The install stopped at ${step}: it exited ${status}, and nothing after it ran. Fix what it ` +
+        `said, then run \`${verbCommand('install', options.mode)}\` again; every step before it ` +
+        'keeps what it wrote.',
+    );
+    return status === 0 ? 1 : status;
+  };
+
+  io.log('\n== 1. The company sign-in ==');
+  const secret = answers?.get(SIGN_IN_SECRET);
+  const signInIo: SetupIo =
+    answers === undefined
+      ? io
+      : {
+          ...io,
+          interactive: false,
+          environment: {
+            ...io.environment,
+            ...(secret === undefined ? {} : { [SIGN_IN_SECRET]: secret }),
+          },
+        };
+  const signedIn = await runSignIn(
+    { signIn: options.signIn ?? {}, dryRun: options.dryRun },
+    signInIo,
+  );
+  if (signedIn !== 0) return stopped('the sign-in', signedIn);
+
+  io.log('\n== 2. The organisation’s systems ==');
+  const connected = await runAccess(
+    {
+      access: options.access ?? {},
+      dryRun: options.dryRun,
+      ...(answers === undefined ? {} : { answers }),
+    },
+    io,
+  );
+  if (connected !== 0) return stopped('access', connected);
+
+  const checks = ['check:setup', 'check:sign-in'] as const;
+  if (options.dryRun) {
+    io.log(`\nThen: ${checks.map((name) => `pnpm run ${name}`).join(', then ')}.`);
+    return 0;
+  }
+  for (const [index, name] of checks.entries()) {
+    io.log(
+      `\n== ${index + 3}. ${name === 'check:setup' ? 'The whole setup' : 'One test sign-in, with the customer’s IT'} ==`,
+    );
+    io.log(`pnpm run ${name}`);
+    const result = io.run('pnpm', ['run', name], { inherit: true });
+    if (result.status !== 0) return stopped(name, result.status ?? 1);
+  }
+  const seconds = Math.round(((io.now?.() ?? Date.now()) - started) / 1000);
+  io.log(
+    `\nThe install passed every check in ${Math.floor(seconds / 60)} min ${seconds % 60} s. ` +
+      'Build and start the app behind the proxy: `pnpm build`, then `pnpm start`.',
+  );
+  return 0;
+}
+
 /**
  * Run the verb the command line named, or the setup itself.
  *
@@ -5037,6 +5279,10 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
       return runUnpause(options, io);
     case 'sign-in':
       return runSignIn({ signIn: options.signIn ?? {}, dryRun: options.dryRun }, io);
+    case 'access':
+      return runAccessVerb(options, io);
+    case 'install':
+      return runInstall(options, io);
     case undefined:
       return runSetup(options, io);
   }
@@ -5268,6 +5514,17 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
         maxBuffer: 32 * 1024 * 1024,
       });
       return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    },
+    readStdin: async (): Promise<string> => {
+      if (process.stdin.isTTY === true) {
+        throw new Error(
+          '--secrets-stdin reads a pipe or a file, not a terminal: ' +
+            '`./setup.sh access --secrets-stdin < answers.env`, the file readable by you alone.',
+        );
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
+      return Buffer.concat(chunks).toString('utf8');
     },
     ask: (question: string, options: { hidden?: boolean } = {}): Promise<string> =>
       new Promise<string>((resolvePromise, rejectPromise) => {
