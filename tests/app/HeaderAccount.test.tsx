@@ -60,6 +60,7 @@ vi.mock('@clerk/nextjs', () => ({
       ? { isLoaded: false, isSignedIn: undefined, user: undefined }
       : { isLoaded: true, isSignedIn: clerk.user !== null, user: clerk.user },
   useClerk: () => ({ status: clerk.user === undefined ? 'loading' : 'ready' }),
+  useAuth: () => ({ isLoaded: clerk.user !== undefined, isSignedIn: clerk.user ? true : false }),
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     clerk.user !== undefined && (when === 'signed-in') === (clerk.user !== null) ? children : null,
   SignInButton: ({ children, appearance }: { children: ReactNode; appearance?: unknown }) => {

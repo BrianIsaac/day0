@@ -1,18 +1,13 @@
 'use client';
 
 import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
-import Link from 'next/link';
 import { useEffect, useId, useRef, useState, type FocusEvent as ReactFocusEvent } from 'react';
 import { CUSTOMER_SIGN_IN, type SessionAccount } from '@/lib/customer-sign-in';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
 import { clerkAppearance, clerkSignInAppearance } from './clerk-appearance';
-import { CustomerSignOutButton, useCustomerAccount } from './Providers';
-import {
-  ORGANISATION_HREF,
-  ORGANISATION_LINK,
-  useCallerIsAdministrator,
-} from './organisation/use-administrator';
+import { CustomerSignOutButton, SessionGate, useCustomerAccount } from './Providers';
+import { AdministeredAccountMenu, OrganisationMenuLink } from './organisation/AdministratorLinks';
 
 /** Every control in the slot sits in its one grid cell, so the cell is as large as the largest. */
 const LAYER = '[grid-area:1/1]';
@@ -83,55 +78,19 @@ function AccountSlot(): React.ReactElement {
 }
 
 /**
- * Clerk's account menu in the shared appearance, with the organisation page's way in for an
- * administrator only (B8).
+ * Clerk's account menu in the shared appearance. Once Convex holds the token it is the menu that
+ * knows whether the caller administers the organisation; until then, and for anyone Convex has not
+ * confirmed, the plain menu. Clerk reads its custom items off the menu's own children, so the gate
+ * chooses between two menus rather than wrapping an item.
  */
 function ClerkAccountMenu(): React.ReactElement {
-  const administrator = useCallerIsAdministrator();
-  return (
-    <UserButton appearance={clerkAppearance} userProfileProps={{ appearance: clerkAppearance }}>
-      {administrator ? (
-        <UserButton.MenuItems>
-          <UserButton.Link
-            label={ORGANISATION_LINK}
-            labelIcon={<OrganisationIcon />}
-            href={ORGANISATION_HREF}
-          />
-        </UserButton.MenuItems>
-      ) : null}
-    </UserButton>
+  const plain = (
+    <UserButton appearance={clerkAppearance} userProfileProps={{ appearance: clerkAppearance }} />
   );
-}
-
-/** The organisation link's icon in Clerk's menu: a building, drawn in the text's colour. */
-function OrganisationIcon(): React.ReactElement {
   return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none">
-      <path
-        d="M3 14V3.5L9 2v12M9 6h4v8M2 14h12M5 5.5h2M5 8h2M5 10.5h2M11 8.5h0M11 11h0"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/**
- * The organisation page's way in, inside the customer-local account menu: for an administrator
- * only (B8), a 44 px link like the menu's other control.
- */
-function OrganisationMenuLink(): React.ReactElement | null {
-  const administrator = useCallerIsAdministrator();
-  if (!administrator) return null;
-  return (
-    <Link
-      href={ORGANISATION_HREF}
-      className="inline-flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-3 text-sm text-[var(--color-fg)] no-underline hover:border-[var(--color-accent)]"
-    >
-      {ORGANISATION_LINK}
-    </Link>
+    <SessionGate fallback={plain} closed={plain}>
+      <AdministeredAccountMenu />
+    </SessionGate>
   );
 }
 
@@ -282,7 +241,9 @@ function CustomerAccountMenu(): React.ReactElement {
             <p className="truncate text-xs text-[var(--color-muted)]">{account.email}</p>
           )}
         </div>
-        <OrganisationMenuLink />
+        <SessionGate fallback={null} closed={null}>
+          <OrganisationMenuLink />
+        </SessionGate>
         <CustomerSignOutButton />
       </div>
     </div>

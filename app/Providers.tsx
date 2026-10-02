@@ -228,6 +228,12 @@ export const SIGN_IN_CONFIRM_MS = 5_000;
 export interface SessionGateProps {
   readonly children: ReactNode;
   readonly fallback: ReactNode;
+  /**
+   * Drawn in place of every state but open (waiting, unconfirmed, signed out), for a gate inside
+   * the header, where a page-scale notice has no room: the header's own signed-out controls say
+   * the rest. Absent, a page's gate says each state at page scale.
+   */
+  readonly closed?: ReactNode;
 }
 
 /**
@@ -249,12 +255,16 @@ export interface SessionGateProps {
  * would otherwise leave the manager's rows, address and controls drawn under a header that says
  * "Sign in" (the second review's x1).
  */
-export function SessionGate({ children, fallback }: SessionGateProps) {
+export function SessionGate({ children, fallback, closed }: SessionGateProps) {
   if (DEV_NO_AUTH || CUSTOMER_SIGN_IN) return <>{children}</>;
-  return <ClerkSessionGate fallback={fallback}>{children}</ClerkSessionGate>;
+  return (
+    <ClerkSessionGate fallback={fallback} closed={closed}>
+      {children}
+    </ClerkSessionGate>
+  );
 }
 
-function ClerkSessionGate({ children, fallback }: SessionGateProps) {
+function ClerkSessionGate({ children, fallback, closed }: SessionGateProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { status } = useClerk();
   const { isSignedIn } = useAuth();
@@ -266,10 +276,13 @@ function ClerkSessionGate({ children, fallback }: SessionGateProps) {
   const unconfirmed = !isLoading && !isAuthenticated && isSignedIn === true;
   const awaitingToken = unconfirmed && tokenFetch === null;
   const confirming = unconfirmed && tokenFetch?.hadToken === true;
-  const overdue = useOverdue((isLoading || awaitingToken) && status !== 'error', SESSION_WAIT_MS);
-  const confirmOverdue = useOverdue(confirming && status !== 'error', SIGN_IN_CONFIRM_MS);
+  // A header's gate waits silently: the page's own gate times the wait and says it.
+  const timed = status !== 'error' && closed === undefined;
+  const overdue = useOverdue((isLoading || awaitingToken) && timed, SESSION_WAIT_MS);
+  const confirmOverdue = useOverdue(confirming && timed, SIGN_IN_CONFIRM_MS);
   // A Clerk that failed to load never answers; the page is let through to say what it can.
-  if (status === 'error') return <>{children}</>;
+  if (status === 'error') return <>{closed ?? children}</>;
+  if (closed !== undefined && !(isAuthenticated && !isLoading)) return <>{closed}</>;
   if (isLoading || awaitingToken) return overdue ? <SessionUnconfirmed /> : <>{fallback}</>;
   if (confirming && !confirmOverdue) return <>{fallback}</>;
   if (!isAuthenticated) return <SignedOut refused={isSignedIn === true} />;
