@@ -510,4 +510,40 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(proposed).not.toContain('Provision a dedicated app');
     expect(proposed).not.toMatch(/<button[^>]*>Connect<\/button>/);
   });
+
+  it('says on its chip that a card waits on IT or is ready to connect, never that it needs a credential nobody pastes (bed, 2 Oct)', (): void => {
+    const waiting = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
+    expect(chip(waiting)).toBe('Waiting on IT');
+    const ready = render(
+      listed(LINEAR_APPROVED),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(chip(ready)).toBe('Ready to connect');
+    expect(chip(render(listed(LINEAR_APPROVED)))).toBe('Needs its credential');
+  });
+
+  it("draws no credential lines on a covered card, whose identity the Acts as row names, unless the manager's own key is stored there (bed, 2 Oct)", (): void => {
+    const covered = render(
+      listed({
+        ...LINEAR_APPROVED,
+        request: { credential: { found: 'none', method: 'oauth', label: 'Linear access' } },
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(covered).not.toContain('Follow the documented OAuth approval procedure');
+    const organisationHeld = render(
+      listed({
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-org' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        actsAs: { kind: 'shared-app', label: 'Linear' },
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+    );
+    expect(organisationHeld).not.toContain('Stored credential metadata is unavailable');
+  });
 });

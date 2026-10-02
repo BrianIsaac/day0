@@ -98,13 +98,18 @@ export interface StateChipWords {
  * can do, never the stored verdict. Access that has ended or ends within the week outranks the
  * connection, since it is what the manager has to act on.
  *
+ * An approved card with nothing landed says what it waits on where that is not a paste: IT, for a
+ * card whose access request is out, or the manager's Connect, for a card IT's connection covers.
+ *
  * @param surface - The card's row.
  * @param now - The instant to judge the access against.
+ * @param options - What an approved card with nothing landed waits on, when not a paste.
  */
 export function stateChip(
   surface: WordedSurface,
   now: number,
   zone: string | undefined,
+  options: { readonly waitsOn?: 'it' | 'connect' } = {},
 ): StateChipWords {
   const access = accessStanding(surface, now, zone);
   if (access.kind === 'ended') return { text: 'Access ended', tone: 'warn' };
@@ -124,9 +129,10 @@ export function stateChip(
     case 'proposed':
       return { text: rung ? `Proposed · ${rung.name}` : 'Proposed', tone: 'muted' };
     case 'approved':
-      return surface.credentialLanded
-        ? { text: 'Checking the connection', tone: 'accent' }
-        : { text: 'Needs its credential', tone: 'warn' };
+      if (surface.credentialLanded) return { text: 'Checking the connection', tone: 'accent' };
+      if (options.waitsOn === 'it') return { text: 'Waiting on IT', tone: 'muted' };
+      if (options.waitsOn === 'connect') return { text: 'Ready to connect', tone: 'accent' };
+      return { text: 'Needs its credential', tone: 'warn' };
     case 'connected':
       return { text: rung ? `Connected ${rung.via}` : 'Connected', tone: 'ok' };
     case 'ungranted':

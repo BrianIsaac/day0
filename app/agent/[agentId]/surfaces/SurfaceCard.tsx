@@ -243,7 +243,6 @@ export function SurfaceCard({
     reason: surface.reason,
   });
   const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
-  const chip = stateChip(surface, context.now, zone);
   const pending = operation && !operation.error ? operation.kind : undefined;
   const failed = (kind: Operation['kind']): string | undefined =>
     operation?.kind === kind ? operation.error : undefined;
@@ -324,6 +323,16 @@ export function SurfaceCard({
     !ended &&
     surface.credentialId === undefined &&
     !accessRequest;
+  const slackConnectable =
+    slack &&
+    covering !== undefined &&
+    approvedAccess &&
+    !ended &&
+    surface.credentialId === undefined &&
+    provisioningPresentation.offerProvisioning;
+  const chip = stateChip(surface, context.now, zone, {
+    waitsOn: accessRequest ? 'it' : connectable || slackConnectable ? 'connect' : undefined,
+  });
   return (
     <Card
       id={`surface-${surface.slug}`}
@@ -453,7 +462,13 @@ export function SurfaceCard({
             onSent={actions.recordAccessRequestSent}
           />
         ) : null}
-        {request || surface.credentialId || surface.credentialLocation ? (
+        {/* Where IT's connection covers the card, the Acts as row names its identity: the field's
+            lines are drawn only for a key of the manager's own still stored on it. */}
+        {(
+          covering === undefined
+            ? request || surface.credentialId || surface.credentialLocation
+            : summary !== undefined
+        ) ? (
           <CredentialField
             expected={expectedCredential(surface, presentation.label)}
             approved={surface.managerApprovedAt !== undefined}
