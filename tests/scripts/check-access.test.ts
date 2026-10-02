@@ -311,5 +311,12 @@ describe('check:access', (): void => {
         DAY0_TEST_SLACK_AUTHORIZE_URL: 'https://evil.example/oauth/v2/authorize',
       }),
     ).toThrow(/this machine/);
+    // A loopback-looking prefix with credentials in it names another host.
+    expect(() =>
+      slackApiBaseForCheck({
+        DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
+        DAY0_TEST_SLACK_AUTHORIZE_URL: 'http://127.0.0.1:1@evil.example/oauth/v2/authorize',
+      }),
+    ).toThrow(/this machine/);
   });
 });

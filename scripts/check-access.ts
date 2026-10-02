@@ -36,7 +36,6 @@ import type { CheckStatus } from './check-sign-in';
 import { adminTarget, deploymentAdmin } from './lib/convex-admin';
 import { readEnvValues } from './lib/env-file';
 import { firstLine } from './model-reach';
-import { isLoopback } from './setup-route';
 
 type Values = Readonly<Record<string, string>>;
 
@@ -207,7 +206,7 @@ function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
       'gap',
       `Missing scope ${[...new Set(lacking)].join(', ')}: the registration holds ` +
         `${row.scopes.join(', ') || 'none'}, and Day0 needs ${mode.scopes.join(', ')}. Grant ` +
-        'them at the vendor, then land the connection again.',
+        'them at the vendor, then rotate the connection with them on the organisation page.',
     );
   }
   if (mode.scopes.length === 0 && row.scopes.length === 0) {
@@ -533,7 +532,8 @@ async function liveChecks(
         row.system,
         'secret',
         'gap',
-        `The secret does not open under this deployment's key: ${errorMessage(err)}`,
+        "The secret does not open under this deployment's key (the key changed since it was " +
+          `sealed, or the row was altered); rotate it with a fresh secret: ${errorMessage(err)}`,
       ),
       check(row.system, 'identity', 'gap', 'Not asked: the secret did not open.'),
     ];
@@ -691,13 +691,32 @@ export function parseConnectionRows(stdout: string): ConnectionRow[] {
 export function slackApiBaseForCheck(values: Values): URL {
   if (!(values.DAY0_TEST_SLACK_API_URL ?? '').trim()) return new URL(SLACK_API_ENDPOINT);
   const published = (values.DAY0_TEST_SLACK_AUTHORIZE_URL ?? '').trim();
-  if (!isLoopback(published)) {
+  if (!onThisMachine(published)) {
     throw new Error(
       'DAY0_TEST_SLACK_API_URL names a fake Slack, and DAY0_TEST_SLACK_AUTHORIZE_URL does not ' +
         'publish it on this machine, so the check cannot reach it.',
     );
   }
   return new URL('/api/', published);
+}
+
+/** The loopback hosts a bed publishes a fake on. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/** Whether an address names this machine: parsed, plain http, a loopback host and no credentials. */
+function onThisMachine(address: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === 'http:' &&
+    url.username === '' &&
+    url.password === '' &&
+    LOOPBACK_HOSTS.has(url.hostname)
+  );
 }
 
 /** The connections the deployment holds, through the Convex CLI pointed at it. */
