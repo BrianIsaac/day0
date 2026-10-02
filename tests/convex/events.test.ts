@@ -711,6 +711,50 @@ describe('export redaction', (): void => {
   });
 });
 
+describe("a provider's answer kept as text (the real-Linear walk's m4)", (): void => {
+  /** A Linear `get_issue` read as the ledger keeps it: the tool, the surface and the answer's JSON. */
+  const READ =
+    'get_issue on linear · {"id":"FIN-5","title":"Close the duplicate query",' +
+    '"gitBranchName":"aiko/fin-5-close-the-duplicate-query","status":"Todo",' +
+    '"createdBy":"Aiko Tanaka","createdById":"11ecf8f2","project":"September close"}';
+
+  it('drops the value of every personal key the answer quotes, and keeps the rest of the answer', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    const exported = redactForExport({ output: { applied: [{ ok: true, effect: READ }] } });
+    const effect = (exported as { output: { applied: Array<{ effect: string }> } }).output
+      .applied[0].effect;
+    expect(effect).not.toContain('aiko');
+    expect(effect).not.toContain('Aiko Tanaka');
+    expect(effect).toBe(
+      'get_issue on linear · {"id":"FIN-5","title":"Close the duplicate query",' +
+        '"gitBranchName":"<redacted: personal>","status":"Todo",' +
+        '"createdBy":"<redacted: personal>","createdById":"11ecf8f2","project":"September close"}',
+    );
+  });
+
+  it('drops a quoted personal value whose text escapes a quote, and one held in a flat object', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport(
+        '{"requester":{"name":"Aman","team":"Sales"},"createdBy":"Wei \\"W\\" Chen"}',
+      ),
+    ).toBe('{"requester":"<redacted: personal>","createdBy":"<redacted: personal>"}');
+  });
+
+  it('drops a personal value the effect bound cut short, to the end of the text', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport('get_issue on linear · {"id":"FIN-5","gitBranchName":"aiko/fin-5-clo…'),
+    ).toBe('get_issue on linear · {"id":"FIN-5","gitBranchName":"<redacted: personal>"');
+  });
+
+  it('leaves a key that only ends in a personal name, and prose that names one, as they are', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    const text = '{"notCreatedBy":"kept"} and the createdBy field was empty';
+    expect(redactForExport(text)).toBe(text);
+  });
+});
+
 describe('the Record tab reader', (): void => {
   /** An employee of `owner` with a work item and five events, oldest first. */
   async function seedRecord(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {

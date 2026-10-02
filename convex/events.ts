@@ -232,9 +232,34 @@ const PERSONAL_KEYS = new Set([
   'toAddress',
 ]);
 
+/** What an export writes in place of a personal key's value quoted inside a text. */
+export const PERSONAL_VALUE_REDACTION = '<redacted: personal>';
+
+/**
+ * A personal key as a JSON text quotes it, with its value: a string (escapes kept whole, and one
+ * the ledger's bound cut short running to the end of the text), or an object or array holding no
+ * other. The key must stand alone in its quotes, so `"notCreatedBy"` and prose that names a key
+ * are left. Out of its reach, and left to the export's other floors: a value nested two objects
+ * deep, and JSON quoted inside a JSON string (`\"createdBy\"`).
+ */
+const EMBEDDED_PERSONAL_VALUE = new RegExp(
+  `("(?:${[...PERSONAL_KEYS].join('|')})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*(?:"|$)|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])`,
+  'g',
+);
+
+/**
+ * A text with the value of every personal key it quotes replaced: a provider's answer the ledger
+ * keeps as text (a Linear read's `gitBranchName`, which carries the Linear user's handle, and its
+ * `createdBy`; the real-Linear walk's m4), which the key filter of `redactForExport` never sees.
+ */
+function withoutEmbeddedPersonalValues(text: string): string {
+  return text.replace(EMBEDDED_PERSONAL_VALUE, `$1"${PERSONAL_VALUE_REDACTION}"`);
+}
+
 /**
  * Redact one value for export: personal keys are dropped, every string has
- * its recognisable credential shapes replaced, and containers are walked.
+ * the personal values it quotes and its recognisable credential shapes
+ * replaced, and containers are walked.
  *
  * Args:
  *   value: A stored payload, ledger entry or nested part of one.
@@ -243,7 +268,7 @@ const PERSONAL_KEYS = new Set([
  *   The same shape with nothing an export should not carry.
  */
 export function redactForExport(value: unknown): unknown {
-  if (typeof value === 'string') return redactTokenShapes(value);
+  if (typeof value === 'string') return redactTokenShapes(withoutEmbeddedPersonalValues(value));
   if (Array.isArray(value)) return value.map(redactForExport);
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(

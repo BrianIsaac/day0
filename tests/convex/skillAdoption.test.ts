@@ -128,13 +128,28 @@ async function employee(
   });
 }
 
-/** A connected Linear surface of an employee, with the tools the manager approved on it. */
+/**
+ * A connected Linear surface of an employee, with the tools the manager approved on it, and the
+ * charter evidence the approval's seeding writes (`declareCharterSystem`) when the employee's
+ * approved charter names Linear.
+ */
 async function linear(
   harness: Harness,
   agentId: Id<'agents'>,
   surface: Partial<Doc<'surfaces'>> = {},
 ): Promise<void> {
   await harness.run(async (ctx) => {
+    const charters = await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect();
+    const namesLinear = charters.some(
+      (charter) =>
+        charter.approved &&
+        (charter.body as { namedSystems?: Array<{ name: string }> }).namedSystems?.some(
+          (system) => system.name === 'Linear',
+        ),
+    );
     await ctx.db.insert('surfaces', {
       agentId,
       slug: 'linear',
@@ -146,6 +161,20 @@ async function linear(
       credentialLanded: true,
       lastVerifiedAt: Date.now(),
       approvedToolAllowlist: ['get_issue', 'save_comment', 'update_issue'],
+      ...(namesLinear
+        ? {
+            discoveryEvidence: [
+              {
+                kind: 'charter' as const,
+                ref: 'manager 1:1',
+                quote: 'the one-to-one',
+                current: true,
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+              },
+            ],
+          }
+        : {}),
       createdAt: 1,
       ...surface,
     });

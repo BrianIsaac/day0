@@ -7,7 +7,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
-import { holdSandboxLease } from '../../convex/skillActions';
+import { holdSandboxLease } from '../../convex/skillSandboxCheck';
 import { SANDBOX_LEASE_RETRY_MS } from '../../convex/sandboxLease';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';

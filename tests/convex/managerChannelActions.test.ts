@@ -4,12 +4,18 @@ import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
+import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import {
   NOTICE_TO_A_GUEST,
+  NOTICE_CARD_NOT_APPROVED,
+  NOTICE_CARD_NOT_CONNECTED,
   NOTICE_TO_THE_MANAGER,
+  NOTICE_WITHOUT_READ,
+  NOTICE_WITHOUT_SLACK,
+  NOTICE_WITHOUT_WRITE,
   transferNoticeText,
 } from '../../convex/transferNotice';
 import { sendTransferNotice as sendTransferNoticeFunction } from '../../convex/managerChannelActions';
@@ -1517,6 +1523,62 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     await withoutWrite(false, false);
     await withoutWrite(true, true);
     expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('records that the named manager was not told in Slack, and why, when no card can carry the notice (m10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const withheld = async (change: (ctx: MutationCtx) => Promise<void>): Promise<unknown[]> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId } = await seedMaya(harness);
+      await harness.run(async (ctx): Promise<void> => await change(ctx));
+      const transferId = await askPriya(harness, agentId);
+      const recorded = await noticeEvents(harness, agentId);
+      expect(recorded).toEqual([
+        {
+          transferId,
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: PRIYA_ADDRESS,
+          delivered: false,
+          reason: expect.any(String),
+        },
+      ]);
+      return recorded;
+    };
+    const surfacesOf = async (ctx: MutationCtx): Promise<Doc<'surfaces'>[]> =>
+      await ctx.db.query('surfaces').collect();
+    const withoutGrant = async (ctx: MutationCtx, scope: string): Promise<void> => {
+      for (const row of await ctx.db.query('permissionGrants').collect()) {
+        if (row.scope === scope) await ctx.db.delete(row._id);
+      }
+    };
+    const reasons = [
+      await withheld(async (ctx) => {
+        for (const surface of await surfacesOf(ctx)) await ctx.db.delete(surface._id);
+      }),
+      await withheld(async (ctx) => {
+        for (const surface of await surfacesOf(ctx)) {
+          await ctx.db.patch(surface._id, { expiresAt: Date.now() - 1 });
+        }
+      }),
+      await withheld(async (ctx) => {
+        for (const surface of await surfacesOf(ctx)) {
+          await ctx.db.patch(surface._id, { toolAllowlist: ['conversations.history'] });
+        }
+      }),
+      await withheld(async (ctx) => await withoutGrant(ctx, 'team-chat:read')),
+      // Juno on the real-Linear walk: Slack connected and readable, no write, autonomy off.
+      await withheld(async (ctx) => await withoutGrant(ctx, 'team-chat:write')),
+    ].map((recorded) => (recorded[0] as { reason: string }).reason);
+    expect(reasons).toEqual([
+      NOTICE_WITHOUT_SLACK,
+      NOTICE_CARD_NOT_CONNECTED,
+      NOTICE_CARD_NOT_APPROVED,
+      NOTICE_WITHOUT_READ,
+      NOTICE_WITHOUT_WRITE,
+    ]);
     expect(noticesIn(calls)).toEqual([]);
   });
 

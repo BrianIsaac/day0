@@ -36,7 +36,10 @@ export interface Adopter {
   readonly mode: SurfaceMode;
   /** The employee's surfaces; the mock office has none. */
   readonly surfaces: readonly AdopterSurface[];
-  /** The classes of the systems the employee's approved charter names (`namedSystems`). */
+  /**
+   * The classes of the systems the employee's approved charter names (`namedSystems`), asked in
+   * mock mode, where no surface carries evidence; in real mode each surface's own evidence is.
+   */
   readonly charterClasses: readonly string[];
   /**
    * The class of the system the work that needs the skill comes from: the proposal's shape, which
@@ -113,16 +116,18 @@ function toolEntries(version: AdoptableVersion): readonly VersionSurfaceTools[] 
  * 1. a connected surface of the version's class;
  * 2. for every surface the version names tools on, a connected surface of that class (or, with
  *    no class kept, of that slug) whose approved allowlist holds every one of those tools;
- * 3. charter evidence for the system: the approved charter names a system of the class, or the
- *    class's surface carries current charter evidence, so a skill is never adopted onto a system
- *    the manager did not put in this employee's charter.
+ * 3. charter evidence on the system itself: the connection is a surface of the class that carries
+ *    current charter evidence and whose approved allowlist holds the version's tools for the
+ *    class, so a skill is never adopted onto a system the manager did not put in this employee's
+ *    charter, even where the charter names another system of the same class (the wave 10 review
+ *    A-m1).
  *
  * In mock mode the mock office stands in for every connection and allowlist, as it does for an
- * approval, and only the charter is asked. There the work item's own system is the charter's
- * evidence too: the mock office holds every system, and the employee's queue is drafted from its
- * approved charter's duties, so work from a system of the class is work the manager chartered
- * whether or not the drafter listed the system by name (the v0.13.0 walk: "the ticket queue"
- * named no product, so no kanban system was listed). Real mode never reads it.
+ * approval, and only the charter's classes are asked. There the work item's own system is the
+ * charter's evidence too: the mock office holds every system, and the employee's queue is drafted
+ * from its approved charter's duties, so work from a system of the class is work the manager
+ * chartered whether or not the drafter listed the system by name (the v0.13.0 walk: "the ticket
+ * queue" named no product, so no kanban system was listed). Real mode never reads it.
  *
  * @param version - The version as the library keeps it.
  * @param adopter - The employee it would be adopted for.
@@ -158,18 +163,39 @@ export function adoptionFit(version: AdoptableVersion, adopter: Adopter): Adopti
       );
     }
   }
-  const chartered =
-    adopter.charterClasses.includes(surfaceClass) ||
-    ofClass.some((surface) => surface.charterEvidence);
-  if (!chartered) {
-    return mismatch('no-charter-evidence', `the charter names no ${surfaceClass} system`);
+  return charteredConnection(version, ofClass);
+}
+
+/**
+ * The surface of the version's class the sandbox would run under: one that carries current charter
+ * evidence and approves the version's tools for the class. A surface the charter does not name
+ * never stands in for one it does, though its allowlist holds every tool.
+ */
+function charteredConnection(
+  version: AdoptableVersion,
+  ofClass: readonly AdopterSurface[],
+): AdoptionFit {
+  const chartered = ofClass.filter((surface) => surface.charterEvidence);
+  const [first] = chartered;
+  if (first === undefined) {
+    // Said of the cards, not the charter: a card the charter names may carry no evidence (a match
+    // recorded as ambiguous, a row from before the evidence), and the charter does name its system.
+    return mismatch(
+      'no-charter-evidence',
+      `no connected ${version.surfaceClass} card carries the charter`,
+    );
   }
-  const allowing = toolEntries(version).find((entry) => entry.surfaceClass === surfaceClass);
-  const connection =
-    allowing === undefined
-      ? ofClass[0]
-      : (ofClass.find((surface) => firstUnapproved(allowing, surface) === undefined) ?? ofClass[0]);
-  return { fits: true, connection };
+  const allowing = toolEntries(version).find(
+    (entry) => entry.surfaceClass === version.surfaceClass,
+  );
+  if (allowing === undefined) return { fits: true, connection: first };
+  const connection = chartered.find((surface) => firstUnapproved(allowing, surface) === undefined);
+  return connection !== undefined
+    ? { fits: true, connection }
+    : mismatch(
+        'tool-not-approved',
+        `the approved tools of ${first.displayName} do not include ${firstUnapproved(allowing, first)}`,
+      );
 }
 
 /**
@@ -522,16 +548,34 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   }
 }
 
+/** What the proposals card holds, as the note under it reads it. */
+export interface ProposalsCardHolds {
+  /** A proposal on the card offers an adoption. */
+  readonly offersAdoption: boolean;
+  /** A proposal on the card waits for an approval, which writes a skill. */
+  readonly proposals: boolean;
+  /** An adoption past its offer is drawn: being checked, stalled, failed or declined. */
+  readonly adoptions: boolean;
+}
+
 /**
  * The note under the proposals: what approving does, said for either way when a card offers an
- * adoption (the prototype's "Approving either way").
+ * adoption (the prototype's "Approving either way"). An adoption past its offer writes nothing,
+ * so a card that holds one never says that approving writes the skill under it (the pre-tag
+ * walk: a stalled adoption's card did).
  *
  * @param adopterName - The employee.
- * @param offersAdoption - Whether any proposal on the card offers an adoption.
+ * @param holds - What the card holds.
  */
-export function adoptionHelp(adopterName: string, offersAdoption: boolean): string {
+export function adoptionHelp(adopterName: string, holds: ProposalsCardHolds): string {
   const charter = `Whether that work is within ${adopterName}'s charter is judged separately.`;
-  return offersAdoption
-    ? `Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`
-    : `Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. ${charter}`;
+  if (holds.offersAdoption) {
+    return `Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`;
+  }
+  if (!holds.adoptions) {
+    return `Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. ${charter}`;
+  }
+  return holds.proposals
+    ? `Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. ${charter}`
+    : `Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`;
 }

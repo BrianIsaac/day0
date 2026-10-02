@@ -1,3 +1,5 @@
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import { RedactorUnavailableError, type SpanModel } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
@@ -1784,6 +1786,150 @@ describe('a refusal is a refusal (P5-4)', (): void => {
     expect(result).toMatchObject({ ok: false, reason: 'Issue not found: <redacted>' });
     expect(result.outcomeUnknown).toBeUndefined();
     expect(client.disconnected).toBe(1);
+  });
+});
+
+describe("a provider's temporarily unavailable on a write (the real-Linear walk's m1)", (): void => {
+  /** Linear's MCP answer to a `save_comment` on 1 October (the walk's FIN-5), less its request id. */
+  const UNAVAILABLE = JSON.stringify({
+    error: 'upstream_unavailable',
+    message: 'Linear is temporarily unavailable. Please try again.',
+    status: 502,
+  });
+
+  interface FakeLinear {
+    readonly url: URL;
+    /** The tools called, in order. */
+    readonly calls: string[];
+    close(): Promise<void>;
+  }
+
+  /**
+   * A Streamable HTTP MCP server on loopback that answers each `tools/call` with the next of
+   * `answers`: a string is an `isError` result with that text, anything else a result body.
+   */
+  async function fakeLinear(answers: readonly unknown[]): Promise<FakeLinear> {
+    const calls: string[] = [];
+    const server = createServer((request: IncomingMessage, response: ServerResponse): void => {
+      let raw = '';
+      request.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+      request.on('end', (): void => {
+        const rpc = raw
+          ? (JSON.parse(raw) as { id?: number; method: string; params?: { name?: string } })
+          : undefined;
+        if (request.method !== 'POST' || rpc?.id === undefined) {
+          response.writeHead(202).end();
+          return;
+        }
+        let result: unknown = {
+          protocolVersion: '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'fake-linear', version: '1' },
+        };
+        if (rpc.method === 'tools/list') {
+          result = {
+            tools: ['save_comment', 'list_issues'].map((name) => ({
+              name,
+              inputSchema: { type: 'object', properties: {} },
+            })),
+          };
+        } else if (rpc.method === 'tools/call') {
+          const answer = answers[calls.length];
+          calls.push(rpc.params?.name ?? '');
+          result =
+            typeof answer === 'string'
+              ? { content: [{ type: 'text', text: answer }], isError: true }
+              : { content: [{ type: 'text', text: JSON.stringify(answer) }] };
+        }
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result }));
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    return {
+      url: new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`),
+      calls,
+      close: async (): Promise<void> =>
+        await new Promise<void>((done) => server.close(() => done())),
+    };
+  }
+
+  /** The adapter on the production client, pointed at the fake in place of the card's address. */
+  function realClientAdapter(fake: FakeLinear, surfaces: SurfaceRecord[] = [linear]): McpAdapter {
+    return new McpAdapter(surfaces, {
+      decrypt: vi.fn(async (): Promise<string> => 'lin-secret'),
+      createClient: (options: McpClientOptions): McpClientLike =>
+        createMastraMcpClient({ serverName: options.serverName, url: fake.url }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+      spanModel: new RecordedSpanModel(),
+    });
+  }
+
+  it('sends the approved write once more and lands it when the server answered that Linear is unavailable', async (): Promise<void> => {
+    const fake = await fakeLinear([UNAVAILABLE, { id: 'comment-1' }]);
+    try {
+      const result = await realClientAdapter(fake).apply(ctx, run, commentCall, 0, 'k');
+      expect(result).toMatchObject({ ok: true, providerId: 'comment-1', idempotencyKey: 'k' });
+      expect(fake.calls).toEqual(['save_comment', 'save_comment']);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it('sends it no third time: a second unavailable answer is the refusal, and nothing is unknown', async (): Promise<void> => {
+    const fake = await fakeLinear([UNAVAILABLE, UNAVAILABLE, { id: 'comment-1' }]);
+    try {
+      const result = await realClientAdapter(fake).apply(ctx, run, commentCall, 0, 'k');
+      expect(result).toMatchObject({ ok: false, reason: UNAVAILABLE });
+      expect(result.outcomeUnknown).toBeUndefined();
+      expect(fake.calls).toEqual(['save_comment', 'save_comment']);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("sends it once when another server answers in Linear's words: the resend is Linear's MCP alone", async (): Promise<void> => {
+    const tracker: SurfaceRecord = {
+      ...linear,
+      slug: 'tracker',
+      displayName: 'Tracker',
+      endpoint: 'https://mcp.tracker.example/mcp',
+    };
+    const trackerComment: MockAction = {
+      ...commentCall,
+      args: { ...commentCall.args, surface: 'tracker' },
+    };
+    const fake = await fakeLinear([UNAVAILABLE, { id: 'comment-1' }]);
+    try {
+      const result = await realClientAdapter(fake, [tracker]).apply(
+        ctx,
+        run,
+        trackerComment,
+        0,
+        'k',
+      );
+      expect(result).toMatchObject({ ok: false, reason: UNAVAILABLE });
+      expect(fake.calls).toEqual(['save_comment']);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it('keeps every other refusal a refusal, sent once', async (): Promise<void> => {
+    const notFound = JSON.stringify({
+      error: 'not_found',
+      message: 'Issue not found',
+      status: 404,
+    });
+    const fake = await fakeLinear([notFound, { id: 'comment-1' }]);
+    try {
+      const result = await realClientAdapter(fake).apply(ctx, run, commentCall, 0, 'k');
+      expect(result).toMatchObject({ ok: false, reason: notFound });
+      expect(fake.calls).toEqual(['save_comment']);
+    } finally {
+      await fake.close();
+    }
   });
 });
 

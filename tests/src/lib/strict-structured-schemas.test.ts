@@ -21,7 +21,7 @@ import { qualityFitSchema } from '../../../src/work/quality-fit';
 import { scopeJudgementSchema } from '../../../src/work/scope';
 import { questionLabelSchema } from '../../../convex/onboarding';
 import { intakeScopePickSchema, orientationSchema } from '../../../convex/orientationActions';
-import { authorSchema, realAuthorSchema } from '../../../convex/skillActions';
+import { authorSchema, realAuthorSchema } from '../../../convex/skillAuthorPrompt';
 
 /**
  * What OpenAI Structured Outputs accepts in a strict `json_schema`, and nothing

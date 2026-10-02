@@ -206,6 +206,29 @@ describe('skillVersions: registration writes the library', (): void => {
     ]);
   });
 
+  it('stamps no row of another owner that points at the older version (the wave 10 review K-m3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    const first = await claimedSkill(harness, priya);
+    await register(harness, first, BODY_ONE);
+    const [one] = await versionsOf(harness);
+    // No writer leaves a pointer across owners today; the boundary holds in the read itself.
+    const stranger = await claimedSkill(harness, await employee(harness, 'Wren', 'colleague'), {
+      state: 'registered',
+      body: BODY_ONE,
+      versionId: one._id,
+    });
+
+    await register(harness, await claimedSkill(harness, mateo), BODY_TWO);
+
+    expect((await skill(harness, first.skillId)).recheckDueAt).toBeDefined();
+    const unstamped = await skill(harness, stranger.skillId);
+    expect([unstamped.recheckDueAt, unstamped.recheckReason]).toEqual([undefined, undefined]);
+    expect(
+      (await eventsOf(harness, 'skill.recheck-due')).map((event) => event.payload.skillId),
+    ).toEqual([first.skillId]);
+  });
+
   it('links a row that registers the version offered to it, as adopted, answers the offer and writes no copy', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];

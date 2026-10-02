@@ -293,7 +293,7 @@ describe('the static gate on an authored skill, through the authoring action', (
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
     expect(recorded.sandboxPrograms).toEqual([smokeTest]);
-    const { authorSchema } = await import('../../convex/skillActions');
+    const { authorSchema } = await import('../../convex/skillAuthorPrompt');
     expect(recorded.schemas).toEqual([authorSchema]);
   });
 
@@ -503,7 +503,7 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
-    const { realAuthorSchema } = await import('../../convex/skillActions');
+    const { realAuthorSchema } = await import('../../convex/skillAuthorPrompt');
     expect(recorded.schemas).toEqual([realAuthorSchema]);
     // The sandbox ran the author's program inside the harness, under the stored
     // body and the agent's connected surfaces: none on this seed.

@@ -6,6 +6,7 @@ import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
 import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
+import type { SweepRead } from './intakeSeed';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { forEachStoredPage, namesSystem } from './orientationActions';
@@ -148,7 +149,11 @@ export interface IntakeDocumentation {
 }
 
 export interface IntakeRuntime {
-  listSurfaces(): Promise<Doc<'surfaces'>[]>;
+  /**
+   * Every declared surface and its employee's owner, read in one transaction: the owner each
+   * employee is polled under and its seeds are fenced by (FR-m4).
+   */
+  readSweep(): Promise<SweepRead>;
   /** The chat rows alone, for the poll that runs once a minute. */
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
@@ -276,6 +281,34 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
+ * What an intake card says when the provider did not answer before the poll's time ran out, in
+ * place of the platform's abort (the real-Linear walk's m12: "TimeoutError: The operation was
+ * aborted due to timeout"). Every poll reads again, so the words say nothing of a retry: a
+ * partial read's line already says it reads the rest next time.
+ */
+export const PROVIDER_DID_NOT_ANSWER = 'the provider did not answer in time';
+
+/** How far down an error's causes a timed-out request is looked for. */
+const TIMEOUT_CAUSE_DEPTH = 3;
+
+/**
+ * Whether a failure is a timed-out request: the platform's `TimeoutError`, a client's error that
+ * carries one in its words (an MCP client hands the abort on as text), or one that wraps it as
+ * its cause.
+ */
+function isTimedOut(error: unknown, depth = 0): boolean {
+  if (error instanceof Error && error.name === 'TimeoutError') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\bTimeoutError: The operation was aborted due to timeout/.test(message)) return true;
+  return (
+    depth < TIMEOUT_CAUSE_DEPTH &&
+    error instanceof Error &&
+    error.cause !== undefined &&
+    isTimedOut(error.cause, depth + 1)
+  );
+}
+
+/**
  * Redact and bound one provider failure before it reaches surface metadata.
  *
  * Args:
@@ -286,6 +319,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  *   A single safe line suitable for a surface card.
  */
 export function safeIntakeError(error: unknown, credential: string): string {
+  if (isTimedOut(error)) return PROVIDER_DID_NOT_ANSWER;
   return safeFailureMessage(error, credential, 'Provider intake failed.');
 }
 
@@ -1785,7 +1819,8 @@ export async function runIntakeSweep(
   const browserAbsent = browserComponentRefusal(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
-  const surfaces = await runtime.listSurfaces();
+  const { surfaces, owners } = await runtime.readSweep();
+  const ownerAtRead = new Map(owners.map(({ agentId, owner }) => [agentId, owner]));
   const target = dependencies.surfaceId;
   const inScope = (surface: Doc<'surfaces'>): boolean =>
     target === undefined || surface._id === target;
@@ -1801,8 +1836,11 @@ export async function runIntakeSweep(
   let skipped = 0;
   for (const [agentId, agentSurfaces] of byAgent) {
     if (!agentSurfaces.some(inScope)) continue;
+    const startedUnder = ownerAtRead.get(agentId);
     const agent = await runtime.getAgent(agentId);
-    if (!agent) continue;
+    // Gone at the read, gone since, or handed over since: the rows read above carry the old
+    // owner's connection, so nothing is polled with them; the next sweep reads the new owner's.
+    if (!agent || startedUnder === undefined || (agent.userId ?? null) !== startedUnder) continue;
     let documentation: IntakeDocumentation;
     let scopes: string[];
     let queue: { waiting: number; limit: number };
@@ -2153,8 +2191,8 @@ export async function readIntakeDocumentation(
 /** Create the Convex runtime boundary used by the scheduled action. */
 function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
-    listSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
-      await ctx.runQuery(internal.orientationData.surfacesForIntake, {}),
+    readSweep: async (): Promise<SweepRead> =>
+      await ctx.runQuery(internal.intakeSeed.surfacesForSweep, {}),
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       await ctx.runQuery(internal.orientationData.chatSurfacesForIntake, {}),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>

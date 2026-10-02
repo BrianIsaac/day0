@@ -95,3 +95,28 @@ describe('intakeSeed.seedListedItem: a poll in flight at a handover (U3-m2)', ()
     ).rejects.toThrow(SEED_AFTER_HANDOVER);
   });
 });
+
+describe('intakeSeed.surfacesForSweep: the owner read with the cards (FR-m4)', (): void => {
+  it('answers every card with its employee owner as the same read saw it, leaving out a gone employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const kept = await seedEmployee(harness, 'owner');
+    const gone = await seedEmployee(harness, 'colleague');
+    for (const [agentId, name, surfaceClass] of [
+      [kept, 'Linear', 'kanban'],
+      [gone, 'Slack', 'chat'],
+    ] as const) {
+      await harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [{ name, class: surfaceClass, whereMentioned: 'Named for intake.' }],
+      });
+    }
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(gone);
+    });
+
+    const read = await harness.query(internal.intakeSeed.surfacesForSweep, {});
+
+    expect(read.surfaces.map((surface) => surface.slug).sort()).toEqual(['linear', 'slack']);
+    expect(read.owners).toEqual([{ agentId: kept, owner: 'owner' }]);
+  });
+});
