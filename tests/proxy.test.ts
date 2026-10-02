@@ -190,8 +190,9 @@ describe('the Clerk proxy gate', (): void => {
     await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');
   });
 
-  it('lets the MCP authorisation redirect through: its signed, single-use state is the boundary', async (): Promise<void> => {
-    await expect(proxy(request('/api/oauth/mcp?code=x&state=y'))).resolves.toBeUndefined();
+  it("holds the MCP authorisation redirect to a signed-in session: only the card's manager completes it (the wave 11 review's M2)", async (): Promise<void> => {
+    const refused = (await proxy(request('/api/oauth/mcp?code=x&state=y'))) as Response;
+    expect(refused.status).toBe(401);
   });
 
   it('protects a route that only shares the redirect’s prefix', async (): Promise<void> => {

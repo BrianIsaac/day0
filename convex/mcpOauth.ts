@@ -42,7 +42,7 @@ export const MCP_MIN_REFRESH_INTERVAL_MS = 30_000;
 const sealedValidator = v.object({ ciphertext: v.string(), iv: v.string(), keyId: v.string() });
 
 /** Why a redirect found no authorisation to complete. */
-export type PendingClaimFailure = 'none' | 'used' | 'expired';
+export type PendingClaimFailure = 'none' | 'used' | 'expired' | 'not-the-manager';
 
 /** What an authorisation needs to know about its card, its employee and its server's client. */
 export interface AuthorisationContext {
@@ -195,11 +195,19 @@ export interface ClaimedAuthorisation {
 /**
  * Consume a card's pending authorisation for the redirect that names its nonce: one transaction,
  * so two redirects cannot both win and a replay finds nothing. An expired one is cleared and
- * refused. Internal, for `mcpOauthActions.completeAuthorisation`, which has verified the state's
- * signature.
+ * refused. Only the card's manager, signed in, completes it (the wave 11 review's M2, decision
+ * 3 (a)): a caller whose owner key is not the employee's owner's is refused before anything is
+ * claimed, so the manager's own authorisation stays pending and nothing of another person's
+ * consent lands. Internal, for `mcpOauthActions.completeAuthorisation`, which has verified the
+ * state's signature and read the caller.
  */
 export const claimPendingAuthorisation = internalMutation({
-  args: { surfaceId: v.id('surfaces'), stateNonce: v.string(), now: v.number() },
+  args: {
+    surfaceId: v.id('surfaces'),
+    stateNonce: v.string(),
+    callerOwnerKey: v.string(),
+    now: v.number(),
+  },
   handler: async (
     ctx,
     args,
@@ -208,10 +216,11 @@ export const claimPendingAuthorisation = internalMutation({
     const pending = surface?.pendingAuthorisation;
     if (!surface || !pending) return { ok: false, reason: 'none' };
     if (pending.stateNonce !== args.stateNonce) return { ok: false, reason: 'used' };
-    await clearPending(ctx, surface);
-    if (pending.stateExpiresAt <= args.now) return { ok: false, reason: 'expired' };
     const agent = await ctx.db.get(surface.agentId);
     if (!agent?.userId) return { ok: false, reason: 'none' };
+    if (agent.userId !== args.callerOwnerKey) return { ok: false, reason: 'not-the-manager' };
+    await clearPending(ctx, surface);
+    if (pending.stateExpiresAt <= args.now) return { ok: false, reason: 'expired' };
     return {
       ok: true,
       pending,

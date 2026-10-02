@@ -154,16 +154,22 @@ async function consent(authoriseUrl: string, extra: Record<string, string> = {})
   return new URL(answer.headers.get('location') ?? '');
 }
 
+/**
+ * Hand the redirect to the deployment as the route does, signed in as the card's manager unless the
+ * test names another caller, or none.
+ */
 async function complete(
   harness: TestConvex<typeof schema>,
   back: URL,
+  as: ReturnType<typeof managerIdentity> | 'nobody' = managerIdentity(),
 ): Promise<{ ok: boolean; reason?: string; agentId?: string; surfaceSlug?: string }> {
   const { api } = await liveApi();
   const arg = (name: string): Record<string, string> => {
     const value = back.searchParams.get(name);
     return value === null ? {} : { [name]: value };
   };
-  return await harness.action(api.mcpOauthActions.completeAuthorisation, {
+  const caller = as === 'nobody' ? harness : harness.withIdentity(as);
+  return await caller.action(api.mcpOauthActions.completeAuthorisation, {
     state: back.searchParams.get('state') ?? '',
     ...arg('code'),
     ...arg('iss'),
@@ -928,6 +934,56 @@ describe('an employee acts at the vendor only as the identity its card names (cr
     const reply = (await answer.json()) as { result?: { content?: Array<{ text?: string }> } };
 
     expect(reply.result?.content?.[0]?.text).toBe(surface.actsAs?.label);
+  });
+});
+
+describe('who may complete an authorisation (the wave 11 review’s M2, decision 3 (a))', (): void => {
+  it('refuses a second signed-in person’s consent, lands nothing and leaves the manager’s authorisation pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const back = await consent(started.authoriseUrl);
+
+    const outcome = await complete(harness, back, managerIdentity('ana'));
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason:
+        "Only the employee's manager, signed in to Day0, can finish this authorisation, so nothing was connected. The manager starts it from the card.",
+    });
+    const after = await read(harness, surfaceId);
+    expect(after.surface.credentialId).toBeUndefined();
+    expect(after.surface.actsAs).toBeUndefined();
+    expect(after.surface.pendingAuthorisation).toBeDefined();
+    expect(after.credentials).toEqual([]);
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 0, liveRefreshTokens: 0 });
+  });
+
+  it('refuses a redirect that carries no signed-in caller', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+
+    const outcome = await complete(harness, await consent(started.authoriseUrl), 'nobody');
+
+    expect(outcome.ok).toBe(false);
+    expect((await read(harness, surfaceId)).surface.credentialId).toBeUndefined();
+  });
+
+  it('lands the manager’s own consent on the card, labelled as the manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    expect((await read(harness, surfaceId)).surface.actsAs).toEqual({
+      kind: 'delegated',
+      label: MANAGER_ADDRESS,
+    });
   });
 });
 

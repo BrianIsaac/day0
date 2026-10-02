@@ -2,6 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const action = vi.hoisted(() => vi.fn());
 const constructed = vi.hoisted((): string[] => []);
+/** The tokens the route's client was authenticated with, in order. */
+const tokens = vi.hoisted((): string[] => []);
+/** The local sign-in's session cookie the browser presents, when it holds one. */
+let cookieValue: string | undefined;
+
+vi.mock('@clerk/nextjs/server', () => ({
+  auth: async (): Promise<{ userId: null }> => ({ userId: null }),
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: async (): Promise<{ get: () => { value: string } | undefined }> => ({
+    get: (): { value: string } | undefined => (cookieValue ? { value: cookieValue } : undefined),
+  }),
+}));
 
 vi.mock('convex/browser', () => ({
   ConvexHttpClient: class {
@@ -9,8 +23,20 @@ vi.mock('convex/browser', () => ({
     constructor(url: string) {
       constructed.push(url);
     }
+    setAuth(token: string): void {
+      tokens.push(token);
+    }
   },
 }));
+
+/** A P-256 signing key for the local sign-in's Convex tokens. */
+async function signingKey(): Promise<string> {
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  return Buffer.from(await crypto.subtle.exportKey('pkcs8', pair.privateKey)).toString('base64');
+}
 
 const PUBLIC_URL = 'https://day0.example.test';
 
@@ -20,9 +46,17 @@ beforeEach(async (): Promise<void> => {
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
   vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://convex.example.invalid');
   vi.stubEnv('CONVEX_URL', 'http://127.0.0.1:3210');
+  vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+  vi.stubEnv('NODE_ENV', 'development');
+  vi.stubEnv('DEV_NO_AUTH_SECRET', 'a'.repeat(43));
+  vi.stubEnv('DEV_NO_AUTH_SIGNING_KEY', await signingKey());
   action.mockReset();
   constructed.length = 0;
+  tokens.length = 0;
   vi.resetModules();
+  // The manager's browser holds the local sign-in's session unless a test says otherwise.
+  const { mintDevNoAuthSession } = await import('../../../../../src/lib/dev-auth-server');
+  cookieValue = await mintDevNoAuthSession();
   ({ GET } = await import('../../../../../app/api/oauth/mcp/route'));
 });
 
@@ -53,6 +87,9 @@ describe('the MCP authorisation redirect', (): void => {
       iss: 'https://auth.acme.test',
     });
     expect(constructed).toEqual(['http://127.0.0.1:3210']);
+    // The deployment is asked as the browser's signed-in caller (the wave 11 review's M2).
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/);
     expect(response.status).toBe(307);
     const target = location(response);
     expect(target.origin).toBe(PUBLIC_URL);
@@ -90,6 +127,21 @@ describe('the MCP authorisation redirect', (): void => {
       'The authorisation was declined at the authorisation server.',
     );
     expect(target.href).not.toContain('script');
+  });
+
+  it('asks the deployment with no token when the browser holds no session, and lands its refusal (M2)', async (): Promise<void> => {
+    cookieValue = undefined;
+    const refusal =
+      "Only the employee's manager, signed in to Day0, can finish this authorisation, so nothing was connected. The manager starts it from the card.";
+    action.mockResolvedValue({ ok: false, reason: refusal });
+    const response = await GET(redirect({ code: 'the-code', state: 'the-state' }));
+    expect(tokens).toEqual([]);
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(307);
+    const target = location(response);
+    expect(target.pathname).toBe('/');
+    expect(target.searchParams.get('authorisation')).toBe('failed');
+    expect(target.searchParams.get('reason')).toBe(refusal);
   });
 
   it('refuses a redirect with no state, or with neither a code nor an error, before calling the deployment', async (): Promise<void> => {

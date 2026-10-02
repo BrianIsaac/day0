@@ -52,7 +52,6 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/api/voice/elevenlabs/webhook(.*)',
   '/api/oauth/slack(.*)',
-  '/api/oauth/mcp',
   '/api/oauth/linear',
   '/api/seed(.*)',
   '/api/onboarding/synthesise(.*)',

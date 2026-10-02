@@ -10,7 +10,7 @@ import {
   type ClaimedAuthorisation,
   type PendingClaimFailure,
 } from './mcpOauth';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCaller } from './ownership';
 import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
 import {
@@ -377,6 +377,8 @@ const STATE_MESSAGES: Readonly<Record<OauthStateFailure | PendingClaimFailure, s
   expired: 'That authorisation link has expired. Start the authorisation again from the card.',
   none: 'That authorisation has already been used or was cancelled. Start it again from the card.',
   used: 'That authorisation has already been used or was cancelled. Start it again from the card.',
+  'not-the-manager':
+    "Only the employee's manager, signed in to Day0, can finish this authorisation, so nothing was connected. The manager starts it from the card.",
 };
 
 /** The redirect's query, as the route passes it on. */
@@ -543,16 +545,22 @@ async function exchangeAndLand(
 
 /**
  * Complete an authorisation from the redirect: verify the signed state, consume the card's pending
- * authorisation, apply the RFC 9207 check before the code goes anywhere, exchange the code with the
- * sealed verifier and the resource, and land the tokens. No caller identity: the signed,
- * single-use state is the authority, as for the Slack install.
+ * authorisation for the card's manager alone, apply the RFC 9207 check before the code goes
+ * anywhere, exchange the code with the sealed verifier and the resource, and land the tokens. The
+ * signed, single-use state names the card; the caller's owner key must be the employee's owner's
+ * (the wave 11 review's M2, decision 3 (a)), so a consent given in another person's browser never
+ * lands on the manager's card as the manager.
+ *
+ * @param callerOwnerKey - The signed-in caller's owner key, or undefined with no caller.
  */
 export async function runCompleteAuthorisation(
   ctx: ActionCtx,
   response: AuthorisationResponse,
+  callerOwnerKey: string | undefined,
   deps: McpOauthDeps,
 ): Promise<CompleteOutcome> {
   if (oversized(response)) return { ok: false, reason: STATE_MESSAGES.malformed };
+  if (callerOwnerKey === undefined) return { ok: false, reason: STATE_MESSAGES['not-the-manager'] };
   const now = deps.now();
   const verified = verifyOauthState(response.state, process.env.DAY0_CREDENTIAL_KEY, now);
   if (!verified.ok) return { ok: false, reason: STATE_MESSAGES[verified.reason] };
@@ -561,6 +569,7 @@ export async function runCompleteAuthorisation(
     await ctx.runMutation(internal.mcpOauth.claimPendingAuthorisation, {
       surfaceId,
       stateNonce: verified.nonce,
+      callerOwnerKey,
       now,
     });
   if (!claim.ok) return { ok: false, reason: STATE_MESSAGES[claim.reason] };
@@ -575,10 +584,11 @@ export async function runCompleteAuthorisation(
 }
 
 /**
- * Complete an MCP card's authorisation from the redirect `app/api/oauth/mcp` received. Public and
- * without a caller identity: the signed, single-use state names the card; real mode only. Writes
- * the card's credential, its `actsAs` and `organisationConnectionId`, two credential rows and the
- * record's `surface.authorised` or `surface.authorisation-failed`.
+ * Complete an MCP card's authorisation from the redirect `app/api/oauth/mcp` received, as the
+ * browser's signed-in caller. Public: the signed, single-use state names the card, and only its
+ * employee's manager completes it (M2, decision 3 (a)); real mode only. Writes the card's
+ * credential, its `actsAs` and `organisationConnectionId`, two credential rows and the record's
+ * `surface.authorised` or `surface.authorisation-failed`.
  */
 export const completeAuthorisation = action({
   args: {
@@ -589,7 +599,8 @@ export const completeAuthorisation = action({
   },
   handler: async (ctx, args): Promise<CompleteOutcome> => {
     assertRealMode('MCP authorisation');
-    return await runCompleteAuthorisation(ctx, args, mcpOauthDeps());
+    const caller = await getCaller(ctx);
+    return await runCompleteAuthorisation(ctx, args, caller?.ownerKey, mcpOauthDeps());
   },
 });
 
