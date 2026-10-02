@@ -9,6 +9,10 @@ import {
 } from './schema';
 import { appendEvent } from './eventLog';
 import { assertOwnsAgent } from './ownership';
+import type { HeldTokenRows, RotationOutcome } from '../src/surfaces/token-store';
+
+/** The token store's row shapes, declared in `src/surfaces/token-store.ts` (11-AT) and named here as before. */
+export type { HeldTokenRows, RotationOutcome };
 
 /*
  * The rows behind the MCP rung's OAuth 2.1 client (wave 11, 11-AM; the access plan, section 4.6):
@@ -353,13 +357,6 @@ export const landAuthorisedTokens = internalMutation({
   },
 });
 
-/** A held access token's row, its refresh token's row and the connection whose client issued them. */
-export interface HeldTokenRows {
-  readonly access: Doc<'credentials'>;
-  readonly refresh: Doc<'credentials'> | null;
-  readonly connection: Doc<'organisationConnections'> | null;
-}
-
 /**
  * One access token's rows for a read or a refresh. Internal; writes nothing. The id arrives as the
  * adapters hold it, a string: one that names no credential reads as none, and the caller decrypts
@@ -401,11 +398,6 @@ export const recordRefreshRefusal = internalMutation({
     }
   },
 });
-
-/** What a rotation's write answers. */
-export type RotationOutcome =
-  | { readonly ok: true; readonly generation: number }
-  | { readonly ok: false; readonly reason: 'stale' | 'gone' };
 
 /**
  * Write a refresh's tokens, the access token and the rotated refresh token together, only while
