@@ -6972,6 +6972,49 @@ describe('work.needsYou', (): void => {
     expect(inbox.waitingByEmployee.find((row) => row.agentId === mira)?.waiting).toBe(1);
   });
 
+  it('lists no card the manager disconnected, nor one whose access ended, though IT answered its request (join 12, the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      const card = {
+        agentId: mira,
+        class: 'kanban',
+        verdict: 'approved' as const,
+        whereFound: [],
+        path: 'documented-api' as const,
+        endpoint: 'https://api.linear.app/graphql',
+        managerApprovedAt: 2,
+        credentialLanded: false,
+        accessRequest: { reason: 'no-connection' as const, scopes: ['linear:read'], draftedAt: 3 },
+        createdAt: 1,
+      };
+      await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'linear',
+        displayName: 'Linear',
+        reason: 'Disconnected by the manager.',
+      });
+      await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'linear-ops',
+        displayName: 'Linear ops',
+        expiresAt: 4,
+      });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 50 },
+        status: 'active',
+        createdAt: 50,
+      });
+    });
+
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
   it('lists no card that asked IT while its connection still asks an administrator for more', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

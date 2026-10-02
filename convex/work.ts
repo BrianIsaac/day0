@@ -7491,16 +7491,21 @@ interface WaitingRows {
 
 /**
  * The cards whose access request IT has answered (the access plan, section 4.5): approved,
- * holding no credential, a request drafted for IT, and their system's organisation connection now
- * active and asking an administrator for nothing more, so the manager's Connect is the way on.
- * Each is dated from when that connection landed, or from the request when it was drafted after.
+ * holding no credential, never ended since (no reason recorded: a disconnect, an organisation's
+ * revoke or an expiry each records one, and an ended card is renewed or reconnected on purpose),
+ * their access not past its end date, a request drafted for IT, and their system's organisation
+ * connection now active and asking an administrator for nothing more, so the manager's Connect is
+ * the way on. Each is dated from when that connection landed, or from the request when it was
+ * drafted after.
  *
  * @param ctx - Query context.
  * @param surfaces - The employee's cards, as the inbox read them.
+ * @param now - The instant an end date is judged against.
  */
 async function connectReadyCards(
   ctx: QueryCtx,
   surfaces: readonly Doc<'surfaces'>[],
+  now: number,
 ): Promise<WaitingRows['connectable']> {
   const ready = await Promise.all(
     surfaces.map(async (surface) => {
@@ -7509,6 +7514,8 @@ async function connectReadyCards(
       if (
         surface.verdict !== 'approved' ||
         surface.credentialId !== undefined ||
+        surface.reason !== undefined ||
+        accessEnded(surface, now) ||
         request === undefined ||
         system === undefined
       ) {
@@ -7573,7 +7580,7 @@ async function waitingRowsOf(
   const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
   const [skills, connectable] = await Promise.all([
     Promise.all(skillIds.map(async (id) => await ctx.db.get(id))),
-    connectReadyCards(ctx, surfaces),
+    connectReadyCards(ctx, surfaces, now),
   ]);
   return {
     charter: charter && !charter.approved ? charter : null,
