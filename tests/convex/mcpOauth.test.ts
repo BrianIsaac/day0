@@ -309,6 +309,36 @@ describe('claiming a pending authorisation', (): void => {
     expect(surface?.pendingAuthorisation?.stateNonce).toBe('nonce-linear');
   });
 
+  it('claims its own authorisation whose recorded redirect IT wrote with a trailing slash', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        pendingAuthorisation: {
+          stateNonce: 'nonce-slash',
+          stateExpiresAt: 50_000,
+          clientId: 'day0-mcp',
+          verifierCiphertext: 'c',
+          verifierIv: 'i',
+          issuer: 'https://auth.acme.test',
+          resource: 'https://auth.acme.test/mcp',
+          redirectUrl: 'https://day0.acme.test/api/oauth/mcp/',
+          startedAt: 1,
+        },
+      });
+    });
+    const { internal } = await liveApi();
+
+    const claimed = await harness.mutation(internal.mcpOauth.claimPendingAuthorisation, {
+      surfaceId,
+      stateNonce: 'nonce-slash',
+      callerOwnerKey: 'owner',
+      now: 2_000,
+    });
+
+    expect(claimed.ok).toBe(true);
+  });
+
   it("refuses a caller who is not the employee's owner before it claims anything (M2)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedCard(harness);

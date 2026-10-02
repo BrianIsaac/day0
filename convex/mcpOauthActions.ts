@@ -381,6 +381,13 @@ const STATE_MESSAGES: Readonly<Record<OauthStateFailure | PendingClaimFailure, s
     "Only the employee's manager, signed in to Day0, can finish this authorisation, so nothing was connected. The manager starts it from the card.",
 };
 
+/**
+ * What a redirect with no signed-in caller is told (M2): most often the manager's own sign-in that
+ * lapsed while they consented at the server, so it says that, and nothing is claimed.
+ */
+const SIGN_IN_LAPSED =
+  'Your Day0 sign-in had lapsed, so nothing was connected. Sign in again, then start the authorisation again from the card.';
+
 /** The redirect's query, as the route passes it on. */
 export interface AuthorisationResponse {
   readonly state: string;
@@ -560,7 +567,7 @@ export async function runCompleteAuthorisation(
   deps: McpOauthDeps,
 ): Promise<CompleteOutcome> {
   if (oversized(response)) return { ok: false, reason: STATE_MESSAGES.malformed };
-  if (callerOwnerKey === undefined) return { ok: false, reason: STATE_MESSAGES['not-the-manager'] };
+  if (callerOwnerKey === undefined) return { ok: false, reason: SIGN_IN_LAPSED };
   const now = deps.now();
   const verified = verifyOauthState(response.state, process.env.DAY0_CREDENTIAL_KEY, now);
   if (!verified.ok) return { ok: false, reason: STATE_MESSAGES[verified.reason] };

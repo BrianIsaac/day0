@@ -650,7 +650,7 @@ async function emptySharedToken(
 /**
  * Record a rotation and its ledger line, in one transaction. Internal, for
  * {@link rotateConnection}. The new secret replaces the old, which is revoked with its refresh
- * token (its ciphertext kept for the vendor call, F19), and the shared token issued with it is
+ * token and ended by its kind ({@link endOrganisationSecrets}; M6), and the shared token issued with it is
  * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
  * and the secrets the action stored are revoked here.

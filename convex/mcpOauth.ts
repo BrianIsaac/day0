@@ -185,7 +185,8 @@ export const cancelAuthorisation = mutation({
 /** Whether a pending authorisation returns to the MCP redirect, as only this flow's do. */
 function returnsToMcpRedirect(redirectUrl: string): boolean {
   try {
-    return new URL(redirectUrl).pathname === MCP_REDIRECT_PATH;
+    // IT may have recorded the redirect with a trailing slash; the path is the same.
+    return new URL(redirectUrl).pathname.replace(/\/+$/, '') === MCP_REDIRECT_PATH;
   } catch {
     // Not an address: no authorisation this flow started.
     return false;

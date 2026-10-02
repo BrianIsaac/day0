@@ -1028,7 +1028,13 @@ describe('who may complete an authorisation (the wave 11 review’s M2, decision
 
     const outcome = await complete(harness, await consent(started.authoriseUrl), 'nobody');
 
-    expect(outcome.ok).toBe(false);
+    // A manager whose sign-in lapsed at the consent is told so, not that they are not the manager.
+    expect(outcome).toEqual({
+      ok: false,
+      reason:
+        'Your Day0 sign-in had lapsed, so nothing was connected. Sign in again, then start the authorisation again from the card.',
+    });
+    expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeDefined();
     expect((await read(harness, surfaceId)).surface.credentialId).toBeUndefined();
   });
 

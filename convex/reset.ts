@@ -733,7 +733,8 @@ export async function sortCredentials(
  * @param userId - The owner.
  * @param retired - The retired employees with the cards each deleted.
  * @param end - `retire`, `owner-deletion` when the owner's data goes with it, or `transfer` for a
- *   handover's cut, which calls no vendor (A25).
+ *   handover's cut, which revokes what Day0 obtained as a Disconnect does (the wave 11 review's
+ *   M1).
  * @param now - The retire time.
  * @param leaving - The employees whose own surfaces do not count as still binding: a handover's
  *   employee, which still exists; after a retire has deleted them there are none to skip.
