@@ -2,7 +2,7 @@ import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
-import type { Id } from '../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import {
   connectCheckedApi,
   DocumentedApiLimitation,
@@ -29,6 +29,7 @@ import {
   accessTokenFor,
   type HeldTokens,
   type TokenKeeper,
+  type TokenRefresher,
   type TokenStoreBackend,
 } from '../../../src/surfaces/token-store';
 
@@ -999,7 +1000,7 @@ describe('the documented-API rung asks the token store for its token', (): void 
         expiresAt: now + 10_000,
         issuedBy: { system: 'tracker', grant: 'client-credentials' },
         refreshable: true,
-        connection: null,
+        connection: { _id: 'connection-tracker' } as unknown as Doc<'organisationConnections'>,
         tokenStore,
       }),
       // A Nango-held row seals the Nango connection it points at, never a token.
@@ -1009,9 +1010,27 @@ describe('the documented-API rung asks the token store for its token', (): void 
         refreshReads += 1;
         return 'refresh-token-never-sent';
       },
-      rotate: async () => ({ ok: false, reason: 'gone' }),
+      rotate: async () => ({ ok: true, generation: 1 }),
     };
   }
+
+  /** The tracker's issuer, as a native refresher: it exchanges the refresh token for a new pair. */
+  const trackerRefresher: TokenRefresher = {
+    owns: (issuedBy): boolean => issuedBy.system === 'tracker',
+    readRefreshMarginMs: 60_000,
+    retryable: (): boolean => false,
+    prepare: async () => ({
+      ok: true,
+      refresh: {
+        exchange: async (presented: string) => ({
+          accessToken: `refreshed-with-${presented.length}-characters`,
+          refreshToken: 'rotated-refresh-token',
+          expiresAt: now + 3_600_000,
+        }),
+        discard: async (): Promise<void> => undefined,
+      },
+    }),
+  };
 
   function rungOver(keeper: TokenKeeper): {
     rung: HttpAdapter;
@@ -1026,7 +1045,7 @@ describe('the documented-API rung asks the token store for its token', (): void 
       decrypt: async (context, credentialId): Promise<string> =>
         await accessTokenFor(context, credentialId as Id<'credentials'>, {
           keeper,
-          refreshers: [],
+          refreshers: [trackerRefresher],
           now: (): number => now,
           backends: [nango],
         }),
@@ -1046,14 +1065,16 @@ describe('the documented-API rung asks the token store for its token', (): void 
     expect(keeper.refreshReads()).toBe(0);
   });
 
-  it('never reads a refresh token for a natively kept token, even one about to expire', async (): Promise<void> => {
+  it('sends a natively kept token the store refreshed in its last minute, and never a refresh token', async (): Promise<void> => {
     const keeper = keeperFor('native');
     const { rung, calls } = rungOver(keeper);
     await expect(rung.apply(ctx, run, read, 0, 'k')).resolves.toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
     expect(new Headers(calls[0].init.headers).get('authorization')).toBe(
-      'Bearer native-access-token',
+      'Bearer refreshed-with-24-characters',
     );
-    expect(JSON.stringify(calls)).not.toContain('refresh-token-never-sent');
-    expect(keeper.refreshReads()).toBe(0);
+    // The store read the refresh token once, to refresh; the rung's request carries neither.
+    expect(keeper.refreshReads()).toBe(1);
+    expect(JSON.stringify(calls)).not.toContain('refresh-token');
   });
 });
