@@ -71,6 +71,7 @@ import {
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../app/agent/[agentId]/surfaces/SurfaceCard';
+import { withListedIdentity } from '../../../app/agent/[agentId]/surfaces/fakes/listed-identity';
 import { AgentZoneContext } from '../../../../app/components/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
@@ -419,7 +420,7 @@ describe('the dashboard driver', (): void => {
       mount(
         <AgentZoneContext value="UTC">
           <SurfaceCard
-            surface={surface}
+            surface={withListedIdentity(surface)}
             context={context}
             operation={undefined}
             actions={actions}
