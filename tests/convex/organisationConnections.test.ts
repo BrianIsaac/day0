@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -468,5 +469,24 @@ describe('what the organisation page and a manager read', (): void => {
     await expect(
       ines.query(api.organisationConnections.summaryForManager, {}),
     ).resolves.toMatchObject({ callerIsAdministrator: true });
+  });
+});
+
+describe("a manager's deletion and the organisation's connections", (): void => {
+  it('never touches the connections, their ledger or the secrets under the reserved key, as SECURITY.md says', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ines = harness.withIdentity(INES);
+    await ines.action(api.organisationConnections.land, SLACK);
+    const before = await organisationRows(harness);
+    // Ines is a manager too: her own deletion, with her documentation unlinked, leaves the organisation's rows.
+    await ines.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    await harness
+      .withIdentity(SAM)
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    expect(await organisationRows(harness)).toEqual(before);
+    const security = readFileSync(new URL('../../SECURITY.md', import.meta.url), 'utf8');
+    expect(security).toContain(
+      "The deletion never touches the organisation's connections (`organisationConnections`), their ledger (`connectionEvents`) or the secrets stored under the organisation's reserved key: they are the organisation's, which only an administrator revokes.",
+    );
   });
 });
