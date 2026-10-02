@@ -2203,8 +2203,10 @@ function reissueOf(surface: Doc<'surfaces'>): 'install' | 'authorise' {
 
 /**
  * What renewing an ended card needs: a card whose expiry revoked its credential at the vendor
- * (its latest `surface.expired` says so) needs it issued again; a card renewing a pasted key while
- * linked to an active organisation connection is offered the move to the employee's own identity.
+ * (its latest `surface.expired` says so) needs it issued again; a card renewing a pasted key whose
+ * system has an active organisation connection is offered the move to the employee's own identity.
+ * The connection is read for the card's system, as the card reads it, since no path links a card
+ * that holds a pasted key to a connection (the wave 11 review's M5).
  *
  * @param ctx - The renewal's transaction.
  * @param surface - The card as it stood before the renewal.
@@ -2222,11 +2224,9 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
   if (credential === null || credential.issuedBy !== undefined || credential.holder !== undefined) {
     return {};
   }
-  const connection =
-    surface.organisationConnectionId === undefined
-      ? null
-      : await db.get(surface.organisationConnectionId);
-  return connection?.status === 'active' ? { offer: 'own-identity' } : {};
+  const system = organisationSystemOf(surface);
+  if (system === undefined) return {};
+  return (await activeConnectionFor(ctx, system)) === null ? {} : { offer: 'own-identity' };
 }
 
 /**

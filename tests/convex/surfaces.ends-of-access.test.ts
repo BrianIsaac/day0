@@ -324,10 +324,26 @@ describe('the ends of access on a card (11-AR)', (): void => {
     ]);
   });
 
-  it('renewing a pasted-key card whose system has an organisation connection offers the move', async (): Promise<void> => {
+  it('renewing a pasted-key card whose system has an organisation connection offers the move, though no connect path linked the card (M5)', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });
-    const linked = await pastedLinearCard(harness, leo.agentId, leo.connectionId);
+    // As a product path leaves it: the key pasted on the card, which no connect path links to the
+    // connection IT landed for Linear afterwards (the wave 11 review's M5).
+    const linked = await pastedLinearCard(harness, leo.agentId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linked.surfaceId, { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        clientCredentialsScopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
     const alone = await harness.run(async (ctx) => {
       const surfaceId = await ctx.db.insert('surfaces', {
         agentId: leo.agentId,
