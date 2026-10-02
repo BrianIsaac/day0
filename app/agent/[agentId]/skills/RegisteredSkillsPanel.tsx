@@ -21,6 +21,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { attemptsSpent } from '@/work/needs-manager';
+import { stalledWords } from '@/work/skill-adoption';
 import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
 import { CODE_CHIP, plainSkillName, ScopeChips, SkillInputs, SkillStatusLine } from './skill-parts';
@@ -92,6 +93,23 @@ export function retriesWithReasons(
   skill: Pick<Doc<'skills'>, 'state' | 'verificationLog'>,
 ): boolean {
   return skill.state === 'failed' && Boolean(skill.verificationLog);
+}
+
+/**
+ * The status line of a not-callable row with no run on it: for a skill parked because its check
+ * never ran, why, in the manager's words (the sandbox's own log names the operator's commands, as
+ * the stalled adoption card's did before A-m6); otherwise the row's verdict as it stands.
+ *
+ * @param skill - The unregistered row.
+ */
+function parkedLine(
+  skill: Pick<
+    Doc<'skills'>,
+    'state' | 'body' | 'pendingSmokeTest' | 'verificationLog' | 'description'
+  >,
+): string {
+  if (!retryVerifiesSavedDraft(skill)) return skill.verificationLog ?? skill.description;
+  return `The check did not run: ${stalledWords(skill.verificationLog) ?? 'Day0 could not start the check'}.`;
 }
 
 /** The day a skill registered, in the employee's zone. */
@@ -455,7 +473,7 @@ export function RegisteredSkillsPanel({
                           ? 'authoring now · a run holds this skill'
                           : s.authoringRunId
                             ? 'a run stopped without reporting · Retry takes the skill over'
-                            : (s.verificationLog ?? s.description)
+                            : parkedLine(s)
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />

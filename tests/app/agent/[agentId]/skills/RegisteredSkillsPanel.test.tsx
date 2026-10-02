@@ -532,6 +532,24 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('>Being written<');
   });
 
+  it('says why a parked skill was not checked in the manager’s words, never the sandbox’s own (as A-m6 did for the stalled card)', (): void => {
+    const outage = {
+      ...parked,
+      verificationLog:
+        'DAYTONA_API_KEY not set and the local sandbox is not running (/run/day0-sandbox/skill-sandbox.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.',
+    } as unknown as Doc<'skills'>;
+    const markup = panel([outage]);
+    expect(markup).toContain(
+      'The check did not run: no sandbox was running to check it; the operator can start one.',
+    );
+    expect(markup).not.toContain('DAYTONA_API_KEY');
+    expect(markup).not.toContain('sandbox:up');
+    expect(markup).not.toContain('ECONNREFUSED');
+    expect(panel([parked])).toContain(
+      'The check did not run: the sandbox was busy checking another skill for 5 minutes.',
+    );
+  });
+
   it('says what Retry does in the manager’s words behind a disclosure, never the operator’s commands (as A-m6 did for the stalled card)', (): void => {
     const markup = panel([refused]);
     expect(markup).toMatch(
