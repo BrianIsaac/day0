@@ -4,7 +4,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { axeViolations } from '../fixtures/dom/axe';
 import { mount, unmountAll } from '../fixtures/dom/press';
-import { syncServer, type SyncServer } from '../fixtures/convex/sync-socket';
+import { syncServer, type Answer, type SyncServer } from '../fixtures/convex/sync-socket';
 
 /**
  * The header's account menu under the customer-local profile, drawn from the session's claims
@@ -52,6 +52,7 @@ async function mountHeader(
     firstName: 'Priya',
     email: 'priya@acme.test',
   },
+  answer: Answer = () => undefined,
 ): Promise<HTMLElement> {
   vi.stubEnv('NEXT_PUBLIC_DAY0_PROFILE', 'customer-local');
   vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
@@ -61,7 +62,7 @@ async function mountHeader(
     async (): Promise<Response> =>
       Response.json({ token: idToken('priya'), expiresAt: Date.now() + 3_600_000, account }),
   );
-  const server = syncServer(() => undefined);
+  const server = syncServer(answer);
   vi.stubGlobal('WebSocket', server.Socket);
   const { Providers } = await import('../../app/Providers');
   const { HeaderAccount } = await import('../../app/HeaderAccount');
@@ -162,6 +163,26 @@ describe('the customer-local account menu', (): void => {
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(elsewhere);
     elsewhere.remove();
+  });
+
+  it("offers the organisation page in an administrator's menu, a 44 px link, and in nobody else's (B8)", async (): Promise<void> => {
+    const summary =
+      (administrator: boolean): Answer =>
+      (udfPath, signedIn) =>
+        udfPath === 'organisationConnections:summaryForManager' && signedIn
+          ? { value: { callerIsAdministrator: administrator, systems: [] } }
+          : undefined;
+    const container = await mountHeader(undefined, summary(true));
+    act((): void => menuButton(container).click());
+    const link = container.querySelector<HTMLAnchorElement>('header a[href="/organisation"]');
+    expect(link?.textContent).toBe('Organisation');
+    expect(link?.className).toContain('min-h-11');
+    expect(await axeViolations(container)).toEqual([]);
+    unmountAll();
+    vi.resetModules();
+    const manager = await mountHeader(undefined, summary(false));
+    act((): void => menuButton(manager).click());
+    expect(manager.querySelector('header a[href="/organisation"]')).toBeNull();
   });
 
   it('names an account that carries neither a name nor an address as the account menu', async (): Promise<void> => {

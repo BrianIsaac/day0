@@ -10,6 +10,50 @@ const clerk = vi.hoisted(
   } => ({ user: undefined, appearance: {} }),
 );
 
+/** What Convex answers the header: whether it holds a token, and the caller's summary. */
+const convex = vi.hoisted((): { authenticated: boolean; administrator: boolean } => ({
+  authenticated: false,
+  administrator: false,
+}));
+
+vi.mock('convex/react', () => ({
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: convex.authenticated }),
+  useQuery: (_query: unknown, args: unknown): unknown =>
+    args === 'skip' ? undefined : { callerIsAdministrator: convex.administrator, systems: [] },
+}));
+
+/** Clerk's account menu, drawing the custom items it is given as Clerk does inside its menu. */
+const UserButton = vi.hoisted(() =>
+  Object.assign(
+    ({
+      appearance,
+      userProfileProps,
+      children,
+    }: {
+      appearance?: unknown;
+      userProfileProps?: { appearance?: unknown };
+      children?: ReactNode;
+    }): ReactNode => {
+      clerk.appearance.account = appearance;
+      clerk.appearance.profile = userProfileProps?.appearance;
+      return (
+        <>
+          <button type="button">Open user menu</button>
+          {children}
+        </>
+      );
+    },
+    {
+      MenuItems: ({ children }: { children: ReactNode }): ReactNode => <ul>{children}</ul>,
+      Link: ({ label, href }: { label: string; href: string; labelIcon: ReactNode }): ReactNode => (
+        <li>
+          <a href={href}>{label}</a>
+        </li>
+      ),
+    },
+  ),
+);
+
 vi.mock('@clerk/nextjs', () => ({
   useUser: () =>
     clerk.user === undefined
@@ -26,17 +70,7 @@ vi.mock('@clerk/nextjs', () => ({
     clerk.appearance.signUp = appearance;
     return children;
   },
-  UserButton: ({
-    appearance,
-    userProfileProps,
-  }: {
-    appearance?: unknown;
-    userProfileProps?: { appearance?: unknown };
-  }): ReactNode => {
-    clerk.appearance.account = appearance;
-    clerk.appearance.profile = userProfileProps?.appearance;
-    return <button type="button">Open user menu</button>;
-  },
+  UserButton,
 }));
 
 import { HeaderAccount } from '../../app/HeaderAccount';
@@ -50,6 +84,8 @@ const MANAGER = {
 afterEach((): void => {
   clerk.user = undefined;
   clerk.appearance = {};
+  convex.authenticated = false;
+  convex.administrator = false;
 });
 
 /** The header's account slot as the server, or a browser Clerk has answered, draws it. */
@@ -77,6 +113,16 @@ function classOf(html: string, pattern: RegExp): string | undefined {
 }
 
 describe('the header account controls', (): void => {
+  it("adds the organisation page to an administrator's account menu, and to nobody else's (B8)", (): void => {
+    clerk.user = MANAGER;
+    convex.authenticated = true;
+    expect(render()).not.toContain('href="/organisation"');
+    convex.administrator = true;
+    expect(render()).toContain('<a href="/organisation">Organisation</a>');
+    convex.authenticated = false;
+    expect(render()).not.toContain('href="/organisation"');
+  });
+
   it('gives Sign in and Create account a 44 px target once Clerk has loaded (N14)', (): void => {
     clerk.user = null;
     const html = render();
