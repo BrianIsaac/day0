@@ -232,6 +232,8 @@ export type RefreshPreparation =
  * Linear issuer joins as another.
  */
 export interface TokenRefresher {
+  /** The issuer's name at the head of the store's log lines about its tokens (`mcp`). */
+  readonly name: string;
   /** Whether a held token was issued by this refresher's issuer. */
   owns(issuedBy: NonNullable<Doc<'credentials'>['issuedBy']>): boolean;
   /** How close to its expiry a token read for use is refreshed first. */
@@ -372,7 +374,7 @@ export async function nativeAccessToken(
         `The authorisation server could not be reached to refresh the token: ${reason}`,
       );
     }
-    log.warn('read-time refresh failed; the stored token still lives', {
+    log.warn(`${refresher.name} read-time refresh failed; the stored token still lives`, {
       credentialId,
       reason,
     });
@@ -380,7 +382,7 @@ export async function nativeAccessToken(
   }
   if (outcome.ok) return outcome.accessToken;
   if (alive) {
-    log.warn('read-time refresh refused; the stored token still lives', {
+    log.warn(`${refresher.name} read-time refresh refused; the stored token still lives`, {
       credentialId,
       reason: outcome.refusal,
     });
@@ -473,7 +475,7 @@ export async function runScheduledRefresh(
     const reason = safeFailureMessage(error, '', 'The authorisation server could not be reached.');
     const retryable = refresher.retryable(error);
     if (retryable && attempt < SCHEDULED_REFRESH_RETRIES) {
-      log.warn('scheduled refresh failed', {
+      log.warn(`${refresher.name} scheduled refresh failed`, {
         credentialId: scheduled.credentialId,
         attempt,
         reason,

@@ -654,6 +654,7 @@ async function revokeUnkept(deps: McpOauthDeps, unkept: UnkeptTokens): Promise<v
  */
 export function mcpTokenRefresher(deps: McpOauthDeps): TokenRefresher {
   return {
+    name: 'mcp',
     owns: (issuedBy): boolean => issuedBy.system.startsWith(MCP_SYSTEM_PREFIX),
     readRefreshMarginMs: MCP_READ_REFRESH_MARGIN_MS,
     retryable,

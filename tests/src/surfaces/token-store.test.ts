@@ -85,6 +85,7 @@ function scriptedRefresher(
   const discarded: string[] = [];
   return {
     discarded,
+    name: 'issuer',
     owns: (issuedBy): boolean => issuedBy.system.startsWith('issuer:'),
     readRefreshMarginMs: 60_000,
     retryable: (): boolean => options.retryable ?? false,

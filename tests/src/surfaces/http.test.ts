@@ -1016,6 +1016,7 @@ describe('the documented-API rung asks the token store for its token', (): void 
 
   /** The tracker's issuer, as a native refresher: it exchanges the refresh token for a new pair. */
   const trackerRefresher: TokenRefresher = {
+    name: 'tracker',
     owns: (issuedBy): boolean => issuedBy.system === 'tracker',
     readRefreshMarginMs: 60_000,
     retryable: (): boolean => false,
