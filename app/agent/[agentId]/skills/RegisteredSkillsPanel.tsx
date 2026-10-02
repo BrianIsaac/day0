@@ -21,7 +21,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { attemptsSpent } from '@/work/needs-manager';
-import { stalledWords } from '@/work/skill-adoption';
+import { stalledReason, stalledWords } from '@/work/skill-adoption';
 import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
 import { CODE_CHIP, plainSkillName, ScopeChips, SkillInputs, SkillStatusLine } from './skill-parts';
@@ -109,7 +109,7 @@ function parkedLine(
   >,
 ): string {
   if (!retryVerifiesSavedDraft(skill)) return skill.verificationLog ?? skill.description;
-  return `The check did not run: ${stalledWords(skill.verificationLog) ?? 'Day0 could not start the check'}.`;
+  return `The check did not run: ${stalledWords(stalledReason(skill.verificationLog)) ?? 'Day0 could not start the check'}.`;
 }
 
 /** The day a skill registered, in the employee's zone. */
