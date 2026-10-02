@@ -11,6 +11,7 @@ import { appendEvent } from './eventLog';
 import { assertOwnsAgent } from './ownership';
 import { endAccessAtSource } from './sourceRevocation';
 import type { HeldTokenRows, RotationOutcome } from '../src/surfaces/token-store';
+import { MCP_REDIRECT_PATH } from '../src/surfaces/access-kit/mcp';
 
 /** The token store's row shapes, declared in `src/surfaces/token-store.ts` (11-AT) and named here as before. */
 export type { HeldTokenRows, RotationOutcome };
@@ -181,6 +182,16 @@ export const cancelAuthorisation = mutation({
   },
 });
 
+/** Whether a pending authorisation returns to the MCP redirect, as only this flow's do. */
+function returnsToMcpRedirect(redirectUrl: string): boolean {
+  try {
+    return new URL(redirectUrl).pathname === MCP_REDIRECT_PATH;
+  } catch {
+    // Not an address: no authorisation this flow started.
+    return false;
+  }
+}
+
 /** A pending authorisation the redirect consumed, with what completing it needs. */
 export interface ClaimedAuthorisation {
   readonly ok: true;
@@ -216,6 +227,9 @@ export const claimPendingAuthorisation = internalMutation({
     const pending = surface?.pendingAuthorisation;
     if (!surface || !pending) return { ok: false, reason: 'none' };
     if (pending.stateNonce !== args.stateNonce) return { ok: false, reason: 'used' };
+    // Another flow's authorisation (11-AL's Linear install shares the row) is left for its own
+    // redirect, as Linear's claim leaves an MCP one (the wave 11 review's m3).
+    if (!returnsToMcpRedirect(pending.redirectUrl)) return { ok: false, reason: 'none' };
     const agent = await ctx.db.get(surface.agentId);
     if (!agent?.userId) return { ok: false, reason: 'none' };
     if (agent.userId !== args.callerOwnerKey) return { ok: false, reason: 'not-the-manager' };
