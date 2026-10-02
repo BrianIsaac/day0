@@ -168,9 +168,11 @@ function charteredConnection(
   const chartered = ofClass.filter((surface) => surface.charterEvidence);
   const [first] = chartered;
   if (first === undefined) {
+    // Said of the cards, not the charter: a card the charter names may carry no evidence (a match
+    // recorded as ambiguous, a row from before the evidence), and the charter does name its system.
     return mismatch(
       'no-charter-evidence',
-      `the charter names no connected ${version.surfaceClass} system`,
+      `no connected ${version.surfaceClass} card carries the charter`,
     );
   }
   const allowing = toolEntries(version).find(

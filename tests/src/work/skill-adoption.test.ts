@@ -137,7 +137,7 @@ describe('adoptionFit', (): void => {
     expect(adoptionFit(VERSION, unchartered)).toEqual({
       fits: false,
       mismatch: 'no-charter-evidence',
-      detail: 'the charter names no connected kanban system',
+      detail: 'no connected kanban card carries the charter',
     });
     expect(adoptionFit(VERSION, { ...unchartered, surfaces: [LINEAR, SLACK] })).toMatchObject({
       fits: true,
@@ -147,7 +147,7 @@ describe('adoptionFit', (): void => {
     expect(adoptionFit(VERSION, { ...unchartered, charterClasses: ['kanban'] })).toEqual({
       fits: false,
       mismatch: 'no-charter-evidence',
-      detail: 'the charter names no connected kanban system',
+      detail: 'no connected kanban card carries the charter',
     });
   });
 
@@ -184,7 +184,7 @@ describe('adoptionFit', (): void => {
       expect(adoptionFit(VERSION, { ...MATEO, surfaces: [JIRA, SLACK] })).toEqual({
         fits: false,
         mismatch: 'no-charter-evidence',
-        detail: 'the charter names no connected kanban system',
+        detail: 'no connected kanban card carries the charter',
       });
     });
   });
