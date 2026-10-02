@@ -10,7 +10,11 @@ import {
   type IssuedToken,
   type SessionAccount,
 } from './customer-sign-in';
-import { SIGN_IN_REFUSAL_WORDS, customerOidcEmailTrusted } from './customer-oidc';
+import {
+  CUSTOMER_SIGN_IN_REFUSAL_WORDS,
+  customerOidcEmailTrusted,
+  type CallerRefusal,
+} from './customer-oidc';
 import {
   CustomerSignInUnavailable,
   customerSignInSettings,
@@ -368,12 +372,12 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
       return response;
     }
     case 'refused': {
-      log.info('customer sign-in refused by the domain rule', { reason: finished.reason });
+      log.info('customer sign-in refused', { reason: finished.reason });
       const address = typeof finished.claims.email === 'string' ? finished.claims.email : '';
       const response = signInPageResponse({
         status: 403,
         title: 'Day0 is not open to this account',
-        body: `${address ? `You signed in as ${address}. ` : ''}${SIGN_IN_REFUSAL_WORDS[finished.reason]}`,
+        body: `${address ? `You signed in as ${address}. ` : ''}${CUSTOMER_SIGN_IN_REFUSAL_WORDS[finished.reason]}`,
         action: {
           href: customerSignInHref(transaction.returnTo, { switchAccount: true }),
           label: 'Use another account',
@@ -592,6 +596,17 @@ export function signedOutRoute(): NextResponse {
  *
  * @param idToken - The ID token the issuer handed over.
  */
+/** What the live check says of a person the deployment verified and refused, by its reason. */
+const WHO_AM_I_REFUSALS: Readonly<Record<CallerRefusal, string>> = {
+  'outside-domains':
+    'The deployment verified the token and refused the person: outside the allowed ' +
+    'domains it holds (DAY0_OIDC_ALLOWED_DOMAINS on the deployment, pnpm sync:env).',
+  'unverified-address':
+    'The deployment verified the token and refused the person: their address is not verified, ' +
+    'and under the generic preset the deployment admits only a verified address (email_verified ' +
+    'from the issuer; DAY0_OIDC_EMAIL_TRUSTED only for an issuer that sends no such claim).',
+};
+
 async function askWhoAmI(idToken: string): Promise<SignInCheckReport['whoAmI']> {
   try {
     const client = new ConvexHttpClient(serverConvexUrl());
@@ -601,10 +616,10 @@ async function askWhoAmI(idToken: string): Promise<SignInCheckReport['whoAmI']> 
       return {
         status: 'gap',
         detail:
-          'The deployment verified the token and refused the person: outside the allowed ' +
-          'domains it holds (DAY0_OIDC_ALLOWED_DOMAINS on the deployment, pnpm sync:env).',
+          'The deployment answered the token as no caller: it holds no issuer that signed it.',
       };
     }
+    if ('refused' in caller) return { status: 'gap', detail: WHO_AM_I_REFUSALS[caller.refused] };
     return { status: 'ok', ownerKey: caller.ownerKey, verifiedAddress: caller.verifiedAddress };
   } catch (err) {
     return {

@@ -1,4 +1,10 @@
-import { GOOGLE_ISSUER, isGoogleIssuer } from './customer-oidc';
+import {
+  GOOGLE_ISSUER,
+  customerAddressVerified,
+  isGoogleIssuer,
+  type AddressClaims,
+  type AddressRefusal,
+} from './customer-oidc';
 
 /**
  * What differs between the identity providers the install kit is set up
@@ -33,6 +39,12 @@ export interface CustomerOidcPreset {
   readonly switchAccountPrompt: string;
   /** The claim that says the address is verified: `email_verified`, or Entra's `xms_edov`. */
   readonly verifiedAddressClaim: 'email_verified' | 'xms_edov';
+  /**
+   * Whether a person is admitted only with a verified address (decision 7 (b)): Entra, Okta and
+   * Google control the addresses they issue, so the domain rule alone admits their people; a
+   * generic issuer may let anyone register an address in an allowed domain.
+   */
+  readonly requiresVerifiedAddress: boolean;
 }
 
 /** The scopes an issuer that grants refresh tokens through `offline_access` is asked for. */
@@ -48,6 +60,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     clientAuth: 'client_secret_post',
     switchAccountPrompt: 'select_account',
     verifiedAddressClaim: 'xms_edov',
+    requiresVerifiedAddress: false,
   },
   okta: {
     provider: 'okta',
@@ -57,6 +70,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     clientAuth: 'client_secret_basic',
     switchAccountPrompt: 'login',
     verifiedAddressClaim: 'email_verified',
+    requiresVerifiedAddress: false,
   },
   google: {
     provider: 'google',
@@ -69,6 +83,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     // Consent stays, or Google would grant no refresh token on this sign-in.
     switchAccountPrompt: 'select_account consent',
     verifiedAddressClaim: 'email_verified',
+    requiresVerifiedAddress: false,
   },
   oidc: {
     provider: 'oidc',
@@ -78,6 +93,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     clientAuth: 'client_secret_basic',
     switchAccountPrompt: 'login',
     verifiedAddressClaim: 'email_verified',
+    requiresVerifiedAddress: true,
   },
 };
 
@@ -113,6 +129,26 @@ export function providerOfIssuer(
   if (host === ENTRA_HOST) return 'entra';
   if (named === 'okta' || /\.(okta|oktapreview|okta-emea)\.com$/.test(host)) return 'okta';
   return 'oidc';
+}
+
+/**
+ * The address rule (decision 7 (b)): whether an issuer the generic preset serves signed a person
+ * in whose address it did not verify ({@link customerAddressVerified}). Run at the sign-in's
+ * callback and its refresh beside the domain rule; the deployment's `getCaller` refuses the same
+ * person, so a token forced past the first is refused by the second.
+ *
+ * @param claims - The verified token's claims.
+ * @param issuer - The token's issuer.
+ * @param emailTrusted - Whether the deployment declares the issuer authoritative for `email`.
+ * @returns The refusal, or undefined when the person is admitted by this rule.
+ */
+export function addressRefusal(
+  claims: AddressClaims,
+  issuer: string,
+  emailTrusted: boolean,
+): AddressRefusal | undefined {
+  if (!CUSTOMER_OIDC_PRESETS[providerOfIssuer(issuer)].requiresVerifiedAddress) return undefined;
+  return customerAddressVerified(claims, emailTrusted) ? undefined : 'unverified-address';
 }
 
 /**

@@ -12,6 +12,7 @@ const SETTINGS: CustomerSignInSettings = {
   publicUrl: 'https://day0.acme.test',
   sessionSecret: 's'.repeat(43),
   preset: CUSTOMER_OIDC_PRESETS.oidc,
+  emailTrusted: false,
 };
 
 function post(url: string, headers: Record<string, string>): NextRequest {

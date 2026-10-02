@@ -61,7 +61,9 @@ describe('the live check’s claim verdicts', (): void => {
     ).find((one) => one.claim === 'registration');
     expect(registration).toMatchObject({ status: 'warn' });
     expect(registration?.note).toContain('anyone can register an address');
-    expect(registration?.note).toContain('require a verified address');
+    // Decision 7 (b) is built: the deployment itself requires the verified address.
+    expect(registration?.note).toContain('This deployment admits only a verified address');
+    expect(registration?.note).not.toContain('spend the model');
     // The named providers control their addresses: no such line.
     expect(claimVerdicts(BASE, OKTA).map((one) => one.claim)).not.toContain('registration');
   });
