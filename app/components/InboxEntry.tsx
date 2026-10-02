@@ -109,11 +109,18 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
         control: 'Open',
       };
     case 'surface':
-      return {
-        ask: 'a system to approve',
-        about: `${entry.subject}, before it is connected.`,
-        control: 'Open',
-      };
+      // A card IT has answered for is approved already and waits only on Connect (11-AJ join 12).
+      return entry.ready === 'connect'
+        ? {
+            ask: 'a system to connect',
+            about: `${entry.subject}: IT connected it, and Connect is on its card.`,
+            control: 'Open',
+          }
+        : {
+            ask: 'a system to approve',
+            about: `${entry.subject}, before it is connected.`,
+            control: 'Open',
+          };
     case 'transfer': {
       // The employee is not the viewer's yet, so the date is in the viewer's zone, named (N12).
       const zone = deploymentZone();
