@@ -50,6 +50,11 @@ describe('the Slack recipe', (): void => {
     expect(new Set(SLACK_KIT_BOT_SCOPES).size).toBe(SLACK_KIT_BOT_SCOPES.length);
   });
 
+  it('asks for channels:join, so a renewed employee re-joins its public channels itself, and for no private channel (RM4)', (): void => {
+    expect(SLACK_KIT_BOT_SCOPES).toContain('channels:join');
+    expect(SLACK_KIT_BOT_SCOPES.filter((scope) => scope.startsWith('groups:'))).toEqual([]);
+  });
+
   it('refuses a public origin Slack would refuse, as the issuer does', (): void => {
     expect(() =>
       slackKitManifest({ employeeName: 'Maya', publicUrl: 'http://day0.acme.test' }),
