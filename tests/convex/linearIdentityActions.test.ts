@@ -11,6 +11,7 @@ import type { MockAction } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
 import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -678,6 +679,34 @@ describe('an employee acts at the vendor only as the identity its card names (cr
 
     expect(await rungBearer(harness, credentialId)).toBe(pasted);
     expect(tokenRequests()).toEqual([]);
+  });
+});
+
+describe("Linear's own bearer read for a credential its issuer did not obtain (the second pass)", (): void => {
+  it('reads it through the token store, so a Nango-held row is never answered with its location', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'location',
+          label: 'Tracker token (Nango)',
+          ...sealForOwner(
+            nangoLocation({ providerConfigKey: 'tracker-cc', connectionId: 'tracker' }),
+            { current: credentialKey },
+            ORGANISATION_OWNER_KEY,
+          ),
+          source: 'entered',
+          createdAt: 1,
+          tokenStore: 'nango',
+          issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        }),
+    );
+
+    await expect(bearerOf(harness, credentialId)).rejects.toThrow(
+      'The nango token store is not configured on this deployment.',
+    );
   });
 });
 

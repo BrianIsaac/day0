@@ -841,14 +841,33 @@ export async function readLinearBearer(
 }
 
 /**
- * The bearer for any credential a card holds: a Linear token through {@link readLinearBearer}, any
- * other read as `credentials.decrypt` reads it. Internal, for an action in another module (the
- * probe, intake); records the credential's use.
+ * The bearer for any credential a card holds, as Linear's issuer reads it: a Linear token through
+ * {@link readLinearBearer}, any other through the token store (`accessTokenFor`), never a plain
+ * decrypt, which would answer a Nango-held row with its location. The rungs' one read is
+ * `mcpOauthActions.readSurfaceBearer`, which also refreshes an MCP authorisation's tokens.
+ *
+ * @param deps - Linear's transport and the clock.
+ */
+async function bearerAsLinearReadsIt(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  deps: LinearIdentityDeps,
+): Promise<string> {
+  return (
+    (await readLinearBearer(ctx, credentialId, deps)) ??
+    (await accessTokenFor(ctx, credentialId, linearTokenStore(deps)))
+  );
+}
+
+/**
+ * The bearer for any credential a card holds, as Linear's issuer reads it
+ * ({@link bearerAsLinearReadsIt}). Internal, for an action in another module; records the
+ * credential's use.
  */
 export const currentBearer = internalAction({
   args: { credentialId: v.id('credentials') },
   handler: async (ctx, args): Promise<string> =>
-    (await readLinearBearer(ctx, args.credentialId)) ?? (await valueOf(ctx, args.credentialId)),
+    await bearerAsLinearReadsIt(ctx, args.credentialId, linearIdentityDeps()),
 });
 
 /**
@@ -930,8 +949,7 @@ export function linearProbeIdentity(
 ): LinearProbeIdentity {
   return {
     async bearer(credentialId) {
-      const bearer =
-        (await readLinearBearer(ctx, credentialId, deps)) ?? (await valueOf(ctx, credentialId));
+      const bearer = await bearerAsLinearReadsIt(ctx, credentialId, deps);
       const held = await ctx.runQuery(internal.linearIdentity.heldToken, { credentialId });
       return { bearer, generation: held?.access.generation ?? 0 };
     },
