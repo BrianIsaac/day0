@@ -132,7 +132,7 @@ describe('the access recipes', (): void => {
       'docs/running/install.md',
       ...SYSTEMS.map((system) => ACCESS_KIT[system].guide),
     ]) {
-      expect(page(path), path).not.toContain('—');
+      expect(page(path), path).not.toContain('\u2014');
     }
   });
 });

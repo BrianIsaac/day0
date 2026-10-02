@@ -62,7 +62,7 @@ describe('the install record', (): void => {
     );
     expect(markdown).toContain('- github: keeps the pasted key until Day0 has an issuer for it');
     expect(markdown).toContain('`pnpm run check:access` exited 0: every connection passed.');
-    expect(markdown).not.toMatch(/—/);
+    expect(markdown).not.toMatch(/\u2014/);
   });
 
   it('says so when this run connected nothing', (): void => {
