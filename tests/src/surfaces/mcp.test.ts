@@ -137,6 +137,13 @@ function adapter(
 }
 
 describe('MCP adapter', (): void => {
+  it('takes its read of the bearer from the caller, with no plain-decrypt default (join 9)', (): void => {
+    const build = (surfaces: readonly SurfaceRecord[]): McpAdapter =>
+      // @ts-expect-error -- deps are required: a plain decrypt would send a Nango-held row's pointer, or a token past its expiry.
+      new McpAdapter(surfaces);
+    expect(build).toBeTypeOf('function');
+  });
+
   it('applies outcome redaction to extracted provider identifiers', async () => {
     const client = fakeClient({ linear_save_comment: async () => ({ id: 'password: hunter2' }) });
     const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
