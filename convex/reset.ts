@@ -20,6 +20,7 @@ import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
 import type { AccessEnd } from '../src/surfaces/access-identity';
+import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
@@ -677,8 +678,9 @@ export async function stillBound(
 
 /**
  * Which of a leaving employee's credentials a retire or a handover would revoke and which it
- * would keep for what still binds them; a credential that is gone or not the owner's is in
- * neither.
+ * would keep for what still binds them; a credential that is gone, or neither the owner's nor a
+ * per-employee identity the organisation holds for the owner's employee (the wave 11 common
+ * rules), is in neither, so the organisation's own rows never are.
  *
  * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
@@ -695,7 +697,9 @@ export async function sortCredentials(
   const kept = new Set<Id<'credentials'>>();
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
-    if (!credential || credential.userId !== userId) continue;
+    if (!credential) continue;
+    const employeeIdentity = credential.holder !== undefined && !sharedByOrganisation(credential);
+    if (credential.userId !== userId && !employeeIdentity) continue;
     if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }

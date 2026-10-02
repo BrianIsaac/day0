@@ -423,7 +423,6 @@ async function runAttempt(ctx: ActionCtx, job: RevocationJob): Promise<void> {
     {
       issuedBy: credential.issuedBy,
       role: job.primaryIsRefresh === true ? 'refresh' : 'access',
-      ...(credential.holder !== undefined ? { holder: credential.holder } : {}),
     },
     plan,
   );

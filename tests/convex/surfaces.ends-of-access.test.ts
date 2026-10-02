@@ -159,6 +159,30 @@ describe('the ends of access on a card (11-AR)', (): void => {
     }
   });
 
+  it("disconnect revokes the bot token of an identity the organisation holds, as it does the owner's", async (): Promise<void> => {
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.disconnect, { surfaceId: leo.slack.surfaceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([
+      {
+        url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${LEO_BOT_TOKEN}`,
+        form: {},
+      },
+    ]);
+    expect((await read(harness, leo.slack.token))?.sourceRevocation?.state).toBe('done');
+    expect((await read(harness, leo.slack.secret))?.revokedAt).toBeUndefined();
+    expect(await eventsOf(harness, leo.agentId, 'credential.revoked-at-source')).toEqual([
+      expect.objectContaining({ system: 'slack', end: 'disconnect', outcome: 'token-revoked' }),
+    ]);
+  });
+
   it('disconnects a pasted-key card without sending the key anywhere, and keeps it in the owner’s store', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: false });

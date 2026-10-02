@@ -17,13 +17,34 @@ export interface RevocationIssuer {
   readonly clientId?: string;
 }
 
-/** The credential a plan is for: how Day0 obtained it, who holds it, and which token it is. */
+/** The credential a plan is for: how Day0 obtained it and which token it is. */
 export interface RevocationSubject {
   readonly issuedBy: RevocationIssuer;
-  /** `organisation` for a credential every employee shares; absent for the owner's. */
-  readonly holder?: 'organisation';
   /** An access token (or a bot token, or an app's secret), or the refresh token paired with one. */
   readonly role: 'access' | 'refresh';
+}
+
+/** What {@link sharedByOrganisation} reads of a credential row. */
+export interface CredentialHolding {
+  readonly holder?: 'organisation';
+  readonly issuedBy?: { readonly grant: CredentialGrant };
+}
+
+/**
+ * Whether a credential row is the organisation's own, which every employee shares and no one
+ * employee's end of access touches: a row the organisation holds that Day0 did not obtain for one
+ * employee (an organisation connection's secret, which carries no `issuedBy`) or that is a
+ * client-credentials app-actor token (L2). A per-employee identity's tokens are held by the
+ * organisation too (the wave 11 common rules) and are not shared: how Day0 obtained a row decides
+ * whether it is revoked, not who holds it.
+ *
+ * @param row - The credential row.
+ */
+export function sharedByOrganisation(row: CredentialHolding): boolean {
+  return (
+    row.holder !== undefined &&
+    (row.issuedBy === undefined || row.issuedBy.grant === 'client-credentials')
+  );
 }
 
 /** What Day0 holds that a revocation may need beside the credential itself. */
@@ -119,8 +140,9 @@ function slackPlan(
 /**
  * Choose how to end one credential Day0 obtained at its vendor, for one end of access.
  *
- * A handover calls nothing (A25). A token the organisation holds, or a client-credentials
- * app-actor token, is shared by other employees and never revoked (L2). Slack's two calls follow
+ * A handover calls nothing (A25). A client-credentials app-actor token is shared by other
+ * employees and never revoked (L2); a per-employee token is revoked whoever holds its row
+ * ({@link sharedByOrganisation}). Slack's two calls follow
  * {@link endRemovesApp}; Linear revokes each token of the pair by its hint (L3); an MCP server is
  * revoked at the endpoint it advertises (RFC 7009); a system with no revoker, or an app Linear
  * cannot delete by API (L1), is named as such.
@@ -136,7 +158,7 @@ export function revocationPlanFor(
 ): RevocationPlan {
   if (end === 'transfer') return { kind: 'none', outcome: 'not-at-vendor', words: HANDOVER_WORDS };
   const { system, grant, clientId } = subject.issuedBy;
-  if (subject.holder === 'organisation' || grant === 'client-credentials') {
+  if (grant === 'client-credentials') {
     return { kind: 'none', outcome: 'shared', words: SHARED_WORDS };
   }
   const hint: TokenTypeHint = subject.role === 'refresh' ? 'refresh_token' : 'access_token';

@@ -15,6 +15,7 @@ import {
 import { allConvexModules } from './all-modules';
 import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
 import type { AccessEnd } from '../../src/surfaces/access-identity';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -85,6 +86,33 @@ async function linearPair(harness: Harness): Promise<{
   const issuedBy = { system: 'linear', grant: 'authorisation-code' as const, clientId: 'lin-1' };
   const refresh = await stored(harness, LINEAR_REFRESH, { issuedBy });
   const access = await stored(harness, LINEAR_ACCESS, { issuedBy, refreshCredentialId: refresh });
+  return { access, refresh };
+}
+
+/**
+ * A Linear access token and its refresh token for one employee, held by the organisation under
+ * the reserved key, as the wave 11 common rules have an issuer store a per-employee identity.
+ */
+async function organisationHeldLinearPair(harness: Harness): Promise<{
+  readonly access: Id<'credentials'>;
+  readonly refresh: Id<'credentials'>;
+}> {
+  const issuedBy = { system: 'linear', grant: 'authorisation-code' as const, clientId: 'lin-1' };
+  const held = async (plaintext: string, label: string): Promise<Id<'credentials'>> =>
+    await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'oauth',
+      label,
+      plaintext,
+      source: 'oauth',
+    });
+  const refresh = await held(LINEAR_REFRESH, 'Linear refresh token');
+  const access = await held(LINEAR_ACCESS, 'Linear access token');
+  await harness.run(async (ctx) => {
+    await ctx.db.patch(refresh, { issuedBy });
+    await ctx.db.patch(access, { issuedBy, refreshCredentialId: refresh });
+  });
   return { access, refresh };
 }
 
@@ -280,6 +308,54 @@ describe('ending access at the vendor (11-AR; the access plan, section 4.4)', ()
     expect(row?.ciphertext).toEqual(expect.any(String));
     expect(await lines(harness, card.agentId)).toEqual([
       expect.objectContaining({ system: 'linear', outcome: 'shared' }),
+    ]);
+  });
+
+  it("revokes an employee's own identity the organisation holds, by how Day0 obtained it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access, refresh } = await organisationHeldLinearPair(harness);
+    network.answer('/oauth/revoke', { status: 200, body: '' });
+
+    await end(harness, card, [access, refresh], 'retire');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls.map((call) => call.form)).toEqual([
+      { token: LINEAR_REFRESH, token_type_hint: 'refresh_token' },
+      { token: LINEAR_ACCESS, token_type_hint: 'access_token' },
+    ]);
+    expect(
+      (await rows(harness)).map((row) => [row.sourceRevocation?.state, row.ciphertext]),
+    ).toEqual([
+      ['done', undefined],
+      ['done', undefined],
+    ]);
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({ system: 'linear', end: 'retire', outcome: 'token-revoked' }),
+    ]);
+  });
+
+  it("never revokes an organisation connection's own secret a card binds, and says so", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const secret = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Linear client secret',
+      plaintext: PASTED_KEY,
+      source: 'entered',
+    });
+
+    await end(harness, card, [secret], 'retire');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([]);
+    const [row] = await rows(harness);
+    expect(row?.revokedAt).toBeUndefined();
+    expect(row?.ciphertext).toEqual(expect.any(String));
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({ system: 'Linear', outcome: 'shared' }),
     ]);
   });
 

@@ -74,13 +74,20 @@ async function sealed(
  *
  * @param harness - A harness whose `DAY0_CREDENTIAL_KEY` is stubbed.
  * @param options - Whether IT's Slack configuration connection exists (and so created the app),
- *   and whose employee Leo is.
+ *   whose employee Leo is, and who holds his identities' rows: his owner, as an issuer before
+ *   v0.14.0 stored them, or the organisation, as the wave 11 common rules have every issuer
+ *   store a per-employee identity's tokens (`holder: 'organisation'` under the reserved key).
  */
 export async function seedIssuedIdentities(
   harness: TestConvex<typeof schema>,
-  options: { readonly connection: boolean; readonly owner?: string },
+  options: {
+    readonly connection: boolean;
+    readonly owner?: string;
+    readonly heldBy?: 'owner' | 'organisation';
+  },
 ): Promise<IssuedIdentities> {
   const owner = options.owner ?? 'owner';
+  const heldUnder = options.heldBy === 'organisation' ? ORGANISATION_OWNER_KEY : owner;
   let connectionId: Id<'organisationConnections'> | undefined;
   if (options.connection) {
     const configuration = await sealed(
@@ -111,10 +118,10 @@ export async function seedIssuedIdentities(
     clientId: LEO_CLIENT_ID,
     ...(connectionId !== undefined ? { organisationConnectionId: connectionId } : {}),
   };
-  const secret = await sealed(harness, owner, LEO_CLIENT_SECRET, 'Leo (Day0) client secret', {
+  const secret = await sealed(harness, heldUnder, LEO_CLIENT_SECRET, 'Leo (Day0) client secret', {
     issuedBy: { ...app, grant: 'app-created' },
   });
-  const token = await sealed(harness, owner, LEO_BOT_TOKEN, 'Slack bot token', {
+  const token = await sealed(harness, heldUnder, LEO_BOT_TOKEN, 'Slack bot token', {
     issuedBy: { ...app, grant: 'oauth-install', clientSecretCredentialId: secret },
   });
   const linearIssuer = {
@@ -122,10 +129,10 @@ export async function seedIssuedIdentities(
     grant: 'authorisation-code' as const,
     clientId: 'lin-1',
   };
-  const refresh = await sealed(harness, owner, LEO_LINEAR_REFRESH, 'Linear refresh token', {
+  const refresh = await sealed(harness, heldUnder, LEO_LINEAR_REFRESH, 'Linear refresh token', {
     issuedBy: linearIssuer,
   });
-  const access = await sealed(harness, owner, LEO_LINEAR_ACCESS, 'Linear access token', {
+  const access = await sealed(harness, heldUnder, LEO_LINEAR_ACCESS, 'Linear access token', {
     issuedBy: linearIssuer,
     refreshCredentialId: refresh,
   });

@@ -152,6 +152,46 @@ describe('the retire revokes at the vendor what Day0 obtained (11-AR)', (): void
     expect(retirement).toMatchObject({ revokedCredentials: 4, keptCredentials: 0 });
   });
 
+  it("retire revokes the employee's own identity the organisation holds, as it does the owner's", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+    network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
+    network.answer('/oauth/revoke', { status: 200, body: '' });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.retire, { agentId: leo.agentId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls.map((call) => new URL(call.url).pathname).sort()).toEqual([
+      '/api/apps.manifest.delete',
+      '/oauth/revoke',
+      '/oauth/revoke',
+    ]);
+    expect(await lines(harness, leo.agentId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ system: 'slack', end: 'retire', outcome: 'app-deleted' }),
+        expect.objectContaining({ system: 'linear', end: 'retire', outcome: 'token-revoked' }),
+      ]),
+    );
+    const after = await credentialRows(harness, [
+      leo.slack.token,
+      leo.slack.secret,
+      leo.linear.access,
+      leo.linear.refresh,
+    ]);
+    expect(after.map((row) => [row?.sourceRevocation?.state, row?.ciphertext])).toEqual([
+      ['done', undefined],
+      ['done', undefined],
+      ['done', undefined],
+      ['done', undefined],
+    ]);
+    const [retirement] = await harness.run(
+      async (ctx) => await ctx.db.query('retirements').collect(),
+    );
+    expect(retirement).toMatchObject({ revokedCredentials: 4, keptCredentials: 0 });
+  });
+
   it("leaves a pasted key's vendor alone and says so, deleting Day0's copy as before", async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: false });
@@ -233,6 +273,24 @@ describe("the retire preview's per-credential outcome (11-AR; the retire dialog'
         system: 'linear',
         outcome: 'token-revoked',
       },
+    ]);
+  });
+
+  it('says the same of an identity the organisation holds', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+
+    const preview = await harness
+      .withIdentity(managerIdentity())
+      .query(api.reset.retirePreview, { agentId: leo.agentId });
+
+    expect(preview?.outcomes).toEqual([
+      { slug: 'slack', displayName: 'Slack', system: 'slack', outcome: 'app-deleted' },
+      { slug: 'linear', displayName: 'Linear', system: 'linear', outcome: 'token-revoked' },
+    ]);
+    expect(preview?.revoked).toEqual([
+      { slug: 'slack', displayName: 'Slack' },
+      { slug: 'linear', displayName: 'Linear' },
     ]);
   });
 

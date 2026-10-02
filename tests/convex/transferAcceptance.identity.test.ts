@@ -170,6 +170,50 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     expect(secret?.ciphertext).toEqual(expect.any(String));
   });
 
+  it("keeps an identity the organisation holds at a handover and through the old manager's deletion", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+    await handOverLeo(harness, leo);
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await read(harness, leo.slack.surfaceId)).toMatchObject({
+      verdict: 'proposed',
+      reason: HANDOVER_REAPPROVE_REASON,
+      credentialId: leo.slack.token,
+    });
+    for (const id of [leo.slack.token, leo.slack.secret]) {
+      const row = await read(harness, id);
+      expect(row?.revokedAt).toBeUndefined();
+      expect(row?.ciphertext).toEqual(expect.any(String));
+    }
+    expect(network.calls).toEqual([]);
+  });
+
+  it('deletes the app of an identity the organisation holds when the new manager rejects the card', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+    network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
+    await handOverLeo(harness, leo);
+
+    await harness
+      .withIdentity(COLLEAGUE)
+      .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not ours.' });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([
+      {
+        url: 'https://slack.com/api/apps.manifest.delete',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: { app_id: LEO_APP_ID },
+      },
+    ]);
+    expect((await read(harness, leo.slack.token))?.sourceRevocation?.state).toBe('done');
+  });
+
   it('revokes the kept identity at the vendor when the new manager rejects the card', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });

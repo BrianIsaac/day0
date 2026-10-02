@@ -3,6 +3,7 @@ import { ACCESS_ENDS, type AccessEnd } from '../../../../src/surfaces/access-ide
 import {
   endRemovesApp,
   revocationPlanFor,
+  sharedByOrganisation,
   type RevocationMeans,
   type RevocationSubject,
 } from '../../../../src/surfaces/revokers/plan';
@@ -103,9 +104,32 @@ describe('the Linear plan (L2, L3)', (): void => {
       outcome: 'shared',
       words: "Shared app token: not revoked (the app's other employees use it).",
     });
+  });
+});
+
+describe("the organisation's own rows, and an employee's identity it holds (wave 11 common rules)", (): void => {
+  it("shares an organisation connection's secret and its app-actor token, never an owner's row", (): void => {
+    expect(sharedByOrganisation({ holder: 'organisation' })).toBe(true);
     expect(
-      revocationPlanFor({ ...LINEAR_ACCESS, holder: 'organisation' }, 'retire', EVERYTHING),
-    ).toMatchObject({ kind: 'none', outcome: 'shared' });
+      sharedByOrganisation({ holder: 'organisation', issuedBy: { grant: 'client-credentials' } }),
+    ).toBe(true);
+    expect(sharedByOrganisation({})).toBe(false);
+    expect(sharedByOrganisation({ issuedBy: { grant: 'authorisation-code' } })).toBe(false);
+  });
+
+  it("leaves a per-employee identity the organisation holds to the employee's end, revoked as any", (): void => {
+    for (const grant of [
+      'oauth-install',
+      'authorisation-code',
+      'token-rotation',
+      'app-created',
+    ] as const) {
+      expect(sharedByOrganisation({ holder: 'organisation', issuedBy: { grant } })).toBe(false);
+    }
+    expect(revocationPlanFor(LINEAR_ACCESS, 'retire', EVERYTHING)).toEqual({
+      kind: 'call',
+      calls: [{ kind: 'linear-revoke', hint: 'access_token' }],
+    });
   });
 });
 

@@ -11,7 +11,12 @@ import { finishSourceRevocation, holdForSourceRevocation, purgeCredential } from
 import { appendEvent } from './eventLog';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
-import { callOutcome, HANDOVER_WORDS, revocationPlanFor } from '../src/surfaces/revokers/plan';
+import {
+  callOutcome,
+  HANDOVER_WORDS,
+  revocationPlanFor,
+  sharedByOrganisation,
+} from '../src/surfaces/revokers/plan';
 
 /*
  * Revocation at the vendor, the transaction half (wave 11, 11-AR; the access plan, section 4.4;
@@ -87,7 +92,7 @@ export interface EndedAtSource {
   readonly purged: readonly Id<'credentials'>[];
   /** The pasted keys: never sent to a vendor, and left to the caller's own rule. */
   readonly pasted: readonly Id<'credentials'>[];
-  /** The rows the organisation holds: never revoked by one employee's end. */
+  /** The organisation's own rows (`sharedByOrganisation`): never revoked by one employee's end. */
   readonly shared: readonly Id<'credentials'>[];
   /**
    * The rows Day0 obtained but cannot revoke at the vendor here (their value is gone, or the
@@ -101,9 +106,13 @@ type IssuedCredential = Doc<'credentials'> & {
   readonly issuedBy: NonNullable<Doc<'credentials'>['issuedBy']>;
 };
 
-/** Whether a row is a credential Day0 obtained and one employee may end. */
+/**
+ * Whether a row is a credential Day0 obtained and one employee may end: it carries `issuedBy` and
+ * is not the organisation's own, whoever holds it (a per-employee identity the organisation holds
+ * is the employee's to end).
+ */
 function ownIssued(credential: Doc<'credentials'>): credential is IssuedCredential {
-  return credential.issuedBy !== undefined && credential.holder === undefined;
+  return credential.issuedBy !== undefined && !sharedByOrganisation(credential);
 }
 
 /**
@@ -185,7 +194,7 @@ function sortRows(credentials: readonly Doc<'credentials'>[]): SortedRows {
   return {
     issued,
     pasted: credentials.filter((row) => row.issuedBy === undefined && !row.holder),
-    shared: credentials.filter((row) => row.holder !== undefined),
+    shared: credentials.filter(sharedByOrganisation),
     revocable,
     unrevocable: unheld.filter((row) => !revocable.includes(row)),
   };
@@ -241,7 +250,8 @@ function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): Card
  * with it; a handover calls no vendor (A25), so it purges them at once. A row Day0 obtained but
  * cannot revoke here (its value gone, or the token store holding it) is revoked in Day0 at once.
  * A pasted key is never sent to a vendor, and the caller's own rule decides whether Day0's copy
- * goes. A row the organisation holds is untouched. One line is written per card, so per system
+ * goes. The organisation's own row is untouched; a per-employee identity the organisation holds is
+ * ended as any row Day0 obtained. One line is written per card, so per system
  * ({@link cardLine}), or none where the attempts will write it. A row already held by an earlier
  * end keeps its scheduled attempts and is not scheduled again.
  *
@@ -430,7 +440,7 @@ export async function plannedAtSource(
   if (line !== null && line.outcome !== 'shared' && line.outcome !== 'pasted-key') {
     return { system: line.system, outcome: plannedOf(line.outcome) };
   }
-  const organisation = [...card.ended, ...card.kept].find((row) => row.holder !== undefined);
+  const organisation = [...card.ended, ...card.kept].find(sharedByOrganisation);
   if (organisation !== undefined) {
     return { system: organisation.issuedBy?.system ?? card.surfaceName, outcome: 'shared' };
   }
