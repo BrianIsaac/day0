@@ -458,6 +458,20 @@ pnpm check:sign-in                      # with the customer's IT: one test sign-
 
 The guides take the customer's administrator through the same seven steps, from registering the application to what the live check must show: [Microsoft Entra ID](docs/running/sign-in-entra.md), [Okta](docs/running/sign-in-okta.md), [Google Workspace](docs/running/sign-in-google.md), and [any other OpenID Connect issuer](docs/running/sign-in-oidc.md) (`--provider oidc`); from such an issuer Day0 admits only a verified address, refusing anyone else at sign-in and again on the backend, so where anyone can register and verify an address at it, self-registration must be off, and `pnpm check:sign-in` says so for such an issuer. Who may sign in is decided three times: by the provider's own assignment, by the allowed domains (`DAY0_OIDC_ALLOWED_DOMAINS`, checked at sign-in and again on the backend, and for Google the account's Workspace, `hd`, as well), and, for deploying or taking on an employee, by a verified address (`email_verified`, Entra's `xms_edov`, or `DAY0_OIDC_EMAIL_TRUSTED` as the declared fallback). The session is a sealed, httpOnly cookie holding the refresh token and the current ID token; there is no session table, and changing `DAY0_SESSION_SECRET` signs everyone out. `pnpm check:setup` checks every value, the issuer's discovery document from this machine and from inside the backend container, and that the backend holds the file's values.
 
+### The organisation's systems (customer-local)
+
+The other half of the same install: the customer's IT connects each system the documentation names once, for the whole organisation, and every employee Day0 deploys then acts through that connection under its own identity (its own Slack app; its own Linear app user, or the organisation's shared Day0 app), with no credential pasted on any card. Administrators named at install (`DAY0_ADMINISTRATORS`) manage those connections; each employee's access still has one approval, its manager's. [Installing Day0 at a customer](docs/running/install.md) is the one runbook over both halves:
+
+```bash
+./setup.sh install --provider entra --backend-url https://convex.day0.acme.com
+                                        # the target checks, sign-in, access, check:setup and check:sign-in,
+                                        # stopping at the first that fails and saying which
+./setup.sh access                       # the access half alone: administrators, then each system's recipe
+pnpm check:access                       # each connection: redirect, scopes, its secret opens, its vendor answers
+```
+
+`./setup.sh access` lists the systems the documentation names, shows each one's recipe ([Slack](docs/running/access-slack.md), [Linear](docs/running/access-linear.md), [an MCP server](docs/running/access-mcp.md)), records the mode chosen for it (per employee or shared), asks for what the recipe produced, secrets in a hidden prompt or from a file on stdin (`--secrets-stdin`) and never as a flag, and lands it sealed under the deployment's credential key. It then runs `pnpm check:access` and writes an install record for the customer's IT (`~/day0-install/<project>/`): what was registered, where, with which scopes, and when each secret expires, without any secret. A system the documentation names that has no recipe yet (GitHub, Atlassian, Notion, Microsoft 365, Google Workspace) keeps the pasted key on each employee's card.
+
 ### The components you need
 
 Real mode adds optional components, and each one is a Compose profile. `real` is day0 itself and is added for you; you name the rest:
@@ -1573,6 +1587,20 @@ pnpm check:sign-in                      # 与客户 IT 一起：一次测试登�
 ```
 
 四份指南按相同的七个步骤带客户管理员完成配置，从注册应用到在线检查必须显示的内容：[Microsoft Entra ID](docs/running/sign-in-entra.md)、[Okta](docs/running/sign-in-okta.md)、[Google Workspace](docs/running/sign-in-google.md)，以及[其他 OpenID Connect issuer](docs/running/sign-in-oidc.md)（`--provider oidc`）。对这类 issuer，Day0 只接纳已验证的地址，其他人在登录时和后端都会被拒绝；因此如果任何人都能在该 issuer 上注册并自行验证地址，必须关闭自助注册，`pnpm check:sign-in` 会对这类 issuer 给出提示。谁可以登录由三层决定：身份提供方自己的分配；允许的域名（`DAY0_OIDC_ALLOWED_DOMAINS`，在登录时和后端各检查一次，Google 还要检查账号所属的 Workspace，即 `hd`）；以及部署或接手员工所需的已验证地址（`email_verified`、Entra 的 `xms_edov`，或作为声明的后备方案的 `DAY0_OIDC_EMAIL_TRUSTED`）。会话是一个加密封装的 httpOnly cookie，保存 refresh token 和当前的 ID token；没有会话表，更改 `DAY0_SESSION_SECRET` 会让所有人退出登录。`pnpm check:setup` 会检查每个值、从本机和后端容器内部各获取一次 issuer 的 discovery 文档，并确认后端保存的值与文件一致。
+
+#### 组织的系统（customer-local）
+
+这是同一次安装的另一半：客户 IT 为整个组织把文档中提到的每个系统各连接一次，之后 Day0 部署的每名员工都通过这个连接、以自己的身份行事（自己的 Slack 应用；自己的 Linear 应用用户，或组织共享的 Day0 应用），任何卡片上都不粘贴凭据。安装时指定的管理员（`DAY0_ADMINISTRATORS`）管理这些连接；每名员工的访问仍只有一次审批，即其经理的审批。[在客户处安装 Day0](docs/running/install.md) 是覆盖两半的唯一操作手册：
+
+```bash
+./setup.sh install --provider entra --backend-url https://convex.day0.acme.com
+                                        # 目标检查、sign-in、access、check:setup 与 check:sign-in，
+                                        # 在第一个失败的步骤处停止并说明是哪一步
+./setup.sh access                       # 单独运行 access 这一半：先指定管理员，再逐个系统按配方连接
+pnpm check:access                       # 每个连接：重定向、scope、密钥能否打开、厂商是否应答
+```
+
+`./setup.sh access` 列出文档提到的系统，展示每个系统的配方（[Slack](docs/running/access-slack.md)、[Linear](docs/running/access-linear.md)、[MCP server](docs/running/access-mcp.md)），记录为它选择的模式（每名员工各自一个，或共享），询问配方产出的值：密钥在隐藏提示中输入或通过 stdin 从文件读取（`--secrets-stdin`），从不作为命令行参数；然后用部署的凭据密钥加密封装后落地。随后它运行 `pnpm check:access`，并为客户 IT 写一份安装记录（`~/day0-install/<project>/`）：注册了什么、在哪里、用哪些 scope、每个密钥何时过期，其中不含任何密钥。文档提到但尚无配方的系统（GitHub、Atlassian、Notion、Microsoft 365、Google Workspace）在每名员工的卡片上继续使用粘贴的密钥。
 
 #### 需要的组件
 
