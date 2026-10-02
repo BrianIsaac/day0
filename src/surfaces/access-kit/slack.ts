@@ -1,0 +1,129 @@
+import {
+  EMPLOYEE_NAME_PLACEHOLDER,
+  PUBLIC_URL_PLACEHOLDER,
+  SLACK_REDIRECT_PATH,
+  buildSlackManifest,
+  type BuiltSlackManifest,
+  type SlackManifest,
+} from '../slack-manifest';
+import type { AccessRecipe } from './types';
+
+/*
+ * Slack in the access kit (the access plan, sections 4.8 and 4.9; B9, S2 to S4): IT hands the
+ * setup verb a configuration token and its refresh token, generated from a workspace service
+ * account, and each employee's own Slack app is created from the manifest below. The manifest is
+ * written once here, as a template with the two placeholders the documentation reader knows, and
+ * built through the issuer's own builder (`buildSlackManifest`), so the app the kit prints, the
+ * app the recipe page shows and the app the issuer sends are one app.
+ */
+
+/**
+ * The bot scopes an employee's own app holds: exactly the methods Day0 calls in Slack, each
+ * method's documented scope (read 1 October 2026): `chat.postMessage` and `chat.update`
+ * (`chat:write`), `conversations.list` (`channels:read`, `im:read`), `conversations.history` and
+ * `conversations.replies` (`channels:history`, `im:history`), `conversations.open` (`im:write`)
+ * and `users.lookupByEmail` (`users:read.email`, which Slack grants only beside `users:read`).
+ * `auth.test` needs none. Private channels are added by hand (RM4), so no `groups:` scope.
+ */
+export const SLACK_KIT_BOT_SCOPES: readonly string[] = [
+  'chat:write',
+  'channels:read',
+  'channels:history',
+  'im:read',
+  'im:write',
+  'im:history',
+  'users:read',
+  'users:read.email',
+];
+
+/** The app's description in Slack's directory: what the employee is, in Slack's 140 characters. */
+const APP_DESCRIPTION =
+  'A Day0 digital employee. It drafts first and holds what it posts until its manager approves.';
+
+/** The manifest template, placeholders and all, as a policy page may carry it. */
+const TEMPLATE: SlackManifest = {
+  display_information: {
+    name: `${EMPLOYEE_NAME_PLACEHOLDER} (Day0)`,
+    description: APP_DESCRIPTION,
+  },
+  features: {
+    bot_user: { display_name: `${EMPLOYEE_NAME_PLACEHOLDER} (Day0)`, always_online: false },
+  },
+  oauth_config: {
+    redirect_urls: [`${PUBLIC_URL_PLACEHOLDER}${SLACK_REDIRECT_PATH}`],
+    scopes: { bot: [...SLACK_KIT_BOT_SCOPES] },
+  },
+  settings: {
+    org_deploy_enabled: false,
+    socket_mode_enabled: false,
+    token_rotation_enabled: false,
+  },
+};
+
+/**
+ * The kit's Slack manifest template: the JSON a policy page carries in a fenced block, with
+ * `<employee name>` and `<Day0 public URL>` for the issuer to fill.
+ */
+export function slackKitManifestTemplate(): string {
+  return JSON.stringify(TEMPLATE, null, 2);
+}
+
+/**
+ * The manifest one employee's own Slack app is created from (11-AS's issuer sends this app).
+ *
+ * @param input.employeeName - The employee's name, which names the app and its bot user.
+ * @param input.publicUrl - Day0's public https origin, which the redirect returns to.
+ * @returns The manifest, the app's name, its redirect and its scopes, as the issuer builds them.
+ * @throws ManifestTemplateError when the origin is not https or the name is empty, as the issuer refuses.
+ */
+export function slackKitManifest(input: {
+  readonly employeeName: string;
+  readonly publicUrl: string;
+}): BuiltSlackManifest {
+  return buildSlackManifest({
+    agentName: input.employeeName,
+    publicUrl: input.publicUrl,
+    template: slackKitManifestTemplate(),
+  });
+}
+
+/** Slack's recipe: per employee only (AI4), from a configuration token and its refresh token. */
+export const SLACK_RECIPE: AccessRecipe = {
+  system: 'slack',
+  displayName: 'Slack',
+  guide: 'docs/running/access-slack.md',
+  redirectPath: SLACK_REDIRECT_PATH,
+  vendorHosts: ['slack.com'],
+  modes: [
+    {
+      mode: 'per-employee',
+      kind: 'slack-configuration',
+      scopes: SLACK_KIT_BOT_SCOPES,
+      summary:
+        'From a workspace service account (not a person), generate an app configuration token ' +
+        'and keep its refresh token: Day0 creates each employee its own Slack app with it.',
+      asks: [
+        {
+          field: 'secret',
+          label: 'Slack app configuration token (hidden)',
+          secret: true,
+          stdinName: 'SLACK_CONFIGURATION_TOKEN',
+          optional: false,
+        },
+        {
+          field: 'refreshToken',
+          label: 'Its refresh token (hidden)',
+          secret: true,
+          stdinName: 'SLACK_CONFIGURATION_REFRESH_TOKEN',
+          optional: false,
+        },
+      ],
+      secretLifetime: {
+        words:
+          'The configuration token expires 12 hours after it is generated; Day0 renews it with ' +
+          'its refresh token each time it creates an app, and each renewal returns a new pair.',
+      },
+      landsAtInstall: true,
+    },
+  ],
+};
