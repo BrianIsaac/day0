@@ -409,6 +409,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'app configuration token revoked at the provider'
       : `app configuration token dropped${because(payload.reason)}`,
   'surface.app-unrecorded': 'a registered app was not recorded: remove it at the provider',
+  'surface.disconnected': (payload) =>
+    payload.by === 'organisation'
+      ? `disconnected: the organisation's connection was revoked${because(payload.reason)}`
+      : 'disconnected by the manager',
   'credential.revoked-at-source': (payload) => revokedAtSourceLabel(payload),
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>

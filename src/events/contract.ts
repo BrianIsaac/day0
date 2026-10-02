@@ -770,6 +770,8 @@ export interface SurfaceConnectedPayload extends SurfaceNamed {
 /** The payload of `surface.expired`. Older code wrote this without the end date. */
 export interface SurfaceExpiredPayload extends SurfaceNamed {
   readonly expiresAt?: number;
+  /** True where the end revoked at the vendor the credential Day0 obtained (11-AR, A26). */
+  readonly revokedAtSource?: boolean;
 }
 
 /** The payload of `surface.access-set`. */
@@ -778,6 +780,10 @@ export interface SurfaceAccessSetPayload extends SurfaceNamed {
   readonly days: number;
   readonly expiresAt: number;
   readonly renewed?: boolean;
+  /** What the renewal needs issued again: the expiry revoked it at the vendor (11-AR, A26). */
+  readonly reissue?: 'install' | 'authorise';
+  /** The move a renewed pasted key is offered: its system has an organisation connection (A27). */
+  readonly offer?: 'own-identity';
   /** The end date the upgrade replaced. */
   readonly from?: number;
 }
@@ -822,6 +828,16 @@ export interface SurfaceConfigurationTokenRevokedPayload extends SurfaceNamed {
 /** The payload of `surface.app-unrecorded`. */
 export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
+}
+
+/**
+ * The payload of `surface.disconnected` (11-AR): the manager's Disconnect on the card, or the
+ * administrator's revoke of the organisation connection the card acted through, with its reason.
+ * What the end did at the vendor is the `credential.revoked-at-source` line beside it.
+ */
+export interface SurfaceDisconnectedPayload extends SurfaceNamed {
+  readonly by: 'manager' | 'organisation';
+  readonly reason?: string;
 }
 
 // Ends of access at the vendor.
@@ -1412,6 +1428,7 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'surface.disconnected': SurfaceDisconnectedPayload;
   'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
@@ -1577,6 +1594,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'surface.disconnected',
   'credential.revoked-at-source',
   'plan.obligations-judged',
   'plan.obligations-failed-open',

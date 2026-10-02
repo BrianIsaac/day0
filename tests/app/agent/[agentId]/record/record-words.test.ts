@@ -770,4 +770,21 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
       ended({ system: 'slack', surfaceName: 'Slack', end: 'disconnect', outcome: 'already-gone' }),
     ).toBe('Access to the Slack connection was already revoked at Slack.');
   });
+
+  it('says who disconnected a connection', (): void => {
+    expect(recordWords({ type: 'surface.disconnected', payload: { by: 'manager' } }, leo)).toBe(
+      'You disconnected the Slack connection.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.disconnected',
+          payload: { by: 'organisation', reason: 'Slack was disconnected for everyone by IT' },
+        },
+        leo,
+      ),
+    ).toBe(
+      "The Slack connection was disconnected when the organisation's connection was revoked: Slack was disconnected for everyone by IT.",
+    );
+  });
 });

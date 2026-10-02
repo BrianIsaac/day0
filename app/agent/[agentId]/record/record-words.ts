@@ -178,6 +178,11 @@ function connectionOf(subject: RecordSubject): string {
   return subject.connection ? `the ${subject.connection} connection` : 'a connection';
 }
 
+/** A phrase with its first letter in capitals, to open a sentence. */
+function capitalised(phrase: string): string {
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
+}
+
 /**
  * What one end of access did at the vendor (11-AR): the connection by the card's name while the
  * card stands, else by the name the line kept, and the system as it names itself.
@@ -639,6 +644,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
   'surface.app-unrecorded': (_, subject) =>
     `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
+  'surface.disconnected': (p, subject) =>
+    p.by === 'organisation'
+      ? `${capitalised(connectionOf(subject))} was disconnected when the organisation's connection was revoked${because(p.reason)}`
+      : `${decider(subject)} disconnected ${connectionOf(subject)}`,
   'credential.revoked-at-source': (p, subject) => revokedAtSourceWords(p, subject),
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,

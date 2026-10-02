@@ -40,6 +40,8 @@ import { PROBE_LEASE_MS, probeInFlight } from '../src/surfaces/probe-lease';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
+import { endAccessAtSource } from './sourceRevocation';
+import type { AccessEnd } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
@@ -1780,6 +1782,70 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'listed-dead',
 ];
 
+/** What an end of the card's own credential did: the rows held for their vendor call. */
+interface OwnCredentialEnded {
+  readonly held: readonly Id<'credentials'>[];
+}
+
+/**
+ * The card's own credential and the refresh token paired with it, unless another card binds the
+ * credential too: the rows an end that keeps the card's app takes from it.
+ *
+ * @param db - The ending transaction's reader.
+ * @param surface - The card.
+ */
+async function ownCredentialRows(
+  db: QueryCtx['db'],
+  surface: Doc<'surfaces'>,
+): Promise<Doc<'credentials'>[]> {
+  if (surface.credentialId === undefined) return [];
+  const credential = await db.get(surface.credentialId);
+  if (credential === null) return [];
+  const binders = await db
+    .query('surfaces')
+    .withIndex('by_credentialId', (q) => q.eq('credentialId', credential._id))
+    .take(2);
+  if (binders.some((binder) => binder._id !== surface._id)) {
+    // A key a colleague's card binds too (N1) is never ended by this one; only a pasted key can.
+    return credential.issuedBy === undefined ? [credential] : [];
+  }
+  const refresh =
+    credential.refreshCredentialId === undefined
+      ? null
+      : await db.get(credential.refreshCredentialId);
+  return refresh === null ? [credential] : [credential, refresh];
+}
+
+/**
+ * End the card's own credential at its vendor for an end that keeps the card's app (a
+ * disconnect, an expiry, an organisation connection's revoke): what Day0 obtained is revoked and
+ * held for the vendor call, a pasted key is left where it is and never sent, and the system's
+ * ledger line is written (`endAccessAtSource`).
+ *
+ * @param ctx - The ending transaction.
+ * @param surface - The card as it stands before the end.
+ * @param end - The end of access.
+ * @param now - When it ended.
+ */
+async function endOwnCredentialAtSource(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  end: AccessEnd,
+  now: number,
+): Promise<OwnCredentialEnded> {
+  const rows = await ownCredentialRows(ctx.db, surface);
+  if (rows.length === 0) return { held: [] };
+  const ended = await endAccessAtSource(ctx, {
+    agentId: surface.agentId,
+    surfaceId: surface._id,
+    surfaceName: surface.displayName,
+    credentials: rows,
+    end,
+    now,
+  });
+  return { held: ended.held };
+}
+
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
 type AccessSetBy = NonNullable<Doc<'surfaces'>['accessSetBy']>;
 
@@ -1793,7 +1859,11 @@ function accessEndDatePassed(surface: Doc<'surfaces'>, now: number): boolean {
 }
 
 /**
- * End a surface's access: back to `approved` with the reason, and the event.
+ * End a surface's access: back to `approved` with the reason, and the event. A credential Day0
+ * itself obtained is revoked at its vendor and leaves the card (D4, A26; S1: a Slack bot token is
+ * revoked and the app kept, so the renewal reinstalls the same app); a pasted key stays on the
+ * card for the renewal and is never sent to a vendor (A27, D5). Either way the card's system gets
+ * its ledger line.
  *
  * Args:
  *   ctx: Mutation context.
@@ -1805,6 +1875,7 @@ async function endAccessInTransaction(
   surface: Doc<'surfaces'>,
   now: number,
 ): Promise<void> {
+  const ended = await endOwnCredentialAtSource(ctx, surface, 'expiry', now);
   await ctx.db.patch(surface._id, {
     verdict: 'approved',
     reason: 'expired',
@@ -1815,13 +1886,20 @@ async function endAccessInTransaction(
     // card on an answer taken before the end (wave 2 review M20, m9).
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
+    ...(ended.held.length > 0
+      ? { credentialId: undefined, credentialKind: undefined, credentialLocation: undefined }
+      : {}),
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.
   await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.expired',
-    payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
+    payload: {
+      surfaceId: surface._id,
+      expiresAt: surface.expiresAt,
+      ...(ended.held.length > 0 ? { revokedAtSource: true } : {}),
+    },
     createdAt: now,
   });
 }
@@ -1950,6 +2028,50 @@ export const recordExpired = internalMutation({
   },
 });
 
+/** What a renewal needs beyond the new end date (11-AR; A26, A27). */
+interface Renewal {
+  /**
+   * The identity the expiry revoked at the vendor, to be issued again: the install of the app Day0
+   * created for the employee, or a new authorisation.
+   */
+  readonly reissue?: 'install' | 'authorise';
+  /** A pasted key whose system has an organisation connection: the move to its own identity. */
+  readonly offer?: 'own-identity';
+}
+
+/** What `setAccessDays` answers: the end date, and what the renewal needs. */
+type AccessDaysSet = { readonly expiresAt: number } & Renewal;
+
+/**
+ * What renewing an ended card needs: a card whose expiry revoked its credential at the vendor
+ * (its latest `surface.expired` says so) needs it issued again; a card renewing a pasted key while
+ * linked to an active organisation connection is offered the move to the employee's own identity.
+ *
+ * @param ctx - The renewal's transaction.
+ * @param surface - The card as it stood before the renewal.
+ */
+async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Renewal> {
+  const { db } = ctx;
+  if (surface.credentialId === undefined) {
+    for await (const event of eventsOfType(ctx, surface.agentId, 'surface.expired').order('desc')) {
+      if (!isEventOf(event, 'surface.expired') || event.payload.surfaceId !== surface._id) continue;
+      return event.payload.revokedAtSource === true
+        ? { reissue: surface.provisioning !== undefined ? 'install' : 'authorise' }
+        : {};
+    }
+    return {};
+  }
+  const credential = await db.get(surface.credentialId);
+  if (credential === null || credential.issuedBy !== undefined || credential.holder !== undefined) {
+    return {};
+  }
+  const connection =
+    surface.organisationConnectionId === undefined
+      ? null
+      : await db.get(surface.organisationConnectionId);
+  return connection?.status === 'active' ? { offer: 'own-identity' } : {};
+}
+
 /**
  * Set how long an approved surface's access lasts, from now (Q5).
  *
@@ -1958,12 +2080,20 @@ export const recordExpired = internalMutation({
  * `approved` with no reason and is probed at once. Writes `expiresAt` and a
  * `surface.access-set` event.
  *
+ * The renewal's answer says what else it needs (A26, A27; the access plan,
+ * section 4.12): where the expiry revoked at the vendor a credential Day0
+ * obtained, there is nothing to probe, and the card asks for the identity to
+ * be issued again (`reissue`: the same app's install for one Day0 created,
+ * else a new authorisation); where the card renews a pasted key and its system
+ * has an active organisation connection, it offers the move to the employee's
+ * own identity (`offer`), and the key keeps working meanwhile.
+ *
  * @throws ConvexError when the card is not approved yet or the length is not
  * a whole number of days from 1 to 365.
  */
 export const setAccessDays = mutation({
   args: { surfaceId: v.id('surfaces'), days: v.number() },
-  handler: async (ctx, args): Promise<{ expiresAt: number }> => {
+  handler: async (ctx, args): Promise<AccessDaysSet> => {
     assertRealMode('Setting surface access');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -1986,19 +2116,21 @@ export const setAccessDays = mutation({
       accessSetBy: 'manager',
       ...(renewed ? { reason: undefined } : {}),
     });
+    const renewal = renewed ? await renewalOf(ctx, surface) : {};
     await logAccessSet(ctx, surface, {
       by: 'manager',
       days: args.days,
       expiresAt,
       renewed,
+      ...renewal,
       at: now,
     });
-    if (renewed) {
+    if (renewed && renewal.reissue === undefined) {
       await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
         surfaceId: surface._id,
       });
     }
-    return { expiresAt };
+    return { expiresAt, ...renewal };
   },
 });
 
@@ -2424,10 +2556,48 @@ export const approve = mutation({
 });
 
 /**
+ * End at the vendor what a rejected card bound (11-AR; D4): every credential it binds that no
+ * other card binds, its app's client secret and its token's pair included, so an app Day0 created
+ * is deleted (S4) and its tokens revoked. A pasted key is never sent to a vendor and stays in the
+ * owner's store, as the rejection always left it; its line says so.
+ *
+ * @param ctx - The rejection's transaction.
+ * @param surface - The card as it stood before the rejection.
+ * @param now - The rejection's time.
+ */
+async function endRejectedAtSource(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  const rows: Doc<'credentials'>[] = [];
+  for (const id of await credentialsBoundBy(ctx.db, [surface])) {
+    const row = await ctx.db.get(id);
+    if (row === null) continue;
+    const binders = await ctx.db
+      .query('surfaces')
+      .withIndex('by_credentialId', (q) => q.eq('credentialId', id))
+      .take(2);
+    const elsewhere = binders.some((binder) => binder._id !== surface._id);
+    if (!elsewhere || row.issuedBy === undefined) rows.push(row);
+  }
+  if (rows.length === 0) return;
+  await endAccessAtSource(ctx, {
+    agentId: surface.agentId,
+    surfaceId: surface._id,
+    surfaceName: surface.displayName,
+    credentials: rows,
+    end: 'reject',
+    now,
+  });
+}
+
+/**
  * Reject a proposed or approved surface and return it to `declared`.
  *
  * The approval and every connection detail are cleared, so a later
- * re-proposal starts from evidence again and waits for a new approval.
+ * re-proposal starts from evidence again and waits for a new approval. What
+ * Day0 obtained for it is revoked at the vendor (`endRejectedAtSource`).
  */
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
@@ -2442,6 +2612,7 @@ export const reject = mutation({
       );
     }
     const now = Date.now();
+    await endRejectedAtSource(ctx, surface, now);
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
@@ -2468,10 +2639,9 @@ export const reject = mutation({
       toolArguments: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
-      // The dedicated app itself survives a rejection - it exists in the
-      // provider's workspace and only an administrator can delete it there -
-      // but this deployment forgets it, so a re-proposal provisions afresh
-      // rather than installing into an app nobody has re-approved.
+      // This deployment forgets the dedicated app, so a re-proposal provisions afresh rather than
+      // installing into an app nobody has re-approved; an app Day0 created is deleted at the
+      // vendor with it (endRejectedAtSource), so none is left dead in the workspace.
       provisioning: undefined,
       channelsNotJoined: undefined,
       waterfallPosition: undefined,
@@ -2492,6 +2662,125 @@ export const reject = mutation({
     await requeueWorkAfterRejection(ctx, surface, now);
   },
 });
+
+/** The reason a card the manager disconnected shows until it connects again. */
+export const DISCONNECTED_REASON = 'Disconnected by the manager.';
+
+/** Who ended a card's connection: the manager on its card, or IT revoking the organisation's. */
+type DisconnectedBy = 'manager' | 'organisation';
+
+/**
+ * Disconnect a card in the caller's transaction: it keeps its approval and its app and holds no
+ * credential, with the reason; any probe in flight ends with its generation. What Day0 obtained is
+ * revoked at the vendor and a pasted key left where it is (`endOwnCredentialAtSource`), with the
+ * system's ledger line, and `surface.disconnected` says who disconnected it.
+ *
+ * @param ctx - The disconnecting transaction.
+ * @param surface - The card as it stands.
+ * @param by - Who disconnected it, the end at the vendor, and the reason the card shows.
+ * @param now - When it was disconnected.
+ */
+async function disconnectInTransaction(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  by: { readonly who: DisconnectedBy; readonly end: AccessEnd; readonly reason: string },
+  now: number,
+): Promise<void> {
+  await endOwnCredentialAtSource(ctx, surface, by.end, now);
+  await ctx.db.patch(surface._id, {
+    verdict: ACCESS_VERDICTS.includes(surface.verdict) ? 'approved' : surface.verdict,
+    reason: by.reason,
+    credentialId: undefined,
+    credentialKind: undefined,
+    credentialLocation: undefined,
+    credentialLanded: false,
+    lastVerifiedAt: undefined,
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
+  });
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.disconnected',
+    payload: {
+      surfaceId: surface._id,
+      by: by.who,
+      ...(by.who === 'organisation' ? { reason: by.reason } : {}),
+    },
+    createdAt: now,
+  });
+}
+
+/**
+ * Disconnect a card (11-AR; the access plan, section 4.4): the card's Disconnect, which the card
+ * confirms in a dialog before it calls this. Public, owner-guarded, real mode only. The card keeps
+ * its approval and its app; what Day0 obtained for it is revoked at the vendor, a pasted key is
+ * never sent to one; writes the card, the credentials' revocation, the ledger line and
+ * `surface.disconnected`.
+ *
+ * @throws ConvexError when the card holds no credential.
+ */
+export const disconnect = mutation({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<void> => {
+    assertRealMode('Disconnecting a connection');
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new ConvexError('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.credentialId === undefined) {
+      throw new ConvexError('This connection holds no credential to disconnect.');
+    }
+    await disconnectInTransaction(
+      ctx,
+      surface,
+      { who: 'manager', end: 'disconnect', reason: DISCONNECTED_REASON },
+      Date.now(),
+    );
+  },
+});
+
+/** The most cards one organisation connection's revoke ends in its transaction. */
+const CONNECTION_CARD_LIMIT = 1_000;
+
+/**
+ * End every card on an organisation connection the administrator revoked (11-AR for 11-AO's
+ * revoke; the access plan, section 8, cross-unit test 3): each card linked to it is disconnected
+ * with the administrator's reason, what Day0 obtained through it revoked at the vendor, and no
+ * card of any other connection is read. Called in the revoke's own transaction.
+ *
+ * @param ctx - The revoking transaction.
+ * @param input - The connection, the reason each card shows, and the revoke's time.
+ * @returns The cards ended.
+ * @throws ConvexError when more cards are linked than one transaction ends.
+ */
+export async function endCardsOnConnection(
+  ctx: MutationCtx,
+  input: {
+    readonly organisationConnectionId: Id<'organisationConnections'>;
+    readonly reason: string;
+    readonly now: number;
+  },
+): Promise<Id<'surfaces'>[]> {
+  const cards = await ctx.db
+    .query('surfaces')
+    .withIndex('by_organisation_connection', (q) =>
+      q.eq('organisationConnectionId', input.organisationConnectionId),
+    )
+    .take(CONNECTION_CARD_LIMIT + 1);
+  if (cards.length > CONNECTION_CARD_LIMIT) {
+    throw new ConvexError(
+      `More than ${CONNECTION_CARD_LIMIT} connections use this organisation connection; revoke it again once some are removed.`,
+    );
+  }
+  for (const card of cards) {
+    await disconnectInTransaction(
+      ctx,
+      card,
+      { who: 'organisation', end: 'organisation-revoked', reason: input.reason },
+      input.now,
+    );
+  }
+  return cards.map((card) => card._id);
+}
 
 /** The most tools one approved list names; a provider's catalogue is a few dozen. */
 const APPROVED_TOOLS_LIMIT = 200;

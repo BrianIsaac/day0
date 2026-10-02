@@ -514,4 +514,16 @@ describe('the labels of an end of access at the vendor (11-AR)', (): void => {
       'pasted key: never sent to Zendesk; revoke it there',
     );
   });
+
+  it('labels a disconnection by who made it', (): void => {
+    expect(eventLabel({ type: 'surface.disconnected', payload: { by: 'manager' } })).toBe(
+      'disconnected by the manager',
+    );
+    expect(
+      eventLabel({
+        type: 'surface.disconnected',
+        payload: { by: 'organisation', reason: 'revoked by IT' },
+      }),
+    ).toBe("disconnected: the organisation's connection was revoked (revoked by IT)");
+  });
 });
