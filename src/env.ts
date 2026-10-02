@@ -77,6 +77,9 @@ const schema = z.object({
   DAY0_OIDC_CLIENT_SECRET: z.string().optional(),
   DAY0_OIDC_ALLOWED_DOMAINS: z.string().optional(),
   DAY0_SESSION_SECRET: z.string().optional(),
+  // The administrators named at install (B8), read by the deployment's guard through
+  // `src/lib/administrators.ts`, which checks each entry is an address.
+  DAY0_ADMINISTRATORS: z.string().optional(),
 });
 
 /**
@@ -127,6 +130,7 @@ const OPTIONAL_STRINGS = [
   'DAY0_OIDC_CLIENT_SECRET',
   'DAY0_OIDC_ALLOWED_DOMAINS',
   'DAY0_SESSION_SECRET',
+  'DAY0_ADMINISTRATORS',
 ] as const;
 
 /**
@@ -190,5 +194,6 @@ export const env = schema.parse(
     DAY0_OIDC_CLIENT_SECRET: process.env.DAY0_OIDC_CLIENT_SECRET,
     DAY0_OIDC_ALLOWED_DOMAINS: process.env.DAY0_OIDC_ALLOWED_DOMAINS,
     DAY0_SESSION_SECRET: process.env.DAY0_SESSION_SECRET,
+    DAY0_ADMINISTRATORS: process.env.DAY0_ADMINISTRATORS,
   }),
 );

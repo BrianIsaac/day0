@@ -10,6 +10,7 @@ import {
   CUSTOMER_SESSION_SECRET_VAR,
   PUBLIC_URL_VAR,
 } from '../src/lib/customer-oidc';
+import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import { PRIVATE_HOSTS_VAR } from '../src/lib/private-hosts';
 
 const EXAMPLE = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
@@ -40,6 +41,15 @@ describe('.env.example', (): void => {
     ]) {
       expect(DECLARED, name).toContain(name);
     }
+  });
+
+  it('declares the administrators after the customer-local sign-in block, empty by default (B8)', (): void => {
+    expect(DECLARED).toContain(ADMINISTRATORS_VAR);
+    expect(EXAMPLE).toMatch(/^DAY0_ADMINISTRATORS=$/m);
+    expect(EXAMPLE.indexOf('DAY0_ADMINISTRATORS=')).toBeGreaterThan(
+      EXAMPLE.indexOf('DAY0_OIDC_EMAIL_TRUSTED='),
+    );
+    expect(EXAMPLE.indexOf('DAY0_ADMINISTRATORS=')).toBeLessThan(EXAMPLE.indexOf('# --- Clerk'));
   });
 
   it('declares the shared-skills switch, on by default (K4)', (): void => {

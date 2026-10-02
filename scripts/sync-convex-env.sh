@@ -67,9 +67,12 @@ CLERK_ISSUER=CLERK_JWT_ISSUER_DOMAIN
 # .env.local is removed, since a stale one would keep admitting a domain the
 # operator took off. The client secret and the session secret are the app
 # server's alone and never pushed, nor is the browser's copy of the profile.
-# Wave 11 adds its customer-local names after these.
+# Wave 11 adds its customer-local names after these: the administrators named
+# at install (B8), whom `assertAdministrator` checks; a list dropped from
+# .env.local is removed, so nobody stays an administrator the operator took off.
 CUSTOMER_LOCAL_KEYS=(
   DAY0_OIDC_ALLOWED_DOMAINS
+  DAY0_ADMINISTRATORS
 )
 
 # Their absence is also meaningful, which is why they are removed rather than
