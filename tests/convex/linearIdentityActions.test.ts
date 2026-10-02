@@ -10,6 +10,7 @@ import { toSurfaceRecord } from '../../src/surfaces/records';
 import type { MockAction } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
+import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -598,6 +599,71 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
       'client_credentials',
       'client_credentials',
     ]);
+  });
+});
+
+describe('an employee acts at the vendor only as the identity its card names (cross-unit test 1, backend half)', (): void => {
+  /** The bearer every rung sends for a card: the runtime's one read. */
+  async function rungBearer(
+    harness: TestConvex<typeof schema>,
+    credentialId: Id<'credentials'>,
+  ): Promise<string> {
+    const { internal } = await liveApi();
+    return await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+  }
+
+  it('own-app: the bearer acts at Linear as the employee’s own app user, the one the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.actsAs?.kind).toBe('own-app');
+
+    const viewer = await readLinearViewer(
+      linear.fetch,
+      await rungBearer(harness, surface.credentialId!),
+    );
+
+    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+  });
+
+  it('shared-app: the bearer acts at Linear as the organisation’s shared app user, the one the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.actsAs?.kind).toBe('shared-app');
+
+    const viewer = await readLinearViewer(
+      linear.fetch,
+      await rungBearer(harness, surface.credentialId!),
+    );
+
+    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+  });
+
+  it('shared-key: the bearer is the key someone pasted, read as it was stored', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    const pasted = 'lin_api_pasted_0123456789';
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear key',
+      plaintext: pasted,
+      source: 'entered',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, {
+        credentialId,
+        credentialKind: 'value',
+        actsAs: { kind: 'shared-key', label: 'a key someone pasted' },
+      });
+    });
+
+    expect(await rungBearer(harness, credentialId)).toBe(pasted);
+    expect(tokenRequests()).toEqual([]);
   });
 });
 

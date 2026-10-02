@@ -895,6 +895,40 @@ describe('refreshing with rotation', (): void => {
   });
 });
 
+describe('an employee acts at the vendor only as the identity its card names (cross-unit test 1, backend half)', (): void => {
+  it('delegated: the bearer every rung sends acts for the manager whose address the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await seed(harness);
+    // The manager consents in their own browser (AM6): the fake's person is the manager.
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { bossEmail: 'priya@acme.test' }));
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const { surface } = await read(harness, surfaceId);
+    expect(surface.actsAs).toMatchObject({ kind: 'delegated', label: 'priya@acme.test' });
+    const { internal } = await liveApi();
+    const bearer = await harness.action(internal.mcpOauthActions.currentBearer, {
+      credentialId: surface.credentialId as Id<'credentials'>,
+    });
+
+    const answer = await server.handle(
+      new Request(RESOURCE, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'whoami', arguments: {} },
+        }),
+      }),
+    );
+    const reply = (await answer.json()) as { result?: { content?: Array<{ text?: string }> } };
+
+    expect(reply.result?.content?.[0]?.text).toBe(surface.actsAs?.label);
+  });
+});
+
 describe('the organisation’s revoke of a confidential client’s connection (join 8)', (): void => {
   afterEach((): void => {
     vi.unstubAllGlobals();
