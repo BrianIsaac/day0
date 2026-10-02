@@ -125,6 +125,7 @@ describe('the customer-local proxy gate', (): void => {
       '/api/auth/oidc/logout',
       '/api/voice/elevenlabs/webhook',
       '/api/oauth/slack',
+      '/api/oauth/linear?code=x&state=y',
     ]) {
       expect(((await proxy(request(path))) as Response).status).toBe(200);
     }
