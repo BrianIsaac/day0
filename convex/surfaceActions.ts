@@ -48,6 +48,7 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
+import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
@@ -237,6 +238,13 @@ class ProbeRateLimited extends Error {
     super(message);
   }
 }
+
+/**
+ * The token store could not answer for a card's credential (Nango, or the
+ * authorisation server a due token is refreshed at, out of reach): an answer
+ * about reach, not an authority withdrawal, so it never ends the card.
+ */
+class TokenStoreUnavailable extends Error {}
 
 /**
  * A connection that never completed, or a provider answering 5xx.
@@ -1311,23 +1319,28 @@ export async function runSurfaceProbe(
   };
 
   /**
-   * Leave the verdict as it was after the provider rate-limited the probe, and
-   * say when Day0 asks again. A connected or dead card is asked again by the
-   * hourly sweep; any other card is not in the sweep, so one probe is
-   * scheduled for when the provider said it could answer, within bounds.
+   * Leave the verdict as it was and say when Day0 asks again: an answer about
+   * pace or reach, not about the system or the key. A connected or dead card
+   * is asked again by the hourly sweep; any other card is not in the sweep, so
+   * one probe is scheduled for when the answer said it could come, within
+   * bounds.
    */
-  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
+  const keepVerdict = async (
+    reason: string,
+    retryAfterMs: number | undefined,
+    explain: (minutes: number) => string,
+  ): Promise<ProbeOutcome> => {
     const swept = SWEPT_VERDICTS.includes(surface.verdict);
     const next = swept
       ? RATE_LIMITED_REPROBE_MS.max
       : Math.min(
           RATE_LIMITED_REPROBE_MS.max,
-          Math.max(RATE_LIMITED_REPROBE_MS.min, limited.retryAfterMs ?? 0),
+          Math.max(RATE_LIMITED_REPROBE_MS.min, retryAfterMs ?? 0),
         );
     const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
       surfaceId,
       generation,
-      reason: limited.message,
+      reason,
       retryAfterMs: next,
       attemptedAt: dependencies.now(),
       endsProbe: true,
@@ -1341,11 +1354,26 @@ export async function runSurfaceProbe(
         routine: true,
       });
     }
-    return {
-      verdict: 'skipped',
-      reason: `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${Math.round(next / 60_000)} minutes.`,
-    };
+    return { verdict: 'skipped', reason: explain(Math.round(next / 60_000)) };
   };
+
+  /** Leave the verdict as it was after the provider rate-limited the probe. */
+  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> =>
+    await keepVerdict(
+      limited.message,
+      limited.retryAfterMs,
+      (minutes: number): string =>
+        `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${minutes} minutes.`,
+    );
+
+  /** Leave the verdict as it was after the token store could not answer for the card's credential. */
+  const leaveUnanswered = async (unavailable: TokenStoreUnavailable): Promise<ProbeOutcome> =>
+    await keepVerdict(
+      unavailable.message,
+      undefined,
+      (minutes: number): string =>
+        `The token store could not answer for the credential (${unavailable.message}); the card keeps its verdict and Day0 probes again in ${minutes} minutes.`,
+    );
 
   // The route list is capped to the three actual rungs when orientation stores
   // it. This loop is capped independently so a malformed legacy row can never
@@ -1384,14 +1412,24 @@ export async function runSurfaceProbe(
     let known: readonly string[] = [];
     try {
       if (context.agent.userId) known = await ownerKnownValues(ctx, context.agent.userId);
-      if (surface.credentialId) {
+      const credentialId = surface.credentialId;
+      if (credentialId) {
         try {
           // From the token store (11-AT): an authorisation's token is refreshed first when due,
-          // a Nango-held one is asked of Nango, any other credential decrypts as before.
-          credential = await ctx.runAction(internal.mcpOauthActions.currentBearer, {
-            credentialId: surface.credentialId,
-          });
-        } catch {
+          // a Nango-held one is asked of Nango, any other credential decrypts as before. The
+          // store can be out of reach (Nango restarting, an authorisation server down), so the
+          // read gets the probe's one retry and a store that stays out of reach keeps the verdict.
+          credential = await withOneRetry(
+            '',
+            known,
+            async (): Promise<string> =>
+              await ctx.runAction(internal.mcpOauthActions.currentBearer, { credentialId }),
+          );
+        } catch (error) {
+          if (error instanceof ProbeSuperseded || error instanceof ProbeRateLimited) throw error;
+          const reason = safeProviderError(error, '', known);
+          if (isTransientProbeFailure(error, reason)) throw new TokenStoreUnavailable(reason);
+          log.warn('probe found the card credential unreadable', { surfaceId, reason });
           return (
             (await failOrDemote('credential is unavailable or revoked', 'ungranted', false)) ?? {
               verdict: 'ungranted',
@@ -1560,6 +1598,7 @@ export async function runSurfaceProbe(
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
       if (error instanceof ProbeRateLimited) return await leaveRateLimited(error);
+      if (error instanceof TokenStoreUnavailable) return await leaveUnanswered(error);
       const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);

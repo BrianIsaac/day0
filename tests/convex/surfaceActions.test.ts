@@ -687,6 +687,7 @@ describe('surface probe action state', (): void => {
     function probeContext(
       bearer: string | Error,
       failures: Array<Record<string, unknown>>,
+      retries: Array<Record<string, unknown>> = [],
     ): ActionCtx {
       return {
         runMutation: async (
@@ -696,6 +697,10 @@ describe('surface probe action state', (): void => {
           if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
           if ('verdict' in args) {
             failures.push(args);
+            return true;
+          }
+          if ('retryAfterMs' in args) {
+            retries.push(args);
             return true;
           }
           return null;
@@ -727,6 +732,29 @@ describe('surface probe action state', (): void => {
         { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
       );
       expect(probeMcp).toHaveBeenCalledWith('https://auth.acme.test/mcp', 'refreshed-token');
+    });
+
+    it('keeps the verdict and asks again when the token store cannot be reached, rather than ending the card', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const retries: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn();
+      const outcome = await runSurfaceProbe(
+        probeContext(new Error('Nango could not be reached: fetch failed'), failures, retries),
+        { surfaceId },
+        {
+          probeMcp,
+          probeBrowser: vi.fn(),
+          probeSlack: vi.fn(),
+          now: (): number => 1_000,
+          wait: async (): Promise<void> => undefined,
+        },
+      );
+      expect(outcome.verdict).toBe('skipped');
+      expect(outcome.reason).toContain('The token store could not answer for the credential');
+      expect(outcome.reason).toContain('the card keeps its verdict');
+      expect(failures).toEqual([]);
+      expect(retries.at(-1)).toMatchObject({ endsProbe: true });
+      expect(probeMcp).not.toHaveBeenCalled();
     });
 
     it('ends the card when its refresh was refused and the token has expired, calling no system', async (): Promise<void> => {
