@@ -1,7 +1,11 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Id } from '../../convex/_generated/dataModel';
-import { MCP_REFRESH_LEAD_MS, refreshDueAt } from '../../convex/mcpOauth';
+import {
+  MCP_MIN_REFRESH_INTERVAL_MS,
+  MCP_REFRESH_LEAD_MS,
+  refreshDueAt,
+} from '../../convex/mcpOauth';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -116,7 +120,13 @@ describe('when the scheduled refresh runs', (): void => {
       1_000_000 + 3_600_000 - MCP_REFRESH_LEAD_MS,
     );
     expect(refreshDueAt(1_000_000 + 300_000, 1_000_000)).toBe(1_000_000 + 150_000);
-    expect(refreshDueAt(500, 1_000)).toBe(500);
+  });
+
+  it('never runs sooner than half a minute away, however short the life or late the clock', (): void => {
+    expect(refreshDueAt(1_000_000 + 2_000, 1_000_000)).toBe(
+      1_000_000 + MCP_MIN_REFRESH_INTERVAL_MS,
+    );
+    expect(refreshDueAt(500, 1_000)).toBe(1_000 + MCP_MIN_REFRESH_INTERVAL_MS);
   });
 });
 
@@ -154,6 +164,54 @@ describe('landing an authorisation’s tokens', (): void => {
         sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
       });
     }
+  });
+
+  it('keeps a newer authorisation the manager started while the code was being exchanged', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    const newer = {
+      stateNonce: 'nonce-2',
+      stateExpiresAt: 50_000,
+      clientId: 'day0-mcp',
+      verifierCiphertext: 'c',
+      verifierIv: 'i',
+      issuer: 'https://auth.acme.test',
+      resource: 'https://auth.acme.test/mcp',
+      redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+      startedAt: 2,
+    };
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { pendingAuthorisation: newer });
+    });
+    await land(harness, surfaceId);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.pendingAuthorisation).toEqual(newer);
+  });
+
+  it('leaves alone an issued credential another card still holds', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, heldIds } = await seedCard(harness, 'issued');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'docs-two',
+        displayName: 'Acme docs two',
+        class: 'docs',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'mcp',
+        endpoint: 'https://auth.acme.test/mcp',
+        managerApprovedAt: 2,
+        credentialLanded: true,
+        credentialId: heldIds[0],
+        credentialKind: 'oauth',
+        createdAt: 1,
+      });
+    });
+    await land(harness, surfaceId);
+    const shared = await harness.run(async (ctx) => await ctx.db.get(heldIds[0]));
+    expect(shared?.revokedAt).toBeUndefined();
+    expect(shared?.sourceRevocation).toBeUndefined();
   });
 
   it('refuses tokens for an employee that changed hands since the authorisation started', async (): Promise<void> => {

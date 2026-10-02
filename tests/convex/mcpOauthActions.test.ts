@@ -6,6 +6,8 @@ import schema from '../../convex/schema';
 import { createIssuer } from '../../fake-oidc/issuer.js';
 import type { FakeIssuer } from '../../fake-oidc/issuer';
 import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
+import { sealForOwner } from '../../src/lib/credential-crypto';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -16,9 +18,12 @@ const RESOURCE = `${ISSUER}/mcp`;
 const REDIRECT = `${PUBLIC_URL}/api/oauth/mcp`;
 const CLIENT = 'day0-mcp';
 const SYSTEM = 'mcp:auth.acme.test';
+const CONFIDENTIAL = 'day0-mcp-confidential';
+const CLIENT_SECRET = 'mcp-client-secret';
 
 let server: FakeIssuer;
 let clock: number;
+let credentialKey: string;
 
 /** A fetch that hands every request to the in-process authorisation server. */
 function fetchToServer(): OauthFetch {
@@ -35,12 +40,16 @@ async function adminState(): Promise<Record<string, unknown>> {
 
 beforeEach(async (): Promise<void> => {
   useSurfaceMode('real');
-  vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+  credentialKey = randomBytes(32).toString('base64');
+  vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
   clock = 1_800_000_000_000;
   server = createIssuer({
     issuer: ISSUER,
-    clients: [{ id: CLIENT, redirectUris: [REDIRECT] }],
+    clients: [
+      { id: CLIENT, redirectUris: [REDIRECT] },
+      { id: CONFIDENTIAL, secret: CLIENT_SECRET, redirectUris: [REDIRECT] },
+    ],
     protectedResource: { path: '/mcp', scopes: ['read', 'write'] },
     now: () => clock,
   });
@@ -64,7 +73,7 @@ interface Seeded {
 /** An owned, approved MCP card, and the organisation's pre-registered client for its server. */
 async function seed(
   harness: TestConvex<typeof schema>,
-  options: { connection?: boolean; secret?: boolean } = {},
+  options: { connection?: boolean; confidential?: { issuer?: string } } = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const agentId = await ctx.db.insert('agents', {
@@ -88,17 +97,30 @@ async function seed(
       createdAt: 1,
     });
     if (options.connection === false) return { agentId, surfaceId };
+    const secretCredentialId = options.confidential
+      ? await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'value',
+          label: 'Acme docs MCP client secret',
+          ...sealForOwner(CLIENT_SECRET, { current: credentialKey }, ORGANISATION_OWNER_KEY),
+          source: 'entered',
+          createdAt: 1,
+        })
+      : undefined;
     const connectionId = await ctx.db.insert('organisationConnections', {
       system: SYSTEM,
       displayName: 'Acme docs MCP',
       kind: 'mcp-client',
       mode: 'per-employee',
-      clientId: CLIENT,
+      clientId: options.confidential ? CONFIDENTIAL : CLIENT,
       clientRegistration: 'pre-registered',
       scopes: [],
       registeredBy: { via: 'setup-cli', at: 1 },
       status: 'active',
       createdAt: 1,
+      ...(secretCredentialId ? { secretCredentialId } : {}),
+      ...(options.confidential?.issuer ? { issuer: options.confidential.issuer } : {}),
     });
     return { agentId, surfaceId, connectionId };
   });
@@ -218,6 +240,41 @@ describe('starting an authorisation', (): void => {
     expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'issuer-mismatch' });
   });
 
+  it('refuses a confidential client whose authorisation server was never registered', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { confidential: {} });
+    expect(await start(harness, surfaceId)).toMatchObject({
+      ok: false,
+      reason: 'issuer-unregistered',
+    });
+    expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeUndefined();
+  });
+
+  it('says so in a message the browser can read when the deployment has no public address', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PUBLIC_URL', '');
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    let refusal: unknown;
+    try {
+      await start(harness, surfaceId);
+    } catch (error) {
+      refusal = error;
+    }
+    expect((refusal as { data?: unknown }).data).toContain('DAY0_PUBLIC_URL');
+  });
+
+  it('checks the address rules through the deployment’s own fetch when nothing replaces it', async (): Promise<void> => {
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest(undefined);
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, connectionId } = await seed(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { endpoint: 'https://10.1.2.3/mcp' });
+      await ctx.db.patch(connectionId as Id<'organisationConnections'>, { system: 'mcp:10.1.2.3' });
+    });
+    expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'address-refused' });
+  });
+
   it('refuses someone who does not own the employee', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seed(harness);
@@ -313,6 +370,64 @@ describe('completing an authorisation', (): void => {
     expect(surface.credentialId).toBeUndefined();
     expect(credentials).toEqual([]);
     expect(events.map((event) => event.type)).toContain('surface.authorisation-failed');
+  });
+
+  it('lands a confidential client’s tokens through Basic authentication and names its secret', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { confidential: { issuer: ISSUER } });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const { surface, credentials } = await read(harness, surfaceId);
+    const access = credentials.find((row) => row._id === surface.credentialId);
+    const secret = credentials.find((row) => row.holder === ORGANISATION_HOLDER);
+    expect(access?.issuedBy).toMatchObject({
+      clientId: CONFIDENTIAL,
+      clientSecretCredentialId: secret?._id,
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.currentBearer, {
+      credentialId: surface.credentialId as Id<'credentials'>,
+    });
+    expect(await adminState()).toMatchObject({ codeExchanges: 1, refreshExchanges: 1 });
+  });
+
+  it('refuses a response without the iss its server advertises, and sends no code', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const back = await consent(started.authoriseUrl);
+    back.searchParams.delete('iss');
+    const outcome = await complete(harness, back);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toContain('did not say who answered');
+    expect(await adminState()).toMatchObject({ codeExchanges: 0 });
+  });
+
+  it('reads a decline from another server as the mix-up it is, never as a decline', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    await server.handle(
+      new Request(`${ISSUER}/admin/iss?value=https://rogue.acme.test`, { method: 'POST' }),
+    );
+    const outcome = await complete(harness, await consent(started.authoriseUrl, { decline: '1' }));
+    expect(outcome.reason).toContain('another authorisation server');
+    expect(outcome.reason).not.toContain('declined');
+  });
+
+  it('refuses an oversized response before it claims anything', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const back = await consent(started.authoriseUrl);
+    back.searchParams.set('code', 'x'.repeat(5_000));
+    expect((await complete(harness, back)).ok).toBe(false);
+    expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeDefined();
   });
 
   it('finds nothing to claim when the same redirect arrives again', async (): Promise<void> => {
@@ -435,6 +550,155 @@ describe('refreshing with rotation', (): void => {
     });
   });
 
+  it('hands back a token still inside its life when the server cannot be reached, and refuses one past it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const { internal } = await liveApi();
+    const stored = await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (): Promise<Response> => {
+        throw new Error('connect ECONNREFUSED auth.acme.test:443');
+      },
+      now: () => clock,
+    });
+    clock += 290_000;
+    expect(await harness.action(internal.mcpOauthActions.currentBearer, { credentialId })).toBe(
+      stored,
+    );
+    clock += 20_000;
+    await expect(
+      harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
+    ).rejects.toThrow('could not be reached');
+  });
+
+  it('exchanges only the refresh token of the generation it read, so a pair rotated since is not spent', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const { internal } = await liveApi();
+    clock += 290_000;
+    const rotated = await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    const actions = await import('../../convex/mcpOauthActions');
+    // A read that still holds the pair as it was before that rotation.
+    actions.__setMcpOauthDepsForTest({
+      fetch: fetchToServer(),
+      now: () => clock,
+      store: {
+        ...actions.nativeMcpTokenStore,
+        read: async (ctx, id) => {
+          const current = await actions.nativeMcpTokenStore.read(ctx, id);
+          return current && { ...current, generation: 0, expiresAt: clock + 10_000 };
+        },
+      },
+    });
+    expect(await harness.action(internal.mcpOauthActions.currentBearer, { credentialId })).toBe(
+      rotated,
+    );
+    expect(await adminState()).toMatchObject({ refreshExchanges: 1 });
+    actions.__setMcpOauthDepsForTest({ fetch: fetchToServer(), now: () => clock });
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    expect(await adminState()).toMatchObject({ refreshExchanges: 2 });
+  });
+
+  it('revokes at the server the pair a refresh was issued when its write finds the token gone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: fetchToServer(),
+      now: () => clock,
+      store: {
+        ...actions.nativeMcpTokenStore,
+        rotate: async () => ({ ok: false, reason: 'gone' }),
+      },
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    expect(await adminState()).toMatchObject({ refreshExchanges: 1, liveRefreshTokens: 0 });
+  });
+
+  it('tries a scheduled refresh again when the server is busy, and records nothing yet', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (url, init) =>
+        url.pathname === '/token'
+          ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
+          : await fetchToServer()(url, init),
+      now: () => clock,
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.refreshScheduled, {
+      credentialId,
+      generation: 0,
+    });
+    const { events, scheduled } = await harness.run(async (ctx) => ({
+      events: await ctx.db.query('events').collect(),
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(events.map((event) => event.type)).not.toContain('surface.authorisation-failed');
+    expect(
+      scheduled.some(
+        (job) =>
+          job.name.includes('refreshScheduled') &&
+          (job.args[0] as { attempt?: number }).attempt === 1,
+      ),
+    ).toBe(true);
+  });
+
+  it('records on the card when the retries run out, and at once for a refusal no retry can pass', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (): Promise<Response> => {
+        throw new Error('connect ECONNREFUSED');
+      },
+      now: () => clock,
+    });
+    const { internal } = await liveApi();
+    await harness.action(internal.mcpOauthActions.refreshScheduled, {
+      credentialId,
+      generation: 0,
+      attempt: 5,
+    });
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (url, init) =>
+        url.pathname.startsWith('/.well-known/oauth-authorization-server')
+          ? Response.json({ issuer: 'https://other.acme.test' })
+          : url.pathname.startsWith('/.well-known/openid-configuration')
+            ? new Response(null, { status: 404 })
+            : await fetchToServer()(url, init),
+      now: () => clock,
+    });
+    await harness.action(internal.mcpOauthActions.refreshScheduled, {
+      credentialId,
+      generation: 0,
+    });
+    const { events, scheduled } = await harness.run(async (ctx) => ({
+      events: await ctx.db.query('events').collect(),
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    const reasons = events
+      .filter((event) => event.type === 'surface.authorisation-failed')
+      .map((event) => String(event.payload.reason));
+    expect(reasons).toHaveLength(2);
+    expect(reasons[0]).toContain('could not be reached');
+    expect(reasons[1]).toContain('another issuer');
+    expect(
+      scheduled.filter(
+        (job) =>
+          job.name.includes('refreshScheduled') &&
+          job.state.kind === 'pending' &&
+          (job.args[0] as { attempt?: number }).attempt !== undefined,
+      ),
+    ).toEqual([]);
+  });
+
   it('writes a rotated pair atomically and refuses a stale generation', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const credentialId = await landed(harness);
@@ -472,8 +736,15 @@ describe('refreshing with rotation', (): void => {
       now: clock,
     });
     expect(stale).toEqual({ ok: false, reason: 'stale' });
-    const unchanged = await harness.run(async (ctx) => await ctx.db.get(credentialId));
-    expect(unchanged?.ciphertext).toBe(after.access?.ciphertext);
+    const unchanged = await harness.run(async (ctx) => {
+      const access = await ctx.db.get(credentialId);
+      return {
+        access,
+        refresh: await ctx.db.get(access?.refreshCredentialId as Id<'credentials'>),
+      };
+    });
+    expect(unchanged.access?.ciphertext).toBe(after.access?.ciphertext);
+    expect(unchanged.refresh?.ciphertext).toBe(after.refresh?.ciphertext);
   });
 
   it('gives two concurrent reads the same refreshed token', async (): Promise<void> => {

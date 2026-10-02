@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, internalQuery, mutation, type MutationCtx } from './_generated/server';
@@ -27,6 +27,12 @@ export const MCP_REFRESH_LEAD_MS = 5 * 60_000;
  */
 export const MCP_READ_REFRESH_MARGIN_MS = 60_000;
 
+/**
+ * The soonest a scheduled refresh runs after it is scheduled: a token issued with a lifetime of a
+ * few seconds, or a clock behind the server's, must not refresh in a loop.
+ */
+export const MCP_MIN_REFRESH_INTERVAL_MS = 30_000;
+
 /** A token sealed for its owner, as `sealForOwner` returns it. */
 const sealedValidator = v.object({ ciphertext: v.string(), iv: v.string(), keyId: v.string() });
 
@@ -45,11 +51,13 @@ export interface AuthorisationContext {
 
 /**
  * When the scheduled refresh of a token expiring at `expiresAt` runs: {@link MCP_REFRESH_LEAD_MS}
- * before it, or half its remaining life for a token that lives shorter than twice that.
+ * before it, or half its remaining life for a token that lives shorter than twice that, and never
+ * sooner than {@link MCP_MIN_REFRESH_INTERVAL_MS} from now.
  */
 export function refreshDueAt(expiresAt: number, now: number): number {
   const remaining = Math.max(0, expiresAt - now);
-  return expiresAt - Math.min(MCP_REFRESH_LEAD_MS, Math.floor(remaining / 2));
+  const due = expiresAt - Math.min(MCP_REFRESH_LEAD_MS, Math.floor(remaining / 2));
+  return Math.max(due, now + MCP_MIN_REFRESH_INTERVAL_MS);
 }
 
 /**
@@ -116,10 +124,10 @@ export const recordPendingAuthorisation = internalMutation({
   },
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     const agent = await ctx.db.get(surface.agentId);
     if (!agent || agent.userId !== args.ownerKey) {
-      throw new Error('The employee changed hands while the authorisation was starting.');
+      throw new ConvexError('The employee changed hands while the authorisation was starting.');
     }
     await ctx.db.patch(surface._id, { pendingAuthorisation: args.pending });
     const connectionId = args.pending.organisationConnectionId;
@@ -162,7 +170,7 @@ export const cancelAuthorisation = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     return await clearPending(ctx, surface);
   },
@@ -231,15 +239,21 @@ export const recordAuthorisationFailure = internalMutation({
 /**
  * Stamp a credential Day0 obtained and the card no longer holds as revoked, with its revocation at
  * the vendor asked for (11-AR's revoker answers it), keeping its ciphertext for that call (F19).
- * A pasted key is only detached: Day0 never revokes one (D5).
+ * A pasted key is only detached: Day0 never revokes one (D5); nor is a credential another card
+ * still holds.
  */
 async function retireReplaced(
   ctx: MutationCtx,
-  credentialId: Id<'credentials'> | undefined,
+  surface: Doc<'surfaces'>,
   now: number,
 ): Promise<void> {
-  const replaced = credentialId ? await ctx.db.get(credentialId) : null;
+  const replaced = surface.credentialId ? await ctx.db.get(surface.credentialId) : null;
   if (!replaced?.issuedBy || replaced.revokedAt !== undefined) return;
+  const holders = await ctx.db
+    .query('surfaces')
+    .withIndex('by_credentialId', (index) => index.eq('credentialId', replaced._id))
+    .take(2);
+  if (holders.some((holder) => holder._id !== surface._id)) return;
   const pair = replaced.refreshCredentialId ? await ctx.db.get(replaced.refreshCredentialId) : null;
   for (const row of [replaced, pair]) {
     if (!row || row.revokedAt !== undefined) continue;
@@ -255,7 +269,8 @@ async function retireReplaced(
  * credential rows of the employee's owner (the access token's `refreshCredentialId` naming the
  * other, `generation` 0, `issuedBy` the authorisation code), bound to the card with whom it acts
  * as, in one transaction; the token the card held before, where Day0 obtained it, retired; the
- * probe and the first scheduled refresh queued. Internal, for the token store's native
+ * probe and the first scheduled refresh queued. The pending authorisation it completes was cleared
+ * by the claim; one the manager started since is left for its own redirect. Internal, for the token store's native
  * implementation in `mcpOauthActions`; refuses when the employee changed hands since the start.
  *
  * @returns The access token's credential.
@@ -274,10 +289,10 @@ export const landAuthorisedTokens = internalMutation({
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     const agent = await ctx.db.get(surface.agentId);
     if (!agent || agent.userId !== args.ownerKey) {
-      throw new Error('The employee changed hands while the authorisation was completing.');
+      throw new ConvexError('The employee changed hands while the authorisation was completing.');
     }
     const common = {
       userId: args.ownerKey,
@@ -301,9 +316,7 @@ export const landAuthorisedTokens = internalMutation({
       ...(args.expiresAt === undefined ? {} : { expiresAt: args.expiresAt }),
       ...(refreshCredentialId ? { refreshCredentialId } : {}),
     });
-    if (surface.credentialId !== credentialId) {
-      await retireReplaced(ctx, surface.credentialId, args.now);
-    }
+    await retireReplaced(ctx, surface, args.now);
     const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId,
@@ -314,7 +327,6 @@ export const landAuthorisedTokens = internalMutation({
       ...(args.issuedBy.organisationConnectionId
         ? { organisationConnectionId: args.issuedBy.organisationConnectionId }
         : {}),
-      pendingAuthorisation: undefined,
       verdict:
         approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')
           ? 'approved'

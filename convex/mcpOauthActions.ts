@@ -1,6 +1,6 @@
 'use node';
 
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { action, internalAction, type ActionCtx } from './_generated/server';
@@ -39,7 +39,11 @@ import {
   mcpSystemKey,
   newPkcePair,
   requestTokens,
+  revokeToken,
+  type AuthorisationServerMetadata,
+  type ClientAuthentication,
   type IssuedTokens,
+  type McpAuthorisationTarget,
   type McpOauthRefusalReason,
   type OauthFetch,
 } from '../src/surfaces/mcp-oauth';
@@ -111,8 +115,16 @@ export interface McpTokenStore {
   read(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<HeldMcpTokens | null>;
   /** The access token's value, recording its use; refused once it is revoked. */
   accessToken(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<string>;
-  /** The paired refresh token's value; refused when there is none or it is revoked. */
-  refreshToken(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<string>;
+  /**
+   * The paired refresh token's value while the pair is still at `expectedGeneration`, or null once
+   * a refresh has moved it on: a refresh exchanges only the token of the generation it read, never
+   * one a concurrent refresh has just written. Refused when there is none or it is revoked.
+   */
+  refreshToken(
+    ctx: ActionCtx,
+    credentialId: Id<'credentials'>,
+    expectedGeneration: number,
+  ): Promise<string | null>;
   /** Write a refresh's tokens atomically, refusing a stale generation. */
   rotate(ctx: ActionCtx, rotation: RotateMcpTokens): Promise<RotationOutcome>;
 }
@@ -158,10 +170,11 @@ export const nativeMcpTokenStore: McpTokenStore = {
     };
   },
   accessToken: async (ctx, credentialId) => await decryptCredential(ctx, credentialId),
-  refreshToken: async (ctx, credentialId) => {
+  refreshToken: async (ctx, credentialId, expectedGeneration) => {
     const rows: HeldTokenRows | null = await ctx.runQuery(internal.mcpOauth.heldTokens, {
       credentialId,
     });
+    if (rows && (rows.access.generation ?? 0) !== expectedGeneration) return null;
     if (!rows?.refresh) throw new Error('No refresh token is held for this authorisation.');
     return await decryptCredential(ctx, rows.refresh._id);
   },
@@ -212,6 +225,7 @@ export type StartRefusalReason =
   | 'shared-connection'
   | 'no-client'
   | 'resource-mismatch'
+  | 'issuer-unregistered'
   | 'address-refused'
   | 'unreachable';
 
@@ -220,8 +234,18 @@ export type StartOutcome =
   | { readonly ok: true; readonly authoriseUrl: string }
   | { readonly ok: false; readonly reason: StartRefusalReason; readonly message: string };
 
+/**
+ * The longest reason Day0 stores or shows for an authorisation: a refusal can carry a URL a
+ * server chose, and it lands on the record and on the redirect.
+ */
+const REASON_LENGTH = 300;
+
+function clipped(text: string): string {
+  return text.length > REASON_LENGTH ? text.slice(0, REASON_LENGTH) : text;
+}
+
 function refused(reason: StartRefusalReason, message: string): StartOutcome {
-  return { ok: false, reason, message };
+  return { ok: false, reason, message: clipped(message) };
 }
 
 /** The public origin the redirect is registered under. */
@@ -229,27 +253,33 @@ function redirectUrlFor(connection: Doc<'organisationConnections'>): string {
   if (connection.redirectUrl) return connection.redirectUrl;
   const origin = process.env.DAY0_PUBLIC_URL?.trim();
   if (!origin) {
-    throw new Error(
+    throw new ConvexError(
       'DAY0_PUBLIC_URL is not set, so the authorisation server has nowhere to send the browser back to.',
     );
   }
   return new URL(MCP_OAUTH_REDIRECT_PATH, origin).href;
 }
 
+/** A card cleared to authorise: its endpoint, its employee's owner and the organisation's client. */
+interface StartingClient {
+  readonly endpoint: URL;
+  readonly ownerKey: string;
+  readonly connection: Doc<'organisationConnections'>;
+  readonly clientId: string;
+}
+
 /**
- * Start an authorisation for one card: discover the server's authorisation server, seal a PKCE
- * verifier in the card's row with the issuer it must come back from, and hand back the URL the
- * manager's browser is sent to. The caller must own the employee; real mode only.
+ * The card's endpoint, owner and organisation client, once the caller is shown to own the employee
+ * and every rule that keeps the card out has passed; otherwise the refusal the card shows.
  *
- * @throws Error when the card is gone or the caller does not own the employee.
+ * @throws ConvexError when the card is gone or has no owner; the ownership guard's error otherwise.
  */
-export async function runStartAuthorisation(
+async function startingClient(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
-  deps: McpOauthDeps,
-): Promise<StartOutcome> {
+): Promise<StartingClient | StartOutcome> {
   const found = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
-  if (!found) throw new Error('Surface not found.');
+  if (!found) throw new ConvexError('Surface not found.');
   await assertOwnsAgentAction(ctx, found.surface.agentId);
   assertRealMode('MCP authorisation');
   if (found.surface.managerApprovedAt === undefined) {
@@ -263,7 +293,7 @@ export async function runStartAuthorisation(
     surfaceId,
     system: mcpSystemKey(endpoint),
   });
-  if (!context) throw new Error('Surface not found.');
+  if (!context) throw new ConvexError('Surface not found.');
   const { connection, agent } = context;
   if (context.ambiguous) {
     return refused(
@@ -286,19 +316,33 @@ export async function runStartAuthorisation(
   if (!connection.clientId) {
     return refused('no-client', "The organisation's connection for this server has no client id.");
   }
-  const resource = canonicalResource(endpoint);
-  if (connection.resource && connection.resource !== resource) {
+  if (connection.resource && connection.resource !== canonicalResource(endpoint)) {
     return refused(
       'resource-mismatch',
       "The organisation's connection for this server names another resource.",
     );
   }
-  if (!agent.userId) throw new Error('The employee has no owner.');
+  // A client secret is unique to the server that issued it: it is sent only to the server it was
+  // registered with, never to whichever one the MCP server's own metadata names first.
+  if (connection.secretCredentialId && !connection.issuer) {
+    return refused(
+      'issuer-unregistered',
+      "The organisation's client has a secret but no authorisation server registered with it; IT records the issuer at install.",
+    );
+  }
+  if (!agent.userId) throw new ConvexError('The employee has no owner.');
+  return { endpoint, ownerKey: agent.userId, connection, clientId: connection.clientId };
+}
 
-  let target;
+/** Discovery for one card, its failures as the card's refusals. */
+async function discoverFor(
+  deps: McpOauthDeps,
+  client: StartingClient,
+  surfaceId: Id<'surfaces'>,
+): Promise<McpAuthorisationTarget | StartOutcome> {
   try {
-    target = await discoverAuthorisation(deps.fetch, endpoint, {
-      ...(connection.issuer ? { issuer: connection.issuer } : {}),
+    return await discoverAuthorisation(deps.fetch, client.endpoint, {
+      ...(client.connection.issuer ? { issuer: client.connection.issuer } : {}),
     });
   } catch (error) {
     if (error instanceof McpOauthRefusal) return refused(error.reason, error.message);
@@ -307,8 +351,19 @@ export async function runStartAuthorisation(
     log.warn('mcp authorisation discovery failed', { surfaceId, reason: message });
     return refused('unreachable', `Discovery could not reach the server: ${message}`);
   }
+}
 
-  const now = deps.now();
+/**
+ * Seal a fresh PKCE verifier for the employee's owner, record the pending authorisation with the
+ * issuer it must come back from and the discovered endpoints, and build the URL the browser goes to.
+ */
+async function recordStart(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+  client: StartingClient,
+  target: McpAuthorisationTarget,
+  now: number,
+): Promise<StartOutcome> {
   const pkce = newPkcePair();
   const nonce = newOauthNonce();
   const stateExpiresAt = now + OAUTH_STATE_TTL_MS;
@@ -316,49 +371,67 @@ export async function runStartAuthorisation(
     { surfaceId, nonce, expiresAt: stateExpiresAt },
     process.env.DAY0_CREDENTIAL_KEY,
   );
-  const verifier = sealed(pkce.verifier, agent.userId);
-  const redirectUrl = redirectUrlFor(connection);
-  const scopes = connection.scopes.length > 0 ? connection.scopes : target.scopes;
+  const verifier = sealed(pkce.verifier, client.ownerKey);
+  const redirectUrl = redirectUrlFor(client.connection);
+  const { server, resource } = target;
   await ctx.runMutation(internal.mcpOauth.recordPendingAuthorisation, {
     surfaceId,
-    ownerKey: agent.userId,
+    ownerKey: client.ownerKey,
     pending: {
       stateNonce: nonce,
       stateExpiresAt,
-      clientId: connection.clientId,
+      clientId: client.clientId,
       verifierCiphertext: verifier.ciphertext,
       verifierIv: verifier.iv,
       verifierKeyId: verifier.keyId,
-      issuer: target.server.issuer,
-      resource: target.resource,
+      issuer: server.issuer,
+      resource,
       redirectUrl,
-      organisationConnectionId: connection._id,
+      organisationConnectionId: client.connection._id,
       startedAt: now,
     },
     discovered: {
-      issuer: target.server.issuer,
-      resource: target.resource,
-      authorisation: target.server.authorisationEndpoint,
-      token: target.server.tokenEndpoint,
-      ...(target.server.revocationEndpoint ? { revocation: target.server.revocationEndpoint } : {}),
-      ...(target.server.registrationEndpoint
-        ? { registration: target.server.registrationEndpoint }
-        : {}),
+      issuer: server.issuer,
+      resource,
+      authorisation: server.authorisationEndpoint,
+      token: server.tokenEndpoint,
+      ...(server.revocationEndpoint ? { revocation: server.revocationEndpoint } : {}),
+      ...(server.registrationEndpoint ? { registration: server.registrationEndpoint } : {}),
       discoveredAt: now,
     },
   });
+  const scopes = client.connection.scopes.length > 0 ? client.connection.scopes : target.scopes;
   return {
     ok: true,
     authoriseUrl: authorisationUrl({
-      server: target.server,
-      clientId: connection.clientId,
+      server,
+      clientId: client.clientId,
       redirectUrl,
       state,
       challenge: pkce.challenge,
-      resource: target.resource,
+      resource,
       scopes,
     }).href,
   };
+}
+
+/**
+ * Start an authorisation for one card: discover the server's authorisation server, seal a PKCE
+ * verifier in the card's row with the issuer it must come back from, and hand back the URL the
+ * manager's browser is sent to. The caller must own the employee; real mode only.
+ *
+ * @throws ConvexError when the card is gone; the ownership guard's error for another caller.
+ */
+export async function runStartAuthorisation(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+  deps: McpOauthDeps,
+): Promise<StartOutcome> {
+  const client = await startingClient(ctx, surfaceId);
+  if ('ok' in client) return client;
+  const target = await discoverFor(deps, client, surfaceId);
+  if ('ok' in target) return target;
+  return await recordStart(ctx, surfaceId, client, target, deps.now());
 }
 
 /**
@@ -399,6 +472,23 @@ export interface AuthorisationResponse {
   readonly error?: string;
 }
 
+/**
+ * The longest each response parameter may be: a state this deployment signed, a code, an issuer
+ * URL and an error code all fit well within them, so anything longer is refused unread.
+ */
+const RESPONSE_LIMITS: Readonly<Record<keyof AuthorisationResponse, number>> = {
+  state: 2048,
+  code: 2048,
+  iss: 2048,
+  error: 256,
+};
+
+function oversized(response: AuthorisationResponse): boolean {
+  return (Object.keys(RESPONSE_LIMITS) as (keyof AuthorisationResponse)[]).some(
+    (name) => (response[name]?.length ?? 0) > RESPONSE_LIMITS[name],
+  );
+}
+
 /** A failure after the claim: on the card's record, and back to the route with the card named. */
 async function failClaimed(
   ctx: ActionCtx,
@@ -407,8 +497,13 @@ async function failClaimed(
   reason: string,
   now: number,
 ): Promise<CompleteOutcome> {
-  await ctx.runMutation(internal.mcpOauth.recordAuthorisationFailure, { surfaceId, reason, now });
-  return { ok: false, reason, agentId: claim.agentId, surfaceSlug: claim.slug };
+  const said = clipped(reason);
+  await ctx.runMutation(internal.mcpOauth.recordAuthorisationFailure, {
+    surfaceId,
+    reason: said,
+    now,
+  });
+  return { ok: false, reason: said, agentId: claim.agentId, surfaceSlug: claim.slug };
 }
 
 /** Why an authorisation response's issuer was refused, as the card says it. */
@@ -418,6 +513,118 @@ const ISSUER_REFUSALS = {
   'iss-missing':
     'The authorisation server did not say who answered, which it advertises it does, so its code was not used.',
 } as const;
+
+/** The organisation connection the authorisation started under, if it is still the active one. */
+async function connectionStill(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+  pending: ClaimedAuthorisation['pending'],
+): Promise<Doc<'organisationConnections'> | null> {
+  const context = await ctx.runQuery(internal.mcpOauth.authorisationContext, {
+    surfaceId,
+    system: mcpSystemKey(new URL(pending.resource)),
+  });
+  const connection = context?.connection ?? null;
+  return connection && connection._id === pending.organisationConnectionId ? connection : null;
+}
+
+/**
+ * Check the response against the claimed authorisation and, when it holds, exchange its code and
+ * land the tokens. The issuer check comes first: on a mismatch nothing the response carries is
+ * acted on or shown, an error included (the revision).
+ *
+ * @returns The card's reason when the response is refused, else undefined once the tokens landed.
+ * @throws Error with every secret it held (the code, the client secret, the verifier) removed.
+ */
+async function exchangeAndLand(
+  ctx: ActionCtx,
+  claim: ClaimedAuthorisation,
+  surfaceId: Id<'surfaces'>,
+  response: AuthorisationResponse,
+  deps: McpOauthDeps,
+): Promise<string | undefined> {
+  const { pending } = claim;
+  const held: string[] = response.code ? [response.code] : [];
+  try {
+    const server = await fetchAuthorisationServerMetadata(deps.fetch, pending.issuer);
+    const issuer = checkResponseIssuer({
+      iss: response.iss ?? null,
+      recordedIssuer: pending.issuer,
+      issParameterSupported: server.issParameterSupported,
+    });
+    if (!issuer.ok) return ISSUER_REFUSALS[issuer.reason];
+    if (response.error !== undefined) {
+      return 'The authorisation was declined at the authorisation server.';
+    }
+    if (!response.code) return 'The authorisation server sent no code.';
+    const connection = await connectionStill(ctx, surfaceId, pending);
+    if (!connection) {
+      return "The organisation's connection for this server was revoked or replaced while the authorisation was under way.";
+    }
+    const secret = connection.secretCredentialId
+      ? await decryptCredential(ctx, connection.secretCredentialId)
+      : undefined;
+    if (secret) held.push(secret);
+    const verifier = openOwnedCredential(
+      {
+        ciphertext: pending.verifierCiphertext,
+        iv: pending.verifierIv,
+        userId: claim.ownerKey,
+        ...(pending.verifierKeyId === undefined ? {} : { keyId: pending.verifierKeyId }),
+      },
+      credentialKeyring(),
+      { allowUnbound: false },
+    );
+    held.push(verifier);
+    const tokens = await requestTokens(
+      deps.fetch,
+      {
+        tokenEndpoint: server.tokenEndpoint,
+        clientId: pending.clientId,
+        auth: clientAuthentication(server, secret),
+        resource: pending.resource,
+        grant: {
+          grant: 'authorization_code',
+          code: response.code,
+          redirectUrl: pending.redirectUrl,
+          verifier,
+        },
+      },
+      deps.now(),
+    );
+    held.push(tokens.accessToken, ...(tokens.refreshToken ? [tokens.refreshToken] : []));
+    const grant: CredentialGrant = 'authorisation-code';
+    await deps.store.land(ctx, {
+      surfaceId,
+      ownerKey: claim.ownerKey,
+      tokens,
+      issuedBy: {
+        system: mcpSystemKey(new URL(pending.resource)),
+        grant,
+        organisationConnectionId: connection._id,
+        clientId: pending.clientId,
+        ...(connection.secretCredentialId
+          ? { clientSecretCredentialId: connection.secretCredentialId }
+          : {}),
+      },
+      actsAs: { kind: 'delegated', label: claim.managerAddress },
+      issuer: pending.issuer,
+      now: deps.now(),
+    });
+    return undefined;
+  } catch (error) {
+    const [first = '', ...rest] = held;
+    throw new Error(
+      safeFailureMessage(
+        error,
+        first,
+        'The authorisation could not be completed.',
+        REASON_LENGTH,
+        rest,
+      ),
+    );
+  }
+}
 
 /**
  * Complete an authorisation from the redirect: verify the signed state, consume the card's pending
@@ -430,6 +637,7 @@ export async function runCompleteAuthorisation(
   response: AuthorisationResponse,
   deps: McpOauthDeps,
 ): Promise<CompleteOutcome> {
+  if (oversized(response)) return { ok: false, reason: STATE_MESSAGES.malformed };
   const now = deps.now();
   const verified = verifyOauthState(response.state, process.env.DAY0_CREDENTIAL_KEY, now);
   if (!verified.ok) return { ok: false, reason: STATE_MESSAGES[verified.reason] };
@@ -441,118 +649,14 @@ export async function runCompleteAuthorisation(
       now,
     });
   if (!claim.ok) return { ok: false, reason: STATE_MESSAGES[claim.reason] };
-  const { pending } = claim;
-
-  let secret = '';
-  let verifier = '';
+  let refusal: string | undefined;
   try {
-    const server = await fetchAuthorisationServerMetadata(deps.fetch, pending.issuer);
-    const issuer = checkResponseIssuer({
-      iss: response.iss ?? null,
-      recordedIssuer: pending.issuer,
-      issParameterSupported: server.issParameterSupported,
-    });
-    // The revision: on an issuer mismatch nothing the response carries is acted on or shown, an
-    // error included, so this check comes before the error is read.
-    if (!issuer.ok)
-      return await failClaimed(ctx, claim, surfaceId, ISSUER_REFUSALS[issuer.reason], now);
-    if (response.error !== undefined) {
-      return await failClaimed(
-        ctx,
-        claim,
-        surfaceId,
-        'The authorisation was declined at the authorisation server.',
-        now,
-      );
-    }
-    if (!response.code) {
-      return await failClaimed(
-        ctx,
-        claim,
-        surfaceId,
-        'The authorisation server sent no code.',
-        now,
-      );
-    }
-    const system = mcpSystemKey(new URL(pending.resource));
-    const context = await ctx.runQuery(internal.mcpOauth.authorisationContext, {
-      surfaceId,
-      system,
-    });
-    const connection = context?.connection ?? null;
-    if (!connection || connection._id !== pending.organisationConnectionId) {
-      return await failClaimed(
-        ctx,
-        claim,
-        surfaceId,
-        "The organisation's connection for this server was revoked or replaced while the authorisation was under way.",
-        now,
-      );
-    }
-    secret = connection.secretCredentialId
-      ? await decryptCredential(ctx, connection.secretCredentialId)
-      : '';
-    verifier = openOwnedCredential(
-      {
-        ciphertext: pending.verifierCiphertext,
-        iv: pending.verifierIv,
-        userId: claim.ownerKey,
-        ...(pending.verifierKeyId === undefined ? {} : { keyId: pending.verifierKeyId }),
-      },
-      credentialKeyring(),
-      { allowUnbound: false },
-    );
-    const tokens = await requestTokens(
-      deps.fetch,
-      {
-        tokenEndpoint: server.tokenEndpoint,
-        clientId: pending.clientId,
-        auth: clientAuthentication(server, secret === '' ? undefined : secret),
-        resource: pending.resource,
-        grant: {
-          grant: 'authorization_code',
-          code: response.code,
-          redirectUrl: pending.redirectUrl,
-          verifier,
-        },
-      },
-      deps.now(),
-    );
-    const grant: CredentialGrant = 'authorisation-code';
-    await deps.store.land(ctx, {
-      surfaceId,
-      ownerKey: claim.ownerKey,
-      tokens,
-      issuedBy: {
-        system,
-        grant,
-        organisationConnectionId: connection._id,
-        clientId: pending.clientId,
-        ...(connection.secretCredentialId
-          ? { clientSecretCredentialId: connection.secretCredentialId }
-          : {}),
-      },
-      actsAs: { kind: 'delegated', label: claim.managerAddress },
-      issuer: pending.issuer,
-      now: deps.now(),
-    });
-    return { ok: true, agentId: claim.agentId, surfaceSlug: claim.slug };
+    refusal = await exchangeAndLand(ctx, claim, surfaceId, response, deps);
   } catch (error) {
-    const reason =
-      error instanceof McpOauthRefusal || error instanceof McpAddressRefusal
-        ? error.message
-        : safeFailureMessage(
-            error,
-            response.code ?? '',
-            'The authorisation could not be completed.',
-            300,
-            [secret, verifier].filter((value) => value !== ''),
-          );
-    return await failClaimed(ctx, claim, surfaceId, reason, deps.now());
-  } finally {
-    secret = '';
-    verifier = '';
+    refusal = error instanceof Error ? error.message : 'The authorisation could not be completed.';
   }
+  if (refusal !== undefined) return await failClaimed(ctx, claim, surfaceId, refusal, deps.now());
+  return { ok: true, agentId: claim.agentId, surfaceSlug: claim.slug };
 }
 
 /**
@@ -603,14 +707,51 @@ async function rotatedSince(
   return null;
 }
 
+/** What a refresh revokes when it cannot keep what it was issued. */
+interface UnkeptTokens {
+  readonly server: AuthorisationServerMetadata;
+  readonly clientId: string;
+  readonly auth: ClientAuthentication;
+  /** The refresh token the refresh presented. */
+  readonly presented: string;
+  readonly issued: IssuedTokens;
+  readonly credentialId: Id<'credentials'>;
+}
+
 /**
- * Refresh a held authorisation with rotation: exchange its refresh token, with the resource, at the
- * issuer's token endpoint, and write the new pair only while the pair is still at the generation
- * read. A refresh that loses to a concurrent one (its write refused as stale, or its spent refresh
- * token refused) takes the winner's token.
+ * Revoke at the server a refresh token Day0 was issued and cannot keep (its write lost, or the
+ * credential was revoked meanwhile), so it does not stay live at the vendor unrecorded. Only a
+ * rotated one: a server that does not rotate handed back the very token the pair still holds.
+ * Best effort; a failure is logged.
+ */
+async function revokeUnkept(deps: McpOauthDeps, unkept: UnkeptTokens): Promise<void> {
+  const issued = unkept.issued.refreshToken;
+  if (!issued || issued === unkept.presented || !unkept.server.revocationEndpoint) return;
+  try {
+    await revokeToken(deps.fetch, {
+      revocationEndpoint: unkept.server.revocationEndpoint,
+      clientId: unkept.clientId,
+      auth: unkept.auth,
+      token: issued,
+      tokenTypeHint: 'refresh_token',
+    });
+  } catch (error) {
+    log.warn('mcp unkept refresh token not revoked', {
+      credentialId: unkept.credentialId,
+      reason: safeFailureMessage(error, issued, 'The revocation failed.'),
+    });
+  }
+}
+
+/**
+ * Refresh a held authorisation with rotation: exchange the refresh token of the generation read,
+ * with the resource, at the issuer's token endpoint, and write the new pair only while the pair is
+ * still at that generation. A refresh that loses to a concurrent one (the pair moved on before it
+ * read the token, its write refused as stale, or its spent token refused) takes the winner's token,
+ * and revokes what it was issued and cannot keep.
  *
- * @throws McpOauthRefusal or a transport error when the server cannot be reached; a refusal of
- *   the refresh by the server is the typed outcome instead.
+ * @throws McpOauthRefusal or a transport error when the server cannot be reached or answers
+ *   unusably; a refusal of the refresh by the server is the typed outcome instead.
  */
 async function refreshHeld(
   ctx: ActionCtx,
@@ -626,23 +767,26 @@ async function refreshHeld(
         "The organisation's connection no longer says where this authorisation is refreshed.",
     };
   }
+  const presented = await deps.store.refreshToken(ctx, held.credentialId, held.generation);
+  if (presented === null) {
+    return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
+  }
   const server = await fetchAuthorisationServerMetadata(deps.fetch, connection.issuer);
-  const secret = connection.secretCredentialId
-    ? await decryptCredential(ctx, connection.secretCredentialId)
-    : undefined;
-  let tokens: IssuedTokens;
+  const secretId = held.issuedBy?.clientSecretCredentialId ?? connection.secretCredentialId;
+  const auth = clientAuthentication(
+    server,
+    secretId ? await decryptCredential(ctx, secretId) : undefined,
+  );
+  let issued: IssuedTokens;
   try {
-    tokens = await requestTokens(
+    issued = await requestTokens(
       deps.fetch,
       {
         tokenEndpoint: server.tokenEndpoint,
         clientId,
-        auth: clientAuthentication(server, secret),
+        auth,
         resource: connection.resource,
-        grant: {
-          grant: 'refresh_token',
-          refreshToken: await deps.store.refreshToken(ctx, held.credentialId),
-        },
+        grant: { grant: 'refresh_token', refreshToken: presented },
       },
       deps.now(),
     );
@@ -657,10 +801,18 @@ async function refreshHeld(
     credentialId: held.credentialId,
     ownerKey: held.ownerKey,
     expectedGeneration: held.generation,
-    tokens,
+    tokens: issued,
     now: deps.now(),
   });
-  if (rotation.ok) return { ok: true, accessToken: tokens.accessToken };
+  if (rotation.ok) return { ok: true, accessToken: issued.accessToken };
+  await revokeUnkept(deps, {
+    server,
+    clientId,
+    auth,
+    presented,
+    issued,
+    credentialId: held.credentialId,
+  });
   if (rotation.reason === 'stale') {
     return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
   }
@@ -669,11 +821,12 @@ async function refreshHeld(
 
 /**
  * The bearer to send for a credential: its stored value, refreshed first when it is an MCP
- * authorisation's access token within {@link MCP_READ_REFRESH_MARGIN_MS} of its expiry. Any other
- * credential is read exactly as `credentials.decrypt` reads it.
+ * authorisation's access token within {@link MCP_READ_REFRESH_MARGIN_MS} of its expiry. A refresh
+ * that fails while the stored token still lives hands that token back; any other credential is
+ * read exactly as `credentials.decrypt` reads it.
  *
- * @throws Error when the credential is unavailable, or an expiring authorisation's refresh was
- *   refused (the manager authorises again).
+ * @throws Error when the credential is unavailable, or an expired authorisation could not be
+ *   refreshed (the manager authorises again).
  */
 export async function readMcpBearer(
   ctx: ActionCtx,
@@ -688,9 +841,25 @@ export async function readMcpBearer(
   ) {
     return await deps.store.accessToken(ctx, credentialId);
   }
-  const outcome = await refreshHeld(ctx, held, deps);
+  const alive = (held.expiresAt ?? 0) > deps.now();
+  let outcome: RefreshOutcome;
+  try {
+    outcome = await refreshHeld(ctx, held, deps);
+  } catch (error) {
+    const reason = safeFailureMessage(error, '', 'The authorisation server could not be reached.');
+    if (!alive) {
+      throw new Error(
+        `The authorisation server could not be reached to refresh the token: ${reason}`,
+      );
+    }
+    log.warn('mcp read-time refresh failed; the stored token still lives', {
+      credentialId,
+      reason,
+    });
+    return await deps.store.accessToken(ctx, credentialId);
+  }
   if (outcome.ok) return outcome.accessToken;
-  if ((held.expiresAt ?? 0) > deps.now()) return await deps.store.accessToken(ctx, credentialId);
+  if (alive) return await deps.store.accessToken(ctx, credentialId);
   throw new Error(`${outcome.refusal} Authorise the card again.`);
 }
 
@@ -712,10 +881,23 @@ export const currentBearer = internalAction({
 });
 
 /**
+ * Whether a failed refresh may succeed later: a transport failure, a busy server, or metadata that
+ * could not be read. A refusal of the client, a mismatched issuer or a malformed answer cannot.
+ */
+function retryable(error: unknown): boolean {
+  return (
+    !(error instanceof McpOauthRefusal) ||
+    error.reason === 'token-unavailable' ||
+    error.reason === 'no-authorisation-server'
+  );
+}
+
+/**
  * Refresh an authorisation ahead of its expiry, so every reader of the stored token (the probe
- * included) finds a live one. Does nothing when another refresh has moved the pair on. A refusal by
- * the server goes on the record of every card holding the token; a server that cannot be reached
- * is tried again with a growing wait. Internal; scheduled by `mcpOauth` at each landing and rotation.
+ * included) finds a live one. Does nothing when another refresh has moved the pair on. A server
+ * that cannot be reached is tried again with a growing wait, {@link SCHEDULED_REFRESH_RETRIES}
+ * times; a refusal, or the retries running out, goes on the record of every card holding the token.
+ * Internal; scheduled by `mcpOauth` at each landing and rotation.
  */
 export const refreshScheduled = internalAction({
   args: {
@@ -727,34 +909,38 @@ export const refreshScheduled = internalAction({
     const deps = mcpOauthDeps();
     const held = await deps.store.read(ctx, args.credentialId);
     if (!held || held.generation !== args.generation || !refreshable(held)) return;
-    let outcome: RefreshOutcome;
+    const attempt = args.attempt ?? 0;
+    let refusal: string;
     try {
-      outcome = await refreshHeld(ctx, held, deps);
+      const outcome = await refreshHeld(ctx, held, deps);
+      if (outcome.ok) return;
+      refusal = outcome.refusal;
     } catch (error) {
-      const attempt = args.attempt ?? 0;
       const reason = safeFailureMessage(
         error,
         '',
         'The authorisation server could not be reached.',
       );
-      log.warn('mcp scheduled refresh failed', {
-        credentialId: args.credentialId,
-        attempt,
-        reason,
-      });
-      if (attempt < SCHEDULED_REFRESH_RETRIES) {
+      if (retryable(error) && attempt < SCHEDULED_REFRESH_RETRIES) {
+        log.warn('mcp scheduled refresh failed', {
+          credentialId: args.credentialId,
+          attempt,
+          reason,
+        });
         await ctx.scheduler.runAfter(
           60_000 * 2 ** attempt,
           internal.mcpOauthActions.refreshScheduled,
           { ...args, attempt: attempt + 1 },
         );
+        return;
       }
-      return;
+      refusal = retryable(error)
+        ? `The authorisation server could not be reached to refresh the token after ${attempt + 1} attempts: ${reason}`
+        : `Refreshing the authorisation was refused: ${reason}`;
     }
-    if (outcome.ok) return;
     await ctx.runMutation(internal.mcpOauth.recordRefreshRefusal, {
       credentialId: args.credentialId,
-      reason: outcome.refusal,
+      reason: clipped(refusal),
       now: deps.now(),
     });
   },
