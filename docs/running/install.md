@@ -75,7 +75,11 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    shared) and for what the recipe produced (secrets hidden), lands it, runs
    `pnpm check:access` and writes the install record.
 5. **`pnpm check:setup`**, now with the access block.
-6. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
+6. **`pnpm build`**: the browser reads the company sign-in's profile at build.
+   Then start the app behind the proxy (`pnpm start`, in another terminal or
+   under the customer's service manager); the install waits up to 10 minutes
+   for it to answer at `DAY0_PUBLIC_URL`.
+7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
 
@@ -105,14 +109,11 @@ EOF
 rm answers.env
 ```
 
-### 3. Start the app
+### 3. Keep the app running
 
-```bash
-pnpm build
-pnpm start
-```
-
-behind the proxy, on the port the proxy forwards `DAY0_PUBLIC_URL` to.
+The install built the app and waited for it; keep `pnpm start` running behind
+the proxy, on port 3000, which the proxy forwards `DAY0_PUBLIC_URL` to, under
+the customer's service manager.
 
 ### 4. The install record
 

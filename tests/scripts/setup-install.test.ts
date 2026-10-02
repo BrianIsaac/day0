@@ -60,7 +60,7 @@ interface InstallBed {
   run(args: readonly string[]): Promise<number>;
 }
 
-function installBed(options: HarnessOptions = {}): InstallBed {
+function installBed(options: HarnessOptions & { readonly appAnswers?: boolean } = {}): InstallBed {
   const bed = harness({ envLocal: INSTALLED, ...options });
   mkdirSync(join(bed.directory, 'docs-local'), { recursive: true });
   writeFileSync(
@@ -76,6 +76,10 @@ function installBed(options: HarnessOptions = {}): InstallBed {
       await runCommand(parseSetupArguments(['--mode', 'real', ...args, '--record', record]), {
         ...bed.io,
         readStdin: async (): Promise<string> => STDIN,
+        waitForApp: async (url: string): Promise<boolean> => {
+          expect(url).toBe('https://day0.acme.test');
+          return options.appAnswers ?? true;
+        },
         fetch: async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
           const body = JSON.parse(String(init?.body)) as { path: string; args: { system: string } };
           if (body.path === 'organisationConnections:landFromSetup') landed.push(body.args.system);
@@ -88,16 +92,16 @@ function installBed(options: HarnessOptions = {}): InstallBed {
   };
 }
 
-/** Where each check ran in the command list, by its script name. */
+/** Where each check and the build ran in the command list, by its script name. */
 function checkOrder(bed: Harness): string[] {
   return bed.commands
     .map((call) => [call.command, ...call.args].join(' '))
-    .map((line) => /pnpm run (check:[a-z-]+)/.exec(line)?.[1])
+    .map((line) => /^pnpm (?:run )?(check:[a-z-]+|build)$/.exec(line)?.[1])
     .filter((name): name is string => name !== undefined);
 }
 
 describe('setup: the install verb', (): void => {
-  it('runs the sign-in, then access, then the checks, in that order, and exits 0 when each passes', async (): Promise<void> => {
+  it('runs the sign-in, then access, then the checks, builds the app and waits for it before the live sign-in, and exits 0 when each passes', async (): Promise<void> => {
     const bed = installBed();
     const status = await bed.run(INSTALL);
     expect(status).toBe(0);
@@ -105,8 +109,10 @@ describe('setup: the install verb', (): void => {
       'check:setup',
       'check:access',
       'check:setup',
+      'build',
       'check:sign-in',
     ]);
+    expect(bed.bed.output.join('\n')).toContain('pnpm start');
     expect(bed.landed).toEqual(['slack']);
     const values = readEnvValues(join(bed.bed.directory, '.env.local'));
     expect(values.DAY0_OIDC_CLIENT_SECRET).toBe(CLIENT_SECRET);
@@ -122,9 +128,14 @@ describe('setup: the install verb', (): void => {
       { failing: 'run check:setup', stoppedAt: 'the sign-in', after: [] as string[] },
       { failing: 'run check:access', stoppedAt: 'access', after: ['check:setup', 'check:access'] },
       {
+        failing: 'pnpm build',
+        stoppedAt: 'the build',
+        after: ['check:setup', 'check:access', 'check:setup', 'build'],
+      },
+      {
         failing: 'run check:sign-in',
         stoppedAt: 'check:sign-in',
-        after: ['check:setup', 'check:access', 'check:setup', 'check:sign-in'],
+        after: ['check:setup', 'check:access', 'check:setup', 'build', 'check:sign-in'],
       },
     ];
     for (const one of cases) {
@@ -138,6 +149,13 @@ describe('setup: the install verb', (): void => {
       else expect(checkOrder(bed.bed), one.failing).toEqual(['check:setup']);
       if (one.failing === 'run check:setup') expect(bed.landed).toEqual([]);
     }
+  });
+
+  it('stops before the live sign-in when the app never answers at its public address', async (): Promise<void> => {
+    const bed = installBed({ appAnswers: false });
+    expect(await bed.run(INSTALL)).toBe(1);
+    expect(bed.bed.output.join('\n')).toContain('The install stopped at the app');
+    expect(checkOrder(bed.bed)).toEqual(['check:setup', 'check:access', 'check:setup', 'build']);
   });
 
   it('runs the lifecycle verbs’ target checks first, which the sign-in verb alone skips', async (): Promise<void> => {

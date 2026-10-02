@@ -382,6 +382,11 @@ export interface SetupIo {
   readonly fetch?: typeof fetch;
   /** All of stdin, for `--secrets-stdin`; a terminal on stdin is refused, a pipe or a file read whole. */
   readStdin?(): Promise<string>;
+  /**
+   * Wait for the app to answer at its public address; true once it does. Absent, `install` polls
+   * the address through `fetch`.
+   */
+  waitForApp?(url: string, timeoutMs: number): Promise<boolean>;
 }
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
@@ -5101,6 +5106,33 @@ async function runAccessVerb(options: SetupOptions, io: SetupIo): Promise<number
   return await runAccess({ access: options.access ?? {}, dryRun: options.dryRun }, io);
 }
 
+/** How long `install` waits for the app to answer at its public address once it is built. */
+const APP_WAIT_MS = 10 * 60_000;
+
+/**
+ * Poll an address until anything but a server error answers it, or the time runs out.
+ *
+ * Args:
+ *   url: The app's public address.
+ *   timeoutMs: How long to keep asking.
+ *
+ * Returns:
+ *   True once the app answers; false when it never did.
+ */
+async function appAnswers(url: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5_000) });
+      if (response.status < 500) return true;
+    } catch {
+      // Not up yet, or the proxy has no upstream yet; the deadline is the only thing that ends this.
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 2_000));
+  }
+  return false;
+}
+
 /** The variable the sign-in verb reads its client secret from when nothing can be asked. */
 const SIGN_IN_SECRET = 'DAY0_OIDC_CLIENT_SECRET';
 
@@ -5228,23 +5260,40 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
   );
   if (connected !== 0) return stopped('access', connected);
 
-  const checks = ['check:setup', 'check:sign-in'] as const;
   if (options.dryRun) {
-    io.log(`\nThen: ${checks.map((name) => `pnpm run ${name}`).join(', then ')}.`);
+    io.log(
+      '\nThen: pnpm run check:setup, pnpm build, the app started behind the proxy, ' +
+        'and pnpm run check:sign-in.',
+    );
     return 0;
   }
-  for (const [index, name] of checks.entries()) {
-    io.log(
-      `\n== ${index + 3}. ${name === 'check:setup' ? 'The whole setup' : 'One test sign-in, with the customer’s IT'} ==`,
-    );
-    io.log(`pnpm run ${name}`);
-    const result = io.run('pnpm', ['run', name], { inherit: true });
-    if (result.status !== 0) return stopped(name, result.status ?? 1);
-  }
+  io.log('\n== 3. The whole setup ==');
+  io.log('pnpm run check:setup');
+  const setupChecked = io.run('pnpm', ['run', 'check:setup'], { inherit: true });
+  if (setupChecked.status !== 0) return stopped('check:setup', setupChecked.status ?? 1);
+
+  io.log('\n== 4. The app, built with the company sign-in ==');
+  io.log('pnpm build    (the browser reads the profile at build)');
+  const built = io.run('pnpm', ['build'], { inherit: true });
+  if (built.status !== 0) return stopped('the build', built.status ?? 1);
+  const publicUrl = (readEnvValues(join(io.cwd, ENV_FILE)).DAY0_PUBLIC_URL ?? '').trim();
+  io.log(
+    `Start the app behind the proxy now, in another terminal or under the customer's service ` +
+      `manager: \`pnpm start\` serves on port 3000, which the proxy forwards ${publicUrl} to. ` +
+      `Waiting for it at ${publicUrl} for up to ${APP_WAIT_MS / 60_000} minutes...`,
+  );
+  const answering =
+    io.waitForApp ?? ((url: string, timeoutMs: number) => appAnswers(url, timeoutMs));
+  if (!(await answering(publicUrl, APP_WAIT_MS))) return stopped('the app', 1);
+
+  io.log('\n== 5. One test sign-in, with the customer’s IT ==');
+  io.log('pnpm run check:sign-in');
+  const signInChecked = io.run('pnpm', ['run', 'check:sign-in'], { inherit: true });
+  if (signInChecked.status !== 0) return stopped('check:sign-in', signInChecked.status ?? 1);
   const seconds = Math.round(((io.now?.() ?? Date.now()) - started) / 1000);
   io.log(
     `\nThe install passed every check in ${Math.floor(seconds / 60)} min ${seconds % 60} s. ` +
-      'Build and start the app behind the proxy: `pnpm build`, then `pnpm start`.',
+      'Keep the app running behind the proxy (`pnpm start`) under the customer’s service manager.',
   );
   return 0;
 }
