@@ -12,6 +12,11 @@ export interface CredentialFieldProps {
   readonly expected: ExpectedCredential;
   /** Whether the card is approved: nothing is landed on a card nobody agreed to (B D6). */
   readonly approved: boolean;
+  /**
+   * Whether an active organisation connection covers the card's system: its access then comes
+   * from that connection, never from a paste (the access plan, section 4.3), so no field is drawn.
+   */
+  readonly covered?: boolean;
   readonly error?: string;
   readonly landing: boolean;
   readonly onLand: (plaintext: string) => void;
@@ -23,7 +28,9 @@ export interface CredentialFieldProps {
 /**
  * A card's credential: what is stored or documented, what the store says of it, and, once the
  * card is approved, a write-only field labelled with whose credential it takes. Before approval
- * the card says what it will ask for instead of offering a field the server refuses (B D6).
+ * the card says what it will ask for instead of offering a field the server refuses (B D6). Where
+ * an organisation connection covers the system there is no field at all: the card connects
+ * through it (section 4.3).
  *
  * The field is uncontrolled: the value goes from the form to the action and never lands in React
  * state, where a devtools snapshot or an error boundary could keep it.
@@ -41,6 +48,7 @@ export function CredentialField(props: CredentialFieldProps) {
   // rehearsal driver finds the field by (`input[id^="credential-"]`).
   const fieldId = `credential-${useId()}`;
   const { presentation } = props;
+  const takesPaste = presentation.canLand && props.covered !== true;
   return (
     <div className="grid gap-2 text-sm">
       <p className="text-[var(--color-fg-2)]">
@@ -56,15 +64,15 @@ export function CredentialField(props: CredentialFieldProps) {
       {presentation.governanceFinding ? (
         <p className="text-[var(--color-warn)]">{presentation.governanceFinding}</p>
       ) : null}
-      {presentation.canLand && !props.approved ? (
+      {takesPaste && !props.approved ? (
         <p className="text-[13px] text-[var(--color-muted)]">
           Once you approve, the card asks for {lowerFirst(props.expected.label)}.
         </p>
       ) : null}
-      {presentation.canLand && props.approved && presentation.landingNote ? (
+      {takesPaste && props.approved && presentation.landingNote ? (
         <p className="text-[13px] text-[var(--color-muted)]">{presentation.landingNote}</p>
       ) : null}
-      {presentation.canLand && props.approved ? (
+      {takesPaste && props.approved ? (
         <form onSubmit={onSubmit} className="grid gap-1.5">
           <label htmlFor={fieldId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
             {props.expected.label}

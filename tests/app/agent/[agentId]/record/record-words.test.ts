@@ -891,12 +891,28 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
     expect(
       ended({ system: 'slack', surfaceName: 'Slack', end: 'retire', outcome: 'app-uninstalled' }),
     ).toBe("Leo's Slack app was uninstalled from Slack.");
+    // A disconnect-end line says the token (11-AJ join 4); an expiry's still says the access.
     expect(
       ended(
         { system: 'linear', surfaceName: 'Linear', end: 'disconnect', outcome: 'token-revoked' },
         { name: 'Maya' },
       ),
+    ).toBe('A token Day0 held for the Linear connection was revoked at Linear.');
+    expect(
+      ended(
+        { system: 'linear', surfaceName: 'Linear', end: 'expiry', outcome: 'token-revoked' },
+        { name: 'Maya' },
+      ),
     ).toBe('Access to the Linear connection was revoked at Linear.');
+  });
+
+  it("says a token a disconnect-end revoked as the token, never as the manager's Disconnect, since a re-authorisation ends the pair it replaces the same way (11-AJ join 4)", (): void => {
+    const line = ended(
+      { system: 'linear', surfaceName: 'Linear', end: 'disconnect', outcome: 'token-revoked' },
+      { name: 'Maya', connection: 'Linear' },
+    );
+    expect(line).toBe('A token Day0 held for the Linear connection was revoked at Linear.');
+    expect(line).not.toMatch(/disconnect|Access to/i);
   });
 
   it("says a failure in the vendor's words, and whether another attempt follows", (): void => {

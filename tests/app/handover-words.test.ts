@@ -92,6 +92,7 @@ describe('the hand-over dialog (plan 7.1)', () => {
         name: 'Maya',
         mode: 'real',
         cutSystems: ['Linear', 'Slack'],
+        reapproved: [],
         expiresAt: EXPIRES,
         zone: 'UTC',
       }),
@@ -106,11 +107,31 @@ describe('the hand-over dialog (plan 7.1)', () => {
     ]);
   });
 
+  it('says a card that keeps its own identity goes back for one re-approval, naming whom it keeps acting as (A25)', () => {
+    const lines = handOverLines({
+      name: 'Leo',
+      mode: 'real',
+      cutSystems: ['Linear'],
+      reapproved: [{ system: 'Slack', identity: "Leo's own app" }],
+      expiresAt: EXPIRES,
+      zone: 'UTC',
+    });
+    expect(lines).toContain(
+      "Its connection to Slack stays. Re-approve: keeps acting as Leo's own app; they approve it with one click and nothing to paste.",
+    );
+    expect(
+      lines.indexOf(
+        'Its connection to Linear is cut. They approve it and connect it again with their own credentials.',
+      ),
+    ).toBeLessThan(lines.findIndex((line) => line.startsWith('Its connection to Slack stays.')));
+  });
+
   it('says the office goes with the employee in the hosted office, and names no credential', () => {
     const lines = handOverLines({
       name: 'Maya',
       mode: 'mock',
       cutSystems: ['Linear'],
+      reapproved: [{ system: 'Slack', identity: "Maya's own app" }],
       expiresAt: EXPIRES,
       zone: 'UTC',
     });
@@ -314,6 +335,23 @@ describe('the acceptance dialog (plan 7.3)', () => {
       'Linear: you approve and connect it with your own credentials',
       'Slack: you approve and connect it with your own credentials',
       "12 pages of sam@kestrel.example's documentation it stops reading",
+      'autonomous actions: off until you turn them on',
+    ]);
+  });
+
+  it("lists a card that keeps its identity for one re-approval, naming the identity it keeps (11-AJ's preview field)", () => {
+    expect(
+      leavesBehindLines({
+        ...PREVIEW,
+        leavesBehind: {
+          ...PREVIEW.leavesBehind,
+          surfaces: [],
+          reapprove: [{ slug: 'slack', displayName: 'Slack', identity: 'Leo (Day0)' }],
+          mirroredPages: 0,
+        },
+      }),
+    ).toEqual([
+      'Slack: re-approve with one click; it keeps acting as Leo (Day0), with nothing to paste',
       'autonomous actions: off until you turn them on',
     ]);
   });

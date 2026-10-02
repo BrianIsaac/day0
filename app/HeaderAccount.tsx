@@ -6,7 +6,8 @@ import { CUSTOMER_SIGN_IN, type SessionAccount } from '@/lib/customer-sign-in';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
 import { clerkAppearance, clerkSignInAppearance } from './clerk-appearance';
-import { CustomerSignOutButton, useCustomerAccount } from './Providers';
+import { CustomerSignOutButton, SessionGate, useCustomerAccount } from './Providers';
+import { AdministeredAccountMenu, OrganisationMenuLink } from './organisation/AdministratorLinks';
 
 /** Every control in the slot sits in its one grid cell, so the cell is as large as the largest. */
 const LAYER = '[grid-area:1/1]';
@@ -69,13 +70,27 @@ function AccountSlot(): React.ReactElement {
       </Show>
       <Show when="signed-in">
         <div className={ACCOUNT_MENU_BOX}>
-          <UserButton
-            appearance={clerkAppearance}
-            userProfileProps={{ appearance: clerkAppearance }}
-          />
+          <ClerkAccountMenu />
         </div>
       </Show>
     </div>
+  );
+}
+
+/**
+ * Clerk's account menu in the shared appearance. Once Convex holds the token it is the menu that
+ * knows whether the caller administers the organisation; until then, and for anyone Convex has not
+ * confirmed, the plain menu. Clerk reads its custom items off the menu's own children, so the gate
+ * chooses between two menus rather than wrapping an item.
+ */
+function ClerkAccountMenu(): React.ReactElement {
+  const plain = (
+    <UserButton appearance={clerkAppearance} userProfileProps={{ appearance: clerkAppearance }} />
+  );
+  return (
+    <SessionGate fallback={plain} closed={plain}>
+      <AdministeredAccountMenu />
+    </SessionGate>
   );
 }
 
@@ -226,6 +241,9 @@ function CustomerAccountMenu(): React.ReactElement {
             <p className="truncate text-xs text-[var(--color-muted)]">{account.email}</p>
           )}
         </div>
+        <SessionGate fallback={null} closed={null}>
+          <OrganisationMenuLink />
+        </SessionGate>
         <CustomerSignOutButton />
       </div>
     </div>

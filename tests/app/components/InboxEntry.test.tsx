@@ -106,6 +106,26 @@ describe('inboxEntryWords and inboxEntryHref', (): void => {
   });
 });
 
+describe('a system IT has answered for (wave 11, 11-AJ join 12)', (): void => {
+  it('says the card is ready to connect, in its own words, with the same link to the Surfaces tab', (): void => {
+    const ready = {
+      ...base,
+      kind: 'surface',
+      key: 'surface:f',
+      subject: 'Linear',
+      waitingSince: minutes(5),
+      surfaceId: 'f',
+      ready: 'connect',
+    } as unknown as InboxItem;
+    expect(inboxEntryWords(ready)).toEqual({
+      ask: 'a system to connect',
+      about: 'Linear: IT connected it, and Connect is on its card.',
+      control: 'Open',
+    });
+    expect(inboxEntryHref(ready)).toBe('/agent/synthetic-mira/surfaces');
+  });
+});
+
 describe('the ninth kind: an employee to take on', (): void => {
   const transfer = {
     ...base,

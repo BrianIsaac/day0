@@ -298,10 +298,16 @@ function revokedAtSourceWords(
   );
   const system = systemDisplayName(text(p.system) ?? 'the vendor');
   switch (p.outcome) {
-    case 'token-revoked':
-      return `Access to ${connection} was revoked at ${system}${
-        p.channelMembershipsRemoved === true ? '; its channel memberships were removed' : ''
-      }`;
+    case 'token-revoked': {
+      const memberships =
+        p.channelMembershipsRemoved === true ? '; its channel memberships were removed' : '';
+      // A disconnect's end is also how a re-authorisation ends the pair it replaces (11-AJ join 4),
+      // so the line says the token, never that access ended: the manager's Disconnect has its
+      // own line (`surface.disconnected`).
+      return p.end === 'disconnect'
+        ? `A token Day0 held for ${connection} was revoked at ${system}${memberships}`
+        : `Access to ${connection} was revoked at ${system}${memberships}`;
+    }
     case 'app-deleted':
       return `${subject.name}'s ${system} app was deleted in ${system}`;
     case 'app-uninstalled':

@@ -375,6 +375,9 @@ describe('the dashboard driver', (): void => {
       credentials: new Map(),
       installRedirectConfigured: false,
       browserPresent: true,
+      employeeName: 'Maya',
+      organisation: new Map(),
+      managerDmReachable: false,
     };
     const actions: SurfaceCardActions = {
       approve: (): void => undefined,
@@ -384,6 +387,9 @@ describe('the dashboard driver', (): void => {
       provision: (): void => undefined,
       setDays: async () => ({ expiresAt: NOW }),
       approveTools: async () => undefined,
+      disconnect: async () => undefined,
+      draftAccessRequest: async () => undefined,
+      recordAccessRequestSent: async () => undefined,
     };
     const looker = (fields: Partial<ListedSurface>): ListedSurface =>
       ({

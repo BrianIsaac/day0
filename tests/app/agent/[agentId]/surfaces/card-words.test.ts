@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
 import {
   accessStanding,
+  actsAsWords,
+  cardIdentity,
+  connectedForOrganisationWords,
   expectedCredential,
+  mockActsAsWords,
+  moveOfferWords,
   reachedWords,
   stateChip,
+  type OrganisationSystem,
   type WordedSurface,
 } from '../../../../../app/agent/[agentId]/surfaces/card-words';
 
@@ -121,5 +128,168 @@ describe('whose credential the field expects (Q10, B D6)', (): void => {
       expectedCredential({ displayName: 'Linear', path: 'mcp', endpoint: undefined }, undefined)
         .label,
     ).toBe('A Linear credential with the documented permissions');
+  });
+});
+
+/** A system the organisation connected, as `organisationConnections.summaryForManager` lists it. */
+function connected(
+  fields: Partial<OrganisationSystem> & Pick<OrganisationSystem, 'system'>,
+): OrganisationSystem {
+  return {
+    displayName: fields.system,
+    mode: 'per-employee',
+    status: 'active',
+    connectedAt: Date.UTC(2026, 9, 1, 9),
+    ...fields,
+  };
+}
+
+const SLACK = { endpoint: 'https://slack.com/api/', path: 'documented-api' } as const;
+const LINEAR = { endpoint: 'https://mcp.linear.app/mcp', path: 'mcp' } as const;
+const DOCS_MCP = { endpoint: 'https://docs.acme.test/mcp', path: 'mcp' } as const;
+
+describe('whom a card acts as, before approval as after (D2; the access plan, section 4.3)', (): void => {
+  const names = { employee: 'Maya', system: 'Slack' };
+
+  it('reads the identity the connect path wrote, as it is, and names the app as the system shows it', (): void => {
+    const identity = cardIdentity(
+      { ...SLACK, actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' } },
+      undefined,
+      { selfProvisions: false },
+    );
+    expect(identity).toEqual({ kind: 'own-app', label: 'Maya (Day0)', planned: false });
+    expect(actsAsWords(identity, names)).toBe(
+      'Maya, its own Slack app, named “Maya (Day0)” in Slack',
+    );
+  });
+
+  it("says before approval that a Slack card on the organisation's connection acts as the employee's own app", (): void => {
+    const identity = cardIdentity(SLACK, connected({ system: 'slack' }), { selfProvisions: false });
+    expect(identity).toEqual({ kind: 'own-app', planned: true });
+    expect(actsAsWords(identity, names)).toBe('Maya, its own Slack app');
+  });
+
+  it("says a Linear card on the organisation's shared app acts as that app, with Day0 recording who did what", (): void => {
+    const identity = cardIdentity(LINEAR, connected({ system: 'linear', mode: 'shared' }), {
+      selfProvisions: false,
+    });
+    expect(identity.kind).toBe('shared-app');
+    expect(actsAsWords(identity, { employee: 'Maya', system: 'Linear' })).toBe(
+      'the Day0 app shared by your employees; Day0 records which employee did what',
+    );
+  });
+
+  it('says a Linear card on a per-employee connection acts as its own Linear app', (): void => {
+    const identity = cardIdentity(LINEAR, connected({ system: 'linear' }), {
+      selfProvisions: false,
+    });
+    expect(actsAsWords(identity, { employee: 'Leo', system: 'Linear' })).toBe(
+      'Leo, its own Linear app',
+    );
+  });
+
+  it("says an MCP card on the organisation's client acts as the manager, delegated, and shows it", (): void => {
+    const identity = cardIdentity(
+      DOCS_MCP,
+      connected({ system: 'mcp:docs.acme.test', displayName: 'Acme docs' }),
+      { selfProvisions: false },
+    );
+    expect(identity.kind).toBe('delegated');
+    expect(actsAsWords(identity, { employee: 'Maya', system: 'Acme docs' })).toBe(
+      'you in Acme docs: what it touches shows your name',
+    );
+  });
+
+  it('says a card no organisation connection covers will use a key someone pastes, and once pasted that it does', (): void => {
+    const planned = cardIdentity(LINEAR, undefined, { selfProvisions: false });
+    expect(planned).toEqual({ kind: 'shared-key', planned: true });
+    expect(actsAsWords(planned, { employee: 'Maya', system: 'Linear' })).toBe(
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+    );
+    const landed = cardIdentity(
+      {
+        ...LINEAR,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+        credentialId: 'cred-1' as never,
+      },
+      undefined,
+      { selfProvisions: false },
+    );
+    expect(actsAsWords(landed, { employee: 'Maya', system: 'Linear' })).toBe(
+      "a key someone pasted; its writes show that key's owner, and Day0 adds Maya's name to each",
+    );
+  });
+
+  it("treats a connection that needs IT's attention as no connection: the card can still take a key", (): void => {
+    expect(
+      cardIdentity(LINEAR, connected({ system: 'linear', status: 'needs-attention' }), {
+        selfProvisions: false,
+      }).kind,
+    ).toBe('shared-key');
+  });
+
+  it('says a Slack card that registers its own app without a connection acts as that app', (): void => {
+    expect(cardIdentity(SLACK, undefined, { selfProvisions: true }).kind).toBe('own-app');
+  });
+
+  it('reads a connection only for the system the card is on', (): void => {
+    expect(
+      cardIdentity(LINEAR, connected({ system: 'slack' }), { selfProvisions: false }).kind,
+    ).toBe('shared-key');
+  });
+
+  it('says a dedicated browser seat as the employee signed in as itself', (): void => {
+    expect(
+      actsAsWords(
+        { kind: 'browser-seat', label: 'maya@acme.test', planned: false },
+        { employee: 'Maya', system: 'Looker' },
+      ),
+    ).toBe('Maya, signed in to its own seat in Looker');
+  });
+
+  it('has words for every identity kind, planned and landed, with no em dash', (): void => {
+    for (const kind of ACTS_AS_KINDS) {
+      for (const planned of [true, false]) {
+        const words = actsAsWords({ kind, planned }, { employee: 'Maya', system: 'Linear' });
+        expect(words.length, kind).toBeGreaterThan(0);
+        expect(words).not.toContain('\u2014');
+      }
+    }
+  });
+
+  it("says the hosted office's words on every mock surface", (): void => {
+    expect(mockActsAsWords('Maya')).toBe('Maya, its own app in this office');
+  });
+});
+
+describe("the manager's line for a system IT connected", (): void => {
+  it('names the day IT connected it, in the zone given', (): void => {
+    expect(
+      connectedForOrganisationWords(
+        connected({ system: 'linear', connectedAt: Date.UTC(2026, 9, 1, 9) }),
+        'UTC',
+      ),
+    ).toBe('Connected for your organisation by IT on 1 October');
+  });
+});
+
+describe('the move off a pasted key at its renewal (A27)', (): void => {
+  it('names whom the card would act as through the connection, and that the key keeps working', (): void => {
+    expect(
+      moveOfferWords({ kind: 'own-app', planned: true }, { employee: 'Maya', system: 'Linear' }),
+    ).toBe(
+      'IT has connected Linear. Maya can use its own Linear app instead of the pasted key, which keeps working until you move it.',
+    );
+  });
+
+  it("says a delegated target as acting as the manager, never as the employee's own app (code pass, M5)", (): void => {
+    expect(
+      moveOfferWords(
+        { kind: 'delegated', planned: true },
+        { employee: 'Maya', system: 'Acme docs' },
+      ),
+    ).toBe(
+      'IT has connected Acme docs. Maya can act as you there instead of the pasted key, which keeps working until you move it.',
+    );
   });
 });
