@@ -20,6 +20,7 @@ import {
   openOwnedCredential,
 } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/credential-ref';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -1135,5 +1136,52 @@ describe('the sync generation fence on the credential store (step 14)', (): void
       }),
     ).resolves.toBe(credentialId);
     expect((await rows(harness))[0]?.status).toBeUndefined();
+  });
+});
+
+describe("the organisation's rows and the owner-keyed reads (11-AK, AC12)", (): void => {
+  it('never returns an organisation row from an owner-keyed read: the summary, nor the exact-value list', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sealed = { ciphertext: 'sealed', iv: 'iv', createdAt: 1 } as const;
+    const { ownerRow } = await harness.run(async (ctx) => {
+      const ownerRow = await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: 'owner',
+        kind: 'value',
+        label: 'Linear access',
+        source: 'entered',
+      });
+      await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Slack configuration refresh token',
+        source: 'entered',
+      });
+      await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: 'Linear app actor token',
+        source: 'oauth',
+        issuedBy: { system: 'linear', grant: 'client-credentials' },
+      });
+      return { ownerRow };
+    });
+
+    const summary = await harness
+      .withIdentity(managerIdentity())
+      .query(api.credentials.summaryForOwner, {});
+    expect(summary.map((row) => row._id)).toEqual([ownerRow]);
+    const values = await harness.query(internal.credentials.activeValuesForOwner, {
+      userId: 'owner',
+    });
+    expect(values.rows.map((row) => row._id)).toEqual([ownerRow]);
+    // A manager signed in under another key reads none of them either.
+    await expect(
+      harness.withIdentity(managerIdentity('stranger')).query(api.credentials.summaryForOwner, {}),
+    ).resolves.toEqual([]);
   });
 });

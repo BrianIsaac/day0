@@ -42,6 +42,27 @@ export const TRANSFER_CANCEL_REASONS = ['owner', 'retired', 'address-changed'] a
 export type TransferCancelReason = (typeof TRANSFER_CANCEL_REASONS)[number];
 
 /**
+ * The `cancelReason` an accepted handover that ended without its move is stored with (the
+ * transfer's decision 4: its settle kept failing, the move would be refused, or the operator
+ * ended it), so a reader tells it from an ask's cancel without reading the record. Declared by
+ * the wave 11 schema step; rows from before it carry no reason.
+ */
+export const HANDOVER_ENDED_CANCEL_REASON = 'handover-ended';
+
+/**
+ * Every `cancelReason` a request's row may carry: an ask's cancel ({@link TRANSFER_CANCEL_REASONS},
+ * which the `manager.transfer-cancelled` event names) or the end of an accepted handover, which
+ * that event never names (`manager.transfer-ended` is its record).
+ */
+export const TRANSFER_ROW_CANCEL_REASONS = [
+  ...TRANSFER_CANCEL_REASONS,
+  HANDOVER_ENDED_CANCEL_REASON,
+] as const;
+
+/** One of {@link TRANSFER_ROW_CANCEL_REASONS}. */
+export type TransferRowCancelReason = (typeof TRANSFER_ROW_CANCEL_REASONS)[number];
+
+/**
  * The states each state may move to. There is no reopening: a declined or
  * expired request is asked again as a new row, so the record keeps each
  * attempt, and an acceptance once given is irrevocable.

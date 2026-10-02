@@ -1,6 +1,23 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { MANAGER_TRANSFER_STATES, TRANSFER_CANCEL_REASONS } from '../src/agent/manager-transfer';
+import {
+  MANAGER_TRANSFER_STATES,
+  TRANSFER_ROW_CANCEL_REASONS,
+} from '../src/agent/manager-transfer';
+import { ORGANISATION_HOLDER } from '../src/lib/organisation-key';
+import {
+  ACCESS_ENDS,
+  ACCESS_REQUEST_REASONS,
+  ACTS_AS_KINDS,
+  CREDENTIAL_GRANTS,
+  MCP_CLIENT_REGISTRATIONS,
+  ORGANISATION_CONNECTION_KINDS,
+  ORGANISATION_CONNECTION_MODES,
+  ORGANISATION_CONNECTION_STATUSES,
+  ORGANISATION_REGISTRARS,
+  SOURCE_REVOCATION_STATES,
+  TOKEN_STORES,
+} from '../src/surfaces/access-identity';
 
 /**
  * A tracker ticket as one intake listing showed it: who is assigned, its
@@ -63,6 +80,72 @@ export const surfaceToolsValidator = v.object({
   slug: v.string(),
   surfaceClass: v.optional(v.string()),
   tools: v.array(v.string()),
+});
+
+/** Whom a card acts as in its system (11-AK; the access plan, section 4.2). */
+export const actsAsValidator = v.object({
+  kind: v.union(...ACTS_AS_KINDS.map((kind) => v.literal(kind))),
+  label: v.string(),
+  providerIdentityId: v.optional(v.string()),
+});
+
+/**
+ * How Day0 itself obtained a credential (11-AK; section 4.4): the system, the grant, and the
+ * organisation connection whose registration it came through, when one did. Only a credential
+ * that carries it is revoked at the vendor; a pasted key never is (D5, AC4).
+ */
+export const credentialIssuerValidator = v.object({
+  system: v.string(),
+  grant: v.union(...CREDENTIAL_GRANTS.map((grant) => v.literal(grant))),
+  organisationConnectionId: v.optional(v.id('organisationConnections')),
+});
+
+/**
+ * How a credential's revocation at the vendor stands (11-AK for 11-AR; section 4.4, F19): the
+ * state, the attempts made, the vendor's words for the last failure, when the state was last
+ * written, and which end of access asked for it.
+ */
+export const sourceRevocationValidator = v.object({
+  state: v.union(...SOURCE_REVOCATION_STATES.map((state) => v.literal(state))),
+  attempts: v.number(),
+  lastError: v.optional(v.string()),
+  at: v.optional(v.number()),
+  end: v.optional(v.union(...ACCESS_ENDS.map((end) => v.literal(end)))),
+});
+
+/**
+ * The access request a card drafted for IT (11-AK for 11-AO; section 4.5, A24): why, the scopes it
+ * asks for, the connection it widens when it does, and when it was drafted, copied, sent as an
+ * email and sent to the manager in the chat surface, with that message's provider timestamp as
+ * the evidence it was delivered.
+ */
+export const accessRequestValidator = v.object({
+  reason: v.union(...ACCESS_REQUEST_REASONS.map((reason) => v.literal(reason))),
+  scopes: v.array(v.string()),
+  organisationConnectionId: v.optional(v.id('organisationConnections')),
+  draftedAt: v.number(),
+  copiedAt: v.optional(v.number()),
+  emailedAt: v.optional(v.number()),
+  messagedAt: v.optional(v.number()),
+  messageProviderTs: v.optional(v.string()),
+});
+
+/**
+ * An OAuth authorisation a card has started and its redirect has not consumed (11-AK for 11-AM;
+ * section 4.6): the single-use state nonce and its expiry, the PKCE verifier sealed as a
+ * credential row (never in the URL), the authorisation server the response's `iss` must name,
+ * the resource indicator sent on both requests, the redirect, and the connection whose client it
+ * runs under. Cleared the first time a redirect consumes it.
+ */
+export const pendingAuthorisationValidator = v.object({
+  stateNonce: v.string(),
+  stateExpiresAt: v.number(),
+  verifierCredentialId: v.id('credentials'),
+  issuer: v.string(),
+  resource: v.string(),
+  redirectUrl: v.string(),
+  organisationConnectionId: v.optional(v.id('organisationConnections')),
+  startedAt: v.number(),
 });
 
 export default defineSchema({
@@ -175,9 +258,38 @@ export default defineSchema({
     /** Which credential key sealed this row. Declared ahead of the re-seal
      * that writes it (step 32); nothing writes or reads it yet. */
     keyId: v.optional(v.string()),
+    /**
+     * Who holds the row (11-AK for 11-AO; AC12): `organisation` for a secret IT connected at
+     * install or a token every employee shares, stored under `ORGANISATION_OWNER_KEY`
+     * (`src/lib/organisation-key.ts`) as its `userId` and sealed with that key; absent means
+     * the owner named by `userId`, as every row before wave 11.
+     */
+    holder: v.optional(v.literal(ORGANISATION_HOLDER)),
+    /** How Day0 itself obtained the row, absent for a pasted or documented value (11-AR reads it). */
+    issuedBy: v.optional(credentialIssuerValidator),
+    /** When the token stops working at the vendor (11-AL, 11-AM, 11-AT refresh before it). */
+    expiresAt: v.optional(v.number()),
+    /** The refresh token paired with this access token, a row of its own (11-AM, 11-AT). */
+    refreshCredentialId: v.optional(v.id('credentials')),
+    /**
+     * Counts the rotations written to this row; a refresh or a rotation writes the new pair only
+     * if the row is still at the generation it read, so a concurrent one loses and re-reads
+     * (11-AS, 11-AL, 11-AM; section 4.6). Absent reads as 0.
+     */
+    generation: v.optional(v.number()),
+    /** Where the token lives (11-AT; B15): absent or `native` is this row, `nango` the service. */
+    tokenStore: v.optional(v.union(...TOKEN_STORES.map((store) => v.literal(store)))),
+    /**
+     * The revocation at the vendor of a credential Day0 obtained (11-AR; F19): written with
+     * `revokedAt` by the revoking transaction, which keeps the ciphertext for the vendor call
+     * until the state is final or the attempts run out.
+     */
+    sourceRevocation: v.optional(sourceRevocationValidator),
   })
     .index('by_userId', ['userId'])
-    .index('by_user_source_ref', ['userId', 'source.sourceId', 'source.ref']),
+    .index('by_user_source_ref', ['userId', 'source.sourceId', 'source.ref'])
+    /** The revocations at source in one state, oldest revoke first: the retry and the 24-hour purge (11-AR). */
+    .index('by_source_revocation_state', ['sourceRevocation.state', 'revokedAt']),
 
   docSources: defineTable({
     userId: v.string(),
@@ -470,6 +582,13 @@ export default defineSchema({
         stateExpiresAt: v.optional(v.number()),
         installedAt: v.optional(v.number()),
         lastError: v.optional(v.string()),
+        /**
+         * The organisation's Slack configuration connection the app was created with (11-AS),
+         * absent for an app created with a token pasted on the card: with that connection's
+         * token, `apps.manifest.delete` can delete only the apps it created (S4), which the
+         * retire reads (11-AR).
+         */
+        organisationConnectionId: v.optional(v.id('organisationConnections')),
       }),
     ),
     /** Channels the documentation names that the dedicated app has not been
@@ -558,6 +677,21 @@ export default defineSchema({
       v.union(v.literal('approval'), v.literal('manager'), v.literal('upgrade')),
     ),
     reason: v.optional(v.string()),
+    /**
+     * The organisation connection the card's access comes through (11-AK for 11-AO; section
+     * 4.1): its credential then comes from the connection, never from a paste.
+     */
+    organisationConnectionId: v.optional(v.id('organisationConnections')),
+    /**
+     * Whom the card acts as (11-AK; D2), written by the connect paths, never by the model, and
+     * read by the card (11-AC) and the export. The `surfaces-acts-as` migration writes it for
+     * every card holding a live credential before wave 11.
+     */
+    actsAs: v.optional(actsAsValidator),
+    /** The access request the card drafted for IT and how it went out (11-AO; A24). */
+    accessRequest: v.optional(accessRequestValidator),
+    /** The OAuth authorisation in flight for this card on the MCP rung (11-AM). */
+    pendingAuthorisation: v.optional(pendingAuthorisationValidator),
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])
@@ -568,7 +702,9 @@ export default defineSchema({
     .index('by_class', ['class'])
     .index('by_credentialId', ['credentialId'])
     /** The deployment's cards in one verdict: the hourly re-probe reads the connected and the dead. */
-    .index('by_verdict', ['verdict']),
+    .index('by_verdict', ['verdict'])
+    /** Every card on one organisation connection: a revoked connection ends each of them (11-AR). */
+    .index('by_organisation_connection', ['organisationConnectionId']),
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),
@@ -1403,9 +1539,21 @@ export default defineSchema({
     expiresAt: v.number(),
     /** When it left `asked`. */
     decidedAt: v.optional(v.number()),
+    /**
+     * Why the request was cancelled: an ask's cancel, or `handover-ended` for an accepted
+     * handover that ended without its move (`HANDOVER_ENDED_CANCEL_REASON`, declared in wave 11
+     * for the settle's writer). Absent on a request that was not cancelled, and on one an older
+     * release ended after its acceptance.
+     */
     cancelReason: v.optional(
-      v.union(...TRANSFER_CANCEL_REASONS.map((reason) => v.literal(reason))),
+      v.union(...TRANSFER_ROW_CANCEL_REASONS.map((reason) => v.literal(reason))),
     ),
+    /**
+     * How many settles of an `accepting` request have failed (decision 4), counted on the row so
+     * the count need not be read back from the employee's events. Declared in wave 11; absent
+     * reads as none counted on the row.
+     */
+    settleFailures: v.optional(v.number()),
     /** The named manager's words for declining, bounded. */
     declineReason: v.optional(v.string()),
     /** The acceptor's owner key, written at acceptance. */
@@ -1459,6 +1607,92 @@ export default defineSchema({
     .index('by_state_expires', ['state', 'expiresAt'])
     /** The settle sweep over `accepting` rows whose runs outlived `settleBy`. */
     .index('by_state_settle', ['state', 'settleBy']),
+
+  /**
+   * One row per system IT connected for the whole deployment at install (11-AK for 11-AO; the
+   * access plan, section 4.1; B8): the registration every card of the system reuses. A
+   * deployment table: owned by no manager, managed by the administrators alone, and never
+   * touched by an owner's reset (`DEPLOYMENT_ACCESS_TABLES`, `convex/reset.ts`). Its secrets are
+   * `credentials` rows the organisation holds.
+   */
+  organisationConnections: defineTable({
+    /** The stable system key: `slack`, `linear`, `github`, ..., or `mcp:<host>` for an MCP server. */
+    system: v.string(),
+    displayName: v.string(),
+    kind: v.union(...ORGANISATION_CONNECTION_KINDS.map((kind) => v.literal(kind))),
+    /** One identity per employee, or one shared by all (D3, B11), chosen per system at install. */
+    mode: v.union(...ORGANISATION_CONNECTION_MODES.map((mode) => v.literal(mode))),
+    clientId: v.optional(v.string()),
+    appId: v.optional(v.string()),
+    /** The vendor's id for the customer's workspace (a Slack team, a Linear organisation). */
+    providerWorkspaceId: v.optional(v.string()),
+    /** The authorisation server, for an MCP client (11-AM): the response's `iss` must name it. */
+    issuer: v.optional(v.string()),
+    /** The protected resource an MCP client asks tokens for (RFC 8707), the server's URL. */
+    resource: v.optional(v.string()),
+    /** How an MCP client's client id was obtained (AC7). */
+    clientRegistration: v.optional(
+      v.union(...MCP_CLIENT_REGISTRATIONS.map((registration) => v.literal(registration))),
+    ),
+    /** The authorisation server's endpoints as its metadata last gave them (RFC 8414, 11-AM). */
+    authorisationEndpoints: v.optional(
+      v.object({
+        authorisation: v.string(),
+        token: v.string(),
+        /** RFC 7009's endpoint, which 11-AR's generic revoker calls when it is advertised. */
+        revocation: v.optional(v.string()),
+        registration: v.optional(v.string()),
+        discoveredAt: v.number(),
+      }),
+    ),
+    /** The redirect URI IT registered with the vendor, which `check:access` compares (11-AI). */
+    redirectUrl: v.optional(v.string()),
+    /** The scopes IT registered for the system (B10). */
+    scopes: v.array(v.string()),
+    /**
+     * The one scope set a client-credentials token is requested with (Linear's `oauth-app` in
+     * `shared` mode; 11-AL). Fixed at land and never changed by a rotation: Linear revokes every
+     * app-actor token of the app when a token is requested with other scopes (L2).
+     */
+    clientCredentialsScopes: v.optional(v.array(v.string())),
+    /** The client secret, service key or refresh token, as a row the organisation holds. */
+    secretCredentialId: v.optional(v.id('credentials')),
+    /** In `shared` mode, the one token every employee's card uses until it expires (11-AL). */
+    sharedTokenCredentialId: v.optional(v.id('credentials')),
+    /** Who registered it, from where, and when: an administrator's verified address, or the CLI. */
+    registeredBy: v.object({
+      via: v.union(...ORGANISATION_REGISTRARS.map((registrar) => v.literal(registrar))),
+      address: v.optional(v.string()),
+      at: v.number(),
+    }),
+    status: v.union(...ORGANISATION_CONNECTION_STATUSES.map((status) => v.literal(status))),
+    statusReason: v.optional(v.string()),
+    lastRotatedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    /** The system's connection in one status: `activeFor(system)` and the landing check (11-AO). */
+    .index('by_system_status', ['system', 'status']),
+
+  /**
+   * The ledger of the organisation's connections (11-AK for 11-AO; AC11): install, rotation,
+   * scope change, revocation and every vendor call made with a connection's secret. Owner-less,
+   * so its rows are never an employee's events; its `type`s join `src/events/contract.ts` and
+   * its `payload` is typed there, as `events.payload` is. A deployment table, like its
+   * connections.
+   */
+  connectionEvents: defineTable({
+    organisationConnectionId: v.id('organisationConnections'),
+    type: v.string(),
+    payload: v.any(),
+    /** The administrator's verified address; absent for the operator's CLI and for Day0 itself. */
+    actorAddress: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    /** One connection's ledger in order: the administrator's page. */
+    .index('by_connection', ['organisationConnectionId', 'createdAt'])
+    /** Every connection's ledger in order: the audit export. */
+    .index('by_created', ['createdAt']),
 
   events: defineTable({
     agentId: v.id('agents'),
