@@ -21,6 +21,11 @@ import {
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../src/agent/manager-transfer';
+import {
+  deploymentAdministrators,
+  isAdministratorAddress,
+  NOT_AN_ADMINISTRATOR,
+} from '../src/lib/administrators';
 import { isOrganisationOwnerKey } from '../src/lib/organisation-key';
 import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
@@ -274,6 +279,51 @@ export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx):
   const identity = await getCaller(ctx);
   if (!identity) throw new ConvexError(notAuthenticatedMessage());
   return identity;
+}
+
+/** An administrator of the deployment: the verified caller and the address the list names. */
+export interface Administrator {
+  readonly caller: Caller;
+  readonly address: string;
+}
+
+/**
+ * The caller, if the deployment names its verified address as an administrator's
+ * (`DAY0_ADMINISTRATORS`; B8, the access plan section 4.1): the guard of every public function
+ * that lands, rotates, revokes or lists the organisation's connections. It says nothing about any
+ * employee: an administrator owns no card through it, and each employee's access keeps its one
+ * approval, the manager's. The operator's CLI acts as administrator through internal functions
+ * with the deployment's admin key, and never reaches this guard.
+ *
+ * @throws ConvexError with {@link NOT_AN_ADMINISTRATOR} for a signed-in caller the list does not
+ *   name, or whose token does not assert the address verified; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertAdministrator(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<Administrator> {
+  const caller = await getCallerOrThrow(ctx);
+  const address = administratorAddressOf(caller, deploymentEnv);
+  if (address === undefined) throw new ConvexError(NOT_AN_ADMINISTRATOR);
+  return { caller, address };
+}
+
+/**
+ * Whether the caller is one of the deployment's administrators, for a read that only shows or
+ * hides the organisation page's way in. Never a guard: a write calls {@link assertAdministrator}.
+ */
+export async function callerIsAdministrator(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<boolean> {
+  const caller = await getCaller(ctx);
+  return caller !== null && administratorAddressOf(caller, deploymentEnv) !== undefined;
+}
+
+/** The caller's verified address when the deployment names it as an administrator's. */
+function administratorAddressOf(identity: UserIdentity, read: EnvReader): string | undefined {
+  const address = verifiedAddressOf(identity, read);
+  if (address === undefined) return undefined;
+  return isAdministratorAddress(address, deploymentAdministrators(read)) ? address : undefined;
 }
 
 /**

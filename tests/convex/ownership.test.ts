@@ -22,6 +22,7 @@ import {
   EMPLOYEE_NOT_YOURS,
   isEmployeeNotYours,
 } from '../../src/agent/employee-access';
+import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
@@ -661,6 +662,62 @@ describe('a verified address under the generic sign-in preset (the wave 10 revie
         hd: 'acme.test',
       }),
     ).resolves.toBe('https://accounts.google.com|g2');
+  });
+});
+
+describe('assertAdministrator (B8)', (): void => {
+  /** What the guard answers a caller: the administrator's address, or the refusal's words. */
+  async function guardOf(who: Partial<UserIdentity> | undefined): Promise<string> {
+    const harness = convexTest(schema, allConvexModules());
+    const as = who === undefined ? harness : harness.withIdentity(who);
+    return await as.run(async (ctx) => {
+      const { assertAdministrator } = await import('../../convex/ownership');
+      try {
+        return (await assertAdministrator(ctx)).address;
+      } catch (error) {
+        return error instanceof ConvexError ? `refused: ${String(error.data)}` : 'threw';
+      }
+    });
+  }
+
+  it('admits a caller whose verified address the deployment names, however it is spelt', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'Ines@Acme.test, ops@acme.test');
+    await expect(
+      guardOf(managerIdentity('ines', { issuer: CLERK_ISSUER, email: 'ines@ACME.test' })),
+    ).resolves.toBe('ines@acme.test');
+  });
+
+  it('refuses a manager the list does not name, in words a page can show', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(
+      guardOf(managerIdentity('sam', { issuer: CLERK_ISSUER, email: 'sam@acme.test' })),
+    ).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('refuses a named address the token does not assert verified', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(
+      guardOf(
+        managerIdentity('ines', {
+          issuer: CLERK_ISSUER,
+          email: 'ines@acme.test',
+          emailVerified: false,
+        }),
+      ),
+    ).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('names nobody while the deployment names no administrator, or names them unreadably', async (): Promise<void> => {
+    const ines = managerIdentity('ines', { issuer: CLERK_ISSUER, email: 'ines@acme.test' });
+    await expect(guardOf(ines)).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test, it-team');
+    await expect(guardOf(ines)).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('refuses an anonymous caller as not authenticated', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(guardOf(undefined)).resolves.toMatch(/^refused: /);
+    await expect(guardOf(undefined)).resolves.not.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
   });
 });
 
