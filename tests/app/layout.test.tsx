@@ -43,6 +43,11 @@ describe('the header on a public page', (): void => {
     expect(link).not.toBe('');
     expect(link).toContain('prefetch={false}');
   });
+
+  it("gives the documentation link a 44 px target (11-AC's cockpit item 10)", (): void => {
+    const link = /<Link[^>]*href="\/documentation"[\s\S]*?>/.exec(component)?.[0] ?? '';
+    expect(link).toMatch(/className="[^"]*\bmin-h-11\b/);
+  });
 });
 
 describe('the focus ring', (): void => {

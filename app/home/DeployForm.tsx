@@ -180,7 +180,7 @@ export function DeployForm({
             value={name}
             onChange={(event) => setName(event.target.value)}
             aria-describedby={nameHelpId}
-            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />
           <p id={nameHelpId} className="mt-1.5 text-xs text-[var(--color-muted)]">
             The name the team will see. It cannot be changed after deploy.
@@ -192,7 +192,7 @@ export function DeployForm({
               </legend>
               <div className="flex flex-wrap gap-x-4 gap-y-2">
                 {docSources.map((source) => (
-                  <label key={source._id} className="flex items-center gap-1.5 text-sm">
+                  <label key={source._id} className="flex min-h-11 items-center gap-1.5 text-sm">
                     <input
                       type="checkbox"
                       checked={!excludedSourceIds.includes(source._id)}
@@ -207,7 +207,10 @@ export function DeployForm({
                     {source.label}
                   </label>
                 ))}
-                <Link href="/documentation" className="text-sm text-[var(--color-accent)]">
+                <Link
+                  href="/documentation"
+                  className="inline-flex min-h-11 items-center text-sm text-[var(--color-accent)]"
+                >
                   Manage
                 </Link>
               </div>
@@ -229,7 +232,7 @@ export function DeployForm({
         <button
           type="submit"
           disabled={submitting || !managerAddress}
-          className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-[var(--color-bg)] disabled:opacity-50"
+          className="min-h-11 rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-[var(--color-bg)] disabled:opacity-50"
         >
           {/* Exactly "Deploy": the bed rehearsal's driver presses the button by that name. */}
           {submitting ? 'Deploying…' : 'Deploy'}
@@ -243,7 +246,7 @@ export function DeployForm({
             type="button"
             onClick={onCancel}
             disabled={submitting}
-            className="ml-auto rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
+            className="ml-auto min-h-11 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
           >
             Cancel
           </button>
