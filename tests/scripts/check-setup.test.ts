@@ -780,6 +780,23 @@ describe('check:setup: the access block (11-AI)', (): void => {
     expect(unread?.lines.join('\n')).toContain('the Convex CLI failed');
   });
 
+  it('notes, not gaps, a customer install whose access half is not set up yet, so the sign-in’s check passes before access runs', (): void => {
+    const before = accessSection(
+      { DAY0_PROFILE: 'customer-local', DAY0_PUBLIC_URL: 'https://day0.acme.test' },
+      [],
+      { values: {} },
+    );
+    expect(before?.status).toBe('warn');
+    expect(before?.lines.join('\n')).toContain('./setup.sh access');
+    // Once a connection is landed, nobody to manage it is a gap.
+    const unmanaged = accessSection(
+      { DAY0_PROFILE: 'customer-local', DAY0_PUBLIC_URL: 'https://day0.acme.test' },
+      [SLACK_ROW],
+      { values: {} },
+    );
+    expect(unmanaged?.status).toBe('gap');
+  });
+
   it('says nothing for an install with no administrators, no connection and no company sign-in', (): void => {
     expect(accessSection({ DAY0_SURFACE_MODE: 'real' }, [], undefined)).toBeUndefined();
   });

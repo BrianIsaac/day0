@@ -1577,11 +1577,22 @@ export function accessSection(
   if (!customerLocal && !(v[ADMINISTRATORS_VAR] ?? '').trim() && listed.length === 0) {
     return undefined;
   }
+  // Before `./setup.sh access` has run there is nothing to manage yet: the sign-in's own check,
+  // which `install` runs before the access half, must not stop on the half still to come.
+  const notSetUp = listed.length === 0 && !(v[ADMINISTRATORS_VAR] ?? '').trim();
   const checks: Array<{ status: Status; line: string }> = accessChecksForReport(v, listed).map(
-    (one) => ({
-      status: one.status,
-      line: `${ACCESS_LABEL[one.status]}  ${one.subject} ${one.name}: ${one.detail}`,
-    }),
+    (one) =>
+      notSetUp && one.name === 'administrators'
+        ? {
+            status: 'warn',
+            line:
+              'note  The access half is not set up yet: `./setup.sh access` names the ' +
+              "administrators and connects the organisation's systems.",
+          }
+        : {
+            status: one.status,
+            line: `${ACCESS_LABEL[one.status]}  ${one.subject} ${one.name}: ${one.detail}`,
+          },
   );
   const held = administratorsHeld(v, deployment);
   checks.splice(1, 0, { status: held.status, line: `${ACCESS_LABEL[held.status]}  ${held.line}` });
