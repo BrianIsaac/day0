@@ -603,6 +603,67 @@ describe('the reserved organisation key in getCaller (11-AO)', (): void => {
   });
 });
 
+describe('a verified address under the generic sign-in preset (the wave 10 review, decision 7 (b))', (): void => {
+  /** The owner key getCaller answers a caller with, or null when it refuses them. */
+  async function callerKeyOf(who: Partial<UserIdentity>): Promise<string | null> {
+    const harness = convexTest(schema, allConvexModules());
+    return await harness.withIdentity(who).run(async (ctx) => {
+      const { getCaller } = await import('../../convex/ownership');
+      return (await getCaller(ctx))?.ownerKey ?? null;
+    });
+  }
+
+  it('refuses an allowed-domain address a generic issuer says is unverified', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const unverified = managerIdentity('mallory', {
+      issuer: CUSTOMER_ISSUER,
+      email: 'mallory@acme.test',
+      emailVerified: false,
+    });
+    await expect(callerKeyOf(unverified)).resolves.toBeNull();
+    await expect(callerKeyOf({ ...unverified, emailVerified: undefined })).resolves.toBeNull();
+    await expect(
+      callerKeyOf({ ...unverified, emailVerified: undefined, email_verified: 'true' }),
+    ).resolves.toBeNull();
+  });
+
+  it('admits a generic issuer’s verified address, and an unclaimed one only where the deployment trusts its addresses (D3)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const priya = managerIdentity('priya', { issuer: CUSTOMER_ISSUER, email: 'priya@acme.test' });
+    await expect(callerKeyOf(priya)).resolves.toBe(`${CUSTOMER_ISSUER}|priya`);
+    const unclaimed = { ...priya, emailVerified: undefined };
+    await expect(callerKeyOf(unclaimed)).resolves.toBeNull();
+    vi.stubEnv('DAY0_OIDC_EMAIL_TRUSTED', 'true');
+    await expect(callerKeyOf(unclaimed)).resolves.toBe(`${CUSTOMER_ISSUER}|priya`);
+  });
+
+  it('leaves Entra, Okta and Google, which control their addresses, to the domain rule alone', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const entra = 'https://login.microsoftonline.com/3f2504e0-4f89-11d3-9a0c-0305e82c3301/v2.0';
+    for (const issuer of [entra, 'https://acme.okta.com']) {
+      vi.stubEnv('DAY0_OIDC_ISSUER', issuer);
+      await expect(
+        callerKeyOf(
+          managerIdentity('ana', { issuer, email: 'ana@acme.test', emailVerified: false }),
+        ),
+      ).resolves.toBe(`${issuer}|ana`);
+    }
+    vi.stubEnv('DAY0_OIDC_ISSUER', 'https://accounts.google.com');
+    await expect(
+      callerKeyOf({
+        ...managerIdentity('g2', {
+          issuer: 'https://accounts.google.com',
+          email: 'ana@acme.test',
+          emailVerified: false,
+        }),
+        hd: 'acme.test',
+      }),
+    ).resolves.toBe('https://accounts.google.com|g2');
+  });
+});
+
 describe("verifiedAddressOf and Entra's xms_edov (S4)", (): void => {
   const ENTRA = 'https://login.microsoftonline.com/3f2504e0-4f89-11d3-9a0c-0305e82c3301/v2.0';
 

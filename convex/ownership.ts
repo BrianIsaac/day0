@@ -11,6 +11,7 @@ import {
   issuerKey,
   signInRefusal,
 } from '../src/lib/customer-oidc';
+import { providerOfIssuer } from '../src/lib/customer-oidc-presets';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
 import type { EnvReader } from '../src/lib/hosted-markers';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
@@ -123,9 +124,10 @@ function deploymentEnv(name: string): string | undefined {
 
 /**
  * Whether the domain rule refuses a caller: one the customer's issuer signed
- * whose `email` (and, for Google, `hd`) is outside `DAY0_OIDC_ALLOWED_DOMAINS`.
- * With no domain configured every such caller is refused, as the sign-in's
- * callback refuses them; an unreadable list refuses them too.
+ * whose `email` (and, for Google, `hd`) is outside `DAY0_OIDC_ALLOWED_DOMAINS`,
+ * or, under the generic preset, whose address is not verified. With no domain
+ * configured every such caller is refused, as the sign-in's callback refuses
+ * them; an unreadable list refuses them too.
  */
 function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean {
   if (callerIssuer(identity, read) !== 'customer') return false;
@@ -136,10 +138,26 @@ function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean
     // An entry that is not a domain: `check:setup` names it; meanwhile nobody is admitted by it.
     allowed = [];
   }
-  return (
+  if (
     signInRefusal({ email: identity.email, hd: identity.hd }, allowed, identity.issuer) !==
     undefined
-  );
+  ) {
+    return true;
+  }
+  return unverifiedUnderGenericPreset(identity, read);
+}
+
+/**
+ * Whether a caller signed in through an issuer the generic preset serves has no verified address
+ * (the wave 10 review's S-m2, decision 7 (b)). Entra, Okta and Google control the addresses they
+ * issue, so the domain rule alone admits their people; a generic issuer may let anyone register
+ * an address in an allowed domain, so its caller must also present the address verified by the
+ * issuer's own rule ({@link verifiedAddressOf}: the claim, or the deployment's declared trust
+ * when the issuer sends none).
+ */
+function unverifiedUnderGenericPreset(identity: UserIdentity, read: EnvReader): boolean {
+  if (providerOfIssuer(identity.issuer) !== 'oidc') return false;
+  return verifiedAddressOf(identity, read) === undefined;
 }
 
 /** The three issuers a deployment accepts tokens from (`convex/auth.config.ts`). */
