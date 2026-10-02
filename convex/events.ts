@@ -20,13 +20,19 @@ import {
   TRACE_VERSION,
   type TraceHandover,
   type TraceHead,
+  type TraceLedgerLine,
   type TracePage,
   type TraceRetirement,
   type TraceRows,
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
-import { EVENT_TYPES } from '../src/events/contract';
+import {
+  EVENT_TYPES,
+  isConnectionEventType,
+  isEventOf,
+  type ConnectionEventType,
+} from '../src/events/contract';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
 
@@ -342,9 +348,73 @@ async function acceptedHandoversOf(
     );
 }
 
+/** The newest lines of one connection's ledger the export reads, far above one employee's share. */
+const LEDGER_EXPORT_LIMIT = 500;
+
 /**
- * The head of an agent's trace: the manifest, the agent, the owner section
- * and the credential labels, and where the first page starts. Internal; the
+ * The organisation's ledger lines about the connections an employee's cards use (F17; the access
+ * plan, section 8, cross-unit test 4), oldest first: each connection's landing, rotations and
+ * revoke, and of the vendor calls made with a connection's secret only those that ended this
+ * employee's own credentials (the cards' and those its record says were revoked at the source).
+ * Each payload is redacted as the export redacts, and the administrator's address is left out.
+ */
+async function organisationLedgerOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<TraceLedgerLine[]> {
+  const connectionIds = [
+    ...new Set(
+      surfaces.flatMap((surface) =>
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
+          (id): id is Id<'organisationConnections'> => id !== undefined,
+        ),
+      ),
+    ),
+  ];
+  if (connectionIds.length === 0) return [];
+  const [ended, ...ledgers] = await Promise.all([
+    eventsOfType(ctx, agentId, 'credential.revoked-at-source').take(TRACE_PAGE_ROWS),
+    ...connectionIds.map(
+      async (organisationConnectionId) =>
+        await ctx.db
+          .query('connectionEvents')
+          .withIndex('by_connection', (q) =>
+            q.eq('organisationConnectionId', organisationConnectionId),
+          )
+          .order('desc')
+          .take(LEDGER_EXPORT_LIMIT),
+    ),
+  ]);
+  const own = new Set<string>([
+    ...surfaces.flatMap((surface) => (surface.credentialId ? [surface.credentialId] : [])),
+    ...ended.flatMap((event) =>
+      isEventOf(event, 'credential.revoked-at-source') ? [event.payload.credentialId] : [],
+    ),
+  ]);
+  return ledgers
+    .flat()
+    .filter((line) => isConnectionEventType(line.type))
+    .filter((line) => {
+      if (line.type !== 'organisation.revoked-at-source') return true;
+      const credentialId = (line.payload as { readonly credentialId?: unknown }).credentialId;
+      return typeof credentialId === 'string' && own.has(credentialId);
+    })
+    .toSorted((left, right) => left.createdAt - right.createdAt)
+    .map(
+      (line): TraceLedgerLine => ({
+        type: line.type as ConnectionEventType,
+        organisationConnectionId: line.organisationConnectionId,
+        createdAt: line.createdAt,
+        payload: redactForExport(line.payload) as TraceLedgerLine['payload'],
+      }),
+    );
+}
+
+/**
+ * The head of an agent's trace: the manifest, the agent, the owner section,
+ * the credential labels and the organisation's ledger about its connections,
+ * and where the first page starts. Internal; the
  * export action runs it under the caller's identity, with the moment of the
  * export (a query reads no clock), and the ownership check here runs again.
  */
@@ -399,6 +469,7 @@ export const exportHead = internalQuery({
       credentialNames: credentials.flatMap((credential) =>
         credential ? [{ label: credential.label }] : [],
       ),
+      organisationLedger: await organisationLedgerOf(ctx, args.agentId, surfaces),
       next: { section: TRACE_SECTIONS[0], cursor: null },
     };
   },

@@ -28,6 +28,7 @@ const HEAD: TraceHead = {
   },
   owner: { retired: [] },
   credentialNames: [],
+  organisationLedger: [],
   next: { section: 'charters', cursor: null },
 };
 
