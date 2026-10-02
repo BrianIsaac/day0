@@ -13,6 +13,7 @@ import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
 import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
+import { throughTimers } from './fakes/fake-clock';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -37,7 +38,10 @@ beforeEach(async (): Promise<void> => {
   vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
   vi.stubEnv('DAY0_ADMINISTRATORS', ADMINISTRATOR);
-  clock = 1_800_000_000_000;
+  // The clock starts at the real one under fake timers (the wave 11 review's M11 a): a clock ahead
+  // of it put every scheduled refresh past the timer's range, so each fired at once, in a loop.
+  vi.useFakeTimers();
+  clock = Date.now();
   linear = fakeLinear(
     [
       {
@@ -69,6 +73,7 @@ beforeEach(async (): Promise<void> => {
 });
 
 afterEach(async (): Promise<void> => {
+  vi.useRealTimers();
   const actions = await import('../../convex/linearIdentityActions');
   actions.__setLinearIdentityDepsForTest(undefined);
   restoreSurfaceMode();
@@ -593,7 +598,7 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
 
     clock += DAY + 60_000;
 
-    await expect(rungBearer(harness, surface.credentialId!)).rejects.toThrow(
+    await expect(throughTimers(rungBearer(harness, surface.credentialId!))).rejects.toThrow(
       /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
@@ -766,6 +771,24 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(linear.live(await bearerOf(harness, access!._id))).toBe(true);
   });
 
+  it("schedules the token's refresh for its last minutes, and nothing fires it sooner (the review's M11 a)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1_000);
+    await harness.finishInProgressScheduledFunctions();
+
+    const refreshes = (await read(harness, surfaceIds[0]!)).scheduled.filter(
+      (job) => job.name === 'linearIdentityActions:refreshScheduled',
+    );
+    expect(refreshes.length).toBeGreaterThan(0);
+    for (const refresh of refreshes) {
+      expect(refresh.state.kind).toBe('pending');
+      expect(refresh.scheduledTime).toBeGreaterThan(Date.now() + 12 * 60 * 60 * 1_000);
+    }
+  });
+
   it('refreshes an expired access token and rotates the pair through the rotation-safe write', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
@@ -799,7 +822,7 @@ describe("per-employee mode: the employee's own app", (): void => {
 
     clock += DAY + 60_000;
 
-    await expect(bearerOf(harness, surface.credentialId!)).rejects.toThrow(
+    await expect(throughTimers(bearerOf(harness, surface.credentialId!))).rejects.toThrow(
       /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
@@ -813,10 +836,12 @@ describe("per-employee mode: the employee's own app", (): void => {
     const access = credentials.find((row) => row._id === surface.credentialId)!;
     linear.revokeAppTokens(LEO_CLIENT);
 
-    await harness.action(internal.linearIdentityActions.refreshScheduled, {
-      credentialId: access._id,
-      generation: 0,
-    });
+    await throughTimers(
+      harness.action(internal.linearIdentityActions.refreshScheduled, {
+        credentialId: access._id,
+        generation: 0,
+      }),
+    );
 
     const after = await read(harness, surfaceIds[0]!);
     expect(after.events.at(-1)).toMatchObject({

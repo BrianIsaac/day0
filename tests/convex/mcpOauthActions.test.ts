@@ -13,6 +13,7 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organ
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { throughTimers } from './fakes/fake-clock';
 import { vendorTransport } from './fakes/vendor-revocation';
 import { privateHostAllowlist } from '../../src/lib/private-hosts';
 
@@ -47,7 +48,10 @@ beforeEach(async (): Promise<void> => {
   credentialKey = randomBytes(32).toString('base64');
   vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
-  clock = 1_800_000_000_000;
+  // The clock starts at the real one under fake timers (the wave 11 review's M11 a): a clock ahead
+  // of it put every scheduled refresh past the timer's range, so each fired at once, in a loop.
+  vi.useFakeTimers();
+  clock = Date.now();
   server = createIssuer({
     issuer: ISSUER,
     clients: [
@@ -62,6 +66,7 @@ beforeEach(async (): Promise<void> => {
 });
 
 afterEach(async (): Promise<void> => {
+  vi.useRealTimers();
   const actions = await import('../../convex/mcpOauthActions');
   actions.__setMcpOauthDepsForTest(undefined);
   restoreSurfaceMode();
@@ -891,10 +896,12 @@ describe('refreshing with rotation', (): void => {
     await server.handle(new Request(`${ISSUER}/admin/revoke?person=priya`, { method: 'POST' }));
     const { internal } = await liveApi();
     clock += 290_000;
-    await harness.action(internal.mcpOauthActions.refreshScheduled, {
-      credentialId,
-      generation: 0,
-    });
+    await throughTimers(
+      harness.action(internal.mcpOauthActions.refreshScheduled, {
+        credentialId,
+        generation: 0,
+      }),
+    );
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
     const failed = events.find((event) => event.type === 'surface.authorisation-failed');
     expect(failed?.payload.reason).toContain('invalid_grant');
@@ -934,6 +941,26 @@ describe('an employee acts at the vendor only as the identity its card names (cr
     const reply = (await answer.json()) as { result?: { content?: Array<{ text?: string }> } };
 
     expect(reply.result?.content?.[0]?.text).toBe(surface.actsAs?.label);
+  });
+});
+
+describe('the scheduled refresh under the real clock (the wave 11 review’s M11 a)', (): void => {
+  it("waits for the token's last minutes, and nothing fires it sooner", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await harness.finishInProgressScheduledFunctions();
+
+    const refresh = (await read(harness, surfaceId)).scheduled.find(
+      (job) => job.name === 'mcpOauthActions:refreshScheduled',
+    );
+    expect(refresh?.state.kind).toBe('pending');
+    expect(refresh?.scheduledTime).toBeGreaterThan(Date.now());
+    expect(await adminState()).toMatchObject({ refreshExchanges: 0 });
   });
 });
 
