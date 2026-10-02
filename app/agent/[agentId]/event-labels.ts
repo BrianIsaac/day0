@@ -138,7 +138,7 @@ function planHeldWords(reason: unknown): string {
 
 /** What a correction of an organisation connection changed: its redirect, its scopes, or both. */
 function correctedWhat(payload: Read<'organisation.connection-corrected'>): string {
-  const redirect = text(payload.redirectUrl) !== undefined;
+  const redirect = payload.redirectCorrected === true;
   const scopes = Array.isArray(payload.scopes);
   if (redirect && scopes) return 'redirect and scopes';
   return redirect ? 'redirect' : 'scopes';

@@ -12,6 +12,9 @@ import { cleanScopes, occupyingConnectionFor, scopesRefusal } from './organisati
  * the same one, recorded right.
  */
 
+/** The hosts a plain-http redirect may name: this machine, for a bed. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
 /** The longest redirect address a connection records. */
 const REDIRECT_MAX = 2_048;
 
@@ -27,7 +30,8 @@ function redirectRefusal(redirectUrl: string): string | undefined {
     // Not an address at all: refused in the same words as any other.
     return 'A redirect address is an absolute https (or local http) address.';
   }
-  return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  const local = LOOPBACK_HOSTS.has(parsed.hostname);
+  return parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local)
     ? undefined
     : 'A redirect address is an absolute https (or local http) address.';
 }
@@ -79,14 +83,7 @@ export const correctFromSetup = internalMutation({
         system: connection.system,
         displayName: connection.displayName,
         via: 'setup-cli',
-        ...(redirectChanged
-          ? {
-              redirectUrl,
-              ...(connection.redirectUrl !== undefined
-                ? { previousRedirectUrl: connection.redirectUrl }
-                : {}),
-            }
-          : {}),
+        ...(redirectChanged ? { redirectCorrected: true } : {}),
         ...(scopesChanged ? { scopes, previousScopes: connection.scopes } : {}),
       },
       createdAt: Date.now(),

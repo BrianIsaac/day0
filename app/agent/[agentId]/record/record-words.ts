@@ -205,10 +205,9 @@ function inWords(value: unknown): string | undefined {
 
 /** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
 function correctedParts(p: Read<'organisation.connection-corrected'>): string {
-  const redirect = text(p.redirectUrl);
   const scopes = listed(p.scopes);
   const parts = [
-    ...(redirect !== undefined ? [`redirect (now ${redirect})`] : []),
+    ...(p.redirectCorrected === true ? ['redirect'] : []),
     ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
   ];
   return parts.length === 0 ? 'registration' : parts.join(' and ');

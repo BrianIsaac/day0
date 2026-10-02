@@ -81,8 +81,7 @@ describe("correcting a connection's recorded redirect and scopes (the wave 11 re
           system: 'linear',
           displayName: 'Linear',
           via: 'setup-cli',
-          redirectUrl: 'https://day0.acme.test/api/oauth/linear',
-          previousRedirectUrl: 'https://day0.old.acme.test/api/oauth/linear',
+          redirectCorrected: true,
           scopes: ['read', 'write'],
           previousScopes: ['read'],
         },
@@ -104,6 +103,7 @@ describe("correcting a connection's recorded redirect and scopes (the wave 11 re
     for (const correction of [
       { system: 'slack', scopes: ['chat:write'] },
       { system: 'linear', redirectUrl: 'not an address' },
+      { system: 'linear', redirectUrl: 'http://day0.acme.test/api/oauth/linear' },
       { system: 'linear', scopes: ['read', ' '] },
     ]) {
       await expect(

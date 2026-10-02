@@ -456,7 +456,11 @@ async function correctConnection(
     ...(io.fetch === undefined ? {} : { fetch: io.fetch }),
   });
   try {
-    const [named] = namedByFlag(raw);
+    const listed = namedByFlag(raw);
+    if (listed.length > 1) {
+      throw new AccessRefused('The kit corrects one system at a time: name one.');
+    }
+    const [named] = listed;
     const recipe = named === undefined ? undefined : recipeForSystem(named.system);
     if (named === undefined || recipe === undefined) {
       throw new AccessRefused(`The kit corrects slack, linear or an MCP server, not "${raw}".`);

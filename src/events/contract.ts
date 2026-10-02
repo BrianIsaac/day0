@@ -874,12 +874,12 @@ export interface OrganisationConnectionRotatedPayload extends OrganisationConnec
 
 /**
  * The payload of `organisation.connection-corrected` (the wave 11 review's M12 e): the redirect or
- * the scopes a connection records, corrected in place to what IT registered at the vendor, each
- * with what it was; no secret changes and no card ends.
+ * the scopes a connection records, corrected in place to what IT registered at the vendor; the
+ * scopes with what they were, the redirect only as corrected, so no address reaches a ledger line
+ * or an export. No secret changes and no card ends.
  */
 export interface OrganisationConnectionCorrectedPayload extends OrganisationConnectionNamed {
-  readonly redirectUrl?: string;
-  readonly previousRedirectUrl?: string;
+  readonly redirectCorrected?: boolean;
   readonly scopes?: readonly string[];
   readonly previousScopes?: readonly string[];
 }

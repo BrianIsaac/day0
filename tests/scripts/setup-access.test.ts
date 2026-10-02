@@ -411,6 +411,13 @@ describe('setup: the access verb', (): void => {
     expect(said).toContain('No secret changed and no card ended.');
   });
 
+  it('corrects one system at a time, refusing a list before it calls anything', async (): Promise<void> => {
+    const bed = accessBed({ connected: ['slack'] });
+    expect(await bed.run(['access', '--correct', 'slack,linear'])).toBe(1);
+    expect(bed.deployment.calls).toEqual([]);
+    expect(bed.bed.output.join('\n')).toContain('The kit corrects one system at a time: name one.');
+  });
+
   it('refuses to correct a system with no connection, writing nothing', async (): Promise<void> => {
     const bed = accessBed();
     expect(await bed.run(['access', '--correct', 'slack'])).toBe(1);
