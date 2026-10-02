@@ -966,6 +966,9 @@ describe('one code for every open action decision', (): void => {
   }
 
   it('is offered from the second open request on, names every member, and decides them all from one reply', async (): Promise<void> => {
+    // The approval schedules each apply, which this test does not exercise: on fake timers it never
+    // runs, and the file's afterEach discards it, so no apply posts through a later test's fetch.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
