@@ -111,6 +111,8 @@ interface DraftInHand {
 interface PreparedDraft {
   readonly body: string;
   readonly smokeTest: string;
+  /** The stored version a parked copy registers under, as the draft in hand names it. */
+  readonly storedVersionId: Id<'skillVersions'> | undefined;
   /** Placeholders whose names say they are credentials, which the gate refuses. */
   readonly credentials: readonly string[];
   /** A log with Day0's notes on the draft (a fence removed, inputs declared) ahead of it. */
@@ -169,7 +171,7 @@ export async function authorAndRegister(
 
   const drafted = await obtainDraft(run);
   if (drafted.kind === 'ended') return drafted.result;
-  const draft = prepareDraft(drafted.authored);
+  const draft = prepareDraft(drafted);
   if (!draft.body || !draft.smokeTest) {
     const reason = 'the model returned an empty SKILL.md body or smoke test';
     return await recordAuthoringFailure(ctx, skillId, run.runId, {
@@ -185,11 +187,11 @@ export async function authorAndRegister(
   const refused = await gateDraft(run, draft, linkedPages);
   if (refused !== undefined) return refused.result;
 
-  const checked = await checkInSandbox(run, draft, drafted.storedVersionId);
+  const checked = await checkInSandbox(run, draft);
   if (checked.kind === 'ended') return checked.result;
-  const shortfall = await recordShortfall(run, draft, checked, drafted.storedVersionId);
+  const shortfall = await recordShortfall(run, draft, checked);
   if (shortfall !== undefined) return shortfall.result;
-  return await register(run, draft, checked, linkedPages, drafted.storedVersionId);
+  return await register(run, draft, checked, linkedPages);
 }
 
 /**
@@ -289,7 +291,7 @@ function ended(result: AuthoringResult): RunEnded {
  * the gate refuses it and points at `{{secret}}`. Mock mode refuses every
  * undeclared placeholder as the recorded runs did.
  */
-function prepareDraft(authored: AuthoredSkill): PreparedDraft {
+function prepareDraft({ authored, storedVersionId }: DraftInHand): PreparedDraft {
   const inputs =
     SURFACE_MODE === 'real'
       ? declareUndeclaredInputs(authored.body.trim())
@@ -303,6 +305,7 @@ function prepareDraft(authored: AuthoredSkill): PreparedDraft {
   return {
     body: inputs.body,
     smokeTest: fence.source.trim(),
+    storedVersionId,
     credentials: inputs.credentials,
     noted: (log: string): string => (notes.length > 0 ? `${notes.join('\n')}\n\n${log}` : log),
   };
@@ -349,13 +352,8 @@ async function gateDraft(
 }
 
 /** A parked row's log: a stored copy parked again keeps the mark that says it is one (holdsParkedStoredCopy). */
-function parkedLog(
-  draft: PreparedDraft,
-  storedVersionId: Id<'skillVersions'> | undefined,
-  log: string,
-  reason: string,
-): string {
-  return storedVersionId !== undefined ? parkedCheckLog(reason) : draft.noted(log);
+function parkedLog(draft: PreparedDraft, log: string, reason: string): string {
+  return draft.storedVersionId !== undefined ? parkedCheckLog(reason) : draft.noted(log);
 }
 
 /**
@@ -373,7 +371,6 @@ function parkedLog(
 async function checkInSandbox(
   run: AuthoringRun,
   draft: PreparedDraft,
-  storedVersionId: Id<'skillVersions'> | undefined,
 ): Promise<SandboxChecked | RunEnded> {
   const { ctx, skillId, runId, skill } = run;
   const { body, smokeTest } = draft;
@@ -404,7 +401,7 @@ async function checkInSandbox(
       sandboxId: '(skipped)',
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: parkedLog(draft, storedVersionId, reason, reason),
+      verificationLog: parkedLog(draft, reason, reason),
       reason,
     });
     if (!recorded) return ended({ ok: false, reason: SUPERSEDED });
@@ -499,7 +496,6 @@ async function recordShortfall(
   run: AuthoringRun,
   draft: PreparedDraft,
   checked: SandboxChecked,
-  storedVersionId: Id<'skillVersions'> | undefined,
 ): Promise<RunEnded | undefined> {
   const { ctx, skillId, runId, skill } = run;
   const { body, smokeTest } = draft;
@@ -541,7 +537,7 @@ async function recordShortfall(
     sandboxId,
     body: pendingDraft.body,
     smokeTest: pendingDraft.smokeTest,
-    verificationLog: parkedLog(draft, storedVersionId, verificationLog, skipReason),
+    verificationLog: parkedLog(draft, verificationLog, skipReason),
     reason: skipReason,
   });
   if (!recorded) return ended({ ok: false, reason: SUPERSEDED });
@@ -561,10 +557,9 @@ async function register(
   draft: PreparedDraft,
   checked: SandboxChecked,
   linkedPages: readonly LinkedRunbookPage<Doc<'docPages'>>[],
-  storedVersionId: Id<'skillVersions'> | undefined,
 ): Promise<AuthoringResult> {
   const { ctx, skillId, runId } = run;
-  const { body } = draft;
+  const { body, storedVersionId } = draft;
   const { contract } = checked;
   const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
     skillId: skillId,
