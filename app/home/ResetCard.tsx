@@ -36,7 +36,7 @@ interface HeldKind {
 }
 
 /** Each kind of stored row a deletion always takes, in the order they are said. */
-const HELD_KINDS: readonly HeldKind[] = [
+const heldKinds: readonly HeldKind[] = [
   { kind: 'employees', stored: 'your employees', goes: 'every employee and its data' },
   { kind: 'skillLibrary', stored: 'your skill library', goes: 'your skill library' },
   {
@@ -66,7 +66,7 @@ function listed(phrases: readonly string[]): string {
  * @param alsoUnlinkDocumentation - Whether the manager has ticked the unlink choice.
  */
 export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
-  const held = HELD_KINDS.filter(({ kind }) => holdings[kind]).map(({ stored }) => stored);
+  const held = heldKinds.filter(({ kind }) => holdings[kind]).map(({ stored }) => stored);
   if (held.length === 0) {
     if (!holdings.documentation) return 'Nothing of yours is stored now.';
     return alsoUnlinkDocumentation
@@ -89,17 +89,20 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
  * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
  */
 export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
-  const goes = HELD_KINDS.filter(({ kind }) => holdings[kind]).map(({ goes: words }) => words);
+  const goes = heldKinds.filter(({ kind }) => holdings[kind]).map(({ goes: words }) => words);
   const unlinks = alsoUnlinkDocumentation && holdings.documentation;
   const what =
-    goes.length === 0
-      ? 'This unlinks every documentation source.'
-      : `This deletes ${listed(goes)}${unlinks ? ', and unlinks every documentation source' : ''}.`;
+    goes.length > 0
+      ? `This deletes ${listed(goes)}${unlinks ? ', and unlinks every documentation source' : ''}.`
+      : unlinks
+        ? 'This unlinks every documentation source.'
+        : 'There is nothing left to delete.';
   const requests = holdings.handoverWords
     ? ' The requests stay in the other manager’s record.'
     : '';
   const documentation =
     holdings.documentation && !alsoUnlinkDocumentation ? ' Your documentation stays linked.' : '';
+  if (goes.length === 0 && !unlinks) return `${what}${documentation}`;
   return `${what}${requests}${documentation} Your sign-in stays. It cannot be undone.`;
 }
 
@@ -109,7 +112,7 @@ export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boo
  */
 function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): boolean {
   return (
-    HELD_KINDS.some(({ kind }) => holdings[kind]) ||
+    heldKinds.some(({ kind }) => holdings[kind]) ||
     (alsoUnlinkDocumentation && holdings.documentation)
   );
 }
@@ -127,7 +130,9 @@ export function ResetCard() {
   const holdings = useQuery(api.reset.holdings);
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  // What was stored when the dialog opened: its warning stays the one the manager is answering,
+  // though Convex applies the emptied holdings before the deletion resolves.
+  const [confirming, setConfirming] = useState<Holdings | null>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const keep = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLElement>(null);
@@ -137,7 +142,7 @@ export function ResetCard() {
 
   const close = (): void => {
     change.clear();
-    setConfirming(false);
+    setConfirming(null);
   };
 
   return (
@@ -170,7 +175,7 @@ export function ResetCard() {
           aria-describedby={storedId}
           onClick={() => {
             change.clear();
-            setConfirming(true);
+            setConfirming(holdings ?? null);
           }}
           disabled={change.busy || !deletable}
           className="shrink-0 self-start sm:self-center"
@@ -178,12 +183,12 @@ export function ResetCard() {
           {change.busy ? 'Deleting…' : 'Delete my data…'}
         </Button>
       </div>
-      <StatusRegion outcome={confirming ? null : change.outcome} />
-      {confirming && holdings ? (
+      <StatusRegion outcome={confirming !== null ? null : change.outcome} />
+      {confirming !== null ? (
         <Dialog
           role="alertdialog"
           title="Delete your data?"
-          description={deletionWarning(holdings, alsoUnlinkDocumentation)}
+          description={deletionWarning(confirming, alsoUnlinkDocumentation)}
           onClose={close}
           initialFocus={keep}
           busy={change.busy}
@@ -201,7 +206,7 @@ export function ResetCard() {
                 change.run(() => reset({ alsoUnlinkDocumentation }), {
                   done: (result) => resetOutcome(result.unlinkedSources),
                   refused: 'Nothing was deleted.',
-                  after: () => setConfirming(false),
+                  after: () => setConfirming(null),
                   // The button is disabled once nothing is left to take; the card takes focus then.
                   focus: () =>
                     opener.current && !opener.current.disabled ? opener.current : card.current,

@@ -181,6 +181,25 @@ describe('ResetCard', (): void => {
     );
   });
 
+  it('keeps the warning the manager opened while the deletion lands, and says so when nothing is left (re-review)', async (): Promise<void> => {
+    const view = mount(<ResetCard />);
+    await press(view.container, 'Delete my data…');
+    const describe = (): string | null | undefined =>
+      document.getElementById(
+        document.querySelector('[role="alertdialog"]')?.getAttribute('aria-describedby') ?? '',
+      )?.textContent;
+    const opened = describe();
+    expect(opened).toBe(deletionWarning(holding({ employees: true }), false));
+    // Convex applies the emptied holdings before the mutation resolves.
+    read.holdings = holding({});
+    act(() => view.root.render(<ResetCard />));
+    expect(describe()).toBe(opened);
+    expect(deletionWarning(holding({}), false)).toBe('There is nothing left to delete.');
+    expect(deletionWarning(holding({ documentation: true }), false)).toBe(
+      'There is nothing left to delete. Your documentation stays linked.',
+    );
+  });
+
   it('asks in the shared dialog, not the browser’s confirm, with Keep my data focused first', async (): Promise<void> => {
     const confirm = vi.fn();
     vi.stubGlobal('confirm', confirm);
