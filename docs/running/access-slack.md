@@ -124,7 +124,7 @@ step 1.4 is the gate.
 
 ## 5. The secret and its lifetime
 
-The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token an hour before it lapses and before any use in its last half hour, and the refresh token also renews a token that has lapsed; each renewal returns a new pair.
+The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair.
 
 So hand both to the setup verb together: an install that runs after the
 configuration token has lapsed still lands, and Day0 renews the token with the

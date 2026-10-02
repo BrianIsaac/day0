@@ -124,9 +124,9 @@ export const SLACK_RECIPE: AccessRecipe = {
       secretLifetime: {
         words:
           'The configuration token expires 12 hours after it is generated. Day0 renews it with ' +
-          'its refresh token an hour before it lapses and before any use in its last half hour, ' +
-          'and the refresh token also renews a token that has lapsed; each renewal returns a new ' +
-          'pair.',
+          'its refresh token before any use in its last half hour and, once it has used it, an ' +
+          'hour before it lapses; the refresh token also renews a token that has lapsed. Each ' +
+          'renewal returns a new pair.',
       },
       landsAtInstall: true,
     },

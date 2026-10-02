@@ -79,7 +79,7 @@ describe('the Slack recipe', (): void => {
     // The renewal as the code makes it (the wave 11 review's M12 d): an hour before the token
     // lapses, before any use in its last half hour, and after a lapse through the refresh token.
     expect(perEmployee.secretLifetime.words).toBe(
-      'The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token an hour before it lapses and before any use in its last half hour, and the refresh token also renews a token that has lapsed; each renewal returns a new pair.',
+      'The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair.',
     );
     expect(perEmployee.secretLifetime.words).not.toContain('each time it creates an app');
     expect(perEmployee.landsAtInstall).toBe(true);

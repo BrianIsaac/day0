@@ -298,9 +298,12 @@ export function SurfaceCard({
   const chipForIdentity = identityChip(identity);
   // B1, decision 1 (a): a key the documentation gives is never bound where IT's connection covers
   // the system, and the card says it was found and is not used.
+  // An orientation that found a value it could not resolve stored no key: it says so instead
+  // (`credentialLocation`), and the card does not claim a key was found.
   const documentedKeyUnused =
     covering !== undefined &&
     request?.credential?.found === 'value' &&
+    surface.credentialLocation === undefined &&
     identity.keyFrom !== 'documentation';
   const approvedAccess =
     ACCESS_VERDICTS.has(surface.verdict) && surface.managerApprovedAt !== undefined;

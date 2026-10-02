@@ -693,6 +693,18 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
     );
   });
 
+  it('claims no documented key the orientation could not resolve to a stored one (second pass)', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        credentialLocation:
+          'Ask the system administrator to land a valid credential; the stored marker could not be resolved.',
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+    );
+    expect(fact(markup, 'Documented key')).toBeUndefined();
+  });
+
   it('stamps a documented key bound with no connection a shared key, never one someone pasted', (): void => {
     const markup = render(
       listed({
