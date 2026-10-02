@@ -911,6 +911,24 @@ export interface CredentialRevokedAtSourcePayload extends SurfaceNamed {
   readonly channelMembershipsRemoved?: boolean;
 }
 
+/**
+ * The payload of `organisation.revoked-at-source` (11-AR over 11-AO): one attempt at the vendor
+ * made with an organisation connection's secret to end an employee's access, on that connection's
+ * ledger. It names the credential and its system, never the employee or the card (AC11); the
+ * employee's own record says the same in `credential.revoked-at-source`.
+ */
+export interface OrganisationRevokedAtSourcePayload {
+  readonly credentialId: Id<'credentials'>;
+  /** `issuedBy.system` of the credential the call ended. */
+  readonly system: string;
+  readonly end: AccessEnd;
+  readonly outcome: SourceRevocationOutcome;
+  /** Which attempt made the call. */
+  readonly attempt: number;
+  /** The vendor's words for a failure. */
+  readonly reason?: string;
+}
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1481,6 +1499,7 @@ export interface EventPayloads {
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
   'surface.disconnected': SurfaceDisconnectedPayload;
   'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
+  'organisation.revoked-at-source': OrganisationRevokedAtSourcePayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1651,6 +1670,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'organisation.connection-revoked',
   'surface.disconnected',
   'credential.revoked-at-source',
+  'organisation.revoked-at-source',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
@@ -1737,6 +1757,7 @@ export const CONNECTION_EVENT_TYPES = [
   'organisation.connection-landed',
   'organisation.connection-rotated',
   'organisation.connection-revoked',
+  'organisation.revoked-at-source',
 ] as const satisfies readonly EventType[];
 
 /** One of {@link CONNECTION_EVENT_TYPES}. */

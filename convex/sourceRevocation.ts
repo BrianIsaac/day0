@@ -8,6 +8,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { finishSourceRevocation, holdForSourceRevocation, purgeCredential } from './credentials';
+import { appendConnectionEvent } from './connectionEvents';
 import { appendEvent } from './eventLog';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
@@ -659,9 +660,9 @@ export const recordAttempt = internalMutation({
       ...(reason !== undefined ? { reason } : {}),
     });
     if (args.viaConnection !== undefined) {
-      await ctx.db.insert('connectionEvents', {
+      await appendConnectionEvent(ctx, {
         organisationConnectionId: args.viaConnection,
-        type: 'credential.revoked-at-source',
+        type: 'organisation.revoked-at-source',
         payload: {
           credentialId: credential._id,
           system,

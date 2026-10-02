@@ -320,7 +320,7 @@ describe("Slack's two calls with their two meanings (S1, S4)", (): void => {
     expect(ledger).toEqual([
       expect.objectContaining({
         organisationConnectionId: leo.connectionId,
-        type: 'credential.revoked-at-source',
+        type: 'organisation.revoked-at-source',
         payload: expect.objectContaining({
           system: 'slack',
           end: 'retire',

@@ -233,6 +233,18 @@ describe('the live feed labels', (): void => {
         payload: { ...named, reason: 'the workspace moved' },
       }),
     ).toBe('Slack: the organisation connection revoked (the workspace moved)');
+    expect(
+      eventLabel({
+        type: 'organisation.revoked-at-source',
+        payload: {
+          credentialId: 'k1',
+          system: 'slack',
+          end: 'retire',
+          outcome: 'app-deleted',
+          attempt: 1,
+        },
+      }),
+    ).toBe('Slack organisation connection: Slack app deleted in Slack');
   });
 
   it('says which credential the documentation dropped and how many cards need one again', (): void => {

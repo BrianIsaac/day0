@@ -424,6 +424,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? `disconnected: the organisation's connection was revoked${because(payload.reason)}`
       : 'disconnected by the manager',
   'credential.revoked-at-source': (payload) => revokedAtSourceLabel(payload),
+  'organisation.revoked-at-source': (payload) =>
+    `${systemDisplayName(text(payload.system) ?? 'the vendor')} organisation connection: ${revokedAtSourceLabel(payload)}`,
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>
     `plan obligations not judged${because(payload.reason)}; the planner's stand unchecked`,

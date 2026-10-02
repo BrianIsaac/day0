@@ -196,6 +196,40 @@ function capitalised(phrase: string): string {
 }
 
 /**
+ * What one attempt made with an organisation connection's secret did at the vendor, on the
+ * connection's ledger (11-AR over 11-AO): it names no employee and no card (AC11).
+ */
+function organisationRevokedAtSourceWords(p: Read<'organisation.revoked-at-source'>): string {
+  const system = systemDisplayName(text(p.system) ?? 'the vendor');
+  const by = `with the organisation's ${system} connection`;
+  switch (p.outcome) {
+    case 'token-revoked':
+      return `An employee's access was revoked at ${system} ${by}`;
+    case 'app-deleted':
+      return `An employee's ${system} app was deleted in ${system} ${by}`;
+    case 'app-uninstalled':
+      return `An employee's ${system} app was uninstalled from ${system} ${by}`;
+    case 'already-gone':
+      return `An employee's access was found already revoked at ${system} ${by}`;
+    case 'retrying':
+      return `Revoking an employee's access at ${system} ${by} failed and will be tried again${because(p.reason)}`;
+    case 'failed':
+      return `Revoking an employee's access at ${system} ${by} failed${because(p.reason)}`;
+    case 'not-supported':
+      return `An employee's access could not be revoked at ${system} ${by}${because(p.reason)}`;
+    case 'shared':
+    case 'not-at-vendor':
+    case 'pasted-key':
+    case undefined:
+      return `An employee's access at ${system} ended ${by}`;
+    default: {
+      const unknown: never = p.outcome;
+      return `An employee's access at ${system} ended ${by} (${String(unknown)})`;
+    }
+  }
+}
+
+/**
  * What one end of access did at the vendor (11-AR): the connection by the card's name while the
  * card stands, else by the name the line kept, and the system as it names itself.
  */
@@ -671,6 +705,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       ? `${capitalised(connectionOf(subject))} was disconnected when the organisation's connection was revoked${because(p.reason)}`
       : `${decider(subject)} disconnected ${connectionOf(subject)}`,
   'credential.revoked-at-source': (p, subject) => revokedAtSourceWords(p, subject),
+  'organisation.revoked-at-source': (p) => organisationRevokedAtSourceWords(p),
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

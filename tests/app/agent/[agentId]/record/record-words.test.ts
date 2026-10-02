@@ -532,6 +532,26 @@ describe('the access request and the organisation connection ledger in the recor
     ).toBe(
       "The organisation's Slack connection was revoked by an administrator: the workspace moved.",
     );
+    const attempt = { credentialId: 'k1', system: 'slack', end: 'retire', attempt: 1 };
+    expect(
+      recordWords(
+        { type: 'organisation.revoked-at-source', payload: { ...attempt, outcome: 'app-deleted' } },
+        subject,
+      ),
+    ).toBe(
+      "An employee's Slack app was deleted in Slack with the organisation's Slack connection.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.revoked-at-source',
+          payload: { ...attempt, outcome: 'failed', reason: 'invalid_auth' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Revoking an employee's access at Slack with the organisation's Slack connection failed: invalid_auth.",
+    );
   });
 });
 
