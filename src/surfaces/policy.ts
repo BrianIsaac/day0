@@ -1868,7 +1868,7 @@ export function sharedWriteWithoutAttribution(
   earlier: ReadonlyArray<ParsedSurfaceAction | undefined>,
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
-  if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
+  if (!signsForEmployee(surface, credentialKind) || actionIntent(parsed) === 'read') return false;
   if (surface.path === 'browser-driven') return false;
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
@@ -1881,6 +1881,21 @@ export function sharedWriteWithoutAttribution(
 }
 
 /**
+ * Whether writes through a card carry the employee's name (the trailer, and a chat post's name and
+ * icon): by the identity the card acts as where it names one (`attributionOf`: a shared app, a
+ * shared key and a delegated grant sign; the employee's own app and seat do not), else by its
+ * credential's kind, as before wave 11 (a dedicated `oauth` app posts as itself).
+ *
+ * @param surface - The card, with its attribution where it acts as a named identity.
+ * @param credentialKind - How its credential was landed.
+ */
+export function signsForEmployee(surface: SurfaceRecord, credentialKind: CredentialKind): boolean {
+  return surface.attribution === undefined
+    ? credentialKind !== 'oauth'
+    : surface.attribution === 'trailer';
+}
+
+/**
  * Apply the provenance rules to one action.
  *
  * A comment, a message or the description of a new ticket written through a
@@ -1888,8 +1903,9 @@ export function sharedWriteWithoutAttribution(
  * message through a shared chat credential also carries the employee's name
  * and icon so it stays attributable. Both are added by the server, never by
  * the skill: a skill-supplied trailer or `username` is refused rather than
- * merged, because either could name another employee. A dedicated `oauth` app
- * posts as itself, so nothing is added for it.
+ * merged, because either could name another employee. A card acting as the
+ * employee's own identity posts as itself, so nothing is added for it
+ * ({@link signsForEmployee}).
  *
  * Args:
  *   parsed: A parsed surface action.
@@ -1908,7 +1924,7 @@ export function applyProvenance(
 ): ProvenanceResult {
   const refusal = provenanceRefusal(parsed, surface);
   if (refusal) return { ok: false, reason: refusal };
-  const shared = credentialKind !== 'oauth';
+  const shared = signsForEmployee(surface, credentialKind);
   const trailer = provenanceTrailer(run.agentName, run.workItemId, run.runId);
   if (parsed.kind === 'mcp.call') {
     if (isMcpChatPost(parsed)) {

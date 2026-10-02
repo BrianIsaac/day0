@@ -49,6 +49,7 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
     toolArguments: surface.toolArguments,
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
+    attribution: surface.attribution,
     managerDmChannelId: surface.managerDmChannelId,
     managerUserId: surface.managerUserId,
   });

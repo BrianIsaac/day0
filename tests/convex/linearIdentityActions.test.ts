@@ -257,6 +257,35 @@ describe('shared mode: the organisation app actor', (): void => {
     });
   });
 
+  it('lands the shared token as the OAuth token it is, and still signs every write as the employee (join 14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface).toMatchObject({ credentialKind: 'oauth', actsAs: { kind: 'shared-app' } });
+    const parsedComment = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'FIN-3', body: 'Reconciled.' }),
+      },
+    });
+    if (!parsedComment.ok) throw new Error(parsedComment.reason);
+    const record = toSurfaceRecord(surface);
+    expect(
+      applyProvenance(
+        parsedComment.action,
+        record,
+        { agentName: 'Leo', workItemId: 'wi_1', runId: 'run_1' },
+        record.credentialKind ?? 'value',
+      ),
+    ).toMatchObject({
+      ok: true,
+      action: { toolArgs: { body: 'Reconciled.\n\n-- Leo (Day0) · run wi_1/run_1' } },
+    });
+  });
+
   it("requests the shared token with the connection's scope set and never another", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared', cards: 2 });

@@ -1,5 +1,6 @@
 import { isSurfacePath, CREDENTIAL_KINDS, type CredentialKind, type SurfaceRecord } from './types';
 import type { PersistedSurfaceVerdict } from './verdict';
+import { attributionOf, isActsAsKind } from './access-identity';
 
 /**
  * A `surfaces` row as any lane's schema revision may store it. Only the fields
@@ -18,6 +19,8 @@ export interface SurfaceRowLike {
   toolArguments?: Array<{ tool: string; arguments: string[] }>;
   credentialId?: string;
   credentialKind?: string;
+  /** Whom the card acts as (wave 11, 11-AK), written by the connect paths. */
+  actsAs?: { kind: string };
   managerDmChannelId?: string;
   managerUserId?: string;
   managerName?: string;
@@ -69,6 +72,7 @@ export function toSurfaceRecord(row: SurfaceRowLike): SurfaceRecord {
     toolArguments: row.toolArguments,
     credentialId: row.credentialId,
     credentialKind: credentialKindFor(row),
+    ...(isActsAsKind(row.actsAs?.kind) ? { attribution: attributionOf(row.actsAs.kind) } : {}),
     managerDmChannelId: row.managerDmChannelId,
     managerUserId: row.managerUserId,
     managerName: row.managerName,

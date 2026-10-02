@@ -36,6 +36,16 @@ export const CREDENTIAL_KINDS = ['value', 'location', 'oauth'] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
 /**
+ * How a write through a card is attributed to the employee: by the server's trailer, where the
+ * card acts through an identity others share or a person's delegated grant, or by the vendor
+ * itself, where the card acts as the employee's own identity (the access plan, section 4.2).
+ */
+export const ATTRIBUTIONS = ['trailer', 'identity'] as const;
+
+/** One of {@link ATTRIBUTIONS}. */
+export type Attribution = (typeof ATTRIBUTIONS)[number];
+
+/**
  * The surface fields the executors read. A structural subset of the
  * `surfaces` row: the adapters never depend on the whole document, so a row
  * from any lane's schema revision can be narrowed to this shape.
@@ -62,6 +72,11 @@ export interface SurfaceRecord {
   toolArguments?: Array<{ tool: string; arguments: string[] }>;
   credentialId?: string;
   credentialKind?: CredentialKind;
+  /**
+   * How writes through the card are attributed, read off the identity it acts as (`actsAs`);
+   * absent for a card that names no identity, whose credential's kind decides.
+   */
+  attribution?: Attribution;
   managerDmChannelId?: string;
   /** The probed DM counterpart; only this provider user may resolve a decision. */
   managerUserId?: string;

@@ -343,8 +343,8 @@ async function landingCard(
 /**
  * Connect a card through the organisation's shared Linear app (D3, shared mode): the card holds the
  * connection's one app-actor token and acts as the shared app user, so its writes carry the
- * employee's trailer (the card's credential is landed as a shared value, which the provenance rules
- * read: `applyProvenance`). The probe is queued. Internal, for `linearIdentityActions.connect`,
+ * employee's trailer (the provenance rules read the card's `shared-app` identity:
+ * `signsForEmployee`). The probe is queued. Internal, for `linearIdentityActions.connect`,
  * which has checked the caller owns the employee and linked the card; refuses when the employee
  * changed hands since, or the token is no longer the connection's.
  */
@@ -379,8 +379,9 @@ export const connectSharedCard = internalMutation({
     };
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
-      // A shared value: every write through it names the employee (`applyProvenance`).
-      credentialKind: 'value',
+      // The OAuth token it is; the card's `shared-app` identity makes every write through it name
+      // the employee (`signsForEmployee`).
+      credentialKind: 'oauth',
       credentialLocation: undefined,
       credentialLanded: false,
       actsAs,

@@ -1202,6 +1202,23 @@ describe('the provenance every existing card carries (join 14, pinned before the
       expect(signs(card(shape.fields))).toEqual({ trailer: shape.sign, refused: shape.sign });
     });
   }
+
+  it('signs by the identity a card acts as, not its credential’s kind: a delegated grant and the shared app sign (join 14)', (): void => {
+    expect(
+      signs(
+        card({ credentialKind: 'oauth', actsAs: { kind: 'delegated', label: 'sam@acme.test' } }),
+      ),
+    ).toEqual({ trailer: true, refused: true });
+    expect(
+      signs(card({ credentialKind: 'oauth', actsAs: { kind: 'shared-app', label: 'Linear' } })),
+    ).toEqual({ trailer: true, refused: true });
+  });
+
+  it('does not sign a dedicated browser seat, which acts as the employee’s own seat (join 14)', (): void => {
+    expect(
+      signs(card({ credentialKind: 'location', actsAs: { kind: 'browser-seat', label: 'Leo' } })),
+    ).toEqual({ trailer: false, refused: false });
+  });
 });
 
 describe('provenance', (): void => {
