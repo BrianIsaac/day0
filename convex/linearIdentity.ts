@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
-import { activeConnectionFor } from './organisationConnections';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { pendingAuthorisationValidator } from './schema';
 import { endAccessAtSource } from './sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';

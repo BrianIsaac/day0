@@ -13,6 +13,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
 import { endCardsOnConnection } from './surfaces';
 import { log } from '../src/lib/logger';
@@ -243,22 +244,6 @@ const CONNECTION_NOT_FOUND = 'That organisation connection does not exist.';
 
 /** The refusal for a change to a revoked connection. */
 const CONNECTION_REVOKED = 'That organisation connection is revoked: land a new one instead.';
-
-/**
- * The system's active organisation connection, if it has one.
- *
- * @param ctx - A query's or a mutation's context.
- * @param system - The system key.
- */
-export async function activeConnectionFor(
-  ctx: Pick<QueryCtx, 'db'>,
-  system: string,
-): Promise<Doc<'organisationConnections'> | null> {
-  return await ctx.db
-    .query('organisationConnections')
-    .withIndex('by_system_status', (index) => index.eq('system', system).eq('status', 'active'))
-    .first();
-}
 
 /**
  * The system's connection that keeps it occupied, if any: an active one, or one that needs IT's

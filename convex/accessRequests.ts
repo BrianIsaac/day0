@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import { internal } from './_generated/api';
 import { appendEvent, eventsOfType } from './eventLog';
-import { activeConnectionFor } from './organisationConnections';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { assertOwnsAgent } from './ownership';
 import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
