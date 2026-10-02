@@ -1,6 +1,10 @@
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { HeadedSignUp, StepHeading } from '../../HeadedClerk';
+
+/** The tab's title: the account form, named as the sign-in page names its own. */
+export const metadata: Metadata = { title: 'Create a Day0 account' };
 
 /**
  * The hosted demo's account form: Clerk's sign-up under the page's own heading, in the shared
