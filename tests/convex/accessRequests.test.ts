@@ -208,11 +208,15 @@ describe('drafting and sending the access request', (): void => {
 
 describe('a request after the system was connected and revoked again (11-AO review)', (): void => {
   it('is a new request: drafted again with its own record line, and no longer shown as sent', async (): Promise<void> => {
+    // The clock moves on between the draft and the landing, as it does between two people's clicks.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 9, 2, 9));
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.accessRequests.draft, { surfaceId });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
+    vi.setSystemTime(Date.UTC(2026, 9, 2, 10));
     await connectLinear(harness);
     const connection = await harness.query(internal.organisationConnections.activeFor, {
       system: 'linear',
@@ -226,5 +230,20 @@ describe('a request after the system was connected and revoked again (11-AO revi
     expect(shown).not.toHaveProperty('draftedAt');
     await owner.mutation(api.accessRequests.draft, { surfaceId });
     expect(await requestEvents(harness, agentId)).toHaveLength(2);
+  });
+});
+
+describe('the card after a draft (11-AO re-review)', (): void => {
+  it('shows the words the draft recorded, which the DM and the export carry, after the card changed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
+    });
+    const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
+    expect(shown?.text).toBe(drafted.text);
+    expect(shown?.mailto).toContain(encodeURIComponent(drafted.text));
   });
 });

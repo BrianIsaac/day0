@@ -74,7 +74,6 @@ function hostWithin(host: string, domain: string): boolean {
  */
 export function organisationSystemOf(card: SystemCard): string | undefined {
   if (card.endpoint === undefined) return undefined;
-  if (isSlackApiEndpoint(card.endpoint)) return 'slack';
   let url: URL;
   try {
     url = new URL(card.endpoint);
@@ -82,9 +81,11 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
     // Not an address: a card orientation could not place names no system.
     return undefined;
   }
+  // A fully qualified host's trailing dot names the same host, Slack's API base's included.
+  url.hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (isSlackApiEndpoint(url.href)) return 'slack';
   if (url.protocol !== 'https:') return undefined;
-  // A fully qualified host's trailing dot names the same host.
-  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  const host = url.hostname;
   const known = SYSTEM_HOSTS.find((entry) =>
     entry.hosts.some((domain: string): boolean => hostWithin(host, domain)),
   );
@@ -287,6 +288,17 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     scopes,
     subject,
     text,
-    mailto: `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`,
+    mailto: accessRequestMailto(subject, text),
   };
+}
+
+/**
+ * The `mailto:` link "Email it" opens, with the subject and the words filled: the product sends
+ * no email (the enhancements plan's G3), the manager's own mail client does.
+ *
+ * @param subject - The request's subject line.
+ * @param text - The request's words.
+ */
+export function accessRequestMailto(subject: string, text: string): string {
+  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
 }

@@ -17,6 +17,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { ACCESS_REQUEST_REASONS } from '../src/surfaces/access-identity';
 import {
   accessRequestReason,
+  accessRequestMailto,
   draftAccessRequest,
   organisationSystemOf,
   type AccessRequestDraft,
@@ -45,8 +46,8 @@ const DM_GRANT_READ_LIMIT = 500;
 /** Bound on an employee's request lines read for the words a draft recorded, newest first. */
 const DRAFT_EVENT_READ_LIMIT = 50;
 
-/** Bound on one system's connections read for one landed since a draft, past any history. */
-const SYSTEM_CONNECTION_READ_LIMIT = 100;
+/** Every status a connection can be in, each read for the system's newest connection in it. */
+const CONNECTION_STATUSES = ['active', 'needs-attention', 'revoked'] as const;
 
 /** The refusal for a card that asks IT for nothing. */
 export const NO_ACCESS_REQUEST = 'This card needs no access request: it connects without IT.';
@@ -118,28 +119,46 @@ const accessRequestViewValidator = v.object({
 /** The access request as the card shows it. */
 export type AccessRequestView = Infer<typeof accessRequestViewValidator>;
 
-/** The view of a current request, with what the card records of it once drafted. */
+/**
+ * The view of a current request: once drafted, the words the draft recorded (which the DM sends
+ * and the export carries) and how it went out; before, the words built now.
+ */
 function viewOf(
   draft: AccessRequestDraft,
-  recorded: Doc<'surfaces'>['accessRequest'],
+  recorded?: {
+    readonly request: NonNullable<Doc<'surfaces'>['accessRequest']>;
+    readonly words?: string;
+  },
 ): AccessRequestView {
-  const matches = recorded !== undefined;
+  const text = recorded?.words ?? draft.text;
+  const request = recorded?.request;
   return {
     system: draft.system,
     reason: draft.reason,
     scopes: [...draft.scopes],
     subject: draft.subject,
-    text: draft.text,
-    mailto: draft.mailto,
-    ...(matches && recorded !== undefined
-      ? {
-          draftedAt: recorded.draftedAt,
-          ...(recorded.copiedAt === undefined ? {} : { copiedAt: recorded.copiedAt }),
-          ...(recorded.emailedAt === undefined ? {} : { emailedAt: recorded.emailedAt }),
-          ...(recorded.messagedAt === undefined ? {} : { messagedAt: recorded.messagedAt }),
-        }
-      : {}),
+    text,
+    mailto: accessRequestMailto(draft.subject, text),
+    ...(request === undefined
+      ? {}
+      : {
+          draftedAt: request.draftedAt,
+          ...(request.copiedAt === undefined ? {} : { copiedAt: request.copiedAt }),
+          ...(request.emailedAt === undefined ? {} : { emailedAt: request.emailedAt }),
+          ...(request.messagedAt === undefined ? {} : { messagedAt: request.messagedAt }),
+        }),
   };
+}
+
+/** A drafted request with the words its draft recorded. */
+async function recordedView(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+  draft: AccessRequestDraft,
+  request: NonNullable<Doc<'surfaces'>['accessRequest']>,
+): Promise<AccessRequestView> {
+  const words = await draftedWords(ctx, surface, request.draftedAt);
+  return viewOf(draft, { request, ...(words === undefined ? {} : { words }) });
 }
 
 /** Whether a recorded request is the one the card makes now: the same reason and scopes. */
@@ -166,11 +185,21 @@ async function recordedRequest(
 ): Promise<NonNullable<Doc<'surfaces'>['accessRequest']> | undefined> {
   const recorded = surface.accessRequest;
   if (recorded === undefined || !sameRequest(recorded, draft)) return undefined;
-  const connections = await ctx.db
-    .query('organisationConnections')
-    .withIndex('by_system_status', (index) => index.eq('system', draft.system))
-    .take(SYSTEM_CONNECTION_READ_LIMIT);
-  return connections.some((connection) => connection.createdAt > recorded.draftedAt)
+  const newest = await Promise.all(
+    CONNECTION_STATUSES.map(
+      async (status) =>
+        await ctx.db
+          .query('organisationConnections')
+          .withIndex('by_system_status', (index) =>
+            index.eq('system', draft.system).eq('status', status),
+          )
+          .order('desc')
+          .first(),
+    ),
+  );
+  return newest.some(
+    (connection) => connection !== null && connection.createdAt > recorded.draftedAt,
+  )
     ? undefined
     : recorded;
 }
@@ -186,7 +215,10 @@ export const forCard = query({
     const { surface, agent } = await ownedCard(ctx, args.surfaceId);
     const current = await currentRequest(ctx, surface, agent);
     if (current === null) return null;
-    return viewOf(current.draft, await recordedRequest(ctx, surface, current.draft));
+    const recorded = await recordedRequest(ctx, surface, current.draft);
+    return recorded === undefined
+      ? viewOf(current.draft)
+      : await recordedView(ctx, surface, current.draft, recorded);
   },
 });
 
@@ -207,7 +239,7 @@ export const draft = mutation({
     const current = await currentRequest(ctx, surface, agent);
     if (current === null) throw new ConvexError(NO_ACCESS_REQUEST);
     const recorded = await recordedRequest(ctx, surface, current.draft);
-    if (recorded !== undefined) return viewOf(current.draft, recorded);
+    if (recorded !== undefined) return await recordedView(ctx, surface, current.draft, recorded);
     const now = Date.now();
     const accessRequest = {
       reason: current.draft.reason,
@@ -234,7 +266,7 @@ export const draft = mutation({
         draftedAt: now,
       });
     }
-    return viewOf(current.draft, accessRequest);
+    return viewOf(current.draft, { request: accessRequest });
   },
 });
 
