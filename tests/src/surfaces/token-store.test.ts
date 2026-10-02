@@ -13,6 +13,7 @@ import {
   type RotationOutcome,
   type TokenKeeper,
   type TokenRefresher,
+  type TokenStoreBackend,
   type TokenStoreDeps,
 } from '../../../src/surfaces/token-store';
 
@@ -110,8 +111,23 @@ function pairFor(overrides: Partial<KeptPair> = {}): KeptPair {
   };
 }
 
-function storeDeps(keeper: TokenKeeper, refresher: TokenRefresher): TokenStoreDeps {
-  return { keeper, refreshers: [refresher], now: (): number => NOW };
+function storeDeps(
+  keeper: TokenKeeper,
+  refresher: TokenRefresher,
+  backends: readonly TokenStoreBackend[] = [],
+): TokenStoreDeps {
+  return { keeper, refreshers: [refresher], now: (): number => NOW, backends };
+}
+
+/** A keeper whose one row names another store, as a Nango-held credential's does. */
+function heldElsewhere(keeper: TokenKeeper): TokenKeeper {
+  return {
+    ...keeper,
+    read: async (context, id): Promise<HeldTokens | null> => {
+      const held = await keeper.read(context, id);
+      return held ? { ...held, tokenStore: 'nango' } : null;
+    },
+  };
 }
 
 describe('the token store', (): void => {
@@ -194,6 +210,60 @@ describe('the token store', (): void => {
     });
     await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).resolves.toBe(
       'access-0',
+    );
+    expect(keeper.refreshReads()).toBe(0);
+  });
+});
+
+describe('the store a row names', (): void => {
+  it('asks the backend the row names for the token, and neither reads nor refreshes the row', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor({ expiresAt: NOW - 1 }));
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no native refresh expected');
+    });
+    const asked: string[] = [];
+    const nango: TokenStoreBackend = {
+      kind: 'nango',
+      accessTokenFor: async (_context, id): Promise<string> => {
+        asked.push(id);
+        return 'nango-live-token';
+      },
+    };
+    await expect(
+      accessTokenFor(ctx, CREDENTIAL, storeDeps(heldElsewhere(keeper), refresher, [nango])),
+    ).resolves.toBe('nango-live-token');
+    expect(asked).toEqual([CREDENTIAL]);
+    expect(keeper.refreshReads()).toBe(0);
+    expect(keeper.rotations).toEqual([]);
+  });
+
+  it('refuses a row naming a store this deployment has not configured', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor({ expiresAt: NOW + 10 * 60_000 }));
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no native refresh expected');
+    });
+    await expect(
+      accessTokenFor(ctx, CREDENTIAL, storeDeps(heldElsewhere(keeper), refresher)),
+    ).rejects.toThrow('The nango token store is not configured on this deployment.');
+  });
+
+  it('never schedules a native refresh of a token another store keeps', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor());
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no native refresh expected');
+    });
+    await runScheduledRefresh(
+      ctx,
+      { credentialId: CREDENTIAL, generation: 0 },
+      {
+        ...storeDeps(heldElsewhere(keeper), refresher),
+        retryAfter: async (): Promise<void> => {
+          throw new Error('no retry expected');
+        },
+        recordRefusal: async (): Promise<void> => {
+          throw new Error('no refusal expected');
+        },
+      },
     );
     expect(keeper.refreshReads()).toBe(0);
   });

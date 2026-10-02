@@ -25,6 +25,12 @@ import type {
   SurfaceRecord,
 } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import {
+  accessTokenFor,
+  type HeldTokens,
+  type TokenKeeper,
+  type TokenStoreBackend,
+} from '../../../src/surfaces/token-store';
 
 const now = Date.UTC(2026, 7, 29, 9);
 const ctx = {} as ActionCtx;
@@ -951,5 +957,103 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
     expect(row).toMatchObject({ ok: false });
     expect(row.reason).toContain('public HTTPS hostname');
     expect(direct.calls).toEqual([]);
+  });
+});
+
+describe('the documented-API rung asks the token store for its token', (): void => {
+  const card: SurfaceRecord = {
+    slug: 'tracker',
+    displayName: 'Tracker',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: TRACKER,
+    path: 'documented-api',
+    toolAllowlist: ['GET issues'],
+    credentialId: 'cred-tracker',
+    credentialKind: 'location',
+  };
+  const read: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'tracker',
+      method: 'GET',
+      path: '/issues',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+    },
+  };
+
+  /** A keeper whose row names `tokenStore`, counting every read of a refresh token. */
+  function keeperFor(tokenStore: 'native' | 'nango'): TokenKeeper & {
+    readonly refreshReads: () => number;
+  } {
+    let refreshReads = 0;
+    return {
+      refreshReads: (): number => refreshReads,
+      land: async (): Promise<Id<'credentials'>> => 'cred-tracker' as Id<'credentials'>,
+      read: async (): Promise<HeldTokens> => ({
+        credentialId: 'cred-tracker' as Id<'credentials'>,
+        ownerKey: 'owner-1',
+        generation: 0,
+        expiresAt: now + 10_000,
+        issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        refreshable: true,
+        connection: null,
+        tokenStore,
+      }),
+      // A Nango-held row seals the Nango connection it points at, never a token.
+      accessToken: async (): Promise<string> =>
+        tokenStore === 'nango' ? 'nango:tracker/tracker-connection' : 'native-access-token',
+      refreshToken: async (): Promise<string> => {
+        refreshReads += 1;
+        return 'refresh-token-never-sent';
+      },
+      rotate: async () => ({ ok: false, reason: 'gone' }),
+    };
+  }
+
+  function rungOver(keeper: TokenKeeper): {
+    rung: HttpAdapter;
+    calls: Array<{ url: string; init: RequestInit }>;
+  } {
+    const pinned = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
+    const nango: TokenStoreBackend = {
+      kind: 'nango',
+      accessTokenFor: async (): Promise<string> => 'nango-live-token',
+    };
+    const rung = new HttpAdapter([card], {
+      decrypt: async (context, credentialId): Promise<string> =>
+        await accessTokenFor(context, credentialId as Id<'credentials'>, {
+          keeper,
+          refreshers: [],
+          now: (): number => now,
+          backends: [nango],
+        }),
+      fetch: fakeFetch(() => Response.json({})).fetch,
+      connect: pinned.connect,
+      now: (): number => now,
+    });
+    return { rung, calls: pinned.calls };
+  }
+
+  it('sends the token the store a row names answers, never the pointer the row seals', async (): Promise<void> => {
+    const keeper = keeperFor('nango');
+    const { rung, calls } = rungOver(keeper);
+    await expect(rung.apply(ctx, run, read, 0, 'k')).resolves.toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(new Headers(calls[0].init.headers).get('authorization')).toBe('Bearer nango-live-token');
+    expect(keeper.refreshReads()).toBe(0);
+  });
+
+  it('never reads a refresh token for a natively kept token, even one about to expire', async (): Promise<void> => {
+    const keeper = keeperFor('native');
+    const { rung, calls } = rungOver(keeper);
+    await expect(rung.apply(ctx, run, read, 0, 'k')).resolves.toMatchObject({ ok: true });
+    expect(new Headers(calls[0].init.headers).get('authorization')).toBe(
+      'Bearer native-access-token',
+    );
+    expect(JSON.stringify(calls)).not.toContain('refresh-token-never-sent');
+    expect(keeper.refreshReads()).toBe(0);
   });
 });

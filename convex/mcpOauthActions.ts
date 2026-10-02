@@ -713,6 +713,7 @@ function tokenStoreDeps(deps: McpOauthDeps): TokenStoreDeps {
     keeper: deps.store,
     refreshers: [mcpTokenRefresher(deps)],
     now: deps.now,
+    backends: [],
   };
 }
 

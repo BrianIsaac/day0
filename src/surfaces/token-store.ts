@@ -263,7 +263,13 @@ export function refresherFor(
   refreshers: readonly TokenRefresher[],
 ): TokenRefresher | undefined {
   const issuedBy = held.issuedBy;
-  if (!issuedBy || !held.refreshable || held.expiresAt === undefined || held.connection === null) {
+  if (
+    !issuedBy ||
+    !held.refreshable ||
+    held.expiresAt === undefined ||
+    held.connection === null ||
+    (held.tokenStore ?? 'native') !== 'native'
+  ) {
     return undefined;
   }
   return refreshers.find((refresher): boolean => refresher.owns(issuedBy));
@@ -383,15 +389,33 @@ export async function nativeAccessToken(
   throw new Error(`${outcome.refusal} Authorise the card again.`);
 }
 
-/** The token store: its native keeper, the issuers it refreshes for, the clock. */
-export type TokenStoreDeps = NativeTokenStoreDeps;
+/**
+ * One place Day0 keeps tokens (B15). Asked only for a live access token: no rung, and nothing
+ * outside a native refresh, ever reads a refresh token.
+ */
+export interface TokenStoreBackend {
+  readonly kind: TokenStore;
+  /**
+   * A live access token for a credential this backend keeps, refreshed first when due.
+   *
+   * @throws Error when the credential is unavailable or its refresh was refused.
+   */
+  accessTokenFor(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<string>;
+}
+
+/** The token store: every backend, and the keeper whose read says which one holds a credential. */
+export interface TokenStoreDeps extends NativeTokenStoreDeps {
+  /** The backends other than the native one, by the `tokenStore` a row names. */
+  readonly backends: readonly TokenStoreBackend[];
+}
 
 /**
- * The live access token for a credential from the token store, refreshed first when due. The
- * rungs' one read of a bearer (the adapters' decrypt, the re-read, the probe and intake).
+ * The live access token for a credential, from whichever store keeps it: the native store for a
+ * row with no `tokenStore` or `native`, the named backend otherwise. The rungs' one read of a
+ * bearer (the adapters' decrypt, the re-read, the probe and intake).
  *
- * @throws Error when the credential is unavailable, or its refresh was refused once the token
- *   expired.
+ * @throws Error when the credential is unavailable, its store is not configured, or its refresh
+ *   was refused once the token expired.
  */
 export async function accessTokenFor(
   ctx: ActionCtx,
@@ -399,7 +423,15 @@ export async function accessTokenFor(
   deps: TokenStoreDeps,
 ): Promise<string> {
   const held = await deps.keeper.read(ctx, credentialId);
-  return await nativeAccessToken(ctx, credentialId, held, deps);
+  const kind = held?.tokenStore ?? 'native';
+  if (!held || kind === 'native') {
+    return await nativeAccessToken(ctx, credentialId, held, deps);
+  }
+  const backend = deps.backends.find((candidate): boolean => candidate.kind === kind);
+  if (!backend) {
+    throw new Error(`The ${kind} token store is not configured on this deployment.`);
+  }
+  return await backend.accessTokenFor(ctx, credentialId);
 }
 
 /** What a scheduled refresh does beyond the store: queue its retry and record its refusal. */
