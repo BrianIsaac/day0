@@ -2,7 +2,6 @@
 
 import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
-import { makeFunctionReference } from 'convex/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -27,6 +26,12 @@ import { SLACK_AUTH_REVOKE_OK, SLACK_MANIFEST_DELETE_OK } from '../fixtures/revo
  */
 
 type Schema = typeof schemaModule;
+
+/** The administrator IT named at install (B8). */
+const ADMINISTRATOR_ADDRESS = 'ines@acme.test';
+
+/** Ines, signed in with that verified address. */
+const ADMINISTRATOR = managerIdentity('ines', { email: ADMINISTRATOR_ADDRESS });
 
 /** A real-mode harness, its modules loaded after the mode is set. */
 async function realHarness(): Promise<TestConvex<Schema>> {
@@ -374,6 +379,7 @@ describe('an organisation connection revoked by the administrator (11-AR over 11
   afterEach((): void => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     restoreSurfaceMode();
   });
 
@@ -418,20 +424,41 @@ describe('an organisation connection revoked by the administrator (11-AR over 11
     ]);
   });
 
-  // 11-AO owns the administrator's revoke (`organisationConnections.revoke`), which has not landed
-  // on this branch: it must call `endCardsOnConnection` in its own transaction.
-  it.fails(
-    "ends every card through the administrator's own revoke, once 11-AO lands it",
-    async (): Promise<void> => {
-      // fails until 11-AO's organisationConnections.revoke exists and calls endCardsOnConnection
-      const harness = await realHarness();
-      const leo = await seedIssuedIdentities(harness, { connection: true });
-      network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
-      await harness.mutation(makeFunctionReference<'mutation'>('organisationConnections:revoke'), {
-        organisationConnectionId: leo.connectionId,
-        reason: 'Revoked by IT.',
-      });
-      expect((await read(harness, leo.slack.surfaceId))?.credentialId).toBeUndefined();
-    },
-  );
+  it("ends every card through the administrator's own revoke, in its transaction", async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', ADMINISTRATOR_ADDRESS);
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    const connectionId = leo.connectionId;
+    if (connectionId === undefined) throw new Error('The fixture made no connection.');
+
+    await harness.withIdentity(ADMINISTRATOR).mutation(api.organisationConnections.revoke, {
+      organisationConnectionId: connectionId,
+      reason: 'Revoked by IT.',
+    });
+    // Ended in the revoke's own transaction, before any vendor answers.
+    const slack = await read(harness, leo.slack.surfaceId);
+    expect(slack).toMatchObject({
+      verdict: 'approved',
+      reason: 'Revoked by IT.',
+      credentialLanded: false,
+    });
+    expect(slack?.credentialId).toBeUndefined();
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([
+      {
+        url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${LEO_BOT_TOKEN}`,
+        form: {},
+      },
+    ]);
+    expect((await read(harness, leo.linear.surfaceId))?.credentialId).toBe(leo.linear.access);
+    expect(await eventsOf(harness, leo.agentId, 'surface.disconnected')).toEqual([
+      { surfaceId: leo.slack.surfaceId, by: 'organisation', reason: 'Revoked by IT.' },
+    ]);
+    expect(await eventsOf(harness, leo.agentId, 'credential.revoked-at-source')).toEqual([
+      expect.objectContaining({ end: 'organisation-revoked', outcome: 'token-revoked' }),
+    ]);
+  });
 });

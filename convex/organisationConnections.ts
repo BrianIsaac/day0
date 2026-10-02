@@ -14,6 +14,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
+import { endCardsOnConnection } from './surfaces';
 import { log } from '../src/lib/logger';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import {
@@ -729,17 +730,18 @@ export const rotateFromSetup = internalAction({
 
 /**
  * Revoke an organisation connection in the caller's transaction: its status, its reason and every
- * secret under it (the secret, its refresh token and a shared token), with one
- * `organisation.connection-revoked` ledger line. Ending the cards on it is 11-AR's, from this
- * helper (cross-unit test 3).
+ * secret under it (the secret, its refresh token and a shared token), every card on it ended with
+ * the reason (`endCardsOnConnection`, cross-unit test 3), and one
+ * `organisation.connection-revoked` ledger line.
  *
  * @param ctx - The mutation's context.
  * @param revocation - The connection and why it is revoked.
  * @param registrar - Who revoked it.
- * @throws ConvexError when the reason is not one, or the connection is gone or already revoked.
+ * @throws ConvexError when the reason is not one, the connection is gone or already revoked, or
+ *   more cards are on it than one transaction ends.
  */
 export async function revokeConnection(
-  ctx: Pick<MutationCtx, 'db'>,
+  ctx: MutationCtx,
   revocation: {
     readonly organisationConnectionId: Id<'organisationConnections'>;
     readonly reason: string;
@@ -762,6 +764,7 @@ export async function revokeConnection(
     now,
   );
   await ctx.db.patch(connection._id, { status: 'revoked', statusReason: reason, revokedAt: now });
+  await endCardsOnConnection(ctx, { organisationConnectionId: connection._id, reason, now });
   await appendConnectionEvent(ctx, {
     organisationConnectionId: connection._id,
     type: 'organisation.connection-revoked',
@@ -779,8 +782,8 @@ export async function revokeConnection(
 
 /**
  * Revoke an organisation connection from the organisation page. Public, guarded by
- * `assertAdministrator`. Writes the connection's status and every secret's revocation, and one
- * ledger line naming the administrator's address.
+ * `assertAdministrator`. Writes the connection's status and every secret's revocation, ends every
+ * card on it, and one ledger line naming the administrator's address.
  */
 export const revoke = mutation({
   args: revocationFields,
