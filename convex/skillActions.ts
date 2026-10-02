@@ -192,13 +192,13 @@ const PATH_VERBS: Record<string, string> = {
 };
 
 /**
- * What a real-mode author is told when the employee has no connected chat surface, in place of
- * naming one: the cause of the walk's refused first drafts was the prompt teaching a reply the
- * employee could not send (m11), so the prompt says there is none rather than any check
+ * What a real-mode author is told when the employee has no connected chat surface on a path a reply
+ * can take, in place of naming one: the cause of the walk's refused first drafts was the prompt teaching a
+ * reply the employee could not send (m11), so the prompt says there is none rather than any check
  * filtering the draft's words afterwards.
  */
 const NO_CHAT_LINE =
-  '  No chat surface is connected to this employee, so no work reaches it from a channel and it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.';
+  '  This employee has no connected chat surface Day0 can send a reply on, so it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.';
 
 /**
  * The connected chat surface a reply goes to, by a path the gate can reach, if any.

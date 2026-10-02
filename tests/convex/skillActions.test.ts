@@ -266,8 +266,15 @@ describe('skill author prompts', (): void => {
       expect(prompt).not.toContain(input);
     }
     expect(prompt).toContain(
-      '  No chat surface is connected to this employee, so no work reaches it from a channel and it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.',
+      '  This employee has no connected chat surface Day0 can send a reply on, so it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.',
     );
+    // A chat surface connected on no path a reply can take is said truly, not as "none connected"
+    // (the second pass).
+    const escalateOnly = { ...slack, path: 'escalate' as never };
+    const unsendable = buildAuthorPrompt(kanbanSkill, [linear, escalateOnly], now, [], 'real');
+    expect(unsendable).not.toContain('<reply-surface>');
+    expect(unsendable).toContain('no connected chat surface Day0 can send a reply on');
+    expect(unsendable).not.toContain('No chat surface is connected');
     // With a chat surface connected and then gone, the line follows the connection.
     const lapsed = { ...slack, verdict: 'approved' as const, credentialLanded: false };
     expect(buildAuthorPrompt(kanbanSkill, [linear, lapsed], now, [], 'real')).not.toContain(
