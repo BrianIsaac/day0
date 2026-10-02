@@ -15,6 +15,15 @@ describe('reading the authorisation response', (): void => {
     ).toEqual({ state: 's', error: 'access_denied' });
   });
 
+  it('refuses a response that names the state, the code, the iss or the error twice', (): void => {
+    for (const repeated of ['state', 'code', 'iss', 'error']) {
+      const params = new URLSearchParams({ state: 's', code: 'c', iss: 'i' });
+      params.append(repeated, 'again');
+      params.append(repeated, 'and again');
+      expect(readMcpRedirect(params)).toBeUndefined();
+    }
+  });
+
   it('refuses a response with no state, or with neither a code nor an error', (): void => {
     expect(readMcpRedirect(new URLSearchParams({ code: 'c' }))).toBeUndefined();
     expect(readMcpRedirect(new URLSearchParams({ state: 's', iss: 'i' }))).toBeUndefined();

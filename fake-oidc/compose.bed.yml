@@ -32,6 +32,7 @@ services:
       - FAKE_OIDC_MCP_SCOPES=${FAKE_OIDC_MCP_SCOPES:-read write}
       - FAKE_OIDC_MCP_CLIENT_ID=${FAKE_OIDC_MCP_CLIENT_ID:-}
       - FAKE_OIDC_MCP_REDIRECT_URIS=${FAKE_OIDC_MCP_REDIRECT_URIS:-}
+      - FAKE_OIDC_DYNAMIC_REGISTRATION=${FAKE_OIDC_DYNAMIC_REGISTRATION:-}
 
   # The backend's own TLS roots read SSL_CERT_FILE; its Node actions (the MCP
   # client's discovery and token requests) read NODE_EXTRA_CA_CERTS.

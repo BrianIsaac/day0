@@ -22,6 +22,7 @@ describe('the customer-local bed overlay', (): void => {
         'FAKE_OIDC_MCP_SCOPES=${FAKE_OIDC_MCP_SCOPES:-read write}',
         'FAKE_OIDC_MCP_CLIENT_ID=${FAKE_OIDC_MCP_CLIENT_ID:-}',
         'FAKE_OIDC_MCP_REDIRECT_URIS=${FAKE_OIDC_MCP_REDIRECT_URIS:-}',
+        'FAKE_OIDC_DYNAMIC_REGISTRATION=${FAKE_OIDC_DYNAMIC_REGISTRATION:-}',
       ]),
     );
   });

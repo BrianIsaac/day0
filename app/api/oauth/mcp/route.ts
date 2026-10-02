@@ -2,7 +2,14 @@ import { NextResponse } from 'next/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import { serverConvexUrl } from '@/lib/convex-url';
-import { mcpAuthorisationLanding, readMcpRedirect } from '@/surfaces/mcp-oauth-redirect';
+import { log } from '@/lib/logger';
+import { errorMessage } from '@/lib/errors';
+import {
+  MCP_AUTHORISATION_UNAVAILABLE,
+  mcpAuthorisationLanding,
+  readMcpRedirect,
+  type McpAuthorisationResult,
+} from '@/surfaces/mcp-oauth-redirect';
 
 /**
  * The redirect an MCP server's authorisation returns to (wave 11, 11-AM).
@@ -18,13 +25,20 @@ import { mcpAuthorisationLanding, readMcpRedirect } from '@/surfaces/mcp-oauth-r
 export async function GET(request: Request): Promise<NextResponse> {
   const publicUrl = process.env.DAY0_PUBLIC_URL?.trim() || new URL(request.url).origin;
   const response = readMcpRedirect(new URL(request.url).searchParams);
-  const result =
-    response === undefined
-      ? 'invalid'
-      : await new ConvexHttpClient(serverConvexUrl()).action(
-          api.mcpOauthActions.completeAuthorisation,
-          response,
-        );
+  let result: McpAuthorisationResult | 'invalid' = 'invalid';
+  if (response !== undefined) {
+    try {
+      result = await new ConvexHttpClient(serverConvexUrl()).action(
+        api.mcpOauthActions.completeAuthorisation,
+        response,
+      );
+    } catch (error) {
+      // The deployment could not be asked, or failed before it answered: the manager is sent back
+      // to start again rather than shown a server error, and the cause is logged without the query.
+      log.error('mcp authorisation completion failed', { error: errorMessage(error) });
+      result = { ok: false, reason: MCP_AUTHORISATION_UNAVAILABLE };
+    }
+  }
   return NextResponse.redirect(mcpAuthorisationLanding(publicUrl, result), {
     status: 307,
     headers: { 'cache-control': 'no-store' },

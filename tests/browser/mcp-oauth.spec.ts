@@ -73,10 +73,11 @@ let issuer: ChildProcess | undefined;
 let dayZero: ChildProcess | undefined;
 let convex: Server | undefined;
 const pending = new Map<string, Started>();
-const answered: { whoami?: string } = {};
+const answered: { whoami?: string; args?: Record<string, string> } = {};
 
 /** The deployment's half, faked: what `mcpOauthActions.completeAuthorisation` decides, by the real client. */
 async function completeAuthorisation(args: Record<string, string>): Promise<unknown> {
+  answered.args = args;
   const started = pending.get(args.state ?? '');
   pending.delete(args.state ?? '');
   if (!started) return { ok: false, reason: 'That authorisation has already been used.' };
@@ -270,16 +271,15 @@ test.describe('the MCP authorisation, walked in the browser', () => {
     expect((await adminState()).codeExchanges).toBe(exchangesBefore);
   });
 
-  test('a decline lands as failed, with nothing of the server’s description on the URL', async ({
-    page,
-  }) => {
+  test('a decline lands as failed, the server’s description never handed on', async ({ page }) => {
     await page.goto(await startAuthorisation());
     const landing = cardRequest(page);
     await page.getByRole('button', { name: 'Decline' }).click();
     const landed = await landing;
     expect(landed.searchParams.get('authorisation')).toBe('failed');
     expect(landed.searchParams.get('reason')).toBe('The authorisation was declined.');
-    expect(landed.href).not.toContain('declined.%20');
-    expect(landed.href).not.toContain('The%20person%20declined');
+    // What the route handed the deployment: the error code and the iss, never the description.
+    expect(Object.keys(answered.args ?? {}).sort()).toEqual(['error', 'iss', 'state']);
+    expect(answered.args?.error).toBe('access_denied');
   });
 });

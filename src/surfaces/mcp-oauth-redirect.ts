@@ -23,9 +23,16 @@ export interface McpRedirectQuery {
  * `error_description` is never read, since the revision forbids showing anything of a response
  * whose issuer has not been checked and the card never needs it.
  *
- * @returns The response, or undefined when it carries no state or neither a code nor an error.
+ * A response that names any of the four twice is refused (RFC 9207 section 2.4): which of two
+ * issuers to believe is exactly the question the check exists to settle.
+ *
+ * @returns The response, or undefined when it carries no state, neither a code nor an error, or a
+ *   repeated parameter.
  */
 export function readMcpRedirect(params: URLSearchParams): McpRedirectQuery | undefined {
+  if (['state', 'code', 'iss', 'error'].some((name) => params.getAll(name).length > 1)) {
+    return undefined;
+  }
   const state = params.get('state') ?? '';
   const code = params.get('code') ?? '';
   const error = params.get('error') ?? '';
@@ -38,6 +45,10 @@ export function readMcpRedirect(params: URLSearchParams): McpRedirectQuery | und
     ...(iss === null ? {} : { iss }),
   };
 }
+
+/** What the card is told when the deployment could not be asked at all. */
+export const MCP_AUTHORISATION_UNAVAILABLE =
+  'Day0 could not complete the authorisation just now. Start it again from the card.';
 
 /** What the deployment answered the redirect, as far as the landing reads it. */
 export interface McpAuthorisationResult {

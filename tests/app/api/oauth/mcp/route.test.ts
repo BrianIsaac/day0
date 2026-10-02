@@ -102,6 +102,26 @@ describe('the MCP authorisation redirect', (): void => {
     expect(action).not.toHaveBeenCalled();
   });
 
+  it('lands as failed, not as a server error, when the deployment cannot be reached', async (): Promise<void> => {
+    action.mockRejectedValue(new Error('fetch failed: connect ECONNREFUSED 127.0.0.1:3210'));
+    const response = await GET(redirect({ code: 'the-code', state: 'the-state' }));
+    expect(response.status).toBe(307);
+    const target = location(response);
+    expect(target.pathname).toBe('/');
+    expect(target.searchParams.get('authorisation')).toBe('failed');
+    expect(target.searchParams.get('reason')).toBe(
+      'Day0 could not complete the authorisation just now. Start it again from the card.',
+    );
+  });
+
+  it('refuses a response that repeats a parameter (RFC 9207 section 2.4)', async (): Promise<void> => {
+    const url = new URL(`${PUBLIC_URL}/api/oauth/mcp`);
+    url.search = 'code=c&state=s&iss=https%3A%2F%2Fauth.acme.test&iss=https%3A%2F%2Frogue.test';
+    const response = await GET(new Request(url));
+    expect(action).not.toHaveBeenCalled();
+    expect(location(response).searchParams.get('authorisation')).toBe('invalid');
+  });
+
   it('sends a refused state to the dashboard with the reason the deployment gave', async (): Promise<void> => {
     action.mockResolvedValue({
       ok: false,
