@@ -366,3 +366,34 @@ describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
     expect((gone as ConvexError<string>).data).toBe('Surface not found.');
   });
 });
+
+describe("a pending authorisation on a listed card (11-AC's cockpit item 7)", (): void => {
+  it('lists when it started and when its link lapses, never the sealed verifier or the nonce', async (): Promise<void> => {
+    const { harness, agentId } = await seedOffice('# Handbook');
+    await card(harness, agentId, {
+      slug: 'docs',
+      verdict: 'approved',
+      endpoint: 'https://docs.acme.test/mcp',
+      managerApprovedAt: 1,
+      pendingAuthorisation: {
+        stateNonce: 'nonce-1',
+        stateExpiresAt: 50_000,
+        clientId: 'day0-mcp',
+        verifierCiphertext: 'sealed-verifier',
+        verifierIv: 'iv',
+        issuer: 'https://auth.acme.test',
+        resource: 'https://docs.acme.test/mcp',
+        redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+        startedAt: 1_000,
+      },
+    });
+
+    const [listed] = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(listed?.pendingAuthorisation).toEqual({ startedAt: 1_000, stateExpiresAt: 50_000 });
+    expect(JSON.stringify(listed)).not.toContain('sealed-verifier');
+    expect(JSON.stringify(listed)).not.toContain('nonce-1');
+  });
+});

@@ -243,7 +243,12 @@ export async function backfillCharterProvenance(
  * against this deployment's component, why a proposed card cannot be approved now, and what has
  * changed on the pages its approved scope quotes.
  */
-export interface ListedSurface extends Doc<'surfaces'> {
+export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisation'> {
+  /**
+   * An authorisation the manager started and has not finished: when it started and when its link
+   * lapses, never its sealed verifier, nonce or client (11-AC's cockpit item 7).
+   */
+  readonly pendingAuthorisation?: { readonly startedAt: number; readonly stateExpiresAt: number };
   /** Whom the card acts as, or will once connected (cockpit item 1; `listedCardIdentity`). */
   readonly identity: CardIdentity;
   /** Whom the organisation's active connection for its system would make it act as, if one covers it. */
@@ -415,8 +420,17 @@ export const listForAgent = query({
           : undefined;
       const identity = identities.get(surface._id);
       if (identity === undefined) throw new Error('A listed card has no identity read.');
+      const { pendingAuthorisation, ...card } = listed;
       return {
-        ...listed,
+        ...card,
+        ...(pendingAuthorisation === undefined
+          ? {}
+          : {
+              pendingAuthorisation: {
+                startedAt: pendingAuthorisation.startedAt,
+                stateExpiresAt: pendingAuthorisation.stateExpiresAt,
+              },
+            }),
         ...identity,
         ...(refused === undefined ? {} : { approvalRefusal: refused }),
         ...(scopeChange === undefined ? {} : { scopeChange }),
