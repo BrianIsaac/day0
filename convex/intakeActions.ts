@@ -3,12 +3,12 @@
 import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
 import { randomUUID } from 'node:crypto';
 import type { ToolExecutionContext } from '@mastra/core/tools';
-import type { FunctionReference } from 'convex/server';
 import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import type { SweepRead } from './intakeSeed';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { readSurfaceBearer } from './mcpOauthActions';
 import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
@@ -82,12 +82,6 @@ const MAX_MCP_PAGES = 5;
 const PAGE_SIZE = 100;
 
 type CredentialId = GenericId<'credentials'>;
-
-const credentialInternal = internal as unknown as {
-  credentials: {
-    decrypt: FunctionReference<'action', 'internal', { credentialId: CredentialId }, string>;
-  };
-};
 
 interface McpToolDefinition {
   inputSchema?: unknown;
@@ -2188,8 +2182,8 @@ export async function readIntakeDocumentation(
   return { order: extractDocumentedSystemOrder(entries), pages };
 }
 
-/** Create the Convex runtime boundary used by the scheduled action. */
-function convexRuntime(ctx: ActionCtx): IntakeRuntime {
+/** Create the Convex runtime boundary used by the scheduled action; exported for its test. */
+export function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
     readSweep: async (): Promise<SweepRead> =>
       await ctx.runQuery(internal.intakeSeed.surfacesForSweep, {}),
@@ -2219,8 +2213,10 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
         (grant: Doc<'permissionGrants'>): string => grant.scope,
       ),
+    // From the token store (11-AT): an MCP authorisation's token is refreshed first when due, a
+    // Nango-held one is asked of Nango, any other credential decrypts as before.
     decrypt: async (credentialId: CredentialId): Promise<string> =>
-      await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId }),
+      await readSurfaceBearer(ctx, credentialId),
     recordIntake: async (record: IntakeRecord): Promise<void> => {
       await ctx.runMutation(internal.surfaces.recordIntake, record);
     },

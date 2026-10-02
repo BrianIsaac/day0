@@ -6,7 +6,11 @@ import type { FunctionReference } from 'convex/server';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { sealForOwner } from '../../src/lib/credential-crypto';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 
 /** The configurations the production intake client built, when a test reaches it. */
 const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
@@ -36,6 +40,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   compareProviderTs,
+  convexRuntime,
   createMcpClient,
   issueProject,
   issueTeamLabels,
@@ -4620,4 +4625,49 @@ describe("an employee's documentation as intake reads it (D D3)", (): void => {
     expect(read.order).toEqual(['Slack', 'Linear']);
     expect(read.pages.map((page) => page.ref).sort()).toEqual(['linear.md', 'onboarding.md']);
   }, 60_000);
+});
+
+describe('the credential intake reads comes from the token store (11-AT)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('reads a Nango-held credential as the token Nango holds, never as the pointer its row seals', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const credentialKey = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
+    vi.stubEnv('DAY0_NANGO_URL', 'http://nango-server:3003');
+    vi.stubEnv('DAY0_NANGO_SECRET_KEY', '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17');
+    vi.stubGlobal(
+      'fetch',
+      async (): Promise<Response> =>
+        Response.json({ credentials: { type: 'OAUTH2_CC', token: 'fake-cc-9' } }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.run(
+      async (ctx): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'location',
+          label: 'Tracker token (Nango)',
+          ...sealForOwner(
+            nangoLocation({ providerConfigKey: 'tracker-cc', connectionId: 'tracker' }),
+            { current: credentialKey },
+            ORGANISATION_OWNER_KEY,
+          ),
+          source: 'entered',
+          createdAt: 1,
+          tokenStore: 'nango',
+          issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        }),
+    );
+    await expect(
+      harness.action(
+        async (ctx): Promise<string> => await convexRuntime(ctx).decrypt(credentialId),
+      ),
+    ).resolves.toBe('fake-cc-9');
+  });
 });
