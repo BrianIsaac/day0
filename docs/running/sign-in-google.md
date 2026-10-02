@@ -4,8 +4,9 @@ Day0 installed at a customer signs people in through the customer's own
 identity provider: their managers use their work accounts, and nobody signs in
 whom the customer's IT has not let in. This guide is what we run with the
 customer's Google Workspace administrator, once, after `./setup.sh --route ...`
-has set Day0 up on the customer's machine. The Entra and Okta guides follow the
-same seven steps: [sign-in-entra.md](sign-in-entra.md), [sign-in-okta.md](sign-in-okta.md).
+has set Day0 up on the customer's machine. The Entra, Okta and generic OpenID
+Connect guides follow the same seven steps: [sign-in-entra.md](sign-in-entra.md),
+[sign-in-okta.md](sign-in-okta.md), [sign-in-oidc.md](sign-in-oidc.md).
 
 Google's issuer, `https://accounts.google.com`, is shared by every Google
 account in the world, so the client id alone does not keep strangers out.

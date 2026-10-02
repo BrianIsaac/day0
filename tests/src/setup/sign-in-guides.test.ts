@@ -5,15 +5,17 @@ import { claimVerdicts, type ClaimCheckInput } from '../../../src/lib/sign-in-ch
 import { entraIssuer, googleIssuer, oktaIssuer } from '../../../src/lib/customer-oidc-presets';
 
 /**
- * The three sign-in guides are what we run with a customer's IT, so they are
+ * The four sign-in guides are what we run with a customer's IT, so they are
  * pinned to what the kit does: the same seven steps in the same order, the
- * flags the setup verb takes, and the claims the live check judges.
+ * flags the setup verb takes, and the claims the live check judges (for the
+ * generic preset, the self-registration line of decision 7 (a) among them).
  */
 
 const GUIDES = {
   entra: entraIssuer('3f2504e0-4f89-11d3-9a0c-0305e82c3301'),
   okta: oktaIssuer('acme.okta.com'),
   google: googleIssuer(),
+  oidc: 'https://id.acme.com/realms/acme',
 } as const;
 
 const STEPS = [
