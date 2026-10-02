@@ -271,22 +271,32 @@ describe('ending access at the vendor (11-AR; the access plan, section 4.4)', ()
     ).toEqual(['pasted-key', 'pasted-key', 'pasted-key', 'pasted-key']);
   });
 
-  it('calls no vendor at a handover, and deletes the copy at once with its line (A25)', async (): Promise<void> => {
+  it("revokes a handover's cut at the vendor as a Disconnect does (the wave 11 review's M1, decision 2 (a))", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const card = await employeeWithCard(harness);
     const { access, refresh } = await linearPair(harness);
+    network.answer('/oauth/revoke', { status: 200, body: '' });
 
     await end(harness, card, [access, refresh], 'transfer');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    expect(network.calls).toEqual([]);
+    expect(network.calls.map((call) => [call.url, call.form])).toEqual([
+      [
+        'https://api.linear.app/oauth/revoke',
+        { token: LINEAR_REFRESH, token_type_hint: 'refresh_token' },
+      ],
+      [
+        'https://api.linear.app/oauth/revoke',
+        { token: LINEAR_ACCESS, token_type_hint: 'access_token' },
+      ],
+    ]);
     const after = await rows(harness);
-    expect(after.map((row) => [row.revokedAt !== undefined, row.ciphertext])).toEqual([
-      [true, undefined],
-      [true, undefined],
+    expect(after.map((row) => [row.sourceRevocation?.state, row.ciphertext])).toEqual([
+      ['done', undefined],
+      ['done', undefined],
     ]);
     expect(await lines(harness, card.agentId)).toEqual([
-      expect.objectContaining({ credentialId: access, end: 'transfer', outcome: 'not-at-vendor' }),
+      expect.objectContaining({ credentialId: access, end: 'transfer', outcome: 'token-revoked' }),
     ]);
   });
 
@@ -500,7 +510,7 @@ describe('what the hold anchors, and the rows it cannot hold', (): void => {
     ]);
   });
 
-  it('says a handover changed nothing at the vendor even for a row it could not have revoked', async (): Promise<void> => {
+  it("says a handover's cut could not revoke a row whose value is gone, as a Disconnect says it (M1)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const card = await employeeWithCard(harness);
     const { access } = await linearPair(harness);
@@ -510,8 +520,9 @@ describe('what the hold anchors, and the rows it cannot hold', (): void => {
 
     await end(harness, card, [access], 'transfer');
 
+    expect(network.calls).toEqual([]);
     expect(await lines(harness, card.agentId)).toEqual([
-      expect.objectContaining({ end: 'transfer', outcome: 'not-at-vendor' }),
+      expect.objectContaining({ end: 'transfer', outcome: 'failed' }),
     ]);
   });
 

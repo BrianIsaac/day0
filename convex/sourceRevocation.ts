@@ -7,14 +7,13 @@ import {
 } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { finishSourceRevocation, holdForSourceRevocation, purgeCredential } from './credentials';
+import { finishSourceRevocation, holdForSourceRevocation } from './credentials';
 import { appendConnectionEvent } from './connectionEvents';
 import { appendEvent } from './eventLog';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
 import {
   callOutcome,
-  HANDOVER_WORDS,
   revocationPlanFor,
   sharedByOrganisation,
 } from '../src/surfaces/revokers/plan';
@@ -89,8 +88,6 @@ export interface CardAccessEnd {
 export interface EndedAtSource {
   /** The rows held for a vendor call, the call scheduled. */
   readonly held: readonly Id<'credentials'>[];
-  /** The rows Day0 obtained that an end calling no vendor purged at once (a handover). */
-  readonly purged: readonly Id<'credentials'>[];
   /** The pasted keys: never sent to a vendor, and left to the caller's own rule. */
   readonly pasted: readonly Id<'credentials'>[];
   /** The organisation's own rows (`sharedByOrganisation`): never revoked by one employee's end. */
@@ -211,22 +208,13 @@ interface CardLine {
 
 /**
  * The one line a card's end writes itself, if any: none where a vendor call will speak (its
- * attempts write theirs) or an earlier end's held rows already do; a handover's "nothing at the
- * vendor"; why Day0 could not revoke what it obtained; else the shared token's; else the pasted
- * key's, the card's own listed first.
+ * attempts write theirs) or an earlier end's held rows already do; why Day0 could not revoke what
+ * it obtained; else the shared token's; else the pasted key's, the card's own listed first.
  */
-function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): CardLine | null {
-  if (sorted.revocable.length > 0 && end !== 'transfer') return null;
-  const [obtained] = [...sorted.revocable, ...sorted.unrevocable];
+function cardLine(sorted: SortedRows, surfaceName: string): CardLine | null {
+  if (sorted.revocable.length > 0) return null;
+  const [obtained] = sorted.unrevocable;
   if (obtained !== undefined) {
-    if (end === 'transfer') {
-      return {
-        row: obtained,
-        system: obtained.issuedBy.system,
-        outcome: 'not-at-vendor',
-        reason: HANDOVER_WORDS,
-      };
-    }
     return {
       row: obtained,
       system: obtained.issuedBy.system,
@@ -248,7 +236,8 @@ function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): Card
  * End one card's access at the vendor, in the ending transaction (the access plan, section 4.4).
  * The rows Day0 obtained and holds a value for are revoked at once and held, their ciphertext
  * kept, and the first attempt is scheduled for the one the call is made for, the others finished
- * with it; a handover calls no vendor (A25), so it purges them at once. A row Day0 obtained but
+ * with it; a handover's cut does the same as a Disconnect (the wave 11 review's M1, decision
+ * 2 (a)), and a card it keeps for re-approval never reaches here (A25). A row Day0 obtained but
  * cannot revoke here (its value gone, or the token store holding it) is revoked in Day0 at once.
  * A pasted key is never sent to a vendor, and the caller's own rule decides whether Day0's copy
  * goes. The organisation's own row is untouched; a per-employee identity the organisation holds is
@@ -271,7 +260,7 @@ export async function endAccessAtSource(
     surfaceName: input.surfaceName,
   };
   const sorted = sortRows(input.credentials);
-  const line = cardLine(sorted, input.end, input.surfaceName);
+  const line = cardLine(sorted, input.surfaceName);
   if (line !== null) {
     await appendLine(
       ctx,
@@ -301,11 +290,7 @@ export async function endAccessAtSource(
     stopped: ids(sorted.unrevocable),
   };
   const fresh = sorted.revocable;
-  if (fresh.length === 0) return { held: [], purged: [], ...answer };
-  if (input.end === 'transfer') {
-    for (const row of fresh) await purgeCredential(ctx, row, input.now);
-    return { held: [], purged: ids(fresh), ...answer };
-  }
+  if (fresh.length === 0) return { held: [], ...answer };
   const primary = primaryOf(fresh);
   for (const row of fresh) await holdForSourceRevocation(ctx, row, input.end, input.now);
   // A refresh token whose access token an earlier end already held is revoked as one (L3).
@@ -316,7 +301,7 @@ export async function endAccessAtSource(
     companionIds: fresh.filter((row) => row._id !== primary._id).map((row) => row._id),
     ...(primaryIsRefresh ? { primaryIsRefresh } : {}),
   });
-  return { held: ids(fresh), purged: [], ...answer };
+  return { held: ids(fresh), ...answer };
 }
 
 /** The ids of some rows. */
@@ -408,7 +393,7 @@ function plannedOf(outcome: SourceRevocationOutcome): PlannedOutcome {
 /**
  * What ending one card's access will do at the vendor, by the rules {@link endAccessAtSource} and
  * the attempt follow: the plan of the credential the call is made for, its preferred call's
- * meaning; for a row Day0 obtained and cannot revoke here, or a handover, the line the end would
+ * meaning; for a row Day0 obtained and cannot revoke here, the line the end would
  * write ({@link cardLine}); a pasted key that only this card binds is Day0's copy deleted and
  * never sent; a row that something else still binds is kept; a row the organisation holds is
  * shared.
@@ -428,7 +413,7 @@ export async function plannedAtSource(
   end: AccessEnd,
 ): Promise<{ readonly system: string; readonly outcome: PlannedOutcome } | null> {
   const sorted = sortRows(card.ended);
-  if (sorted.revocable.length > 0 && end !== 'transfer') {
+  if (sorted.revocable.length > 0) {
     const primary = primaryOf(sorted.revocable);
     const means = await meansOf(db, primary);
     const plan = revocationPlanFor({ issuedBy: primary.issuedBy, role: 'access' }, end, {
@@ -445,7 +430,7 @@ export async function plannedAtSource(
         plan.kind === 'none' ? plan.outcome : preferred ? callOutcome(preferred) : 'not-supported',
     };
   }
-  const line = cardLine(sorted, end, card.surfaceName);
+  const line = cardLine(sorted, card.surfaceName);
   if (line !== null && line.outcome !== 'shared' && line.outcome !== 'pasted-key') {
     return { system: line.system, outcome: plannedOf(line.outcome) };
   }

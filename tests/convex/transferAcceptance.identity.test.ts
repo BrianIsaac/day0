@@ -14,6 +14,9 @@ import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation
 import {
   CONFIGURATION_TOKEN,
   LEO_APP_ID,
+  LEO_BOT_TOKEN,
+  LEO_LINEAR_ACCESS,
+  LEO_LINEAR_REFRESH,
   seedIssuedIdentities,
   type IssuedIdentities,
 } from './fakes/issued-identities';
@@ -24,7 +27,8 @@ import { SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
  * acting as the employee's own app obtained through IT's organisation connection keeps it and
  * returns to `proposed` for the new manager to re-approve, its token not revoked at the vendor
  * unless the new manager rejects it; a card on anything else is cut as D5 (a) rules, and the cut
- * calls no vendor.
+ * revokes at the vendor what Day0 obtained for it, as a Disconnect does (the wave 11 review's M1,
+ * decision 2 (a)).
  */
 
 type Schema = typeof schemaModule;
@@ -67,6 +71,25 @@ async function read<Table extends 'surfaces' | 'credentials'>(
   return await harness.run(async (ctx) => await ctx.db.get(id));
 }
 
+/** The two calls a cut of Leo's own Linear app makes at Linear: the refresh token, then access. */
+const LINEAR_CUT_CALLS = [
+  {
+    url: 'https://api.linear.app/oauth/revoke',
+    form: { token: LEO_LINEAR_REFRESH, token_type_hint: 'refresh_token' },
+  },
+  {
+    url: 'https://api.linear.app/oauth/revoke',
+    form: { token: LEO_LINEAR_ACCESS, token_type_hint: 'access_token' },
+  },
+];
+
+/** The calls the network saw, in a stable order, so several ends' calls compare as a set. */
+function sortedCalls(calls: readonly unknown[]): unknown[] {
+  return [...calls].sort((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right)),
+  );
+}
+
 /** Leo's ledger lines, oldest first. */
 async function lines(harness: TestConvex<Schema>, agentId: Id<'agents'>): Promise<unknown[]> {
   return await harness.run(async (ctx) =>
@@ -84,6 +107,8 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
     vi.useFakeTimers();
     network = stubVendorNetwork();
+    // The handover cuts Leo's own Linear app, which no organisation connection issued (M1).
+    network.answer('/oauth/revoke', { status: 200, body: '' });
   });
 
   afterEach((): void => {
@@ -113,8 +138,9 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     const token = await read(harness, leo.slack.token);
     expect(token?.revokedAt).toBeUndefined();
     expect(token?.ciphertext).toEqual(expect.any(String));
-    // Nothing at the vendor at a handover, for the kept identity or the cut one.
-    expect(network.calls).toEqual([]);
+    // Nothing at the vendor for the kept identity; the cut one is revoked as a Disconnect would
+    // (decision 2 (a)), and only it.
+    expect(network.calls).toEqual(LINEAR_CUT_CALLS);
 
     // The Linear app was not obtained through an organisation connection: cut as D5 (a) rules.
     const linear = await read(harness, leo.linear.surfaceId);
@@ -123,14 +149,51 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     const access = await read(harness, leo.linear.access);
     expect(access?.revokedAt).toEqual(expect.any(Number));
     expect(access?.ciphertext).toBeUndefined();
+    expect(access?.sourceRevocation?.state).toBe('done');
     expect(await lines(harness, leo.agentId)).toEqual([
       expect.objectContaining({
         surfaceId: leo.linear.surfaceId,
         system: 'linear',
         end: 'transfer',
-        outcome: 'not-at-vendor',
+        outcome: 'token-revoked',
       }),
     ]);
+  });
+
+  it("revokes at the vendor a cut card's identity Day0 obtained, so the old manager's grant ends where it was given (M1)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    network.answer('/api/auth.revoke', { status: 200, body: { ok: true, revoked: true } });
+
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Neither card was obtained through IT's connection: both are cut, and each identity Day0
+    // obtained is revoked at its vendor, the Slack app kept as a Disconnect keeps it.
+    expect(sortedCalls(network.calls)).toEqual(
+      sortedCalls([
+        ...LINEAR_CUT_CALLS,
+        {
+          url: 'https://slack.com/api/auth.revoke',
+          authorization: `Bearer ${LEO_BOT_TOKEN}`,
+          form: {},
+        },
+      ]),
+    );
+    for (const id of [leo.slack.token, leo.linear.access]) {
+      expect((await read(harness, id))?.sourceRevocation?.state).toBe('done');
+    }
+    expect(
+      (await lines(harness, leo.agentId)).map((line) => {
+        const { system, end, outcome } = line as { system: string; end: string; outcome: string };
+        return [system, end, outcome];
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        ['linear', 'transfer', 'token-revoked'],
+        ['slack', 'transfer', 'token-revoked'],
+      ]),
+    );
   });
 
   it('keeps the identity when the old manager later deletes their data, since it is no longer theirs to end', async (): Promise<void> => {
@@ -147,7 +210,7 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     expect(token?.revokedAt).toBeUndefined();
     expect(token?.ciphertext).toEqual(expect.any(String));
     expect((await read(harness, leo.slack.surfaceId))?.credentialId).toBe(leo.slack.token);
-    expect(network.calls).toEqual([]);
+    expect(network.calls).toEqual(LINEAR_CUT_CALLS);
   });
 
   it("keeps a disconnected identity's app secret when the old manager later deletes their data", async (): Promise<void> => {
@@ -190,7 +253,7 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       expect(row?.revokedAt).toBeUndefined();
       expect(row?.ciphertext).toEqual(expect.any(String));
     }
-    expect(network.calls).toEqual([]);
+    expect(network.calls).toEqual(LINEAR_CUT_CALLS);
   });
 
   it('deletes the app of an identity the organisation holds when the new manager rejects the card', async (): Promise<void> => {
@@ -204,13 +267,16 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not ours.' });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    expect(network.calls).toEqual([
-      {
-        url: 'https://slack.com/api/apps.manifest.delete',
-        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
-        form: { app_id: LEO_APP_ID },
-      },
-    ]);
+    expect(sortedCalls(network.calls)).toEqual(
+      sortedCalls([
+        ...LINEAR_CUT_CALLS,
+        {
+          url: 'https://slack.com/api/apps.manifest.delete',
+          authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+          form: { app_id: LEO_APP_ID },
+        },
+      ]),
+    );
     expect((await read(harness, leo.slack.token))?.sourceRevocation?.state).toBe('done');
   });
 
@@ -225,13 +291,16 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not ours.' });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    expect(network.calls).toEqual([
-      {
-        url: 'https://slack.com/api/apps.manifest.delete',
-        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
-        form: { app_id: LEO_APP_ID },
-      },
-    ]);
+    expect(sortedCalls(network.calls)).toEqual(
+      sortedCalls([
+        ...LINEAR_CUT_CALLS,
+        {
+          url: 'https://slack.com/api/apps.manifest.delete',
+          authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+          form: { app_id: LEO_APP_ID },
+        },
+      ]),
+    );
     expect(await lines(harness, leo.agentId)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ system: 'slack', end: 'reject', outcome: 'app-deleted' }),

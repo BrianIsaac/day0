@@ -279,12 +279,13 @@ interface Cut {
 }
 
 /**
- * Cut the employee's connections (D5 (a)): the surfaces through `handOverSurfaces`, then each
- * credential the cut ones bound sorted by the retire's rule, revoked with its ciphertext deleted
- * when nothing else of the old owner's binds it and kept for them otherwise, each cut card's end
- * written as its system's ledger line with nothing called at the vendor (A25), and every pending
- * job naming a cut or re-approved surface cancelled. A card that kept the employee's own identity
- * keeps its credential.
+ * Cut the employee's connections (D5 (a)): the surfaces through `handOverSurfaces`, every pending
+ * job naming a cut or re-approved surface cancelled, then each credential the cut ones bound
+ * sorted by the retire's rule, revoked with its ciphertext deleted when nothing else of the old
+ * owner's binds it and kept for them otherwise. What Day0 obtained for a cut card is revoked at
+ * the vendor as a Disconnect revokes it (the wave 11 review's M1, decision 2 (a)), its attempt
+ * scheduled after the cancel so the cancel never takes it; a card that kept the employee's own
+ * identity keeps its credential and calls nothing at the vendor (A25).
  */
 async function cutConnections(
   ctx: MutationCtx,
@@ -296,6 +297,10 @@ async function cutConnections(
     agentId: agent._id,
     toOwnerKey: transfer.toOwnerKey,
     now,
+  });
+  await cancelJobsFor(ctx, {
+    ids: new Set([...surfaces.cut, ...surfaces.reapproved].map((surface) => surface.surfaceId)),
+    employees: new Set([agent._id]),
   });
   const { revoked, kept } = await revokeUnbound(
     ctx,
@@ -314,10 +319,6 @@ async function cutConnections(
     now,
     new Set([agent._id]),
   );
-  await cancelJobsFor(ctx, {
-    ids: new Set([...surfaces.cut, ...surfaces.reapproved].map((surface) => surface.surfaceId)),
-    employees: new Set([agent._id]),
-  });
   return { surfaces, revoked: revoked.size, kept: kept.size };
 }
 

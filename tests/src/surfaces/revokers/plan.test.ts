@@ -158,6 +158,17 @@ describe('the RFC 7009 plan for an MCP authorisation server', (): void => {
     });
   });
 
+  it("revokes a manager's delegated grant a handover cuts, as a Disconnect does (the wave 11 review's M1)", (): void => {
+    const means = { ...EVERYTHING, revocationEndpoint: 'https://auth.example.com/revoke' };
+    expect(revocationPlanFor(mcp, 'transfer', means)).toEqual(
+      revocationPlanFor(mcp, 'disconnect', means),
+    );
+    expect(revocationPlanFor(mcp, 'transfer', means).kind).toBe('call');
+    expect(revocationPlanFor(SLACK_BOT, 'transfer', EVERYTHING)).toEqual(
+      revocationPlanFor(SLACK_BOT, 'disconnect', EVERYTHING),
+    );
+  });
+
   it('says there is no endpoint where the server advertises none', (): void => {
     expect(revocationPlanFor(mcp, 'disconnect', EVERYTHING)).toEqual({
       kind: 'none',
@@ -168,14 +179,6 @@ describe('the RFC 7009 plan for an MCP authorisation server', (): void => {
 });
 
 describe('the ends that never call a vendor', (): void => {
-  it('does nothing at the vendor at a handover (A25)', (): void => {
-    expect(revocationPlanFor(SLACK_BOT, 'transfer', EVERYTHING)).toEqual({
-      kind: 'none',
-      outcome: 'not-at-vendor',
-      words: 'A handover changes nothing at the vendor; the new manager re-approves the system.',
-    });
-  });
-
   it('names a system with no revoker as such', (): void => {
     expect(
       revocationPlanFor(
