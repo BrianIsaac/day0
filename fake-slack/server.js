@@ -8,6 +8,11 @@ const requestLog = [];
 // chat.postMessage counts per channel, never the text: a handover between two
 // managers shows as one post in each of their DMs.
 const postsByChannel = new Map();
+// Revocation at the vendor (11-AR, for 11-AS): the bot token auth.revoke or apps.uninstall
+// ended, and the apps apps.manifest.delete removed, as /proof lists them.
+const revokedTokens = new Set();
+const createdApps = new Set();
+const deletedApps = new Set();
 
 // The people besides the one manager, by address (FAKE_SLACK_PEOPLE,
 // comma-separated): each listed address is a Slack user of its own with a DM
@@ -80,7 +85,9 @@ function jsonArguments(request, body) {
 }
 
 function authorised(request, expected = botToken) {
-  return request.headers.authorization === `Bearer ${expected}`;
+  return (
+    request.headers.authorization === `Bearer ${expected}` && !revokedTokens.has(expected)
+  );
 }
 
 const server = createServer(async (request, response) => {
@@ -92,12 +99,17 @@ const server = createServer(async (request, response) => {
       calls: Object.fromEntries(calls),
       requestLog,
       postsByChannel: Object.fromEntries(postsByChannel),
+      apps: [...createdApps].filter((appId) => !deletedApps.has(appId)),
+      revokedTokens: revokedTokens.size,
     });
   }
   if (url.pathname === '/reset' && request.method === 'POST') {
     calls.clear();
     requestLog.length = 0;
     postsByChannel.clear();
+    revokedTokens.clear();
+    createdApps.clear();
+    deletedApps.clear();
     return json(response, 200, { ok: true });
   }
   if (url.pathname === '/oauth/v2/authorize' && request.method === 'GET') {
@@ -125,11 +137,40 @@ const server = createServer(async (request, response) => {
     }
     const manifest = new URLSearchParams(body).get('manifest');
     if (!manifest) return json(response, 200, { ok: false, error: 'invalid_manifest' });
+    createdApps.add('A_DAY0_FAKE');
     return json(response, 200, {
       ok: true,
       app_id: 'A_DAY0_FAKE',
       credentials: { client_id: '111.day0', client_secret: clientSecret },
     });
+  }
+  if (method === 'apps.manifest.delete') {
+    // S4: a manager app's configuration token deletes only the apps it created.
+    if (!authorised(request, 'xoxe-day0-fake-configuration-token')) {
+      return json(response, 200, { ok: false, error: 'invalid_auth' });
+    }
+    const appId = readArguments(url, request, body).get('app_id');
+    if (!appId || !createdApps.has(appId) || deletedApps.has(appId)) {
+      return json(response, 200, { ok: false, error: 'invalid_app_id' });
+    }
+    deletedApps.add(appId);
+    revokedTokens.add(botToken);
+    return json(response, 200, { ok: true });
+  }
+  if (method === 'apps.uninstall') {
+    // S4: revokes every token of the installation.
+    if (!authorised(request)) return json(response, 200, { ok: false, error: 'invalid_auth' });
+    const form = readArguments(url, request, body);
+    if (form.get('client_id') !== '111.day0' || form.get('client_secret') !== clientSecret) {
+      return json(response, 200, { ok: false, error: 'bad_client_secret' });
+    }
+    revokedTokens.add(botToken);
+    return json(response, 200, { ok: true });
+  }
+  if (method === 'auth.revoke' && authorised(request)) {
+    // S1: the bot user is deactivated and leaves its channels; the app stays.
+    revokedTokens.add(botToken);
+    return json(response, 200, { ok: true, revoked: true });
   }
   if (method === 'oauth.v2.access') {
     const form = new URLSearchParams(body);
@@ -139,6 +180,8 @@ const server = createServer(async (request, response) => {
     ) {
       return json(response, 200, { ok: false, error: 'invalid_code' });
     }
+    // A renewal reinstalls the same app: the install issues the bot token afresh.
+    revokedTokens.delete(botToken);
     return json(response, 200, {
       ok: true,
       access_token: botToken,
