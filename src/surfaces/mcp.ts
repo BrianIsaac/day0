@@ -17,6 +17,7 @@ import { redactValue } from './secrets';
 import type { SpanModel } from '../redaction/client';
 import type { MCPClient } from '@mastra/mcp';
 import { createSecretMcpClient } from './mcp-client';
+import { log } from '../lib/logger';
 import {
   checkMcpAddress,
   pinnedFetch,
@@ -174,6 +175,52 @@ export function isServerToolError(error: unknown): boolean {
     error !== null &&
     (error as { id?: unknown }).id === 'MCP_CLIENT_TOOL_EXECUTION_FAILED'
   );
+}
+
+/** The code Linear's MCP answers with when Linear itself did not answer it (the walk's m1). */
+const PROVIDER_UNAVAILABLE_CODE = 'upstream_unavailable';
+
+/**
+ * Whether a server's refusal is its answer that the provider behind it is unavailable, with a
+ * request to try again: Linear's MCP `{"error":"upstream_unavailable","message":"Linear is
+ * temporarily unavailable. Please try again.","status":502}`, as a real workspace answered an
+ * approved `save_comment` on 1 October (the real-Linear walk's m1). The server answered, so the
+ * call never reached the provider; every other refusal stays a refusal.
+ */
+export function isProviderUnavailableAnswer(error: unknown): boolean {
+  if (!isServerToolError(error) || !(error instanceof Error)) return false;
+  let body: unknown;
+  try {
+    body = JSON.parse(error.message);
+  } catch {
+    // Not a JSON body, so not this answer: the refusal stands.
+    return false;
+  }
+  if (typeof body !== 'object' || body === null) return false;
+  const { error: code, status } = body as { readonly error?: unknown; readonly status?: unknown };
+  return code === PROVIDER_UNAVAILABLE_CODE && status === 502;
+}
+
+/**
+ * Send an approved write, and send it once more when the server answered that the provider behind
+ * it is unavailable (`isProviderUnavailableAnswer`). The second answer is the write's, whatever it
+ * is: there is never a third send, and every other failure is the first send's.
+ *
+ * @param send - One fenced send of the write (`sendOnce`), so neither send is ever doubled by the
+ *   client's own reconnect.
+ * @param where - The surface and tool, for the log line.
+ */
+async function sendWriteResendingOnce(
+  send: () => Promise<unknown>,
+  where: { readonly surface: string; readonly tool: string },
+): Promise<unknown> {
+  try {
+    return await send();
+  } catch (error) {
+    if (!isProviderUnavailableAnswer(error)) throw error;
+  }
+  log.warn('mcp write resent once: the provider was unavailable', where);
+  return await send();
 }
 
 /** What creating an MCP client takes: the server name, its endpoint and the credential. */
@@ -927,8 +974,12 @@ export class McpAdapter implements SurfaceAdapter {
         // Named on every row for a call that was sent to the resolved elements.
         const actedOn = await this.actedElements(resolvedElements, bearer);
         const send = async (): Promise<unknown> => await tool.execute?.(toolArgs, {});
+        const sendFenced = async (): Promise<unknown> =>
+          client.sendOnce ? await client.sendOnce(send) : await send();
         const result = interpretToolResult(
-          writeAttempted && client.sendOnce ? await client.sendOnce(send) : await send(),
+          writeAttempted
+            ? await sendWriteResendingOnce(sendFenced, { surface: surface.slug, tool: call.tool })
+            : await send(),
         );
         const removals = [bearer, ...(this.deps.knownValues ?? [])];
         const redacted = await redactOutcome(
