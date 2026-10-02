@@ -254,7 +254,8 @@ function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): Card
  * goes. The organisation's own row is untouched; a per-employee identity the organisation holds is
  * ended as any row Day0 obtained. One line is written per card, so per system
  * ({@link cardLine}), or none where the attempts will write it. A row already held by an earlier
- * end keeps its scheduled attempts and is not scheduled again.
+ * end keeps its scheduled attempts and is not scheduled again. A row the token store keeps is
+ * revoked in Day0 and the store is asked to forget its connection (`forgetInTokenStore`).
  *
  * @param ctx - The ending transaction.
  * @param input - The card, its credentials, the end and its time.
@@ -286,6 +287,13 @@ export async function endAccessAtSource(
   }
   for (const row of sorted.unrevocable) {
     if (row.revokedAt === undefined) await ctx.db.patch(row._id, { revokedAt: input.now });
+    // The token store keeps the token: it is asked to forget the connection, so it neither keeps
+    // nor refreshes it any longer (11-AT; join 9). Nango revokes nothing at the vendor itself.
+    if (row.tokenStore === 'nango' && holdsValue(row)) {
+      await ctx.scheduler.runAfter(0, internal.sourceRevocationActions.forgetInTokenStore, {
+        credentialId: row._id,
+      });
+    }
   }
   const answer = {
     pasted: ids(sorted.pasted),

@@ -16,6 +16,7 @@ import {
   SLACK_UNINSTALL_OK,
 } from '../fixtures/revokers';
 import type { AccessEnd } from '../../src/surfaces/access-identity';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 
 type Harness = TestConvex<typeof schema>;
@@ -414,5 +415,88 @@ describe("Slack's two calls with their two meanings (S1, S4)", (): void => {
     expect(await lines(harness, leo.agentId)).toEqual([
       expect.objectContaining({ outcome: 'already-gone' }),
     ]);
+  });
+});
+
+describe('a token the token store keeps, at its end of access (join 9)', (): void => {
+  const NANGO_KEY = '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17';
+  let network: VendorNetwork;
+
+  beforeEach((): void => {
+    network = stubVendorNetwork();
+    vi.stubEnv('DAY0_NANGO_URL', 'http://nango-server:3003');
+    vi.stubEnv('DAY0_NANGO_SECRET_KEY', NANGO_KEY);
+  });
+
+  /** Leo's tracker card, whose token Nango keeps: the row seals the connection, never the token. */
+  async function leoWithNangoToken(harness: Harness): Promise<{
+    readonly agentId: Id<'agents'>;
+    readonly surfaceId: Id<'surfaces'>;
+    readonly token: Id<'credentials'>;
+  }> {
+    const token = await stored(
+      harness,
+      'owner',
+      nangoLocation({ providerConfigKey: 'tracker-oauth', connectionId: 'leo-tracker' }),
+      { tokenStore: 'nango', issuedBy: { system: 'tracker', grant: 'authorisation-code' } },
+    );
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Leo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'tracker',
+        displayName: 'Tracker',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        credentialId: token,
+        credentialKind: 'oauth',
+        createdAt: 1,
+      });
+      return { agentId, surfaceId, token };
+    });
+  }
+
+  it('asks Nango to forget the connection, then deletes the location Day0 kept', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await leoWithNangoToken(harness);
+    network.answer('/connections/leo-tracker', { status: 200, body: { success: true } });
+
+    await endAndDrain(harness, leo, [leo.token], 'disconnect');
+
+    expect(network.calls).toEqual([
+      {
+        url: 'http://nango-server:3003/connections/leo-tracker?provider_config_key=tracker-oauth',
+        authorization: `Bearer ${NANGO_KEY}`,
+        form: {},
+      },
+    ]);
+    const row = await harness.run(async (ctx) => await ctx.db.get(leo.token));
+    expect(row?.revokedAt).toEqual(expect.any(Number));
+    expect(row?.ciphertext).toBeUndefined();
+    expect(row?.iv).toBeUndefined();
+  });
+
+  it('asks again with a growing wait while Nango cannot answer, keeping the location until it does', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await leoWithNangoToken(harness);
+    network.answer(
+      '/connections/leo-tracker',
+      { status: 503, body: { error: 'unavailable' } },
+      { status: 200, body: { success: true } },
+    );
+
+    await endAndDrain(harness, leo, [leo.token], 'disconnect');
+
+    expect(network.calls).toHaveLength(2);
+    const row = await harness.run(async (ctx) => await ctx.db.get(leo.token));
+    expect(row?.ciphertext).toBeUndefined();
   });
 });

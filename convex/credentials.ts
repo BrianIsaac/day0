@@ -1011,6 +1011,68 @@ export const decryptConnectionSecretForRevocation = internalAction({
   },
 });
 
+/**
+ * A revoked row the token store keeps, whose connection the store is still to forget: Day0
+ * obtained it (`issuedBy`), it is revoked, and it still holds its sealed location. Internal, for
+ * {@link decryptTokenStoreLocation} and {@link forgottenInTokenStore}; writes nothing.
+ */
+async function awaitingForget(
+  db: QueryCtx['db'],
+  credentialId: Id<'credentials'>,
+): Promise<Doc<'credentials'> | null> {
+  const row = await db.get(credentialId);
+  return row !== null &&
+    row.tokenStore === 'nango' &&
+    row.issuedBy !== undefined &&
+    row.revokedAt !== undefined &&
+    row.ciphertext !== undefined &&
+    row.iv !== undefined
+    ? row
+    : null;
+}
+
+/** The row {@link awaitingForget} admits, for the action. Internal; writes nothing. */
+export const tokenStoreRowAwaitingForget = internalQuery({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<Doc<'credentials'> | null> =>
+    await awaitingForget(ctx.db, args.credentialId),
+});
+
+/**
+ * Decrypt the sealed location (the Nango connection, never a token) of a revoked row the token
+ * store keeps, so the end of access can ask the store to forget that connection (11-AT; join 9 of
+ * 11-AJ). Admits only a row {@link awaitingForget} admits; records no use. Internal;
+ * `sourceRevocationActions.forgetInTokenStore` is its only caller.
+ *
+ * @throws Error when the row is not awaiting its forgetting in the token store.
+ */
+export const decryptTokenStoreLocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const row: Doc<'credentials'> | null = await ctx.runQuery(
+      internal.credentials.tokenStoreRowAwaitingForget,
+      args,
+    );
+    if (!row || row.ciphertext === undefined || row.iv === undefined) {
+      throw new Error('Credential is not awaiting its forgetting in the token store.');
+    }
+    return await openSealed(ctx, row, row.ciphertext, row.iv);
+  },
+});
+
+/**
+ * Delete the location Day0 kept for a row once the token store has forgotten its connection.
+ * Internal; `sourceRevocationActions.forgetInTokenStore` is its only caller. Writes the row's
+ * ciphertext away (it stays as the audit trail of a credential that was held).
+ */
+export const forgottenInTokenStore = internalMutation({
+  args: { credentialId: v.id('credentials'), now: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await awaitingForget(ctx.db, args.credentialId);
+    if (row !== null) await purgeCredential(ctx, row, args.now);
+  },
+});
+
 /** Revoke one owner credential without returning its encrypted fields. */
 export const revoke = mutation({
   args: { credentialId: v.id('credentials') },
