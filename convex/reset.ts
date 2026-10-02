@@ -380,8 +380,8 @@ export interface Boundaries {
  */
 export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [], live: [] };
 
-/** One card a retire deleted, with the credentials it bound, for the revocation at the vendor. */
-interface RetiredCard {
+/** One card a retire deleted or a handover cut, with the credentials it bound. */
+export interface RetiredCard {
   readonly surfaceId: Id<'surfaces'>;
   readonly displayName: string;
   readonly bound: ReadonlySet<Id<'credentials'>>;
@@ -707,19 +707,23 @@ export async function sortCredentials(
  * @param ctx - The reset's mutation context.
  * @param userId - The owner.
  * @param retired - The retired employees with the cards each deleted.
- * @param end - `retire`, or `owner-deletion` when the owner's data goes with it.
+ * @param end - `retire`, `owner-deletion` when the owner's data goes with it, or `transfer` for a
+ *   handover's cut, which calls no vendor (A25).
  * @param now - The retire time.
+ * @param leaving - The employees whose own surfaces do not count as still binding: a handover's
+ *   employee, which still exists; after a retire has deleted them there are none to skip.
  * @returns The credentials revoked and the ones kept for what still binds them.
  */
-async function revokeUnbound(
+export async function revokeUnbound(
   ctx: MutationCtx,
   userId: string,
   retired: readonly { readonly agentId: Id<'agents'>; readonly cards: readonly RetiredCard[] }[],
   end: AccessEnd,
   now: number,
+  leaving: ReadonlySet<Id<'agents'>> = new Set(),
 ): Promise<{ revoked: Set<Id<'credentials'>>; kept: Set<Id<'credentials'>> }> {
   const bound = new Set(retired.flatMap(({ cards }) => cards.flatMap((card) => [...card.bound])));
-  const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, new Set());
+  const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, leaving);
   const revoking = new Map(revoke.map((credential) => [credential._id, credential]));
   const ended = new Set<Id<'credentials'>>();
   for (const { agentId, cards } of retired) {

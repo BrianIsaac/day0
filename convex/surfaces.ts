@@ -2948,6 +2948,13 @@ export const HANDOVER_CUT_REPROPOSE_REASON =
 export const HANDOVER_CREDENTIAL_LOCATION =
   "Land a credential of your own: the previous manager's was not handed over.";
 
+/**
+ * Why a card that kept the employee's own identity at a handover is back in `proposed`, on the
+ * card (A25): the new manager re-approves it, with no credential to land.
+ */
+export const HANDOVER_REAPPROVE_REASON =
+  "Handed over to a new manager: approve this connection again. It keeps acting as the employee's own identity, so there is no credential to land.";
+
 /** The most surfaces one employee's handover reads, the card's own bound. */
 const HANDOVER_SURFACE_LIMIT = CARD_SURFACE_LIMIT;
 
@@ -3227,6 +3234,29 @@ function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
 }
 
 /**
+ * The fields a handover's re-approval clears (A25): everything {@link cutPatch} clears save the
+ * employee's own identity, which stays on the card: its credential, the provider's identities, its
+ * app and the channels its bot is in. A card whose address went says so, as a cut one does.
+ *
+ * @param surface - The surface before the move.
+ */
+function reapprovePatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+  const patch = cutPatch(surface);
+  return {
+    ...patch,
+    reason: patch.reason === HANDOVER_CUT_REASON ? HANDOVER_REAPPROVE_REASON : patch.reason,
+    credentialId: surface.credentialId,
+    credentialKind: surface.credentialKind,
+    credentialLocation: surface.credentialLocation,
+    providerIdentityId: surface.providerIdentityId,
+    providerBotId: surface.providerBotId,
+    providerWorkspaceId: surface.providerWorkspaceId,
+    provisioning: surface.provisioning,
+    channelsNotJoined: surface.channelsNotJoined,
+  };
+}
+
+/**
  * Revoke the read grant a connection gave (`recordConnected`'s `<slug>:read`, source `surface`,
  * or no source on a row from before sources), so the scope comes back when the new manager's
  * connection lands. No `permission.revoked` event: that event is the manager's own revoke; the
@@ -3261,9 +3291,18 @@ export interface CutSurface {
   readonly boundCredentials: readonly Id<'credentials'>[];
 }
 
+/** One surface a handover returned for re-approval with the employee's own identity kept (A25). */
+export interface ReapprovedSurface {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly slug: string;
+  readonly displayName: string;
+}
+
 /** What {@link handOverSurfaces} did. */
 export interface HandedOverSurfaces {
   readonly cut: readonly CutSurface[];
+  /** The surfaces that kept the employee's own identity and wait for the new manager's approval. */
+  readonly reapproved: readonly ReapprovedSurface[];
   /** The read scopes the cut connections had granted, revoked with them. */
   readonly scopesRevoked: readonly string[];
 }
@@ -3272,8 +3311,10 @@ export interface HandedOverSurfaces {
  * Cut the employee's surfaces at a handover, in the move's transaction (the transfer plan,
  * section 6.3): each surface {@link surfaceHandoverOf} cuts goes back to `proposed` with the old
  * manager's credential, chat binding and approval cleared, its connection's read grant revoked
- * and a `surface.proposed` event, so the new manager's inbox asks for it; every surface loses the
- * quotes of documentation the new owner does not hold. The credentials themselves, and the
+ * and a `surface.proposed` event, so the new manager's inbox asks for it; each surface that acts
+ * as the employee's own identity obtained through IT's organisation connection goes back to
+ * `proposed` the same way with that identity kept, for the new manager to re-approve (A25); every
+ * surface loses the quotes of documentation the new owner does not hold. The credentials themselves, and the
  * pending jobs naming a cut surface, are the caller's: it sorts the first by the retire's rule
  * and cancels the second (`convex/reset.ts`), which this module cannot import.
  *
@@ -3294,6 +3335,7 @@ export async function handOverSurfaces(
     if (source?.userId === input.toOwnerKey) readable.add(sourceId);
   }
   const cut: CutSurface[] = [];
+  const reapproved: ReapprovedSurface[] = [];
   const scopesRevoked: string[] = [];
   for (const { surface, handover } of planned) {
     const quotes = withoutDepartedQuotes(surface, readable);
@@ -3339,11 +3381,34 @@ export async function handOverSurfaces(
         });
         break;
       }
+      case 'reapprove': {
+        const patch = reapprovePatch(surface);
+        await ctx.db.patch(surface._id, {
+          ...patch,
+          ...quotes,
+          request:
+            patch.endpoint === undefined ? requestWithoutLadder(quotes.request) : quotes.request,
+        });
+        const scope = await revokeConnectionGrant(ctx, surface, input.now);
+        if (scope !== undefined) scopesRevoked.push(scope);
+        await appendEvent(ctx, {
+          agentId: surface.agentId,
+          type: 'surface.proposed',
+          payload: { surfaceId: surface._id, ...(surface.path ? { path: surface.path } : {}) },
+          createdAt: input.now,
+        });
+        reapproved.push({
+          surfaceId: surface._id,
+          slug: surface.slug,
+          displayName: surface.displayName,
+        });
+        break;
+      }
       default: {
         const unknown: never = handover;
         throw new Error(`unhandled surface handover ${String(unknown)}`);
       }
     }
   }
-  return { cut, scopesRevoked };
+  return { cut, reapproved, scopesRevoked };
 }
