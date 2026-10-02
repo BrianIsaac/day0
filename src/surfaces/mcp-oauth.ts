@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   checkMcpAddress,
+  McpAddressRefusal,
   pinnedFetch,
   resolveHostname,
   type HostResolver,
@@ -57,6 +58,7 @@ export const MCP_OAUTH_REFUSALS = [
   'token-unavailable',
   'token-malformed',
   'registration-refused',
+  'revocation-refused',
 ] as const;
 
 /** One of {@link MCP_OAUTH_REFUSALS}. */
@@ -374,25 +376,32 @@ async function jsonOf(response: Response): Promise<unknown> {
   }
 }
 
+/** What one well-known URI gave: its document, or why it gave none (absent, not JSON, unreachable). */
+type Fetched = { readonly document: unknown } | { readonly failure?: unknown };
+
 /**
- * A GET of a metadata document, or undefined when that URL holds none or cannot be reached: the
- * revision has a client try every well-known URI, so one that fails is passed over, not fatal.
+ * A GET of a metadata document. A URL that holds none or cannot be reached is passed over by the
+ * caller (the revision has a client try every well-known URI), so a failure is returned, not thrown.
  */
-async function metadataAt(fetch: OauthFetch, url: URL): Promise<unknown> {
+async function metadataAt(fetch: OauthFetch, url: URL): Promise<Fetched> {
   let response: Response;
   try {
     response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
-  } catch {
-    // Not reachable at this URL (a transport failure, or an address the rules refuse): the next
-    // well-known URI is tried, and a discovery that finds none says so.
-    return undefined;
+  } catch (error) {
+    return { failure: error };
   }
   if (!response.ok) {
     await response.body?.cancel();
-    return undefined;
+    return {};
   }
-  return await jsonOf(response);
+  const document = await jsonOf(response);
+  return document === undefined ? {} : { document };
 }
+
+/** What trying the candidate URLs found: a value, or the first refusal and any address refusal. */
+type Found<T> =
+  | { readonly value: T }
+  | { readonly refusal?: McpOauthRefusal; readonly addressRefusal?: McpAddressRefusal };
 
 /**
  * The first candidate URL whose document validates, trying each in order; a document that fails
@@ -402,26 +411,39 @@ async function firstValid<T>(
   fetch: OauthFetch,
   candidates: readonly URL[],
   read: (document: unknown) => T,
-): Promise<{ readonly value: T } | { readonly refusal?: McpOauthRefusal }> {
+): Promise<Found<T>> {
   let refusal: McpOauthRefusal | undefined;
+  let addressRefusal: McpAddressRefusal | undefined;
   for (const url of candidates) {
-    const document = await metadataAt(fetch, url);
-    if (document === undefined) continue;
+    const fetched = await metadataAt(fetch, url);
+    if (!('document' in fetched)) {
+      if (fetched.failure instanceof McpAddressRefusal) addressRefusal ??= fetched.failure;
+      continue;
+    }
     try {
-      return { value: read(document) };
+      return { value: read(fetched.document) };
     } catch (error) {
       if (!(error instanceof McpOauthRefusal)) throw error;
       refusal ??= error;
     }
   }
-  return refusal ? { refusal } : {};
+  return { ...(refusal ? { refusal } : {}), ...(addressRefusal ? { addressRefusal } : {}) };
+}
+
+/** Why nothing was found: the first refusal, else an address the rules refused, else the fallback. */
+function notFound(
+  found: { readonly refusal?: McpOauthRefusal; readonly addressRefusal?: McpAddressRefusal },
+  fallback: McpOauthRefusal,
+): Error {
+  return found.refusal ?? found.addressRefusal ?? fallback;
 }
 
 /**
  * Fetch and validate an issuer's metadata, trying the revision's well-known URIs in order.
  *
  * @throws McpOauthRefusal the first validation's refusal when no document passes, or
- *   `no-authorisation-server` when none answers with a document.
+ *   `no-authorisation-server` when none answers with a document; McpAddressRefusal when none
+ *   answered and one was refused by the address rules.
  */
 export async function fetchAuthorisationServerMetadata(
   fetch: OauthFetch,
@@ -432,12 +454,12 @@ export async function fetchAuthorisationServerMetadata(
     readAuthorisationServerMetadata(document, issuer, options),
   );
   if ('value' in found) return found.value;
-  throw (
-    found.refusal ??
+  throw notFound(
+    found,
     new McpOauthRefusal(
       'no-authorisation-server',
       `The authorisation server ${issuer} publishes no metadata Day0 can read.`,
-    )
+    ),
   );
 }
 
@@ -462,8 +484,9 @@ async function challengeOf(fetch: OauthFetch, endpoint: URL): Promise<BearerChal
         },
       }),
     });
-  } catch {
-    // No challenge to read: discovery goes on to the well-known URIs, as for a server that sends none.
+  } catch (error) {
+    // The server's own address refused by the rules: no rung can reach it, so discovery stops.
+    if (error instanceof McpAddressRefusal) throw error;
     return undefined;
   }
   await response.body?.cancel();
@@ -516,7 +539,8 @@ function chosenIssuer(metadata: ProtectedResourceMetadata, registered: string | 
  * @param options.issuer - The issuer the organisation registered its client with; when given,
  *   the resource must list it (a client id is unique to the server that issued it); when not, the
  *   resource must list exactly one.
- * @throws McpOauthRefusal for every way the server's documents fail the revision's rules.
+ * @throws McpOauthRefusal for every way the server's documents fail the revision's rules;
+ *   McpAddressRefusal when the rules refuse the server's own address, or every metadata address.
  */
 export async function discoverAuthorisation(
   fetch: OauthFetch,
@@ -531,12 +555,12 @@ export async function discoverAuthorisation(
     (document) => readProtectedResourceMetadata(document, resource),
   );
   if (!('value' in found)) {
-    throw (
-      found.refusal ??
+    throw notFound(
+      found,
       new McpOauthRefusal(
         'no-resource-metadata',
         'The server publishes no protected resource metadata, so Day0 cannot find where to authorise.',
-      )
+      ),
     );
   }
   const metadata = found.value;
@@ -697,24 +721,28 @@ function formEncoded(value: string): string {
   return new URLSearchParams({ value }).toString().slice('value='.length);
 }
 
-function tokenRequestInit(request: TokenRequest): RequestInit {
-  const form = new URLSearchParams(grantFields(request.grant));
+/** A token or revocation request's form and headers, the client authenticated as `auth` says. */
+function authenticatedRequest(
+  fields: Record<string, string>,
+  clientId: string,
+  auth: ClientAuthentication,
+): RequestInit {
+  const form = new URLSearchParams(fields);
   const headers: Record<string, string> = {
     'content-type': 'application/x-www-form-urlencoded',
     accept: 'application/json',
   };
-  const auth = request.auth;
   switch (auth.method) {
     case 'none':
-      form.set('client_id', request.clientId);
+      form.set('client_id', clientId);
       break;
     case 'client_secret_post':
-      form.set('client_id', request.clientId);
+      form.set('client_id', clientId);
       form.set('client_secret', auth.secret);
       break;
     case 'client_secret_basic': {
       // RFC 6749 section 2.3.1: each part form-encoded before the pair is base64-encoded.
-      const pair = `${formEncoded(request.clientId)}:${formEncoded(auth.secret)}`;
+      const pair = `${formEncoded(clientId)}:${formEncoded(auth.secret)}`;
       headers.authorization = `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;
       break;
     }
@@ -723,8 +751,15 @@ function tokenRequestInit(request: TokenRequest): RequestInit {
       throw new Error(`unhandled client authentication ${String(unknown)}`);
     }
   }
-  form.set('resource', request.resource);
   return { method: 'POST', headers, body: form.toString() };
+}
+
+function tokenRequestInit(request: TokenRequest): RequestInit {
+  return authenticatedRequest(
+    { ...grantFields(request.grant), resource: request.resource },
+    request.clientId,
+    request.auth,
+  );
 }
 
 /**
@@ -798,6 +833,39 @@ export async function requestTokens(
 ): Promise<IssuedTokens> {
   const response = await fetch(new URL(request.tokenEndpoint), tokenRequestInit(request));
   return readTokenResponse(response.status, await jsonOf(response), now);
+}
+
+/** One revocation request (RFC 7009). */
+export interface RevocationRequest {
+  readonly revocationEndpoint: string;
+  readonly clientId: string;
+  readonly auth: ClientAuthentication;
+  readonly token: string;
+  readonly tokenTypeHint: 'access_token' | 'refresh_token';
+}
+
+/**
+ * Revoke one token at the authorisation server (RFC 7009): a token Day0 was issued and will not
+ * keep, so it does not stay live at the vendor unrecorded.
+ *
+ * @throws McpOauthRefusal `revocation-refused` when the server does not answer 200.
+ */
+export async function revokeToken(fetch: OauthFetch, request: RevocationRequest): Promise<void> {
+  const response = await fetch(
+    new URL(request.revocationEndpoint),
+    authenticatedRequest(
+      { token: request.token, token_type_hint: request.tokenTypeHint },
+      request.clientId,
+      request.auth,
+    ),
+  );
+  await response.body?.cancel();
+  if (response.status !== 200) {
+    throw new McpOauthRefusal(
+      'revocation-refused',
+      `The authorisation server did not revoke the token (HTTP ${response.status}).`,
+    );
+  }
 }
 
 /** A client registered dynamically. */

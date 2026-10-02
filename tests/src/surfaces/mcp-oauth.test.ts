@@ -24,6 +24,7 @@ import {
   readTokenResponse,
   registerClient,
   requestTokens,
+  revokeToken,
   type AuthorisationServerMetadata,
   type OauthFetch,
 } from '../../../src/surfaces/mcp-oauth';
@@ -357,6 +358,29 @@ describe('discovery', (): void => {
     );
   });
 
+  it("refuses at once when the server's own address is refused, and names a refused metadata address when nothing else answers", async (): Promise<void> => {
+    const refusing = addressCheckedFetch({
+      resolve: async (): Promise<string[]> => ['10.0.0.8'],
+      privateHosts: privateHostAllowlist(''),
+    });
+    await expect(discoverAuthorisation(refusing, new URL(RESOURCE))).rejects.toThrow(
+      McpAddressRefusal,
+    );
+    const server = issuer();
+    const metadataRefused: OauthFetch = async (url, init) => {
+      if (url.pathname.startsWith('/.well-known/')) {
+        throw new McpAddressRefusal(
+          'The approved MCP hostname resolved to a private address.',
+          true,
+        );
+      }
+      return await fetchTo(server)(url, init);
+    };
+    await expect(discoverAuthorisation(metadataRefused, new URL(RESOURCE))).rejects.toThrow(
+      McpAddressRefusal,
+    );
+  });
+
   it('gives every request a timeout when the caller set none', async (): Promise<void> => {
     const server = issuer();
     const signals: (AbortSignal | undefined)[] = [];
@@ -648,6 +672,74 @@ describe('the token requests', (): void => {
     expect(readTokenResponse(200, { access_token: 'x', token_type: 'bearer' }, 0)).toEqual({
       accessToken: 'x',
     });
+  });
+});
+
+describe('revoking a token (RFC 7009)', (): void => {
+  it('revokes a refresh token at the server with the client authentication', async (): Promise<void> => {
+    const server = issuer();
+    const pair = newPkcePair();
+    const url = authorisationUrl({
+      server: METADATA,
+      clientId: CLIENT,
+      redirectUrl: REDIRECT,
+      state: 's',
+      challenge: pair.challenge,
+      resource: RESOURCE,
+      scopes: ['read'],
+    });
+    url.searchParams.set('login_hint', 'priya');
+    const code =
+      new URL(
+        (await server.handle(new Request(url))).headers.get('location') ?? '',
+      ).searchParams.get('code') ?? '';
+    const issued = await requestTokens(
+      fetchTo(server),
+      {
+        tokenEndpoint: METADATA.tokenEndpoint,
+        clientId: CLIENT,
+        auth: { method: 'none' },
+        resource: RESOURCE,
+        grant: {
+          grant: 'authorization_code',
+          code,
+          redirectUrl: REDIRECT,
+          verifier: pair.verifier,
+        },
+      },
+      0,
+    );
+    const sent: Sent[] = [];
+    await revokeToken(fetchTo(server, sent), {
+      revocationEndpoint: `${ISSUER}/revoke`,
+      clientId: CLIENT,
+      auth: { method: 'none' },
+      token: issued.refreshToken ?? '',
+      tokenTypeHint: 'refresh_token',
+    });
+    expect(Object.fromEntries(new URLSearchParams(sent[0].body))).toEqual({
+      token: issued.refreshToken,
+      token_type_hint: 'refresh_token',
+      client_id: CLIENT,
+    });
+    const state = (await (await server.handle(new Request(`${ISSUER}/admin/state`))).json()) as {
+      liveRefreshTokens: number;
+    };
+    expect(state.liveRefreshTokens).toBe(0);
+  });
+
+  it('says so when the server refuses the revocation', async (): Promise<void> => {
+    const refusing: OauthFetch = async () =>
+      Response.json({ error: 'invalid_client' }, { status: 401 });
+    await expect(
+      revokeToken(refusing, {
+        revocationEndpoint: `${ISSUER}/revoke`,
+        clientId: CLIENT,
+        auth: { method: 'none' },
+        token: 't',
+        tokenTypeHint: 'refresh_token',
+      }),
+    ).rejects.toThrow('HTTP 401');
   });
 });
 
