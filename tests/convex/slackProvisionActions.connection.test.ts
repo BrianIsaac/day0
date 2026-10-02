@@ -333,6 +333,25 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     ]);
   });
 
+  it('rotates and tries once more when Slack refuses a token Day0 holds as current', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, maya.surfaceId);
+    // Slack ends the token early (an administrator revoked it, or Slack's clock is ahead).
+    slack.configuration.issuedAt = Date.now() - 12 * HOUR;
+
+    const made = await provision(harness, leo.surfaceId);
+
+    expect(made.appId).toBe('A0APP2');
+    expect(callsOf(slack, 'apps.manifest.create').map((call) => call.bearer)).toEqual([
+      'xoxe.xoxp-1-cfg1',
+      'xoxe.xoxp-1-cfg1',
+      'xoxe.xoxp-1-cfg2',
+    ]);
+  });
+
   it("loses a concurrent rotation, re-reads, and uses the winner's token", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const connectionId = await landSlack(harness);
@@ -511,6 +530,44 @@ describe('keeping the configuration token current (B9; 11-AR re-check)', (): voi
     await passHours(harness, 24);
 
     expect(callsOf(slack, 'tooling.tokens.rotate')).toHaveLength(1);
+  });
+
+  it("keeps trying a renewal Slack could not answer, past the token's twelve hours, and renews once Slack answers", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    await provision(harness, maya.surfaceId);
+    slack.refusals.set('tooling.tokens.rotate', 'service_unavailable');
+
+    // One renewal a step: the clock moves an hour at a time. The old cap stopped at five tries.
+    await passHours(harness, 18);
+    const tries = callsOf(slack, 'tooling.tokens.rotate').length;
+    expect(tries).toBeGreaterThan(5);
+    slack.refusals.delete('tooling.tokens.rotate');
+    await passHours(harness, 1);
+
+    expect(callsOf(slack, 'tooling.tokens.rotate').length).toBe(tries + 1);
+    const row = await configurationRow(harness, connectionId);
+    expect(row.generation).toBe(2);
+    expect(await opened(harness, row._id)).toBe(slack.configuration.token);
+    expect(await harness.run(async (ctx) => await ctx.db.get(connectionId))).toMatchObject({
+      status: 'active',
+    });
+  });
+
+  it('stops renewing once Slack refuses the refresh token, leaving the connection for IT', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    await provision(harness, maya.surfaceId);
+    slack.refusals.set('tooling.tokens.rotate', 'invalid_refresh_token');
+
+    await passHours(harness, 24);
+
+    expect(callsOf(slack, 'tooling.tokens.rotate')).toHaveLength(2);
+    expect(await harness.run(async (ctx) => await ctx.db.get(connectionId))).toMatchObject({
+      status: 'needs-attention',
+    });
   });
 
   it('records app-deleted for a retire on a connection landed 13 hours earlier', async (): Promise<void> => {

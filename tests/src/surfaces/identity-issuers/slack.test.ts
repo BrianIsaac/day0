@@ -7,6 +7,7 @@ import {
   CONFIGURATION_KEEP_CURRENT_BEFORE_MS,
   CONFIGURATION_RENEW_BEFORE_MS,
   CONFIGURATION_TOKEN_LIFETIME_MS,
+  KEEP_CURRENT_MIN_DELAY_MS,
   configurationRenewal,
   keepCurrentAt,
   parseTokenRotation,
@@ -90,10 +91,12 @@ describe('the configuration token before a use (B9, S2)', (): void => {
     expect(CONFIGURATION_KEEP_CURRENT_BEFORE_MS).toBeGreaterThan(CONFIGURATION_RENEW_BEFORE_MS);
   });
 
-  it('keeps the token current an hour before it lapses, and never in the past', (): void => {
+  it('keeps the token current an hour before it lapses, and never sooner than a quarter-hour', (): void => {
     const expiresAt = NOW + CONFIGURATION_TOKEN_LIFETIME_MS;
     expect(keepCurrentAt(expiresAt, NOW)).toBe(expiresAt - CONFIGURATION_KEEP_CURRENT_BEFORE_MS);
-    expect(keepCurrentAt(NOW + 10_000, NOW)).toBe(NOW);
+    expect(keepCurrentAt(NOW + 10_000, NOW)).toBe(NOW + KEEP_CURRENT_MIN_DELAY_MS);
+    expect(keepCurrentAt(NOW - HOUR, NOW)).toBe(NOW + KEEP_CURRENT_MIN_DELAY_MS);
+    expect(KEEP_CURRENT_MIN_DELAY_MS).toBe(15 * 60 * 1000);
   });
 });
 
@@ -110,6 +113,22 @@ describe("reading Slack's rotation", (): void => {
       refreshToken: 'xoxe-1-klmnopqrst',
       expiresAt: exp * 1000,
     });
+  });
+
+  it('holds a stated expiry to the documented twelve hours, and one already past to now', (): void => {
+    const seconds = Math.floor(NOW / 1000);
+    expect(
+      parseTokenRotation(
+        { ok: true, token: 'xoxe-1-a', refresh_token: 'xoxe-1-b', exp: seconds + 48 * 60 * 60 },
+        NOW,
+      ).expiresAt,
+    ).toBe(NOW + CONFIGURATION_TOKEN_LIFETIME_MS);
+    expect(
+      parseTokenRotation(
+        { ok: true, token: 'xoxe-1-a', refresh_token: 'xoxe-1-b', exp: seconds - 60 },
+        NOW,
+      ).expiresAt,
+    ).toBe(NOW);
   });
 
   it('takes the documented twelve hours where Slack stated no expiry', (): void => {

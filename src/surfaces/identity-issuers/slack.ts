@@ -35,6 +35,12 @@ export const CONFIGURATION_RENEW_BEFORE_MS = 30 * 60 * 1000;
  */
 export const CONFIGURATION_KEEP_CURRENT_BEFORE_MS = 60 * 60 * 1000;
 
+/**
+ * The soonest the next renewal runs after one is queued, so a token Slack says lapses within the
+ * hour (or one whose expiry is already past) is renewed every quarter-hour at most, never in a loop.
+ */
+export const KEEP_CURRENT_MIN_DELAY_MS = 15 * 60 * 1000;
+
 /** Why an app cannot be created: the organisation has no Slack connection, and nothing was pasted. */
 export const NO_CONFIGURATION_TOKEN =
   "Paste an app configuration token: the organisation has no active Slack connection to create this employee's app with.";
@@ -101,13 +107,17 @@ export function configurationRenewal(held: HeldConfiguration, now: number): 'use
 
 /**
  * When the kept token is next renewed though nothing uses it: {@link
- * CONFIGURATION_KEEP_CURRENT_BEFORE_MS} before it lapses, or now when that is already past.
+ * CONFIGURATION_KEEP_CURRENT_BEFORE_MS} before it lapses, and never sooner than {@link
+ * KEEP_CURRENT_MIN_DELAY_MS} from now.
  *
  * @param expiresAt - When the token lapses.
  * @param now - The instant the renewal is scheduled at.
  */
 export function keepCurrentAt(expiresAt: number, now: number): number {
-  return Math.max(now, expiresAt - CONFIGURATION_KEEP_CURRENT_BEFORE_MS);
+  return Math.max(
+    now + KEEP_CURRENT_MIN_DELAY_MS,
+    expiresAt - CONFIGURATION_KEEP_CURRENT_BEFORE_MS,
+  );
 }
 
 /** A rotated configuration pair, as `tooling.tokens.rotate` returned it. */
@@ -119,7 +129,8 @@ export interface RotatedConfiguration {
 
 /**
  * Read `tooling.tokens.rotate`'s answer: the new configuration token, the new refresh token, and
- * the expiry Slack states (`exp`, in seconds), else the documented twelve hours from now.
+ * the expiry Slack states (`exp`, in seconds) held between now and the documented twelve hours,
+ * else the twelve hours.
  *
  * @param payload - Slack's successful answer.
  * @param now - The instant of the rotation.
@@ -136,10 +147,13 @@ export function parseTokenRotation(
   if (typeof refreshToken !== 'string' || refreshToken === '') {
     throw new Error('Slack tooling.tokens.rotate returned no new refresh token.');
   }
+  const longest = now + CONFIGURATION_TOKEN_LIFETIME_MS;
+  // Slack's stated expiry is held to the documented twelve hours, and one already past to now
+  // (renewed at its next use), so a bad clock on either side never keeps a token past its life.
   const expiresAt =
     typeof exp === 'number' && Number.isFinite(exp) && exp > 0
-      ? exp * 1000
-      : now + CONFIGURATION_TOKEN_LIFETIME_MS;
+      ? Math.min(Math.max(exp * 1000, now), longest)
+      : longest;
   return { token, refreshToken, expiresAt };
 }
 
@@ -155,6 +169,23 @@ const SPENT_REFRESH_ERRORS: ReadonlySet<string> = new Set([
   'not_authed',
   'account_inactive',
 ]);
+
+/** The errors that say Slack no longer accepts a configuration token Day0 holds as current. */
+const REFUSED_TOKEN_ERRORS: ReadonlySet<string> = new Set([
+  'invalid_auth',
+  'not_authed',
+  'token_expired',
+  'token_revoked',
+]);
+
+/**
+ * Whether Slack refused the configuration token itself, so a use rotates it and tries once more.
+ *
+ * @param error - Slack's error word, when it gave one.
+ */
+export function configurationTokenRefused(error: string | undefined): boolean {
+  return error !== undefined && REFUSED_TOKEN_ERRORS.has(error);
+}
 
 /**
  * What a refused rotation means: the refresh token is spent (IT generates a new pair), or the

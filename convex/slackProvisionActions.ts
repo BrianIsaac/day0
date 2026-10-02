@@ -24,6 +24,7 @@ import {
 } from '../src/lib/oauth-state';
 import {
   configurationRenewal,
+  configurationTokenRefused,
   KEPT_APP_CONNECTION_REVOKED,
   NO_CONFIGURATION_TOKEN,
   parseTokenRotation,
@@ -266,10 +267,11 @@ const provisionDependencies: ProvisionDependencies = {
 /** How many times a use re-reads the configuration token after losing to a concurrent rotation. */
 const ROTATION_READS = 3;
 
-/** A configuration token that opens, and the connection it is for. */
+/** A configuration token that opens, the connection it is for, and whether this use rotated it. */
 interface UsableConfiguration {
   readonly connection: Doc<'organisationConnections'>;
   readonly token: string;
+  readonly rotated: boolean;
 }
 
 /** The value a snapshot's row holds, opened from that snapshot (never re-read). */
@@ -339,7 +341,7 @@ async function rotateConfiguration(
       now: dependencies.now(),
     });
     if (moved) return { kind: 'moved' };
-    throw new Error(reason);
+    throw new SlackCallError(reason, slackErrorOf(error));
   }
   const recorded: RotationRecorded = await ctx.runMutation(internal.slackProvision.recordRotation, {
     ...identity,
@@ -356,12 +358,14 @@ async function rotateConfiguration(
  * left, else rotated first (B9). A rotation that lost to a concurrent one reads the winner's.
  *
  * @param organisationConnectionId - The Slack configuration connection.
+ * @param options.rotate - Rotate whatever the token's expiry says, as after Slack refused it.
  * @throws Error when the connection holds no live token, or Slack refused the rotation.
  */
 async function currentConfiguration(
   ctx: ActionCtx,
   organisationConnectionId: Id<'organisationConnections'>,
   dependencies: ProvisionDependencies,
+  options: { readonly rotate: boolean } = { rotate: false },
 ): Promise<UsableConfiguration> {
   for (let read = 0; read < ROTATION_READS; read += 1) {
     const held: HeldConfigurationRows | null = await ctx.runQuery(
@@ -369,16 +373,23 @@ async function currentConfiguration(
       { organisationConnectionId },
     );
     if (held === null) throw new Error(NO_CONFIGURATION_TOKEN);
-    const renewal = configurationRenewal(
-      {
-        ...(held.secret.expiresAt === undefined ? {} : { expiresAt: held.secret.expiresAt }),
-        refreshable: held.refresh !== null,
-      },
-      dependencies.now(),
-    );
-    if (renewal === 'use') return { connection: held.connection, token: openHeld(held.secret) };
+    const renewal =
+      options.rotate && held.refresh !== null
+        ? 'rotate'
+        : configurationRenewal(
+            {
+              ...(held.secret.expiresAt === undefined ? {} : { expiresAt: held.secret.expiresAt }),
+              refreshable: held.refresh !== null,
+            },
+            dependencies.now(),
+          );
+    if (renewal === 'use') {
+      return { connection: held.connection, token: openHeld(held.secret), rotated: false };
+    }
     const outcome = await rotateConfiguration(ctx, held, dependencies);
-    if (outcome.kind === 'rotated') return { connection: held.connection, token: outcome.token };
+    if (outcome.kind === 'rotated') {
+      return { connection: held.connection, token: outcome.token, rotated: true };
+    }
   }
   throw new Error(
     "The organisation's Slack configuration token kept changing while Day0 read it; try again.",
@@ -443,7 +454,9 @@ async function createApp(
 
 /**
  * Create the app with the organisation's Slack configuration connection: its token made current
- * first, and the call written on the connection's ledger whatever Slack answered.
+ * first, and the call written on the connection's ledger whatever Slack answered. When Slack
+ * refuses a token Day0 held as current (revoked, or ended early), it is rotated and the creation
+ * tried once more.
  */
 async function createThroughConnection(
   ctx: ActionCtx,
@@ -453,24 +466,45 @@ async function createThroughConnection(
   built: SlackAppManifest,
   dependencies: ProvisionDependencies,
 ): Promise<CreatedApp> {
-  const { token } = await currentConfiguration(ctx, organisationConnectionId, dependencies);
+  const recordUse = async (outcome: {
+    readonly appId?: string;
+    readonly failure?: string;
+  }): Promise<void> => {
+    await ctx.runMutation(internal.slackProvision.recordConfigurationUse, {
+      organisationConnectionId,
+      method: 'apps.manifest.create',
+      outcome: outcome.failure === undefined ? 'done' : 'failed',
+      ...(outcome.failure === undefined ? {} : { reason: outcome.failure }),
+      ...(outcome.appId === undefined ? {} : { appId: outcome.appId }),
+      now: dependencies.now(),
+    });
+  };
+  const current = await currentConfiguration(ctx, organisationConnectionId, dependencies);
+  try {
+    const created = await createApp(
+      ctx,
+      surface,
+      ownerKey,
+      current.token,
+      built,
+      dependencies,
+      recordUse,
+    );
+    return { ...created, organisationConnectionId };
+  } catch (error: unknown) {
+    if (current.rotated || !configurationTokenRefused(slackErrorOf(error))) throw error;
+  }
+  const renewed = await currentConfiguration(ctx, organisationConnectionId, dependencies, {
+    rotate: true,
+  });
   const created = await createApp(
     ctx,
     surface,
     ownerKey,
-    token,
+    renewed.token,
     built,
     dependencies,
-    async (outcome): Promise<void> => {
-      await ctx.runMutation(internal.slackProvision.recordConfigurationUse, {
-        organisationConnectionId,
-        method: 'apps.manifest.create',
-        outcome: outcome.failure === undefined ? 'done' : 'failed',
-        ...(outcome.failure === undefined ? {} : { reason: outcome.failure }),
-        ...(outcome.appId === undefined ? {} : { appId: outcome.appId }),
-        now: dependencies.now(),
-      });
-    },
+    recordUse,
   );
   return { ...created, organisationConnectionId };
 }
@@ -761,11 +795,14 @@ export const provisionApp = action({
 /** How long a paused deployment's renewal waits before it looks again. */
 const KEEP_CURRENT_PAUSED_RETRY_MS = 60 * 60 * 1000;
 
-/** How long a renewal Slack could not answer waits before its next try. */
+/** How long a renewal Slack could not answer waits before its next try, for its first tries. */
 const KEEP_CURRENT_RETRY_MS = 15 * 60 * 1000;
 
-/** How many times a renewal Slack could not answer is tried. */
-const KEEP_CURRENT_ATTEMPTS = 4;
+/** How many tries wait {@link KEEP_CURRENT_RETRY_MS}; each later one waits an hour. */
+const KEEP_CURRENT_QUICK_RETRIES = 4;
+
+/** How long each later try waits: past the token's lapse the refresh token still renews it. */
+const KEEP_CURRENT_SLOW_RETRY_MS = 60 * 60 * 1000;
 
 /** One scheduled renewal: the connection and the token generation it was queued for. */
 interface KeepCurrentJob {
@@ -781,8 +818,11 @@ interface KeepCurrentJob {
  * finds it current. Each rotation queues the next ({@link keepCurrentAt}); a job finds nothing to
  * do when the connection is revoked or needs IT, or when another rotation moved the pair on
  * (that rotation queued its own). A token IT rotated by hand since is adopted and renewed at once.
- * A paused deployment calls no vendor (`DAY0_CRONS_PAUSED`), and looks again an hour later; a
- * renewal Slack could not answer is tried again a few times, and the next use rotates on demand.
+ * A paused deployment calls no vendor (`DAY0_CRONS_PAUSED`), and looks again an hour later. A
+ * renewal Slack could not answer is tried again, every quarter-hour at first and then hourly, for
+ * as long as the connection stands: the refresh token renews the token after it lapses too, and a
+ * retire needs it current (11-AR). Slack's refusal of the refresh token ends the renewals, the
+ * connection left for IT (`needs-attention`).
  */
 async function runKeepConfigurationCurrent(
   ctx: ActionCtx,
@@ -816,9 +856,9 @@ async function runKeepConfigurationCurrent(
       spent,
       reason: error instanceof Error ? error.message : String(error),
     });
-    if (spent || attempt >= KEEP_CURRENT_ATTEMPTS) return;
+    if (spent) return;
     await ctx.scheduler.runAfter(
-      KEEP_CURRENT_RETRY_MS,
+      attempt <= KEEP_CURRENT_QUICK_RETRIES ? KEEP_CURRENT_RETRY_MS : KEEP_CURRENT_SLOW_RETRY_MS,
       internal.slackProvisionActions.keepConfigurationCurrent,
       {
         organisationConnectionId: job.organisationConnectionId,
