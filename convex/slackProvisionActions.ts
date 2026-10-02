@@ -586,6 +586,46 @@ export async function runProvisionApp(
   configurationToken: string | undefined,
   dependencies: ProvisionDependencies = provisionDependencies,
 ): Promise<ProvisionOutcome> {
+  const { agent, surface, ownerKey } = await provisionableCard(ctx, surfaceId);
+  const pasted = configurationToken?.trim() || undefined;
+  const publicUrl = publicUrlOrThrow();
+  const now = dependencies.now();
+  const kept = surface.provisioning;
+  if (kept) {
+    // A token pasted for an app the card already has is not needed: revoked unused rather than
+    // left live for twelve hours.
+    if (pasted) await revokeConfigurationToken(ctx, dependencies.fetch, surface, pasted);
+    return await reissueKeptApp(ctx, surface, kept, dependencies, now);
+  }
+  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+    agentId: surface.agentId,
+  });
+  const built = slackAppManifest({
+    documentation: pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+    employeeName: agent.name,
+    publicUrl,
+  });
+  const created = await createEmployeeApp(ctx, surface, ownerKey, pasted, built, dependencies);
+  return await recordCreatedApp(ctx, surface, created, built, dependencies, now);
+}
+
+/** The card an app is provisioned for, its employee, and the owner the action started under. */
+interface ProvisionableCard {
+  readonly agent: Doc<'agents'>;
+  readonly surface: Doc<'surfaces'>;
+  readonly ownerKey: string;
+}
+
+/**
+ * Read the card and refuse one that cannot have its own Slack app: not a chat card, not approved,
+ * already holding a connected app's identity, or documented at another host than Slack's.
+ *
+ * @throws Error naming why the card cannot have an app.
+ */
+async function provisionableCard(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+): Promise<ProvisionableCard> {
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) throw new Error('Surface not found.');
   const { agent, surface } = context;
@@ -608,59 +648,83 @@ export async function runProvisionApp(
   if (!surface.endpoint?.startsWith(SLACK_API)) {
     throw new Error('The documented endpoint is not the approved Slack host.');
   }
-  const pasted = configurationToken?.trim() || undefined;
-  const publicUrl = publicUrlOrThrow();
-  const now = dependencies.now();
+  return { agent, surface, ownerKey: agent.userId };
+}
+
+/**
+ * File a fresh install link for the app the card already has: the second click before its install,
+ * or the renewal after an expiry or a Disconnect (A26's `reissue: 'install'`), with no
+ * configuration token and never a second app (P3-17). An app whose creating connection IT revoked
+ * is not installed again.
+ *
+ * @throws Error with {@link KEPT_APP_CONNECTION_REVOKED}.
+ */
+async function reissueKeptApp(
+  ctx: ActionCtx,
+  surface: Doc<'surfaces'>,
+  kept: NonNullable<Doc<'surfaces'>['provisioning']>,
+  dependencies: ProvisionDependencies,
+  now: number,
+): Promise<ProvisionOutcome> {
+  if (kept.organisationConnectionId !== undefined) {
+    const creator: Doc<'organisationConnections'> | null = await ctx.runQuery(
+      internal.organisationConnections.getInternal,
+      { organisationConnectionId: kept.organisationConnectionId },
+    );
+    if (creator?.status === 'revoked') throw new Error(KEPT_APP_CONNECTION_REVOKED);
+  }
+  const link = installLink(surface, kept, dependencies, now);
+  await ctx.runMutation(internal.slackProvision.recordInstallLink, {
+    surfaceId: surface._id,
+    appId: kept.appId,
+    ...link,
+    now,
+  });
+  return { appId: kept.appId, appName: kept.appName, installUrl: link.installUrl };
+}
+
+/**
+ * Create the employee's app: with the organisation's Slack configuration connection where there
+ * is one (B9), else with the token pasted on the card (Q8 (b)). A token pasted beside a connection
+ * is the fallback when the connection cannot create the app (its refresh token spent, say), and is
+ * revoked unused when it can, after the creation rather than before, so a failing connection never
+ * costs the manager the token they pasted.
+ *
+ * @throws Error with {@link NO_CONFIGURATION_TOKEN} when there is neither, else Slack's refusal.
+ */
+async function createEmployeeApp(
+  ctx: ActionCtx,
+  surface: Doc<'surfaces'>,
+  ownerKey: string,
+  pasted: string | undefined,
+  built: SlackAppManifest,
+  dependencies: ProvisionDependencies,
+): Promise<CreatedApp> {
   const connection = await activeConfigurationConnection(ctx);
-  // A token pasted on the card is not needed beside the organisation's connection, or for an app
-  // the card already has: it is revoked unused rather than left live for twelve hours.
-  if (pasted && (connection !== null || surface.provisioning)) {
-    await revokeConfigurationToken(ctx, dependencies.fetch, surface, pasted);
+  if (connection === null) {
+    if (pasted === undefined) throw new Error(NO_CONFIGURATION_TOKEN);
+    return await createWithPastedToken(ctx, surface, ownerKey, pasted, built, dependencies);
   }
-
-  const kept = surface.provisioning;
-  if (kept) {
-    if (kept.organisationConnectionId !== undefined) {
-      const creator: Doc<'organisationConnections'> | null = await ctx.runQuery(
-        internal.organisationConnections.getInternal,
-        { organisationConnectionId: kept.organisationConnectionId },
-      );
-      if (creator?.status === 'revoked') throw new Error(KEPT_APP_CONNECTION_REVOKED);
-    }
-    const link = installLink(surface, kept, dependencies, now);
-    await ctx.runMutation(internal.slackProvision.recordInstallLink, {
-      surfaceId: surface._id,
-      appId: kept.appId,
-      ...link,
-      now,
-    });
-    return { appId: kept.appId, appName: kept.appName, installUrl: link.installUrl };
-  }
-
-  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId: surface.agentId,
-  });
-  const built = slackAppManifest({
-    documentation: pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
-    employeeName: agent.name,
-    publicUrl,
-  });
   let created: CreatedApp;
-  if (connection !== null) {
+  try {
     created = await createThroughConnection(
       ctx,
       surface,
-      agent.userId,
+      ownerKey,
       connection._id,
       built,
       dependencies,
     );
-  } else if (pasted) {
-    created = await createWithPastedToken(ctx, surface, agent.userId, pasted, built, dependencies);
-  } else {
-    throw new Error(NO_CONFIGURATION_TOKEN);
+  } catch (error: unknown) {
+    if (pasted === undefined) throw error;
+    log.warn('slack app created with the pasted token: the connection could not', {
+      reason: safeFailureMessage(error, pasted, 'the connection failed'),
+    });
+    return await createWithPastedToken(ctx, surface, ownerKey, pasted, built, dependencies);
   }
-  return await recordCreatedApp(ctx, surface, created, built, dependencies, now);
+  if (pasted !== undefined)
+    await revokeConfigurationToken(ctx, dependencies.fetch, surface, pasted);
+  return created;
 }
 
 /**
@@ -970,8 +1034,9 @@ async function rejoinIntakeChannels(
 
 /**
  * Take back a bot token stored for an install that could not be recorded: revoked in Day0, and at
- * Slack, so no row the organisation holds is left live with nothing naming it. Never throws; the
- * install's own failure is the one the caller reports.
+ * Slack, each tried whatever the other did, so no row the organisation holds is left live with
+ * nothing naming it and no bot is left live at Slack. Never throws; the install's own failure is
+ * the one the caller reports, and each release that fails is logged.
  */
 async function releaseInstalledToken(
   ctx: ActionCtx,
@@ -979,13 +1044,20 @@ async function releaseInstalledToken(
   token: string,
   dependencies: ProvisionDependencies,
 ): Promise<void> {
-  try {
-    await ctx.runMutation(credentialInternal.credentials.revokeInternal, { credentialId });
-    await callSlack(dependencies.fetch, 'auth.revoke', { token, form: {} });
-  } catch (error: unknown) {
-    log.warn('an unrecorded install token was not fully released', {
-      reason: safeFailureMessage(error, token, 'the release failed'),
-    });
+  const [inDay0, atSlack] = await Promise.allSettled([
+    ctx.runMutation(credentialInternal.credentials.revokeInternal, { credentialId }),
+    callSlack(dependencies.fetch, 'auth.revoke', { token, form: {} }),
+  ]);
+  for (const [where, outcome] of [
+    ['in Day0', inDay0],
+    ['at Slack', atSlack],
+  ] as const) {
+    if (outcome.status === 'rejected') {
+      log.warn('an unrecorded install token was not released', {
+        where,
+        reason: safeFailureMessage(outcome.reason, token, 'the release failed'),
+      });
+    }
   }
 }
 
