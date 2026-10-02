@@ -728,6 +728,19 @@ describe('revoking a token (RFC 7009)', (): void => {
     expect(state.liveRefreshTokens).toBe(0);
   });
 
+  it('takes any 2xx as done, as a server answering 204 means it', async (): Promise<void> => {
+    const answering: OauthFetch = async () => new Response(null, { status: 204 });
+    await expect(
+      revokeToken(answering, {
+        revocationEndpoint: `${ISSUER}/revoke`,
+        clientId: CLIENT,
+        auth: { method: 'none' },
+        token: 't',
+        tokenTypeHint: 'refresh_token',
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it('says so when the server refuses the revocation', async (): Promise<void> => {
     const refusing: OauthFetch = async () =>
       Response.json({ error: 'invalid_client' }, { status: 401 });

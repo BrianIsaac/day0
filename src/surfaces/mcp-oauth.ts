@@ -376,32 +376,43 @@ async function jsonOf(response: Response): Promise<unknown> {
   }
 }
 
-/** What one well-known URI gave: its document, or why it gave none (absent, not JSON, unreachable). */
-type Fetched = { readonly document: unknown } | { readonly failure?: unknown };
+/**
+ * What one well-known URI gave: its document; an answer with none (absent, not JSON); or the
+ * failure that kept it from answering at all.
+ */
+type Fetched =
+  | { readonly document: unknown }
+  | { readonly answered: true }
+  | { readonly failure: unknown };
 
 /**
  * A GET of a metadata document. A URL that holds none or cannot be reached is passed over by the
  * caller (the revision has a client try every well-known URI), so a failure is returned, not thrown.
  */
 async function metadataAt(fetch: OauthFetch, url: URL): Promise<Fetched> {
-  let response: Response;
   try {
-    response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
+    const response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return { answered: true };
+    }
+    const document = await jsonOf(response);
+    return document === undefined ? { answered: true } : { document };
   } catch (error) {
     return { failure: error };
   }
-  if (!response.ok) {
-    await response.body?.cancel();
-    return {};
-  }
-  const document = await jsonOf(response);
-  return document === undefined ? {} : { document };
 }
 
-/** What trying the candidate URLs found: a value, or the first refusal and any address refusal. */
-type Found<T> =
-  | { readonly value: T }
-  | { readonly refusal?: McpOauthRefusal; readonly addressRefusal?: McpAddressRefusal };
+/** Why trying the candidate URLs found nothing: the first refusal, address refusal and transport failure. */
+interface NotFound {
+  readonly refusal?: McpOauthRefusal;
+  readonly addressRefusal?: McpAddressRefusal;
+  /** The first failure to reach a candidate, kept when no candidate answered at all. */
+  readonly unreachable?: Error;
+}
+
+/** What trying the candidate URLs found: a value, or why none. */
+type Found<T> = { readonly value: T } | NotFound;
 
 /**
  * The first candidate URL whose document validates, trying each in order; a document that fails
@@ -414,12 +425,19 @@ async function firstValid<T>(
 ): Promise<Found<T>> {
   let refusal: McpOauthRefusal | undefined;
   let addressRefusal: McpAddressRefusal | undefined;
+  let failure: Error | undefined;
+  let answered = false;
   for (const url of candidates) {
     const fetched = await metadataAt(fetch, url);
-    if (!('document' in fetched)) {
+    if ('failure' in fetched) {
       if (fetched.failure instanceof McpAddressRefusal) addressRefusal ??= fetched.failure;
+      else
+        failure ??=
+          fetched.failure instanceof Error ? fetched.failure : new Error(String(fetched.failure));
       continue;
     }
+    answered = true;
+    if (!('document' in fetched)) continue;
     try {
       return { value: read(fetched.document) };
     } catch (error) {
@@ -427,23 +445,28 @@ async function firstValid<T>(
       refusal ??= error;
     }
   }
-  return { ...(refusal ? { refusal } : {}), ...(addressRefusal ? { addressRefusal } : {}) };
+  return {
+    ...(refusal ? { refusal } : {}),
+    ...(addressRefusal ? { addressRefusal } : {}),
+    ...(!answered && failure ? { unreachable: failure } : {}),
+  };
 }
 
-/** Why nothing was found: the first refusal, else an address the rules refused, else the fallback. */
-function notFound(
-  found: { readonly refusal?: McpOauthRefusal; readonly addressRefusal?: McpAddressRefusal },
-  fallback: McpOauthRefusal,
-): Error {
-  return found.refusal ?? found.addressRefusal ?? fallback;
+/**
+ * Why nothing was found: the first refusal, else an address the rules refused, else the failure
+ * to reach a server that never answered (a transport error, which the caller reads as
+ * unreachable), else the fallback.
+ */
+function notFound(found: NotFound, fallback: McpOauthRefusal): Error {
+  return found.refusal ?? found.addressRefusal ?? found.unreachable ?? fallback;
 }
 
 /**
  * Fetch and validate an issuer's metadata, trying the revision's well-known URIs in order.
  *
  * @throws McpOauthRefusal the first validation's refusal when no document passes, or
- *   `no-authorisation-server` when none answers with a document; McpAddressRefusal when none
- *   answered and one was refused by the address rules.
+ *   `no-authorisation-server` when none answers with a document; McpAddressRefusal when one was
+ *   refused by the address rules; the transport's own error when no URL answered at all.
  */
 export async function fetchAuthorisationServerMetadata(
   fetch: OauthFetch,
@@ -540,7 +563,8 @@ function chosenIssuer(metadata: ProtectedResourceMetadata, registered: string | 
  *   the resource must list it (a client id is unique to the server that issued it); when not, the
  *   resource must list exactly one.
  * @throws McpOauthRefusal for every way the server's documents fail the revision's rules;
- *   McpAddressRefusal when the rules refuse the server's own address, or every metadata address.
+ *   McpAddressRefusal when the rules refuse the server's own address, or a metadata address; the
+ *   transport's own error when no metadata URL answered at all.
  */
 export async function discoverAuthorisation(
   fetch: OauthFetch,
@@ -848,7 +872,8 @@ export interface RevocationRequest {
  * Revoke one token at the authorisation server (RFC 7009): a token Day0 was issued and will not
  * keep, so it does not stay live at the vendor unrecorded.
  *
- * @throws McpOauthRefusal `revocation-refused` when the server does not answer 200.
+ * @throws McpOauthRefusal `revocation-refused` when the server does not answer with a 2xx (RFC
+ *   7009 names 200; a 204 means the same).
  */
 export async function revokeToken(fetch: OauthFetch, request: RevocationRequest): Promise<void> {
   const response = await fetch(
@@ -860,7 +885,7 @@ export async function revokeToken(fetch: OauthFetch, request: RevocationRequest)
     ),
   );
   await response.body?.cancel();
-  if (response.status !== 200) {
+  if (!response.ok) {
     throw new McpOauthRefusal(
       'revocation-refused',
       `The authorisation server did not revoke the token (HTTP ${response.status}).`,
