@@ -199,7 +199,7 @@ describe('what a renewal needs next, and the move off a pasted key (11-AR; A26, 
       </AgentZoneContext>,
     );
     expect(view.container.textContent).toContain('which keeps working until you move.');
-    await press(view.container, 'Move to its own identity');
+    await press(view.container, 'Move off the pasted key');
     expect(onMove).toHaveBeenCalledTimes(1);
     expect(underTarget(view.container)).toEqual([]);
     view.unmount();
@@ -216,6 +216,6 @@ describe('what a renewal needs next, and the move off a pasted key (11-AR; A26, 
         />
       </AgentZoneContext>,
     );
-    expect(markup).not.toContain('Move to its own identity');
+    expect(markup).not.toContain('Move off the pasted key');
   });
 });

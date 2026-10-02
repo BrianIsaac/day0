@@ -190,8 +190,8 @@ export function ExpiryBlock({
         <div className="grid gap-2 rounded-lg bg-[var(--color-inset)] p-3 text-sm">
           <p className="text-[var(--color-fg-2)]">{move.words}</p>
           <div>
-            <Button size="small" variant="primary" onClick={move.onMove}>
-              Move to its own identity
+            <Button size="small" onClick={move.onMove}>
+              Move off the pasted key
             </Button>
           </div>
         </div>

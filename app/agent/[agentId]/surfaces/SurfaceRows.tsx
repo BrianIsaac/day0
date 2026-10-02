@@ -386,8 +386,7 @@ export function ConnectRow(props: ConnectRowProps): React.ReactNode {
     <div className={INSET}>
       <p className="font-medium text-[var(--color-fg)]">Connect {props.system}</p>
       <p className="mt-1 text-[var(--color-fg-2)]">
-        IT connected {props.system} for your organisation, so there is nothing to paste: Connect
-        gives {props.employee} its access.
+        {`Nothing to paste: Connect gives ${props.employee} its access through IT's connection.`}
       </p>
       {props.startedAt !== undefined ? (
         <p className="mt-1 text-[var(--color-warn)]">
@@ -536,11 +535,11 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
         {accessRequestTitle(request.reason, props.system, props.employee)}
       </p>
       <p className="mt-1 text-[var(--color-fg-2)]">
-        Nothing changes until IT acts; then Connect appears here. This is what IT receives:
+        This is what IT receives. Connect appears here once IT acts.
       </p>
       <p
         id={textId}
-        className="mt-2 border-l-2 border-[var(--color-border-2)] pl-3 whitespace-pre-wrap break-words text-[var(--color-fg-2)]"
+        className="mt-2 border-l-2 border-[var(--color-border-2)] pl-3 text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-[var(--color-fg-2)]"
       >
         {request.text}
       </p>
@@ -634,7 +633,8 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
       {props.presentation.offerProvisioning && !props.presentation.asksForConfigurationToken ? (
         <div className="mt-3">
           <Button
-            variant="primary"
+            // The reinstall follows the renewal, the block's primary control above it.
+            variant={props.presentation.stage === 'reinstall' ? 'secondary' : 'primary'}
             size="small"
             disabled={props.provisioning}
             onClick={(): void => props.onProvision()}

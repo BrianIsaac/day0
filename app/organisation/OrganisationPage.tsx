@@ -6,7 +6,8 @@ import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { deploymentZone, formatStamp } from '@/lib/zone';
-import { Button } from '../components/Button';
+import Link from 'next/link';
+import { Button, buttonClass } from '../components/Button';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { Dialog } from '../components/Dialog';
@@ -81,6 +82,11 @@ export function OrganisationPage({ cardId, zone, navigate }: OrganisationPagePro
               {line}
             </p>
           ))}
+          <div>
+            <Link href="/" className={buttonClass('secondary')}>
+              Back to your employees
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -163,17 +169,21 @@ function ConnectionCard({ connection, zone }: { connection: ConnectionView; zone
       data-connection={connection._id}
     >
       <div className="grid gap-4">
-        {connection.statusReason !== undefined ? (
-          <p
-            className={`text-sm ${connection.status === 'needs-attention' ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg-2)]'}`}
-          >
-            {connection.statusReason}
-          </p>
-        ) : null}
         <dl className="grid gap-2.5">
+          {connection.statusReason !== undefined ? (
+            <Fact label={connection.status === 'revoked' ? 'Reason' : 'Needs IT'}>
+              <span
+                className={
+                  connection.status === 'needs-attention' ? 'text-[var(--color-warn)]' : undefined
+                }
+              >
+                {connection.statusReason}
+              </span>
+            </Fact>
+          ) : null}
           <Fact label="Mode">{modeWords(connection.mode)}</Fact>
-          <Fact label="Registered">{kindWords(connection)}</Fact>
-          <Fact label="Connected">{registeredWords(connection.registeredBy, zone)}</Fact>
+          <Fact label="Type">{kindWords(connection)}</Fact>
+          <Fact label="Connected by">{registeredWords(connection.registeredBy, zone)}</Fact>
           {connection.lastRotatedAt !== undefined ? (
             <Fact label="New secret">{formatStamp(connection.lastRotatedAt, zone)}</Fact>
           ) : null}
@@ -188,13 +198,18 @@ function ConnectionCard({ connection, zone }: { connection: ConnectionView; zone
           </Fact>
         </dl>
         {live ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             {connection.hasSecret ? (
               <Button size="small" onClick={(): void => setOpen('rotate')}>
                 Give it a new secret
               </Button>
             ) : null}
-            <Button size="small" variant="danger" onClick={(): void => setOpen('revoke')}>
+            <Button
+              size="small"
+              variant="danger"
+              className="sm:ml-auto"
+              onClick={(): void => setOpen('revoke')}
+            >
               Revoke
             </Button>
           </div>
@@ -382,7 +397,7 @@ function RotateDialog({
         </Field>
         {refreshable ? (
           <Field
-            label="New configuration refresh token"
+            label="New configuration refresh token (optional)"
             hint="Slack issues it with the token; Day0 keeps the token current with it."
           >
             {(control) => (
@@ -454,62 +469,64 @@ function EmployeeAppSection({
       { done: (words) => words, refused: 'The app was not recorded.' },
     );
   };
+  // Without a link naming its card there is nothing to record here: a note, not a section.
+  if (cardId === undefined) {
+    return (
+      <p className="max-w-2xl text-sm text-[var(--color-muted)]">
+        An employee&apos;s own Linear app is recorded from the link in its access request. Open that
+        link, create the app in Linear as the request says, and record it there.
+      </p>
+    );
+  }
   return (
     <section aria-labelledby="employee-app" className="grid gap-3">
       <h2 id="employee-app" className="text-lg font-semibold">
         An employee&apos;s own Linear app
       </h2>
-      {cardId === undefined ? (
-        <p className="max-w-2xl text-sm text-[var(--color-fg-2)]">
-          An employee&apos;s own Linear app is recorded from the link in its access request. Open
-          that link, create the app in Linear as the request says, and record it there.
+      <form
+        data-employee-app=""
+        className="grid max-w-xl gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 sm:p-5"
+        onSubmit={submit}
+      >
+        <p className="text-sm text-[var(--color-fg-2)]">
+          Create the app in Linear for the employee the access request names, then record it here.
+          Day0 opens Linear for a Linear administrator to install it.
         </p>
-      ) : (
-        <form
-          data-employee-app=""
-          className="grid max-w-xl gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 sm:p-5"
-          onSubmit={submit}
+        <Field label="Client id">
+          {(control) => (
+            <input
+              {...control}
+              name="clientId"
+              autoComplete="off"
+              required
+              disabled={change.busy}
+              className={`${INPUT_CLASS} w-full`}
+            />
+          )}
+        </Field>
+        <Field
+          label="Client secret"
+          hint="Stored encrypted for the organisation, never shown again."
         >
-          <p className="text-sm text-[var(--color-fg-2)]">
-            Create the app in Linear for the employee the access request names, then record it here.
-            Day0 opens Linear for a Linear administrator to install it.
-          </p>
-          <Field label="Client id">
-            {(control) => (
-              <input
-                {...control}
-                name="clientId"
-                autoComplete="off"
-                required
-                disabled={change.busy}
-                className={`${INPUT_CLASS} w-full`}
-              />
-            )}
-          </Field>
-          <Field
-            label="Client secret"
-            hint="Stored encrypted for the organisation, never shown again."
-          >
-            {(control) => (
-              <input
-                {...control}
-                name="clientSecret"
-                type="password"
-                autoComplete="new-password"
-                required
-                disabled={change.busy}
-                className={`${INPUT_CLASS} w-full`}
-              />
-            )}
-          </Field>
-          <StatusRegion outcome={change.outcome} />
-          <div>
-            <Button type="submit" variant="primary" disabled={change.busy}>
-              {change.busy ? 'Recording…' : 'Record the app and install it'}
-            </Button>
-          </div>
-        </form>
-      )}
+          {(control) => (
+            <input
+              {...control}
+              name="clientSecret"
+              type="password"
+              autoComplete="new-password"
+              required
+              disabled={change.busy}
+              className={`${INPUT_CLASS} w-full`}
+            />
+          )}
+        </Field>
+        <StatusRegion outcome={change.outcome} />
+        <div>
+          <Button type="submit" variant="primary" disabled={change.busy}>
+            {change.busy ? 'Recording…' : 'Record the app and install it'}
+          </Button>
+        </div>
+      </form>
     </section>
   );
 }

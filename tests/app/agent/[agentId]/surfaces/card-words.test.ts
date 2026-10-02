@@ -274,7 +274,7 @@ describe('the move off a pasted key at its renewal (A27)', (): void => {
     expect(
       moveOfferWords({ kind: 'own-app', planned: true }, { employee: 'Maya', system: 'Linear' }),
     ).toBe(
-      'IT connected Linear for your organisation: Maya can act as Maya, its own Linear app, instead of the pasted key, which keeps working until you move.',
+      'IT has connected Linear. Maya can use its own Linear app instead of the pasted key, which keeps working until you move it.',
     );
   });
 });

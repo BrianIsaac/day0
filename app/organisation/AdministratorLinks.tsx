@@ -2,6 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
+import { buttonClass } from '../components/Button';
 import { clerkAppearance } from '../clerk-appearance';
 import {
   ORGANISATION_HREF,
@@ -56,10 +57,7 @@ export function OrganisationMenuLink(): React.ReactElement | null {
   const administrator = useCallerIsAdministrator();
   if (!administrator) return null;
   return (
-    <Link
-      href={ORGANISATION_HREF}
-      className="inline-flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-3 text-sm text-[var(--color-fg)] no-underline hover:border-[var(--color-accent)]"
-    >
+    <Link href={ORGANISATION_HREF} className={`${buttonClass('secondary')} justify-self-start`}>
       {ORGANISATION_LINK}
     </Link>
   );

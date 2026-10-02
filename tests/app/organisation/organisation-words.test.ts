@@ -56,7 +56,7 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
       'MCP client, registered by Day0 with the server',
     );
     expect(kindWords(view({ kind: 'service-account' }))).toBe('Service account');
-    expect(kindWords(view({ kind: 'static-key' }))).toBe('Key');
+    expect(kindWords(view({ kind: 'static-key' }))).toBe('API key');
   });
 
   it('chips each status in its tone', (): void => {
@@ -67,10 +67,10 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
 
   it('says who registered a connection and when, an administrator by address and the setup command by name', (): void => {
     expect(registeredWords(view().registeredBy, 'UTC')).toBe(
-      'By ines@acme.test on this page, 1 Oct 2026, 09:30',
+      'ines@acme.test, on this page, 1 Oct 2026, 09:30',
     );
     expect(registeredWords({ via: 'setup-cli', at: AT }, 'UTC')).toBe(
-      'By the setup command, 1 Oct 2026, 09:30',
+      'The setup command, 1 Oct 2026, 09:30',
     );
   });
 
@@ -89,6 +89,7 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
     expect(revokeLines(view())).toEqual([
       "Every employee's Slack card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at Slack.",
       'No card on any other system changes. Each manager sees the reason on the card.',
+      'IT can connect it again with ./setup.sh access.',
     ]);
   });
 

@@ -484,9 +484,9 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { connect: (): void => undefined },
     );
     expect(markup).toContain(
-      'IT connected Linear for your organisation: Maya can act as Maya, its own Linear app, instead of the pasted key, which keeps working until you move.',
+      'IT has connected Linear. Maya can use its own Linear app instead of the pasted key, which keeps working until you move it.',
     );
-    expect(markup).toMatch(/<button[^>]*>Move to its own identity<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>Move off the pasted key<\/button>/);
   });
 
   it("draws the Slack app's provisioning row only on an approved Slack card, never on an MCP card or before approval (bed, 2 Oct)", (): void => {
@@ -571,5 +571,56 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
     );
     expect(markup.match(/re-joins (its|the) public channels/g)).toHaveLength(1);
+  });
+
+  it('says a covered card with no way on that it waits on IT, rather than asking for a credential nobody can paste (second pass)', (): void => {
+    const markup = render(
+      listed({
+        displayName: 'Notion',
+        endpoint: 'https://api.notion.com/v1',
+        path: 'documented-api',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+      }),
+      { organisation: organisation({ system: 'notion', displayName: 'Notion', mode: 'shared' }) },
+    );
+    expect(chip(markup)).toBe('Waiting on IT');
+    expect(markup).toContain(
+      'IT connected Notion for the organisation in a way this card cannot use for Maya. Ask IT how Maya should reach it.',
+    );
+  });
+
+  it('names an installed Slack app once, in the Acts as row, and asks IT nothing on an ended card (second pass)', (): void => {
+    const installed = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-bot' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        actsAs: { kind: 'own-app', label: 'Maya (Day0)' },
+        provisioning: {
+          appId: 'A1',
+          appName: 'Maya (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: 'cred-secret',
+          installUrl: 'https://slack.test/install',
+          redirectUrl: 'https://day0.test/api/slack/oauth',
+          scopes: ['chat:write'],
+          createdAt: 1,
+          installedAt: 2,
+        } as ListedSurface['provisioning'],
+      }),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(installed).not.toContain('Dedicated app installed');
+    const ended = render(
+      listed({ ...LINEAR_APPROVED, reason: 'expired', expiresAt: NOW - DAY }),
+      {},
+      { accessRequest: REQUEST },
+    );
+    expect(ended).not.toContain('Ask IT to connect Linear');
   });
 });

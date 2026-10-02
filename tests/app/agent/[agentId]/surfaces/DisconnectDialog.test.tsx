@@ -44,8 +44,8 @@ describe("what a Disconnect does at the vendor, in the dialog's words", (): void
         { slack: true },
       ),
     ).toEqual([
-      "Maya's own Slack app: its token is revoked at Slack. The app stays, so Connect brings it back.",
-      "Slack: Maya's bot is switched off and removed from its channels. Connecting again turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.",
+      "Maya's own Slack app stays installed, but its token is revoked at Slack and its bot leaves every channel.",
+      'Connect brings it back: it re-joins its public channels itself, and someone adds it to each private one.',
     ]);
   });
 

@@ -369,10 +369,14 @@ export function disconnectLines(
   const { employee, system } = names;
   switch (identity.kind) {
     case 'own-app':
-      return [
-        `${employee}'s own ${system} app: its token is revoked at ${system}. The app stays, so Connect brings it back.`,
-        ...(options.slack ? [slackChannelsGoWords(employee, 'Connecting again')] : []),
-      ];
+      return options.slack
+        ? [
+            `${employee}'s own Slack app stays installed, but its token is revoked at Slack and its bot leaves every channel.`,
+            'Connect brings it back: it re-joins its public channels itself, and someone adds it to each private one.',
+          ]
+        : [
+            `${employee}'s own ${system} app: its token is revoked at ${system}. The app stays, so Connect brings it back.`,
+          ];
     case 'shared-app':
       return [
         `The Day0 app your employees share is not revoked at ${system}: the others still use it. Day0 stops using it for ${employee}.`,
@@ -409,11 +413,27 @@ export function slackChannelsGoWords(employee: string, restoredBy: string): stri
 /**
  * The move off a pasted key a card offers at its renewal once IT has connected its system (A27;
  * the access plan, section 8 step 8): whom it would act as instead, and that the key keeps working
- * until the manager moves it. The wave file's words, flagged as a product call.
+ * until the manager moves it. A product call, flagged.
  *
  * @param target - Whom the card would act as through the organisation's connection.
  * @param names - The employee's name and the system's.
  */
 export function moveOfferWords(target: CardIdentity, names: IdentityNames): string {
-  return `IT connected ${names.system} for your organisation: ${names.employee} can act as ${actsAsWords(target, names)}, instead of the pasted key, which keeps working until you move.`;
+  const instead =
+    target.kind === 'shared-app'
+      ? 'the Day0 app your employees share'
+      : `its own ${names.system} app`;
+  return `IT has connected ${names.system}. ${names.employee} can use ${instead} instead of the pasted key, which keeps working until you move it.`;
+}
+
+/**
+ * What a card says when IT's connection covers its system and nothing on the card can use it: no
+ * issuer runs for the system, no request is asked and no key may be pasted while it is active
+ * (finding 14, for the cockpit). A product call, flagged.
+ *
+ * @param system - The connection's name.
+ * @param employee - The employee's name.
+ */
+export function noWayOnWords(system: string, employee: string): string {
+  return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
 }

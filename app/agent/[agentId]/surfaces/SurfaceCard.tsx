@@ -34,6 +34,7 @@ import {
   disconnectLines,
   expectedCredential,
   moveOfferWords,
+  noWayOnWords,
   slackChannelsGoWords,
   identityChip,
   reachedWords,
@@ -330,8 +331,19 @@ export function SurfaceCard({
     !ended &&
     surface.credentialId === undefined &&
     provisioningPresentation.offerProvisioning;
+  // A covered card with no issuer to run, no request to send and no credential has no way on
+  // from the card (finding 14, for the cockpit): it says so, and waits on IT.
+  const noWayOn =
+    covering !== undefined &&
+    approvedAccess &&
+    !ended &&
+    surface.credentialId === undefined &&
+    !accessRequest &&
+    !connectable &&
+    !slack;
   const chip = stateChip(surface, context.now, zone, {
-    waitsOn: accessRequest ? 'it' : connectable || slackConnectable ? 'connect' : undefined,
+    waitsOn:
+      accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined,
   });
   return (
     <Card
@@ -433,7 +445,10 @@ export function SurfaceCard({
         />
         {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
             approved card, as the action refuses one before. */}
-        {slack && surface.managerApprovedAt !== undefined ? (
+        {/* An installed app is named by the Acts as row; its row would only say it again. */}
+        {slack &&
+        surface.managerApprovedAt !== undefined &&
+        provisioningPresentation.stage !== 'installed' ? (
           <ProvisioningRow
             error={failed('provision')}
             onProvision={actions.provision}
@@ -453,7 +468,13 @@ export function SurfaceCard({
             onConnect={actions.connect}
           />
         ) : null}
-        {accessRequest ? (
+        {noWayOn && covering !== undefined ? (
+          <p className="text-sm text-[var(--color-warn)]">
+            {noWayOnWords(covering.displayName, context.employeeName)}
+          </p>
+        ) : null}
+        {/* An ended card renews first; what IT is asked for follows the renewal. */}
+        {accessRequest && !ended ? (
           <AccessRequestRow
             request={accessRequest}
             system={surface.displayName}
@@ -497,7 +518,7 @@ export function SurfaceCard({
               {pending === 'probe' ? 'Checking…' : 'Check the connection'}
             </Button>
             {surface.credentialId !== undefined ? (
-              <Button size="small" variant="quiet" onClick={(): void => setDisconnecting(true)}>
+              <Button size="small" variant="danger" onClick={(): void => setDisconnecting(true)}>
                 Disconnect
               </Button>
             ) : null}

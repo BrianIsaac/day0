@@ -440,7 +440,7 @@ describe("the access track's card states against the floor (wave 11, 11-AC; N14)
     await settle();
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
     expect(dialog?.textContent).toContain('Disconnect Slack?');
-    expect(dialog?.textContent).toContain('removed from its channels');
+    expect(dialog?.textContent).toContain('its bot leaves every channel');
     expect(document.activeElement?.textContent).toBe('Keep it connected');
     expect(await axeViolations(document.body, ['region'])).toEqual([]);
     expect(underTarget(dialog as HTMLElement)).toEqual([]);

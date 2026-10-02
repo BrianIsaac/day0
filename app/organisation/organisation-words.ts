@@ -67,7 +67,7 @@ export function kindWords(view: Pick<ConnectionView, 'kind' | 'clientRegistratio
     case 'service-account':
       return 'Service account';
     case 'static-key':
-      return 'Key';
+      return 'API key';
     default: {
       const unknown: never = view.kind;
       throw new Error(`unhandled connection kind ${String(unknown)}`);
@@ -114,8 +114,8 @@ export function registeredWords(
 ): string {
   const when = formatStamp(registeredBy.at, zone);
   return registeredBy.via === 'organisation-page' && registeredBy.address !== undefined
-    ? `By ${registeredBy.address} on this page, ${when}`
-    : `By the setup command, ${when}`;
+    ? `${registeredBy.address}, on this page, ${when}`
+    : `The setup command, ${when}`;
 }
 
 /**
@@ -152,12 +152,13 @@ export function revokeLines(view: Pick<ConnectionView, 'displayName' | 'system'>
   return [
     `Every employee's ${view.displayName} card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at ${system}.`,
     'No card on any other system changes. Each manager sees the reason on the card.',
+    'IT can connect it again with ./setup.sh access.',
   ];
 }
 
 /** What a rotation does, said before the administrator gives the new secret. */
 export const ROTATE_NOTE =
-  'No card ends: Day0 seals the new secret, uses it from now on and revokes the old one.';
+  'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.';
 
 /**
  * One ledger line in the record's words (the contract's renderer, so the page and the audit

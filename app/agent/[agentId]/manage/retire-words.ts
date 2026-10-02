@@ -179,7 +179,7 @@ export function waitingWords(entries: readonly InboxItem[], total: number): stri
   // A connection IT answered for waits on Connect, not on an approval (11-AJ's join 12).
   const nounsOf = (entry: InboxItem): readonly [one: string, many: string] =>
     entry.kind === 'surface' && entry.ready === 'connect'
-      ? ['connection to connect', 'connections to connect']
+      ? ['connection waiting to be connected', 'connections waiting to be connected']
       : WAITING_NOUNS[entry.kind];
   const tally = new Map<string, { nouns: readonly [string, string]; count: number }>();
   for (const entry of entries) {

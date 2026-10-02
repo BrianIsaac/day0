@@ -167,6 +167,11 @@ function MockOffice({
 
   return (
     <Card title="Mock office" meta={OFFICE_CAPTION}>
+      {/* The same in every one of the office's systems, so above the strip, not in a tab. */}
+      <dl className="mb-4 grid gap-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+        <dt className="text-[13px] text-[var(--color-muted)]">Acts as</dt>
+        <dd className="min-w-0 text-[var(--color-fg-2)]">{mockActsAsWords(employeeName)}</dd>
+      </dl>
       {/* Wraps rather than scrolls: a strip that overflows hides whole surfaces behind a gesture
           nothing on the page suggests. */}
       <div
@@ -206,10 +211,6 @@ function MockOffice({
           );
         })}
       </div>
-      <dl className="mt-4 grid gap-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
-        <dt className="text-[13px] text-[var(--color-muted)]">Acts as</dt>
-        <dd className="min-w-0 text-[var(--color-fg-2)]">{mockActsAsWords(employeeName)}</dd>
-      </dl>
       {/* The panel carries the id the card links name, so `#surfaces` scrolls here as well as
           selecting the tab above. */}
       <div

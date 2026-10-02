@@ -163,6 +163,7 @@ describe('the organisation page for a manager who is not an administrator (B8)',
       "This page is for your organisation's administrators",
     );
     expect(text(view.container)).toContain("Each employee's access is still yours to approve");
+    expect(view.container.querySelector('a[href="/"]')?.textContent).toBe('Back to your employees');
     expect(
       backend.asked
         .filter((ask) => ask.name !== 'organisationConnections:summaryForManager')
@@ -193,13 +194,13 @@ describe('the organisation page for an administrator', (): void => {
     expect(slack).toContain('Active');
     expect(slack).toContain('Each employee gets its own identity');
     expect(slack).toContain("Slack configuration token, which creates each employee's app");
-    expect(slack).toContain('By ines@acme.test on this page, 1 Oct 2026, 09:30');
+    expect(slack).toContain('ines@acme.test, on this page, 1 Oct 2026, 09:30');
     expect(slack).toContain('Held encrypted; it expires 1 Oct 2026, 21:30');
     expect(slack).toContain('chat:write, channels:join');
     const linear = text(cards[1]);
     expect(linear).toContain('Needs IT');
     expect(linear).toContain('Linear refused the client secret.');
-    expect(linear).toContain('By the setup command, 1 Oct 2026, 09:30');
+    expect(linear).toContain('The setup command, 1 Oct 2026, 09:30');
     const docs = text(cards[2]);
     expect(docs).toContain('Revoked');
     expect(docs).toContain('The server moved.');
@@ -313,7 +314,7 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     mount(<OrganisationPage zone="UTC" />);
     await settle();
     await open('Give it a new secret');
-    expect(text(dialog())).toContain('No card ends');
+    expect(text(dialog())).toContain('No card is affected');
     const [secret, refresh] = [...dialog().querySelectorAll<HTMLInputElement>('input')];
     expect(secret?.type).toBe('password');
     expect(refresh?.type).toBe('password');
