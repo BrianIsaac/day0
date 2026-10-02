@@ -51,7 +51,7 @@ export const MCP_RECIPE: AccessRecipe = {
         {
           field: 'issuer',
           label:
-            "The authorisation server's issuer URL (Enter to discover it at the first sign-in)",
+            "The authorisation server's issuer URL (needed with a client secret; for a public client, Enter to discover it at the first sign-in)",
           secret: false,
           stdinName: 'MCP_ISSUER',
           optional: true,

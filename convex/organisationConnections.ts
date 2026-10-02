@@ -219,6 +219,11 @@ export function landingRefusal(landing: Landing): string | undefined {
     if (landing.clientId === undefined || landing.clientId.trim() === '') {
       return 'An MCP client connection needs the client id IT registered.';
     }
+    // With no issuer the secret could go to whichever server a resource names, so every card
+    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f).
+    if (landing.secret !== undefined && (landing.issuer ?? '').trim() === '') {
+      return "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone.";
+    }
   } else if (mcpField) {
     return 'The issuer, the resource and the client registration belong to an MCP client only.';
   } else if (landing.system.startsWith('mcp:')) {

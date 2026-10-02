@@ -28,10 +28,12 @@ customer allows dynamic registration):
 ## 2. The manifest or the form
 
 There is no manifest: the authorisation server's own client form takes the
-values in step 1. Note the **client id**, the **client secret** for a
-confidential client, and the **issuer** URL of the authorisation server if IT
-knows it (Day0 otherwise discovers it from the MCP server's resource metadata
-at the first authorisation).
+values in step 1. Note the **client id**, and for a confidential client the
+**client secret** and the **issuer** URL of the authorisation server it was
+registered with: Day0 sends the secret to that server alone, and refuses a
+secret landed without its issuer. For a public client the issuer is optional
+(Day0 otherwise discovers it from the MCP server's resource metadata at the
+first authorisation).
 
 ## 3. The scopes
 
@@ -58,8 +60,9 @@ As the authorisation server sets it: ask IT when the client secret expires and k
 ## 6. What to hand to the setup verb
 
 The verb asks for the server's address, the client id, the client secret (in a
-hidden prompt; Enter for a public client), the issuer (Enter to discover it)
-and the scopes (Enter for the server's own):
+hidden prompt; Enter for a public client), the issuer (needed with a secret;
+Enter to discover it for a public client) and the scopes (Enter for the
+server's own):
 
 ```bash
 ./setup.sh access --systems https://mcp.acme.com/mcp
