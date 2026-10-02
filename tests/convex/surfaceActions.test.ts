@@ -3526,6 +3526,27 @@ describe('one failed probe does not write listed-dead', (): void => {
       expect(bearers).toHaveLength(2);
     });
 
+    it('ends a card with a lower rung on no other rung when Linear refuses the new token too', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness, { path: 'mcp', fallback: true });
+      await harness.run(async (ctx) =>
+        ctx.db.patch(surfaceId, {
+          credentialKind: 'value',
+          actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: APP_USER.id },
+        }),
+      );
+      const identity = scriptedIdentity({});
+
+      const { outcome } = await probeWith(harness, surfaceId, identity, [
+        fails(MCP_INVALID_TOKEN_ERROR),
+      ]);
+
+      expect(outcome.verdict).toBe('ungranted');
+      expect(outcome.reason).toContain('401');
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface).toMatchObject({ verdict: 'ungranted', path: 'mcp' });
+    });
+
     it('ends the card with the reason when its expired token cannot be refreshed, on no other rung', async (): Promise<void> => {
       const harness = convexTest(schema, allConvexModules());
       const surfaceId = await approvedSurface(harness, { path: 'mcp', fallback: true });

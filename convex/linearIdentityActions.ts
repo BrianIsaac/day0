@@ -885,7 +885,7 @@ export type LinearProbeResult<Discovery> =
 /**
  * Probe a card acting as a Linear app with its identity's own token (the access plan, section 4.10):
  * the bearer read through the issuer (renewed when due), the server's tools discovered with it, a
- * refusal of it (a 401) answered with one new token before the card ends (L2), and the app user the
+ * refusal of it (a 401) answered with one new token before the card ends (L2), a second refusal ending it on no other rung, and the app user the
  * token acts as read, for `providerIdentityId` and the ticket rule (D6). Linear withdrawing the
  * authority answers the refusal for the card; any other failure is the caller's to judge.
  *
@@ -905,7 +905,13 @@ export async function probeLinearApp<Discovery>(
     } catch (error) {
       if (!isTokenRefusal(error)) throw error;
       bearer = await identity.renewAfterRefusal(credentialId, held.generation);
-      discovery = await discover(bearer);
+      try {
+        discovery = await discover(bearer);
+      } catch (again) {
+        // Refused twice: Linear has withdrawn the authority, which no lower rung stands in for.
+        if (!isTokenRefusal(again)) throw again;
+        return { ok: false, reason: clipped(again, 'Linear refused the new token too.', [bearer]) };
+      }
     }
     return { ok: true, discovery, appUser: await identity.appUser(bearer) };
   } catch (error) {
