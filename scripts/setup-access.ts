@@ -540,6 +540,13 @@ function recordedConnection(
   };
 }
 
+/** The secret values a landing carries, which no refusal may repeat. */
+function secretsOf(landing: Landing): string[] {
+  return ['secret', 'refreshToken']
+    .map((name: string): unknown => landing[name])
+    .filter((value: unknown): value is string => typeof value === 'string');
+}
+
 /** The step that checks what was landed, whose status the verb exits with. */
 const CHECK_ACCESS = ['pnpm', 'run', 'check:access'] as const;
 
@@ -661,7 +668,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
     });
   for (const { landing, planned } of landings) {
     try {
-      await admin.run<string>('action', 'organisationConnections:landFromSetup', landing);
+      await admin.run<string>('action', 'organisationConnections:landFromSetup', landing, {
+        secrets: secretsOf(landing),
+      });
     } catch (err) {
       io.log(`Landing ${landing.system} failed, so the verb stops here: ${errorMessage(err)}`);
       writeRecord(io, options, values, origin, resolved, recorded, undefined);

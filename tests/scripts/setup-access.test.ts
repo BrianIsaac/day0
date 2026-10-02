@@ -181,6 +181,32 @@ describe('setup: the access verb', (): void => {
     for (const secret of Object.values(SECRETS)) expect(everything).not.toContain(secret);
   });
 
+  it('never prints a secret the deployment echoes back when it refuses a landing', async (): Promise<void> => {
+    const bed = accessBed();
+    const echoing = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init?.body)) as {
+        path: string;
+        args: Record<string, unknown>;
+      };
+      if (body.path === 'organisationConnections:landFromSetup') {
+        return Response.json({
+          status: 'error',
+          errorMessage: `Value does not match validator. Object: ${JSON.stringify(body.args)}`,
+        });
+      }
+      return await bed.deployment.fetch(input, init);
+    };
+    const status = await runCommand(parseSetupArguments(['--mode', 'real', ...ACCESS]), {
+      ...bed.bed.io,
+      fetch: echoing,
+      readStdin: async (): Promise<string> => STDIN,
+    });
+    expect(status).toBe(1);
+    const printed = bed.bed.output.join('\n');
+    expect(printed).toContain('Value does not match validator');
+    for (const secret of Object.values(SECRETS)) expect(printed).not.toContain(secret);
+  });
+
   it('lists what the documentation names, and says a known system without an issuer keeps the pasted key', async (): Promise<void> => {
     const bed = accessBed();
     await bed.run(ACCESS);

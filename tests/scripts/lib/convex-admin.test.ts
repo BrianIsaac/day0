@@ -71,6 +71,32 @@ describe('the deployment, called with its admin key', (): void => {
     await expect(refused).rejects.not.toThrow(/xoxe-/);
   });
 
+  it('never repeats an argument’s value that the deployment echoes in its refusal', async (): Promise<void> => {
+    const deployment = answering({
+      status: 'error',
+      errorMessage:
+        'ArgumentValidationError: Object contains extra field `refresh` that is not in the validator.\n\n' +
+        'Object: {displayName: "Slack", secret: "xoxe-1234567890-abcdefghij", refresh: "xoxe-1-refresh-abcdefghij"}',
+    });
+    const admin = deploymentAdmin({ url: URL_BASE, adminKey: ADMIN_KEY, fetch: deployment.fetch });
+
+    const refused = admin.run(
+      'action',
+      'organisationConnections:landFromSetup',
+      {
+        displayName: 'Slack',
+        secret: 'xoxe-1234567890-abcdefghij',
+        refresh: 'xoxe-1-refresh-abcdefghij',
+        scopes: ['chat:write'],
+      },
+      { secrets: ['xoxe-1234567890-abcdefghij', 'xoxe-1-refresh-abcdefghij'] },
+    );
+
+    await expect(refused).rejects.toThrow('extra field `refresh`');
+    await expect(refused).rejects.toThrow('secret: "<secret>"');
+    await expect(refused).rejects.not.toThrow(/xoxe-/);
+  });
+
   it('says the backend could not be reached, without the admin key', async (): Promise<void> => {
     const admin = deploymentAdmin({
       url: URL_BASE,

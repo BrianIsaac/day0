@@ -22,13 +22,33 @@ export interface DeploymentAdmin {
    * @param kind - Query, mutation or action.
    * @param path - The function's path, as `module:function`.
    * @param args - Its arguments, as plain JSON.
+   * @param options.secrets - The secret values among the arguments: removed from any refusal,
+   *   since a validator's refusal quotes the arguments it was given.
    * @throws DeploymentCallFailed with the function's own refusal, or why the backend did not answer.
    */
-  run<T>(kind: FunctionKind, path: string, args: Readonly<Record<string, unknown>>): Promise<T>;
+  run<T>(
+    kind: FunctionKind,
+    path: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: { readonly secrets?: readonly string[] },
+  ): Promise<T>;
 }
 
-/** A call the deployment refused or could not answer; the message never carries the arguments. */
+/** A call the deployment refused or could not answer; the message never carries a named secret. */
 export class DeploymentCallFailed extends Error {}
+
+/** What stands in a message for a value it must not repeat. */
+const SECRET_STAND_IN = '<secret>';
+
+/** A message with every named secret, and the admin key, taken out. */
+function withoutSecrets(message: string, secrets: readonly string[]): string {
+  return secrets
+    .filter((secret: string): boolean => secret !== '')
+    .reduce(
+      (text: string, secret: string): string => text.split(secret).join(SECRET_STAND_IN),
+      message,
+    );
+}
 
 /** The address and admin key of a self-hosted deployment, as the env file names them. */
 export interface AdminTarget {
@@ -88,7 +108,9 @@ export function deploymentAdmin(
       kind: FunctionKind,
       path: string,
       args: Readonly<Record<string, unknown>>,
+      options: { readonly secrets?: readonly string[] } = {},
     ): Promise<T> => {
+      const hidden = [target.adminKey, ...(options.secrets ?? [])];
       let response: Response;
       try {
         response = await send(`${base}/api/${kind}`, {
@@ -101,8 +123,9 @@ export function deploymentAdmin(
           signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
         });
       } catch (err) {
-        const reason = errorMessage(err).split(target.adminKey).join('<admin key>');
-        throw new DeploymentCallFailed(`The backend at ${base} could not be reached: ${reason}`);
+        throw new DeploymentCallFailed(
+          `The backend at ${base} could not be reached: ${withoutSecrets(errorMessage(err), hidden)}`,
+        );
       }
       let answer: FunctionAnswer;
       try {
@@ -114,7 +137,7 @@ export function deploymentAdmin(
       }
       if (answer.status === 'success') return answer.value as T;
       const said = typeof answer.errorMessage === 'string' ? answer.errorMessage : 'no message';
-      throw new DeploymentCallFailed(`${path} refused: ${said}`);
+      throw new DeploymentCallFailed(`${path} refused: ${withoutSecrets(said, hidden)}`);
     },
   };
 }
