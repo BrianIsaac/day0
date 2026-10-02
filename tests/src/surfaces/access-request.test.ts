@@ -29,7 +29,7 @@ describe('the organisation system a key names (the access plan, section 4.1)', (
 });
 
 describe('the organisation system a card needs', (): void => {
-  const card = { slug: 'tracker', class: 'tickets' };
+  const card = { path: 'documented-api' };
 
   it('reads Slack off the Web API base and Linear off its hosts, whatever the slug', (): void => {
     expect(organisationSystemOf({ ...card, endpoint: 'https://slack.com/api/' })).toBe('slack');
