@@ -12,7 +12,7 @@ import {
 } from './_generated/server';
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
-import { noticeSurfaceOf } from './transferNotice';
+import { noticeCarrierOf, recordNoticeOutcome } from './transferNotice';
 import { afterwardsOf, afterwardsValidator } from './transferDepartures';
 import { isEvaluationAgent } from './metrics';
 import {
@@ -450,10 +450,18 @@ async function askInTransaction(
     if (note !== undefined) {
       await ctx.scheduler.runAfter(0, internal.managerTransfers.scrubNote, { transferId });
     }
-    if ((await noticeSurfaceOf(ctx, agent, now)) !== undefined) {
+    const carrier = await noticeCarrierOf(ctx, agent, now);
+    if (carrier.kind === 'carried') {
       await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendTransferNotice, {
         transferId,
       });
+    } else {
+      // The asking manager reads from the record whether the other was told, and why not (m10).
+      await recordNoticeOutcome(
+        ctx,
+        { _id: transferId, agentId: agent._id, fromAddress, toAddress },
+        { delivered: false, reason: carrier.reason },
+      );
     }
   }
   return transferId;
