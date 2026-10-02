@@ -32,13 +32,15 @@ import {
   madeYouWords,
   MAKE_IT_YOU,
   WHAT_HAPPENS,
+  type ReapprovedSystem,
 } from '../../../handover-words';
 
 /** What the cut is decided from: a card as `surfaces.listForAgent` lists it. */
 export type CutCandidate = Pick<
   Doc<'surfaces'>,
   'displayName' | 'verdict' | 'credentialId' | 'provisioning' | 'managerApprovedAt'
->;
+> &
+  Partial<Pick<Doc<'surfaces'>, 'organisationConnectionId' | 'actsAs'>>;
 
 /**
  * The systems a handover would cut, by the name the Surfaces tab gives each: every card bound to
@@ -50,6 +52,30 @@ export type CutCandidate = Pick<
 export function cutSystems(surfaces: readonly CutCandidate[]): string[] {
   const cut = surfaces.filter((surface) => surfaceHandoverOf(surface) === 'cut');
   return [...new Set(cut.map((surface) => surface.displayName))];
+}
+
+/**
+ * The systems a handover keeps for re-approval, by the same rule (`surfaceHandoverOf`'s
+ * `reapprove`, A25): each card acting as the employee's own identity obtained through IT's
+ * organisation connection, with whom it keeps acting as in words (11-AR's draft, "Re-approve:
+ * keeps acting as Leo's own app"; a product call, flagged).
+ *
+ * @param surfaces - The employee's cards.
+ * @param name - The employee's name.
+ */
+export function reapprovedSystems(
+  surfaces: readonly CutCandidate[],
+  name: string,
+): ReapprovedSystem[] {
+  return surfaces
+    .filter((surface) => surfaceHandoverOf(surface) === 'reapprove')
+    .map((surface) => ({
+      system: surface.displayName,
+      identity:
+        surface.actsAs?.kind === 'shared-app'
+          ? 'the Day0 app your employees share'
+          : `${name}'s own app`,
+    }));
 }
 
 /** The request a dialog names another address for, when it changes one rather than asks. */
@@ -107,6 +133,7 @@ export function HandOverDialog({
     name: agent.name,
     mode,
     cutSystems: cutSystems(surfaces ?? []),
+    reapproved: reapprovedSystems(surfaces ?? [], agent.name),
     expiresAt: transferExpiresAt(now),
     zone,
   });
