@@ -349,7 +349,7 @@ describe('the access request’s words, the same wherever they are shown', (): v
       },
     });
     expect(draft.text).toContain(
-      'How to connect it: a Linear administrator creates Maya’s own app as docs/running/access-linear.md says, then records it on the organisation page at https://day0.acme.test/organisation?card=j57card; Day0 then opens Linear to install it.',
+      'How to connect it: a Linear administrator creates Maya’s own app as docs/running/access-linear.md says and records it on the organisation page, which then opens Linear to install it: https://day0.acme.test/organisation?card=j57card',
     );
     expect(draft.text).not.toContain('./setup.sh');
     const noOrigin = draftAccessRequest({
@@ -363,7 +363,7 @@ describe('the access request’s words, the same wherever they are shown', (): v
         scopes: ['read', 'write'],
       },
     });
-    expect(noOrigin.text).toContain('on the organisation page at /organisation?card=j57card;');
+    expect(noOrigin.text).toContain('to install it: /organisation?card=j57card\n');
   });
 
   it('never names the setup verb for a system already connected for the organisation (M4)', (): void => {

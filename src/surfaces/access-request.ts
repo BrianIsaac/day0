@@ -334,7 +334,7 @@ function howLine(input: AccessRequestInput, system: string, name: string): strin
   const origin = input.publicUrl?.trim().replace(/\/+$/, '') ?? '';
   if (input.reason === 'install-needed' && input.connection?.kind === 'oauth-app') {
     const page = `${origin}/organisation?card=${encodeURIComponent(input.card._id)}`;
-    return `How to connect it: a ${name} administrator creates ${input.employeeName}’s own app as ${recipe} says, then records it on the organisation page at ${page}; Day0 then opens ${name} to install it.`;
+    return `How to connect it: a ${name} administrator creates ${input.employeeName}’s own app as ${recipe} says and records it on the organisation page, which then opens ${name} to install it: ${page}`;
   }
   if (input.connection !== null) {
     const page = origin ? `, on the organisation page at ${origin}/organisation` : '';
