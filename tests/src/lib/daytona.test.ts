@@ -8,9 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const daytona = vi.hoisted(() => ({
   startSeconds: 10,
   createError: undefined as Error | undefined,
-  created: [] as Array<{ name?: string; timeout?: number }>,
+  created: [] as Array<{
+    ephemeral?: boolean;
+    autoStopInterval?: number;
+    timeout?: number;
+  }>,
   deleted: [] as string[],
-  findError: undefined as Error | undefined,
+  deleteError: undefined as Error | undefined,
 }));
 
 vi.mock('@daytona/sdk', () => {
@@ -26,15 +30,20 @@ vi.mock('@daytona/sdk', () => {
       }),
     },
     delete: async (): Promise<void> => {
+      if (daytona.deleteError) throw daytona.deleteError;
       daytona.deleted.push(name);
     },
   });
   class Daytona {
     async create(
-      params: { name?: string },
+      params: { ephemeral?: boolean; autoStopInterval?: number },
       options?: { timeout?: number },
     ): Promise<ReturnType<typeof sandbox>> {
-      daytona.created.push({ name: params.name, timeout: options?.timeout });
+      daytona.created.push({
+        ephemeral: params.ephemeral,
+        autoStopInterval: params.autoStopInterval,
+        timeout: options?.timeout,
+      });
       if (daytona.createError) throw daytona.createError;
       const bound = options?.timeout ?? 60;
       if (daytona.startSeconds > bound) {
@@ -42,12 +51,7 @@ vi.mock('@daytona/sdk', () => {
           `Failed to create and start sandbox within ${bound} seconds. Operation timed out.`,
         );
       }
-      return sandbox(params.name ?? 'unnamed');
-    }
-
-    async get(name: string): Promise<ReturnType<typeof sandbox>> {
-      if (daytona.findError) throw daytona.findError;
-      return sandbox(name);
+      return sandbox(`started-${daytona.created.length}`);
     }
   }
   return { Daytona, DaytonaError, DaytonaTimeoutError };
@@ -60,7 +64,7 @@ describe('authorAndVerifySkillOnDaytona', (): void => {
     vi.stubEnv('DAYTONA_API_KEY', 'dtn_key');
     daytona.startSeconds = 10;
     daytona.createError = undefined;
-    daytona.findError = undefined;
+    daytona.deleteError = undefined;
     daytona.created.length = 0;
     daytona.deleted.length = 0;
   });
@@ -83,27 +87,40 @@ describe('authorAndVerifySkillOnDaytona', (): void => {
     expect(daytona.created).toHaveLength(1);
   });
 
-  it('reports a start that does not come within the bound as never started, and deletes the half-started sandbox by its name', async (): Promise<void> => {
+  it('reports a start that does not come within the bound as never started, and leaves the sandbox to delete itself so its build goes on', async (): Promise<void> => {
     daytona.startSeconds = 600;
-    const { authorAndVerifySkillOnDaytona, SANDBOX_START_TIMEOUT_SECONDS } =
-      await import('../../../src/lib/daytona');
+    const {
+      authorAndVerifySkillOnDaytona,
+      SANDBOX_START_TIMEOUT_SECONDS,
+      SANDBOX_IDLE_STOP_MINUTES,
+    } = await import('../../../src/lib/daytona');
 
     const run = await authorAndVerifySkillOnDaytona(ARGS);
 
     expect(run).toEqual({ started: false, waitedSeconds: SANDBOX_START_TIMEOUT_SECONDS });
-    expect(daytona.created).toHaveLength(1);
-    const [{ name }] = daytona.created;
-    expect(name).toMatch(/^day0-verify-/);
-    expect(daytona.deleted).toEqual([name]);
+    // Daytona was asked for a sandbox that deletes itself once it stops idling, and nothing was
+    // deleted under the build the next verification waits on.
+    expect(daytona.created).toEqual([
+      {
+        ephemeral: true,
+        autoStopInterval: SANDBOX_IDLE_STOP_MINUTES,
+        timeout: SANDBOX_START_TIMEOUT_SECONDS,
+      },
+    ]);
+    expect(daytona.deleted).toEqual([]);
   });
 
-  it('still reports the start as never started when the half-started sandbox cannot be found to delete', async (): Promise<void> => {
-    daytona.startSeconds = 600;
-    daytona.findError = new Error('Sandbox not found');
+  it('deletes the sandbox after the smoke test, and keeps the verdict when the teardown fails', async (): Promise<void> => {
     const { authorAndVerifySkillOnDaytona } = await import('../../../src/lib/daytona');
 
-    await expect(authorAndVerifySkillOnDaytona(ARGS)).resolves.toMatchObject({ started: false });
-    expect(daytona.deleted).toEqual([]);
+    await expect(authorAndVerifySkillOnDaytona(ARGS)).resolves.toMatchObject({ started: true });
+    expect(daytona.deleted).toEqual(['started-1']);
+
+    daytona.deleteError = new Error('Sandbox is in a transitional state');
+    await expect(authorAndVerifySkillOnDaytona(ARGS)).resolves.toMatchObject({
+      started: true,
+      outcome: { exitCode: 0 },
+    });
   });
 
   it('lets any other failure to create a sandbox through as it was', async (): Promise<void> => {

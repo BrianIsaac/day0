@@ -146,6 +146,13 @@ function skipped(reason: string): SkillSandboxRun {
   };
 }
 
+/** A wait in the words a skip says it in: whole minutes when it is, seconds otherwise. */
+export function waitedFor(seconds: number): string {
+  if (seconds % 60 !== 0) return `${seconds} seconds`;
+  const minutes = seconds / 60;
+  return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+}
+
 /**
  * Run the authored skill's smoke test in whichever sandbox this machine has,
  * and report what happened.
@@ -168,7 +175,7 @@ export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<Skill
     const run = await authorAndVerifySkillOnDaytona(args);
     if (!run.started) {
       return skipped(
-        `Daytona did not start a sandbox within ${run.waitedSeconds / 60} minutes, ` +
+        `Daytona did not start a sandbox within ${waitedFor(run.waitedSeconds)}, ` +
           'so nothing was checked; the draft is kept to check again',
       );
     }

@@ -10,10 +10,6 @@ vi.mock('@daytona/sdk', () => {
         `Failed to create and start sandbox within ${options?.timeout ?? 60} seconds. Operation timed out.`,
       );
     }
-
-    async get(): Promise<{ delete: () => Promise<void> }> {
-      return { delete: async (): Promise<void> => undefined };
-    }
   }
   return { Daytona, DaytonaTimeoutError };
 });
@@ -114,5 +110,14 @@ describe('a Daytona sandbox that does not start', (): void => {
       skipReason:
         'Daytona did not start a sandbox within 3 minutes, so nothing was checked; the draft is kept to check again',
     });
+  });
+});
+
+describe('waitedFor', (): void => {
+  it('says a wait in whole minutes when it is one, and in seconds otherwise', async (): Promise<void> => {
+    const { waitedFor } = await import('../../../src/lib/skill-sandbox');
+    expect(waitedFor(180)).toBe('3 minutes');
+    expect(waitedFor(60)).toBe('1 minute');
+    expect(waitedFor(90)).toBe('90 seconds');
   });
 });
