@@ -698,8 +698,7 @@ export default defineSchema({
      * Whom the card acts as (11-AK; D2), written by the paths that land a credential, never by
      * the model, and read by the card (11-AC) and the export. The `surfaces-acts-as` migration
      * writes it for every card holding a live credential before wave 11; a card connected after
-     * it by a path not yet writing it reads the same answer off its credential
-     * (`actsAsAtUpgrade`, `src/surfaces/access-identity.ts`).
+     * it by a path that does not write it yet carries none until that path does.
      */
     actsAs: v.optional(actsAsValidator),
     /** The access request the card drafted for IT and how it went out (11-AO; A24). */

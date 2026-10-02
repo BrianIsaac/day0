@@ -249,7 +249,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: ACCESS_RELEASE,
     does: 'records whom each card holding a live credential acts as: its own app for an installed app’s token, named as the app, and a shared key for every pasted value or location, named as the key; a card with no credential, or a revoked or emptied one, is left for its next connection',
     thenRemoves:
-      'nothing: each path that lands a credential writes actsAs once wave 11’s connect units land; until then a card connected after the upgrade reads whom it acts as off its credential (actsAsAtUpgrade)',
+      'nothing: each path that lands a credential is to write actsAs as wave 11’s connect units land; until one does, a card it connects carries none',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
