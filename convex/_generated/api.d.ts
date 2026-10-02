@@ -56,6 +56,7 @@ import type * as skillActions from '../skillActions.js';
 import type * as skillAdoption from '../skillAdoption.js';
 import type * as skillAuthorPrompt from '../skillAuthorPrompt.js';
 import type * as skillAuthoringRecord from '../skillAuthoringRecord.js';
+import type * as skillAuthoringRun from '../skillAuthoringRun.js';
 import type * as skillControls from '../skillControls.js';
 import type * as skillSandboxCheck from '../skillSandboxCheck.js';
 import type * as skillVersions from '../skillVersions.js';
@@ -128,6 +129,7 @@ declare const fullApi: ApiFromModules<{
   skillAdoption: typeof skillAdoption;
   skillAuthorPrompt: typeof skillAuthorPrompt;
   skillAuthoringRecord: typeof skillAuthoringRecord;
+  skillAuthoringRun: typeof skillAuthoringRun;
   skillControls: typeof skillControls;
   skillSandboxCheck: typeof skillSandboxCheck;
   skillVersions: typeof skillVersions;

@@ -232,7 +232,7 @@ function withoutPageMarkers(text: string): string {
 }
 
 /** One linked page as the author prompt carries it: the page, and its text inside its markers. */
-interface LinkedRunbookPage<Page extends AuthorRunbookPage> {
+export interface LinkedRunbookPage<Page extends AuthorRunbookPage> {
   readonly page: Page;
   readonly excerpt: string;
 }
