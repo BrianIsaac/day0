@@ -54,6 +54,7 @@ import {
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
+import { LIST_ISSUES_SELECTABLE_FIELDS } from '../fixtures/linear/linear-oauth-2026-10-02';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -3032,6 +3033,159 @@ describe('each employee reads its own approved queues', (): void => {
         { owner: KEY_OWNER },
       );
       expect(seeded).toEqual(['FIN-1', 'FIN-5']);
+    });
+
+    describe('under the app actor (D6, AC8)', (): void => {
+      const APP_USER = 'app-user-day0-leo';
+      const MANAGER_ID = 'user-ana';
+
+      /** A Linear client whose list selects the live fields, recording each request and get_user call. */
+      function appClient(
+        rows: Record<string, unknown>[],
+        options: {
+          selectable?: readonly string[];
+          requests?: unknown[];
+          userCalls?: unknown[];
+        } = {},
+      ) {
+        return () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: {
+                  name: 'list_issues',
+                  inputSchema: {
+                    properties: {
+                      project: {},
+                      team: {},
+                      limit: {},
+                      fields: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                          enum: [...(options.selectable ?? LIST_ISSUES_SELECTABLE_FIELDS)],
+                        },
+                      },
+                    },
+                  },
+                },
+                get_user: { name: 'get_user', inputSchema: { properties: { query: {} } } },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async ({ definition }: { definition: { name?: string } }) => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              if (definition.name === 'get_user') {
+                options.userCalls?.push(args);
+                return { content: [{ type: 'text', text: JSON.stringify(KEY_OWNER) }] };
+              }
+              options.requests?.push(args);
+              return { issues: rows };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        });
+      }
+
+      /** Leo's Linear card, acting as its own app user as the probe read it. */
+      function leosCard(): Doc<'surfaces'> {
+        return {
+          ...companySurfaces()[1],
+          toolAllowlist: ['list_issues', 'get_user'],
+          actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: APP_USER },
+          providerIdentityId: APP_USER,
+        };
+      }
+
+      it('takes the unassigned tickets and those delegated to its app user, never one assigned to the manager', async (): Promise<void> => {
+        const requests: unknown[] = [];
+        const userCalls: unknown[] = [];
+        const harness = runtimeHarness(
+          [leosCard()],
+          companyPageRows('revops-first'),
+          companyCredentials(),
+          [financeAgent],
+        );
+
+        await runIntakeSweep(harness.runtime, {
+          mode: 'real',
+          now: (): number => POLL_AT,
+          makeMcpClient: appClient(
+            [
+              ticket('FIN-1'),
+              ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: MANAGER_ID }),
+              ticket('FIN-3', {
+                assignee: 'Ana Lim',
+                assigneeId: MANAGER_ID,
+                delegate: 'Day0 Leo',
+                delegateId: APP_USER,
+              }),
+              ticket('FIN-4', { delegate: 'Another agent', delegateId: 'app-user-other' }),
+              // The token's owner by get_user is not who the card acts as: never read for it.
+              ticket('FIN-5', { assignee: 'Kestrel Ops', assigneeId: KEY_OWNER.id }),
+            ],
+            { requests, userCalls },
+          ),
+        });
+
+        expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+          'FIN-1',
+          'FIN-3',
+        ]);
+        expect(harness.withdrawn.map((row) => row.externalId)).toEqual(['FIN-2', 'FIN-4', 'FIN-5']);
+        expect(userCalls).toEqual([]);
+        expect((requests[0] as { fields?: string[] }).fields).toEqual(
+          expect.arrayContaining(['assigneeId', 'delegate', 'delegateId']),
+        );
+        // The ticket handed over by delegation is listed as the app user's, for the re-read.
+        expect([...harness.seeds.values()][1]?.tracker).toMatchObject({
+          assigned: true,
+          assigneeId: APP_USER,
+        });
+      });
+
+      it('holds the checkpoint and takes nothing when its list cannot select the delegate', async (): Promise<void> => {
+        const requests: unknown[] = [];
+        const harness = runtimeHarness(
+          [leosCard()],
+          companyPageRows('revops-first'),
+          companyCredentials(),
+          [financeAgent],
+        );
+
+        await runIntakeSweep(harness.runtime, {
+          mode: 'real',
+          now: (): number => POLL_AT,
+          makeMcpClient: appClient([ticket('FIN-1')], {
+            selectable: LIST_ISSUES_SELECTABLE_FIELDS.filter(
+              (name) => name !== 'delegate' && name !== 'delegateId',
+            ),
+            requests,
+          }),
+        });
+
+        expect(harness.seeds.size).toBe(0);
+        expect(requests).toEqual([]);
+        expect(harness.records[0]?.polledAt).toBeUndefined();
+        expect(harness.records[0]?.skipReason).toContain('a delegate');
+      });
+
+      it('reads the token owner as before for a card on a key, delegated tickets aside', async (): Promise<void> => {
+        const seeded = await seededFrom(
+          [
+            ticket('FIN-1', { assignee: 'Kestrel Ops', assigneeId: KEY_OWNER.id }),
+            ticket('FIN-2', {
+              assignee: 'Kestrel Ops',
+              assigneeId: KEY_OWNER.id,
+              delegate: 'Another agent',
+              delegateId: 'app-user-other',
+            }),
+          ],
+          { owner: KEY_OWNER },
+        );
+        expect(seeded).toEqual(['FIN-1']);
+      });
     });
   });
 });

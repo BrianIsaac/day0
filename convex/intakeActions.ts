@@ -48,11 +48,13 @@ import {
 } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 import {
+  appIdentityOf,
   DO_NOT_AUTOMATE_LABEL,
+  isAppIdentity,
   isClosedStateType,
   personKey,
   samePerson,
-  ticketAssignee,
+  ticketHolder,
   ticketLabels,
   ticketSnapshot,
   ticketStateType,
@@ -419,6 +421,8 @@ const LINEAR_ISSUE_FIELDS = [
   'createdBy',
   'assignee',
   'assigneeId',
+  'delegate',
+  'delegateId',
   'labels',
   'state',
   'project',
@@ -440,6 +444,31 @@ const PERSON_TICKET_FIELDS: ReadonlyArray<{
   { fact: 'a label', fields: ['labels'] },
   { fact: 'a state type', fields: ['statusType', 'state'] },
 ];
+
+/**
+ * What the rule reads beside {@link PERSON_TICKET_FIELDS} for a card acting as an app (D6): the
+ * delegate, since Linear sets an app user a ticket is assigned to as its delegate and leaves the
+ * person as the assignee, so a list without it would read every ticket handed to the employee as
+ * the manager's.
+ */
+const APP_TICKET_FIELDS: ReadonlyArray<{
+  readonly fact: string;
+  readonly fields: readonly string[];
+}> = [{ fact: 'a delegate', fields: ['delegateId', 'delegate'] }];
+
+/**
+ * The facts an app identity's ticket rule reads that the schema's `fields` selector cannot select;
+ * empty when there is no selector and the provider's default fields apply.
+ *
+ * @param inputSchema - The live schema advertised for list_issues.
+ */
+function appTicketFactsUnselectable(inputSchema: unknown): string[] {
+  const selectable = selectableFields(schemaProperties(inputSchema));
+  if (!selectable) return [];
+  return APP_TICKET_FIELDS.filter(({ fields }) => !fields.some((name) => selectable.has(name))).map(
+    ({ fact }) => fact,
+  );
+}
 
 /**
  * Read the field names a schema's `fields` selector accepts.
@@ -687,15 +716,18 @@ const HELD_REFUSALS: ReadonlySet<string> = new Set([OWNER_UNREAD, ASSIGNEE_UNIDE
 
 /**
  * Why intake leaves a Linear ticket alone, by the kanban's own primitives
- * (Q11): a completed or cancelled state, the do-not-automate label, or an
- * assignee who is not the person whose key Day0 reads with, compared by id
- * and then by email, never by name. When the key's owner could not be read,
- * any assigned ticket is left alone: it may be somebody else's, and the
- * unassigned ones are still worked.
+ * (Q11): a completed or cancelled state, the do-not-automate label, or a
+ * holder (the delegate when one is set, else the assignee: `ticketHolder`)
+ * who is not the identity Day0's token acts as, compared by id and then by
+ * email, never by name: under an app identity that is the employee's app
+ * user, so a ticket assigned to the manager is not taken (D6). When that
+ * identity could not be read, any held ticket is left alone: it may be
+ * somebody else's, and the unassigned ones are still worked.
  *
  * Args:
  *   issue: Provider issue object.
- *   owner: The key owner's id and address, or undefined when unread.
+ *   owner: The id and address of the identity the token acts as, or
+ *     undefined when unread.
  *
  * Returns:
  *   The reason to skip, or undefined when the ticket is intake's to take.
@@ -709,7 +741,7 @@ export function linearIntakeRefusal(
   if (ticketLabels(issue).includes(DO_NOT_AUTOMATE_LABEL)) {
     return `the ticket is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
-  const assignee = ticketAssignee(issue);
+  const assignee = ticketHolder(issue);
   if (assignee === undefined) return undefined;
   if (owner === undefined) return OWNER_UNREAD;
   const same = samePerson(assignee, owner);
@@ -719,7 +751,8 @@ export function linearIntakeRefusal(
 
 /**
  * Ask Linear who the intake key belongs to, through the key's own `get_user`
- * with `me`, so an assignee can be compared with it.
+ * with `me`, so a holder can be compared with it. A card acting as an app
+ * never asks: the app user its probe read is the owner (`appIdentityOf`).
  *
  * Args:
  *   client: The connected MCP client.
@@ -1022,7 +1055,10 @@ async function pollLinear(
     if (!tool.execute) throw new Error('Linear list_issues tool is not executable.');
     // Fail closed (review M8, decision D2): a list that cannot carry who owns
     // a ticket would seed a person's ticket as unassigned.
-    const { unselectable } = linearListArguments(definition.inputSchema, { team: scope.team });
+    const unselectable = [
+      ...linearListArguments(definition.inputSchema, { team: scope.team }).unselectable,
+      ...(isAppIdentity(surface) ? appTicketFactsUnselectable(definition.inputSchema) : []),
+    ];
     if (unselectable.length > 0) {
       return {
         candidates: [],
@@ -1031,12 +1067,10 @@ async function pollLinear(
         holdCheckpoint: unreadableOwnershipHold(unselectable),
       };
     }
-    const owner = await linearKeyOwner(
-      client,
-      definitions.surface,
-      surface.toolAllowlist,
-      credential,
-    );
+    // Under an app identity the owner is the app user the card acts as (D6), read at the probe.
+    const owner =
+      appIdentityOf(surface) ??
+      (await linearKeyOwner(client, definitions.surface, surface.toolAllowlist, credential));
 
     const candidates: WorkCandidate[] = [];
     const candidateIds = new Set<string>();
