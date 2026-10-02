@@ -24,9 +24,20 @@ services:
     networks:
       default:
         ipv4_address: ${FAKE_OIDC_ADDRESS:-172.31.250.10}
+    # The authorisation server's protected MCP resource (11-AM), off unless a
+    # bed names its path and its public client; the redirect is the app's
+    # /api/oauth/mcp on the origin the bed's browser reaches.
+    environment:
+      - FAKE_OIDC_MCP_PATH=${FAKE_OIDC_MCP_PATH:-}
+      - FAKE_OIDC_MCP_SCOPES=${FAKE_OIDC_MCP_SCOPES:-read write}
+      - FAKE_OIDC_MCP_CLIENT_ID=${FAKE_OIDC_MCP_CLIENT_ID:-}
+      - FAKE_OIDC_MCP_REDIRECT_URIS=${FAKE_OIDC_MCP_REDIRECT_URIS:-}
 
+  # The backend's own TLS roots read SSL_CERT_FILE; its Node actions (the MCP
+  # client's discovery and token requests) read NODE_EXTRA_CA_CERTS.
   backend:
     environment:
       - SSL_CERT_FILE=/fake-oidc-tls/bundle.pem
+      - NODE_EXTRA_CA_CERTS=/fake-oidc-tls/ca.pem
     volumes:
       - ${FAKE_OIDC_TLS_DIR:-./fake-oidc/tls}:/fake-oidc-tls:ro
