@@ -17,7 +17,7 @@ import {
   LEO_LINEAR_REFRESH,
   seedIssuedIdentities,
 } from './fakes/issued-identities';
-import { SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
+import { SLACK_AUTH_REVOKE_OK, SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
 
 /*
  * The retire's revocation at the vendor (11-AR; the access plan, section 4.4, with the 1 October
@@ -358,5 +358,47 @@ describe("the retire preview's per-credential outcome (11-AR; the retire dialog'
       { slug: 'zendesk', displayName: 'Zendesk', system: 'Zendesk', outcome: 'pasted-key' },
       { slug: 'notion', displayName: 'Notion', system: 'Notion', outcome: 'kept' },
     ]);
+  });
+});
+
+describe("a vendor retry still pending when a retire names its card (the review's m5)", (): void => {
+  let network: VendorNetwork;
+
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    vi.useFakeTimers();
+    network = stubVendorNetwork();
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    restoreSurfaceMode();
+  });
+
+  it('keeps the retry the earlier end scheduled, so it still revokes at the vendor', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    network.answer('/oauth/revoke', { status: 503, body: '' }, { status: 200, body: '' });
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    network.answer('/api/apps.uninstall', { status: 200, body: { ok: true } });
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.surfaces.disconnect, { surfaceId: leo.linear.surfaceId });
+    // The first attempt meets Linear's 503 and schedules the next, an hour on.
+    vi.advanceTimersByTime(1);
+    await harness.finishInProgressScheduledFunctions();
+    expect((await credentialRows(harness, [leo.linear.access]))[0]?.sourceRevocation?.state).toBe(
+      'pending',
+    );
+
+    await owner.mutation(api.reset.retire, { agentId: leo.agentId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [access] = await credentialRows(harness, [leo.linear.access]);
+    expect(access?.sourceRevocation?.state).toBe('done');
+    expect(
+      network.calls.filter((call) => new URL(call.url).pathname === '/oauth/revoke').length,
+    ).toBeGreaterThan(1);
   });
 });

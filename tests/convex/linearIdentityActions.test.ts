@@ -13,6 +13,7 @@ import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
 import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
+import { throughTimers } from './fakes/fake-clock';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -37,7 +38,10 @@ beforeEach(async (): Promise<void> => {
   vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
   vi.stubEnv('DAY0_ADMINISTRATORS', ADMINISTRATOR);
-  clock = 1_800_000_000_000;
+  // The clock starts at the real one under fake timers (the wave 11 review's M11 a): a clock ahead
+  // of it put every scheduled refresh past the timer's range, so each fired at once, in a loop.
+  vi.useFakeTimers();
+  clock = Date.now();
   linear = fakeLinear(
     [
       {
@@ -69,6 +73,7 @@ beforeEach(async (): Promise<void> => {
 });
 
 afterEach(async (): Promise<void> => {
+  vi.useRealTimers();
   const actions = await import('../../convex/linearIdentityActions');
   actions.__setLinearIdentityDepsForTest(undefined);
   restoreSurfaceMode();
@@ -593,7 +598,7 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
 
     clock += DAY + 60_000;
 
-    await expect(rungBearer(harness, surface.credentialId!)).rejects.toThrow(
+    await expect(throughTimers(rungBearer(harness, surface.credentialId!))).rejects.toThrow(
       /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
@@ -766,6 +771,24 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(linear.live(await bearerOf(harness, access!._id))).toBe(true);
   });
 
+  it("schedules the token's refresh for its last minutes, and nothing fires it sooner (the review's M11 a)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1_000);
+    await harness.finishInProgressScheduledFunctions();
+
+    const refreshes = (await read(harness, surfaceIds[0]!)).scheduled.filter(
+      (job) => job.name === 'linearIdentityActions:refreshScheduled',
+    );
+    expect(refreshes.length).toBeGreaterThan(0);
+    for (const refresh of refreshes) {
+      expect(refresh.state.kind).toBe('pending');
+      expect(refresh.scheduledTime).toBeGreaterThan(Date.now() + 12 * 60 * 60 * 1_000);
+    }
+  });
+
   it('refreshes an expired access token and rotates the pair through the rotation-safe write', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
@@ -799,7 +822,7 @@ describe("per-employee mode: the employee's own app", (): void => {
 
     clock += DAY + 60_000;
 
-    await expect(bearerOf(harness, surface.credentialId!)).rejects.toThrow(
+    await expect(throughTimers(bearerOf(harness, surface.credentialId!))).rejects.toThrow(
       /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
@@ -813,10 +836,12 @@ describe("per-employee mode: the employee's own app", (): void => {
     const access = credentials.find((row) => row._id === surface.credentialId)!;
     linear.revokeAppTokens(LEO_CLIENT);
 
-    await harness.action(internal.linearIdentityActions.refreshScheduled, {
-      credentialId: access._id,
-      generation: 0,
-    });
+    await throughTimers(
+      harness.action(internal.linearIdentityActions.refreshScheduled, {
+        credentialId: access._id,
+        generation: 0,
+      }),
+    );
 
     const after = await read(harness, surfaceIds[0]!);
     expect(after.events.at(-1)).toMatchObject({
@@ -845,6 +870,58 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(surface.credentialId).toBeUndefined();
     expect(events.at(-1)?.type).toBe('surface.install-failed');
     expect(tokenRequests()).toEqual([]);
+  });
+
+  it("walks the access request to the installed app: its link names the card IT records the app for on the organisation page (the wave 11 review's M4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+
+    const request = await harness
+      .withIdentity(managerIdentity())
+      .query(api.accessRequests.forCard, { surfaceId: surfaceIds[0]! });
+    expect(request?.reason).toBe('install-needed');
+    expect(request?.text).not.toContain('./setup.sh');
+    const link = /(https:\/\/\S+\/organisation\?card=[^\s;]+)/.exec(request?.text ?? '')?.[1];
+    expect(link).toBeDefined();
+    const opened = new URL(link!);
+    expect(opened.origin).toBe(PUBLIC_URL);
+    const cardId = opened.searchParams.get('card') as Id<'surfaces'>;
+    expect(cardId).toBe(surfaceIds[0]);
+
+    // The organisation page records the app for the card its link names, as `registerEmployeeApp`.
+    await expect(installLeo(harness, cardId)).resolves.toEqual({
+      ok: true,
+      agentId,
+      surfaceSlug: 'linear',
+    });
+    expect((await read(harness, surfaceIds[0]!)).surface.actsAs).toMatchObject({
+      kind: 'own-app',
+      label: 'Day0 Leo',
+    });
+  });
+
+  it("never writes the app's client secret into a refused exchange's words, even when Linear echoes it (the review's m13)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({
+      fetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        url.pathname === '/oauth/token'
+          ? Response.json(
+              { error: 'invalid_client', error_description: `client ${LEO_SECRET} refused` },
+              { status: 401 },
+            )
+          : await linear.fetch(url, init),
+      now: () => clock,
+    });
+
+    const outcome = await installLeo(harness, surfaceIds[0]!);
+
+    expect(outcome.ok).toBe(false);
+    const { events } = await read(harness, surfaceIds[0]!);
+    expect(JSON.stringify(events)).not.toContain(LEO_SECRET);
+    expect(JSON.stringify(outcome)).not.toContain(LEO_SECRET);
   });
 
   it('lets only an administrator record the app, and answers the access request before one is recorded', async (): Promise<void> => {

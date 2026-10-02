@@ -267,6 +267,7 @@ describe('claiming a pending authorisation', (): void => {
         await harness.mutation(internal.mcpOauth.claimPendingAuthorisation, {
           surfaceId,
           stateNonce: 'nonce-1',
+          callerOwnerKey: 'owner',
           now: 2_000,
         })
       ).ok;
@@ -274,5 +275,99 @@ describe('claiming a pending authorisation', (): void => {
     expect(outcomes.filter(Boolean)).toHaveLength(1);
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.pendingAuthorisation).toBeUndefined();
+  });
+
+  it("leaves another flow's pending authorisation for its own redirect (the review's m3)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        pendingAuthorisation: {
+          stateNonce: 'nonce-linear',
+          stateExpiresAt: 50_000,
+          clientId: 'day0-leo',
+          verifierCiphertext: 'c',
+          verifierIv: 'i',
+          issuer: 'https://linear.app',
+          resource: 'https://mcp.linear.app/mcp',
+          redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+          startedAt: 1,
+        },
+      });
+    });
+    const { internal } = await liveApi();
+
+    const refused = await harness.mutation(internal.mcpOauth.claimPendingAuthorisation, {
+      surfaceId,
+      stateNonce: 'nonce-linear',
+      callerOwnerKey: 'owner',
+      now: 2_000,
+    });
+
+    expect(refused).toEqual({ ok: false, reason: 'none' });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.pendingAuthorisation?.stateNonce).toBe('nonce-linear');
+  });
+
+  it('claims its own authorisation whose recorded redirect IT wrote with a trailing slash', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        pendingAuthorisation: {
+          stateNonce: 'nonce-slash',
+          stateExpiresAt: 50_000,
+          clientId: 'day0-mcp',
+          verifierCiphertext: 'c',
+          verifierIv: 'i',
+          issuer: 'https://auth.acme.test',
+          resource: 'https://auth.acme.test/mcp',
+          redirectUrl: 'https://day0.acme.test/api/oauth/mcp/',
+          startedAt: 1,
+        },
+      });
+    });
+    const { internal } = await liveApi();
+
+    const claimed = await harness.mutation(internal.mcpOauth.claimPendingAuthorisation, {
+      surfaceId,
+      stateNonce: 'nonce-slash',
+      callerOwnerKey: 'owner',
+      now: 2_000,
+    });
+
+    expect(claimed.ok).toBe(true);
+  });
+
+  it("refuses a caller who is not the employee's owner before it claims anything (M2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        pendingAuthorisation: {
+          stateNonce: 'nonce-1',
+          stateExpiresAt: 50_000,
+          clientId: 'day0-mcp',
+          verifierCiphertext: 'c',
+          verifierIv: 'i',
+          issuer: 'https://auth.acme.test',
+          resource: 'https://auth.acme.test/mcp',
+          redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+          startedAt: 1,
+        },
+      });
+    });
+    const { internal } = await liveApi();
+
+    const refused = await harness.mutation(internal.mcpOauth.claimPendingAuthorisation, {
+      surfaceId,
+      stateNonce: 'nonce-1',
+      callerOwnerKey: 'colleague',
+      now: 2_000,
+    });
+
+    expect(refused).toEqual({ ok: false, reason: 'not-the-manager' });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.pendingAuthorisation?.stateNonce).toBe('nonce-1');
   });
 });

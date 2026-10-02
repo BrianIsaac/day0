@@ -1,4 +1,7 @@
+import { PassThrough } from 'node:stream';
+import type { IncomingMessage } from 'node:http';
 import { vi } from 'vitest';
+import type { HttpsRequest } from '../../../src/surfaces/mcp-address';
 
 /** One request the code under test sent to a vendor, as the network seam saw it. */
 export interface VendorCall {
@@ -59,5 +62,48 @@ export function stubVendorNetwork(): VendorNetwork {
     answer(path: string, ...answers: VendorAnswer[]): void {
       queued.set(path, [...answers]);
     },
+  };
+}
+
+/**
+ * The pinned transport the address-checked fetch dials with, answering through the stubbed
+ * `fetch` of {@link stubVendorNetwork}, so a request that passed the MCP rung's address rules is
+ * recorded and answered as any other vendor call. It never opens a socket.
+ */
+export function vendorTransport(): HttpsRequest {
+  return (url, options, callback) => {
+    let fail: (error: Error) => void = (): void => undefined;
+    return {
+      on: (_event: 'error', listener: (error: Error) => void): void => {
+        fail = listener;
+      },
+      end: (body?: string | Uint8Array): void => {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(options.headers ?? {})) {
+          headers.set(name, String(value));
+        }
+        const text = typeof body === 'string' ? body : body && Buffer.from(body).toString('utf8');
+        // The answer reaches the pinned fetch through the callback and a failure through the
+        // error listener, as Node's own transport delivers them.
+        void fetch(url, {
+          method: options.method,
+          headers,
+          redirect: 'manual',
+          ...(text === undefined ? {} : { body: text }),
+        })
+          .then(async (answer: Response): Promise<void> => {
+            const response = Object.assign(new PassThrough(), {
+              statusCode: answer.status,
+              statusMessage: '',
+              headers: Object.fromEntries(answer.headers),
+            });
+            callback(response as unknown as IncomingMessage);
+            response.end(Buffer.from(await answer.arrayBuffer()));
+          })
+          .catch((error: unknown): void => {
+            fail(error instanceof Error ? error : new Error(String(error)));
+          });
+      },
+    };
   };
 }

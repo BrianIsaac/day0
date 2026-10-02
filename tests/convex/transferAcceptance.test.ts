@@ -443,7 +443,7 @@ describe('transferPreview: what the named manager reads before accepting (transf
       .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
 
     expect(preview?.leavesBehind.reapprove).toEqual([
-      { slug: 'linear', displayName: 'Linear', identity: 'Day0 Maya' },
+      { slug: 'linear', displayName: 'Linear', identity: 'Day0 Maya', kind: 'own-app' },
     ]);
     expect(preview?.leavesBehind.surfaces).toEqual([{ slug: 'slack', displayName: 'Slack' }]);
     expect(preview?.leavesBehind.scopesRevoked).toEqual(['linear:read']);

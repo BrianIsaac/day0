@@ -13,6 +13,9 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organ
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { throughTimers } from './fakes/fake-clock';
+import { vendorTransport } from './fakes/vendor-revocation';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 
 const PUBLIC_URL = 'https://day0.acme.test';
 const ISSUER = 'https://auth.acme.test';
@@ -45,7 +48,10 @@ beforeEach(async (): Promise<void> => {
   credentialKey = randomBytes(32).toString('base64');
   vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
   vi.stubEnv('DAY0_PUBLIC_URL', PUBLIC_URL);
-  clock = 1_800_000_000_000;
+  // The clock starts at the real one under fake timers (the wave 11 review's M11 a): a clock ahead
+  // of it put every scheduled refresh past the timer's range, so each fired at once, in a loop.
+  vi.useFakeTimers();
+  clock = Date.now();
   server = createIssuer({
     issuer: ISSUER,
     clients: [
@@ -60,6 +66,7 @@ beforeEach(async (): Promise<void> => {
 });
 
 afterEach(async (): Promise<void> => {
+  vi.useRealTimers();
   const actions = await import('../../convex/mcpOauthActions');
   actions.__setMcpOauthDepsForTest(undefined);
   restoreSurfaceMode();
@@ -152,16 +159,22 @@ async function consent(authoriseUrl: string, extra: Record<string, string> = {})
   return new URL(answer.headers.get('location') ?? '');
 }
 
+/**
+ * Hand the redirect to the deployment as the route does, signed in as the card's manager unless the
+ * test names another caller, or none.
+ */
 async function complete(
   harness: TestConvex<typeof schema>,
   back: URL,
+  as: ReturnType<typeof managerIdentity> | 'nobody' = managerIdentity(),
 ): Promise<{ ok: boolean; reason?: string; agentId?: string; surfaceSlug?: string }> {
   const { api } = await liveApi();
   const arg = (name: string): Record<string, string> => {
     const value = back.searchParams.get(name);
     return value === null ? {} : { [name]: value };
   };
-  return await harness.action(api.mcpOauthActions.completeAuthorisation, {
+  const caller = as === 'nobody' ? harness : harness.withIdentity(as);
+  return await caller.action(api.mcpOauthActions.completeAuthorisation, {
     state: back.searchParams.get('state') ?? '',
     ...arg('code'),
     ...arg('iss'),
@@ -883,10 +896,12 @@ describe('refreshing with rotation', (): void => {
     await server.handle(new Request(`${ISSUER}/admin/revoke?person=priya`, { method: 'POST' }));
     const { internal } = await liveApi();
     clock += 290_000;
-    await harness.action(internal.mcpOauthActions.refreshScheduled, {
-      credentialId,
-      generation: 0,
-    });
+    await throughTimers(
+      harness.action(internal.mcpOauthActions.refreshScheduled, {
+        credentialId,
+        generation: 0,
+      }),
+    );
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
     const failed = events.find((event) => event.type === 'surface.authorisation-failed');
     expect(failed?.payload.reason).toContain('invalid_grant');
@@ -929,14 +944,134 @@ describe('an employee acts at the vendor only as the identity its card names (cr
   });
 });
 
+describe('the scheduled refresh under the real clock (the wave 11 review’s M11 a)', (): void => {
+  it("waits for the token's last minutes, and nothing fires it sooner", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await harness.finishInProgressScheduledFunctions();
+
+    const refresh = (await read(harness, surfaceId)).scheduled.find(
+      (job) => job.name === 'mcpOauthActions:refreshScheduled',
+    );
+    expect(refresh?.state.kind).toBe('pending');
+    expect(refresh?.scheduledTime).toBeGreaterThan(Date.now());
+    expect(await adminState()).toMatchObject({ refreshExchanges: 0 });
+  });
+});
+
+describe('a confidential client whose secret IT rotates (the wave 11 review’s M9)', (): void => {
+  it('refreshes a token issued under the old secret with the connection’s current one', async (): Promise<void> => {
+    const confidential = { id: CONFIDENTIAL, secret: CLIENT_SECRET, redirectUris: [REDIRECT] };
+    server = createIssuer({
+      issuer: ISSUER,
+      clients: [confidential],
+      protectedResource: { path: '/mcp', scopes: ['read', 'write'] },
+      now: () => clock,
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, connectionId } = await seed(harness, { confidential: { issuer: ISSUER } });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const { surface } = await read(harness, surfaceId);
+    const { internal } = await liveApi();
+
+    // IT gives the client a new secret at the server and on the organisation page ("No card ends").
+    confidential.secret = 'mcp-client-secret-rotated';
+    await harness.action(internal.organisationConnections.rotateFromSetup, {
+      organisationConnectionId: connectionId as Id<'organisationConnections'>,
+      secret: 'mcp-client-secret-rotated',
+    });
+    clock += 290_000;
+    const bearer = await harness.action(internal.mcpOauthActions.currentBearer, {
+      credentialId: surface.credentialId as Id<'credentials'>,
+    });
+
+    expect(bearer).toEqual(expect.any(String));
+    expect(await adminState()).toMatchObject({ codeExchanges: 1, refreshExchanges: 1 });
+  });
+});
+
+describe('who may complete an authorisation (the wave 11 review’s M2, decision 3 (a))', (): void => {
+  it('refuses a second signed-in person’s consent, lands nothing and leaves the manager’s authorisation pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const back = await consent(started.authoriseUrl);
+
+    const outcome = await complete(harness, back, managerIdentity('ana'));
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason:
+        "Only the employee's manager, signed in to Day0, can finish this authorisation, so nothing was connected. The manager starts it from the card.",
+    });
+    const after = await read(harness, surfaceId);
+    expect(after.surface.credentialId).toBeUndefined();
+    expect(after.surface.actsAs).toBeUndefined();
+    expect(after.surface.pendingAuthorisation).toBeDefined();
+    expect(after.credentials).toEqual([]);
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 0, liveRefreshTokens: 0 });
+  });
+
+  it('refuses a redirect that carries no signed-in caller', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+
+    const outcome = await complete(harness, await consent(started.authoriseUrl), 'nobody');
+
+    // A manager whose sign-in lapsed at the consent is told so, not that they are not the manager.
+    expect(outcome).toEqual({
+      ok: false,
+      reason:
+        'Your Day0 sign-in had lapsed, so nothing was connected. Sign in again, then start the authorisation again from the card.',
+    });
+    expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeDefined();
+    expect((await read(harness, surfaceId)).surface.credentialId).toBeUndefined();
+  });
+
+  it('lands the manager’s own consent on the card, labelled as the manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    expect((await read(harness, surfaceId)).surface.actsAs).toEqual({
+      kind: 'delegated',
+      label: MANAGER_ADDRESS,
+    });
+  });
+});
+
 describe('the organisation’s revoke of a confidential client’s connection (join 8)', (): void => {
-  afterEach((): void => {
+  afterEach(async (): Promise<void> => {
     vi.unstubAllGlobals();
+    // The modules are reset per test: the seam is set on the instance the harness loads.
+    const revocation = await import('../../convex/sourceRevocationActions');
+    revocation.__setRevocationAddressingForTest(undefined);
   });
 
   it('revokes every card’s token at the server with the client secret it revoked in the same act', async (): Promise<void> => {
     vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
-    // The revocation reaches the authorisation server through the deployment's own fetch.
+    // The revocation meets the MCP rung's address rules (the wave 11 review's M3): the issuer's
+    // host answers a public address, and the pinned transport reaches the issuer through the
+    // stubbed fetch, so no socket opens.
+    const revocation = await import('../../convex/sourceRevocationActions');
+    revocation.__setRevocationAddressingForTest({
+      resolve: async (): Promise<string[]> => ['93.184.216.34'],
+      request: vendorTransport(),
+      privateHosts: privateHostAllowlist(''),
+    });
     vi.stubGlobal(
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>

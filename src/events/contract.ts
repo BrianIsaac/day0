@@ -872,6 +872,18 @@ export interface OrganisationConnectionRotatedPayload extends OrganisationConnec
   readonly previousScopes?: readonly string[];
 }
 
+/**
+ * The payload of `organisation.connection-corrected` (the wave 11 review's M12 e): the redirect or
+ * the scopes a connection records, corrected in place to what IT registered at the vendor; the
+ * scopes with what they were, the redirect only as corrected, so no address reaches a ledger line
+ * or an export. No secret changes and no card ends.
+ */
+export interface OrganisationConnectionCorrectedPayload extends OrganisationConnectionNamed {
+  readonly redirectCorrected?: boolean;
+  readonly scopes?: readonly string[];
+  readonly previousScopes?: readonly string[];
+}
+
 /** The payload of `organisation.connection-revoked`. */
 export interface OrganisationConnectionRevokedPayload extends OrganisationConnectionNamed {
   readonly reason: string;
@@ -938,8 +950,15 @@ export interface OrganisationRevokedAtSourcePayload {
   readonly reason?: string;
 }
 
-/** The Slack methods Day0 calls with the organisation's configuration token or its refresh token (11-AS). */
-export type SlackConfigurationMethod = 'tooling.tokens.rotate' | 'apps.manifest.create';
+/**
+ * The Slack methods Day0 calls with the organisation's configuration token or its refresh token
+ * (11-AS), and `auth.revoke`, which ends a configuration token a revoke or a rotation took out of
+ * use (the wave 11 review's M6).
+ */
+export type SlackConfigurationMethod =
+  | 'tooling.tokens.rotate'
+  | 'apps.manifest.create'
+  | 'auth.revoke';
 
 /**
  * The payload of `organisation.configuration-used` (11-AS; B9, AC11): one call Day0 made with the
@@ -1545,6 +1564,7 @@ export interface EventPayloads {
   'surface.access-requested': SurfaceAccessRequestedPayload;
   'organisation.connection-landed': OrganisationConnectionLandedPayload;
   'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
+  'organisation.connection-corrected': OrganisationConnectionCorrectedPayload;
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
   'surface.authorised': SurfaceAuthorisedPayload;
   'surface.authorisation-failed': SurfaceAuthorisationFailedPayload;
@@ -1720,6 +1740,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.access-requested',
   'organisation.connection-landed',
   'organisation.connection-rotated',
+  'organisation.connection-corrected',
   'organisation.connection-revoked',
   'surface.authorised',
   'surface.authorisation-failed',
@@ -1813,6 +1834,7 @@ export function isEventType(value: unknown): value is EventType {
 export const CONNECTION_EVENT_TYPES = [
   'organisation.connection-landed',
   'organisation.connection-rotated',
+  'organisation.connection-corrected',
   'organisation.connection-revoked',
   'organisation.revoked-at-source',
   'organisation.configuration-used',

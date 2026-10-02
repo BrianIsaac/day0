@@ -650,6 +650,8 @@ export const completeAuthorisation = action({
     if (!args.code) return await fail('Linear sent no code back.');
     const { pending } = claimed;
     let issued: LinearIssuedTokens;
+    // Kept beside the code for the failure's words, which never carry either (the review's m13).
+    let secret: string | undefined;
     try {
       const verifier = openOwnedCredential(
         {
@@ -661,7 +663,7 @@ export const completeAuthorisation = action({
         credentialKeyring(),
         { allowUnbound: false },
       );
-      const secret = await valueOf(ctx, claimed.clientSecretCredentialId);
+      secret = await valueOf(ctx, claimed.clientSecretCredentialId);
       issued = await requestLinearTokens(
         deps.fetch,
         { clientId: pending.clientId, clientSecret: secret },
@@ -674,7 +676,12 @@ export const completeAuthorisation = action({
         deps.now(),
       );
     } catch (error) {
-      return await fail(clipped(error, 'Exchanging the code with Linear failed.', [args.code]));
+      return await fail(
+        clipped(error, 'Exchanging the code with Linear failed.', [
+          args.code,
+          ...(secret === undefined ? [] : [secret]),
+        ]),
+      );
     }
     if (issued.refreshToken === undefined) {
       await revokeUnkept(deps, issued);

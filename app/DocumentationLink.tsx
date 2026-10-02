@@ -22,7 +22,7 @@ export function DocumentationLink(): React.ReactElement | null {
     <Link
       href="/documentation"
       prefetch={false}
-      className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      className="inline-flex min-h-11 items-center text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
     >
       Documentation
     </Link>

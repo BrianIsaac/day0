@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
+import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   accessStanding,
   actsAsWords,
-  cardIdentity,
   connectedForOrganisationWords,
+  disconnectLines,
+  documentedKeyUnusedWords,
   expectedCredential,
+  identityChip,
   mockActsAsWords,
   moveOfferWords,
   reachedWords,
@@ -152,8 +155,13 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
   const names = { employee: 'Maya', system: 'Slack' };
 
   it('reads the identity the connect path wrote, as it is, and names the app as the system shows it', (): void => {
+    // A connect path writes the identity with the credential it lands; the card holds both (M8).
     const identity = cardIdentity(
-      { ...SLACK, actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' } },
+      {
+        ...SLACK,
+        actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' },
+        credentialId: 'cred-1',
+      },
       undefined,
       { selfProvisions: false },
     );
@@ -204,7 +212,7 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
     const planned = cardIdentity(LINEAR, undefined, { selfProvisions: false });
     expect(planned).toEqual({ kind: 'shared-key', planned: true });
     expect(actsAsWords(planned, { employee: 'Maya', system: 'Linear' })).toBe(
-      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     const landed = cardIdentity(
       {
@@ -216,7 +224,7 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
       { selfProvisions: false },
     );
     expect(actsAsWords(landed, { employee: 'Maya', system: 'Linear' })).toBe(
-      "a key someone pasted; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pasted; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
   });
 
@@ -259,6 +267,66 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
 
   it("says the hosted office's words on every mock surface", (): void => {
     expect(mockActsAsWords('Maya')).toBe('Maya, its own app in this office');
+  });
+});
+
+describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
+  const names = { employee: 'Maya', system: 'Linear' };
+  const bound = {
+    ...LINEAR,
+    actsAs: { kind: 'shared-key' as const, label: 'Linear API key' },
+    credentialId: 'cred-1' as never,
+  };
+
+  it('says a documented key bound with no connection is a shared key nobody pasted', (): void => {
+    const identity = cardIdentity(bound, undefined, {
+      selfProvisions: false,
+      heldKeyFrom: 'documentation',
+    });
+    expect(identity).toEqual({
+      kind: 'shared-key',
+      label: 'Linear API key',
+      planned: false,
+      keyFrom: 'documentation',
+    });
+    const words = actsAsWords(identity, names);
+    expect(words).toBe(
+      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each write",
+    );
+    expect(words).not.toMatch(/past/);
+    expect(identityChip(identity)).toBe('Documented key');
+  });
+
+  it('still says a key the manager pasted was pasted', (): void => {
+    const identity = cardIdentity(bound, undefined, {
+      selfProvisions: false,
+      heldKeyFrom: 'paste',
+    });
+    expect(actsAsWords(identity, names)).toMatch(/^a key someone pasted;/);
+    expect(identityChip(identity)).toBe('Pasted key');
+  });
+
+  it('says the Disconnect leaves a documented key as it is, without calling it pasted', (): void => {
+    const identity = cardIdentity(bound, undefined, {
+      selfProvisions: false,
+      heldKeyFrom: 'documentation',
+    });
+    const lines = disconnectLines(identity, names, { slack: false });
+    expect(lines).toEqual([
+      'The key found in your documentation is left as it is at Linear: Day0 stops using it and never revokes a key it did not obtain, and it stays in your stored credentials. Revoke it there if it should end.',
+    ]);
+  });
+
+  it('offers the move off a documented key in its own words', (): void => {
+    expect(moveOfferWords({ kind: 'shared-app', planned: true }, names, 'documentation')).toBe(
+      'IT has connected Linear. Maya can use the Day0 app your employees share instead of the key found in your documentation, which keeps working until you move it.',
+    );
+  });
+
+  it("says a documented key IT's connection replaced was found and is not used", (): void => {
+    expect(documentedKeyUnusedWords('Maya')).toBe(
+      "Found and not used: Maya acts through IT's connection.",
+    );
   });
 });
 

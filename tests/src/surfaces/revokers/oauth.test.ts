@@ -51,6 +51,18 @@ describe('the OAuth 2.0 token revocation request (RFC 7009)', (): void => {
       }),
     ).toThrow('A revocation endpoint must be an https address.');
   });
+
+  it("refuses http on the loopback too: every revocation obeys the MCP rung's address rules (the wave 11 review's M3)", (): void => {
+    for (const endpoint of [
+      'http://127.0.0.1:3532/revoke',
+      'http://localhost/revoke',
+      'http://[::1]/revoke',
+    ]) {
+      expect(() =>
+        oauthTokenRevocation({ endpoint, token: ACCESS_TOKEN, hint: 'access_token' }),
+      ).toThrow('A revocation endpoint must be an https address.');
+    }
+  });
 });
 
 describe("reading a revocation endpoint's answer", (): void => {

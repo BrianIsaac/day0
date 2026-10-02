@@ -8,7 +8,9 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { endAccessAtSource } from '../../convex/sourceRevocation';
 import { allConvexModules } from './all-modules';
-import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
+import { stubVendorNetwork, vendorTransport, type VendorNetwork } from './fakes/vendor-revocation';
+import { __setRevocationAddressingForTest } from '../../convex/sourceRevocationActions';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import {
   SLACK_AUTH_REVOKE_OK,
   SLACK_INVALID_AUTH,
@@ -154,11 +156,157 @@ async function lines(harness: Harness, agentId: Id<'agents'>): Promise<unknown[]
   );
 }
 
+/** The authorisation server's host, answered with a public address unless a test says otherwise. */
+const AUTH_HOST = 'auth.example.com';
+
+/**
+ * Dial RFC 7009 revocations through the address rules with a resolver that answers `addresses`
+ * for the authorisation server and the stubbed network as the transport, so no socket opens.
+ */
+function revocationAddressing(addresses: readonly string[]): void {
+  __setRevocationAddressingForTest({
+    resolve: async (host: string): Promise<string[]> =>
+      host === AUTH_HOST ? [...addresses] : ['10.0.0.9'],
+    request: vendorTransport(),
+    privateHosts: privateHostAllowlist(''),
+  });
+}
+
+/** An MCP card whose organisation connection advertises a revocation endpoint, and its token. */
+async function mcpCardWithToken(
+  harness: Harness,
+  revocation: string,
+): Promise<{
+  readonly agentId: Id<'agents'>;
+  readonly surfaceId: Id<'surfaces'>;
+  readonly credentialId: Id<'credentials'>;
+}> {
+  const { connectionId, agentId, surfaceId } = await harness.run(async (ctx) => {
+    const connectionId = await ctx.db.insert('organisationConnections', {
+      system: 'mcp:mcp.example.com',
+      displayName: 'Example MCP',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      scopes: [],
+      registeredBy: { via: 'setup-cli', at: 1 },
+      status: 'active',
+      clientId: 'day0-public',
+      authorisationEndpoints: {
+        authorisation: `https://${AUTH_HOST}/authorize`,
+        token: `https://${AUTH_HOST}/token`,
+        revocation,
+        discoveredAt: 1,
+      },
+      createdAt: 1,
+    });
+    const agentId = await ctx.db.insert('agents', {
+      bossEmail: 'boss@day0.local',
+      name: 'Leo',
+      userId: 'owner',
+      state: 'active',
+      createdAt: 1,
+    });
+    const surfaceId = await ctx.db.insert('surfaces', {
+      agentId,
+      slug: 'example',
+      displayName: 'Example',
+      class: 'docs',
+      verdict: 'connected',
+      whereFound: [],
+      credentialLanded: true,
+      createdAt: 1,
+    });
+    return { connectionId, agentId, surfaceId };
+  });
+  const credentialId = await stored(harness, 'owner', 'mcp-access-0123', {
+    issuedBy: {
+      system: 'mcp:mcp.example.com',
+      grant: 'authorisation-code',
+      clientId: 'day0-public',
+      organisationConnectionId: connectionId,
+    },
+  });
+  return { agentId, surfaceId, credentialId };
+}
+
+describe("the RFC 7009 call through the MCP rung's address rules (the wave 11 review's M3)", (): void => {
+  let network: VendorNetwork;
+
+  beforeEach((): void => {
+    network = stubVendorNetwork();
+  });
+
+  afterEach((): void => {
+    __setRevocationAddressingForTest(undefined);
+  });
+
+  it('never sends a token to a revocation endpoint whose host resolves to a private address', async (): Promise<void> => {
+    revocationAddressing(['10.0.0.5']);
+    const harness = convexTest(schema, allConvexModules());
+    const card = await mcpCardWithToken(harness, `https://${AUTH_HOST}/revoke`);
+    network.answer('/revoke', { status: 200, body: '' });
+
+    await endAndDrain(harness, card, [card.credentialId], 'disconnect');
+
+    expect(network.calls).toEqual([]);
+    const [line] = (await lines(harness, card.agentId)) as { outcome: string; reason: string }[];
+    expect(line?.outcome).toBe('failed');
+    expect(line?.reason).toContain('resolved to a private');
+    expect(line?.reason).not.toContain('mcp-access-0123');
+  });
+
+  it('sends the revocation to the checked address once the host resolves to a public one', async (): Promise<void> => {
+    revocationAddressing(['93.184.216.34']);
+    const harness = convexTest(schema, allConvexModules());
+    const card = await mcpCardWithToken(harness, `https://${AUTH_HOST}/revoke`);
+    network.answer('/revoke', { status: 200, body: '' });
+
+    await endAndDrain(harness, card, [card.credentialId], 'disconnect');
+
+    expect(network.calls).toEqual([
+      {
+        url: `https://${AUTH_HOST}/revoke`,
+        form: {
+          token: 'mcp-access-0123',
+          token_type_hint: 'access_token',
+          client_id: 'day0-public',
+        },
+      },
+    ]);
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({ outcome: 'token-revoked' }),
+    ]);
+  });
+
+  it('refuses an http revocation endpoint on the loopback without dialling it', async (): Promise<void> => {
+    revocationAddressing(['93.184.216.34']);
+    const harness = convexTest(schema, allConvexModules());
+    const card = await mcpCardWithToken(harness, 'http://127.0.0.1:3532/revoke');
+    network.answer('/revoke', { status: 200, body: '' });
+
+    await endAndDrain(harness, card, [card.credentialId], 'disconnect');
+
+    expect(network.calls).toEqual([]);
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({
+        outcome: 'failed',
+        reason:
+          'Day0 refused the revocation endpoint: A revocation endpoint must be an https address.',
+      }),
+    ]);
+  });
+});
+
 describe("the RFC 7009 call after the administrator revoked the connection (the review's minor 6)", (): void => {
   let network: VendorNetwork;
 
   beforeEach((): void => {
     network = stubVendorNetwork();
+    revocationAddressing(['93.184.216.34']);
+  });
+
+  afterEach((): void => {
+    __setRevocationAddressingForTest(undefined);
   });
 
   it("still revokes at the endpoint the revoked connection advertised, and names a bad endpoint in Day0's words", async (): Promise<void> => {

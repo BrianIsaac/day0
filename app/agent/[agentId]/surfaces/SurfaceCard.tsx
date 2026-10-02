@@ -29,10 +29,11 @@ import { clockTime, useAgentZone } from '../../../components/time';
 import {
   accessStanding,
   actsAsWords,
-  cardIdentity,
   connectedForOrganisationWords,
   disconnectLines,
+  documentedKeyUnusedWords,
   expectedCredential,
+  moveLabel,
   moveOfferWords,
   noWayOnWords,
   slackChannelsGoWords,
@@ -290,23 +291,30 @@ export function SurfaceCard({
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
   });
-  const identity = cardIdentity(surface, connection, {
-    selfProvisions:
-      slack &&
-      provisioningPresentation.stage !== 'not-applicable' &&
-      provisioningPresentation.stage !== 'unavailable',
-  });
+  // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
+  const identity = surface.identity;
   const identityNames = { employee: context.employeeName, system: surface.displayName };
   const showsIdentity = !NO_IDENTITY.has(surface.verdict);
-  const chipForIdentity = identityChip(identity.kind);
+  const chipForIdentity = identityChip(identity);
+  // B1, decision 1 (a): a key the documentation gives is never bound where IT's connection covers
+  // the system, and the card says it was found and is not used.
+  // An orientation that found a value it could not resolve stored no key: it says so instead
+  // (`credentialLocation`), and the card does not claim a key was found.
+  const documentedKeyUnused =
+    covering !== undefined &&
+    request?.credential?.found === 'value' &&
+    surface.credentialLocation === undefined &&
+    identity.keyFrom !== 'documentation';
   const approvedAccess =
     ACCESS_VERDICTS.has(surface.verdict) && surface.managerApprovedAt !== undefined;
   const ended = accessStanding(surface, context.now, zone).kind === 'ended';
   // A27: a card still on a pasted key whose system IT has since connected is offered the move,
   // through the connection's own issuer: Slack's app, else the card's Connect.
   const onMove = slack ? (): void => actions.provision() : actions.connect;
+  const target = surface.connectionIdentity;
   const move: MoveOffer | undefined =
     covering !== undefined &&
+    target !== undefined &&
     identity.kind === 'shared-key' &&
     !identity.planned &&
     surface.credentialId !== undefined &&
@@ -315,12 +323,8 @@ export function SurfaceCard({
     // then its Connect refuses and asks for the access request (11-AL's `startInstall`).
     !(system === 'linear' && covering.mode === 'per-employee' && surface.provisioning === undefined)
       ? {
-          words: moveOfferWords(
-            cardIdentity({ endpoint: surface.endpoint, path: surface.path }, covering, {
-              selfProvisions: false,
-            }),
-            identityNames,
-          ),
+          words: moveOfferWords(target, identityNames, identity.keyFrom),
+          label: moveLabel(identity.keyFrom ?? 'paste'),
           onMove,
         }
       : undefined;
@@ -362,6 +366,11 @@ export function SurfaceCard({
       tone={cardTone(chip.tone)}
     >
       <div className="grid gap-4">
+        {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
+            M13); a reason that is the skip line is said once, as the skip. */}
+        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
+          <p className="text-sm text-[var(--color-fg)]">{surface.reason}</p>
+        ) : null}
         {skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
@@ -376,9 +385,6 @@ export function SurfaceCard({
         {/* A proposed card says it beside its disabled Approve instead. */}
         {browserFloor.absent && surface.verdict !== 'proposed' ? (
           <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
-        ) : null}
-        {surface.reason && !skipReason && surface.reason !== 'expired' ? (
-          <p className="text-sm text-[var(--color-fg-2)]">{surface.reason}</p>
         ) : null}
         {request?.target?.reasoning ? (
           <p className="text-sm text-[var(--color-fg-2)]">{request.target.reasoning}</p>
@@ -416,6 +422,9 @@ export function SurfaceCard({
               <Fact label="Connection">
                 {connectedForOrganisationWords(covering, zone ?? deploymentZone())}
               </Fact>
+            ) : null}
+            {documentedKeyUnused && showsIdentity ? (
+              <Fact label="Key in your docs">{documentedKeyUnusedWords(context.employeeName)}</Fact>
             ) : null}
             {approvedAt !== undefined ? (
               <Fact label="Approved">

@@ -286,6 +286,47 @@ describe('landing an organisation connection', (): void => {
   });
 });
 
+describe("a confidential MCP client names its issuer (the wave 11 review's M12 f)", (): void => {
+  const MCP: Landing = {
+    system: 'mcp:docs.acme.test',
+    displayName: 'Acme docs',
+    kind: 'mcp-client',
+    mode: 'per-employee',
+    scopes: [],
+    clientId: 'day0-docs',
+  };
+
+  it('refuses a client secret with no issuer, since every card on it would then be refused', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    expect(
+      await refusalOf(
+        harness
+          .withIdentity(INES)
+          .action(api.organisationConnections.land, { ...MCP, secret: 'mcp-secret-0123' }),
+      ),
+    ).toBe(
+      "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone.",
+    );
+    expect((await organisationRows(harness)).credentials).toEqual([]);
+  });
+
+  it('lands a confidential client with its issuer, and a public client without one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ines = harness.withIdentity(INES);
+    await ines.action(api.organisationConnections.land, {
+      ...MCP,
+      secret: 'mcp-secret-0123',
+      issuer: 'https://auth.acme.test',
+    });
+    await ines.action(api.organisationConnections.land, {
+      ...MCP,
+      system: 'mcp:wiki.acme.test',
+      displayName: 'Wiki',
+    });
+    expect((await organisationRows(harness)).connections).toHaveLength(2);
+  });
+});
+
 describe('a per-employee OAuth app, which holds no organisation secret (AI5, join 2)', (): void => {
   /** Linear per employee as the setup verb lands it: each employee's own app brings its secret. */
   const PER_EMPLOYEE_LINEAR: Landing = {
@@ -399,8 +440,9 @@ describe('rotating and revoking an organisation connection', (): void => {
     expect(connections[0].secretCredentialId).not.toBe(landed.secretCredentialId);
     const old = credentials.find((row) => row._id === landed.secretCredentialId);
     expect(old?.revokedAt).toEqual(expect.any(Number));
-    // The revoked secret's ciphertext stays for the vendor call (F19); 11-AR purges it.
-    expect(old?.ciphertext).toEqual(expect.any(String));
+    // An app's client secret has no call that ends it at the vendor, so its value goes at once
+    // (the wave 11 review's M6); only an MCP client's waits out its card revocations.
+    expect(old?.ciphertext).toBeUndefined();
     await expect(
       harness.action(internal.credentials.decrypt, {
         credentialId: connections[0].secretCredentialId!,

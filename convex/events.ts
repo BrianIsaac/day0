@@ -381,7 +381,8 @@ async function connectionLedgerOf(
  * The organisation's ledger lines about the connections an employee's cards use (F17; the access
  * plan, section 8, cross-unit test 4), oldest first: each connection's landing, rotations and
  * revoke, and of the vendor calls made with a connection's secret only those that ended this
- * employee's own credentials (the cards' and those its record says were revoked at the source).
+ * employee's own credentials (the cards' and those its record says were revoked at the source) and
+ * the configuration token's creation of this employee's own app.
  * Each payload is redacted as the export redacts, and the administrator's address is left out.
  */
 async function organisationLedgerOf(
@@ -411,10 +412,21 @@ async function organisationLedgerOf(
       isEventOf(event, 'credential.revoked-at-source') ? [event.payload.credentialId] : [],
     ),
   ]);
+  const ownApps = new Set<string>(
+    surfaces.flatMap((surface) =>
+      surface.provisioning?.appId ? [surface.provisioning.appId] : [],
+    ),
+  );
   return ledgers
     .flat()
     .filter((line) => isConnectionEventType(line.type))
     .filter((line) => {
+      if (line.type === 'organisation.configuration-used') {
+        // Only the creation of this employee's own app is its: another employee's app, a renewal
+        // of the token and its revoke are the organisation's (the wave 11 review's m1).
+        const appId = (line.payload as { readonly appId?: unknown }).appId;
+        return typeof appId === 'string' && ownApps.has(appId);
+      }
       if (line.type !== 'organisation.revoked-at-source') return true;
       const credentialId = (line.payload as { readonly credentialId?: unknown }).credentialId;
       return typeof credentialId === 'string' && own.has(credentialId);

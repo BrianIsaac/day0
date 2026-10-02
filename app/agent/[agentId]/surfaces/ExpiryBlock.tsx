@@ -44,6 +44,8 @@ export interface Renewed {
 /** The move off a pasted key the card offers at its renewal (A27): its words and its control. */
 export interface MoveOffer {
   readonly words: string;
+  /** The button's words, naming the key it moves off. */
+  readonly label: string;
   readonly onMove: () => void;
 }
 
@@ -191,7 +193,7 @@ export function ExpiryBlock({
           <p className="text-[var(--color-fg-2)]">{move.words}</p>
           <div>
             <Button size="small" onClick={move.onMove}>
-              Move off the pasted key
+              {move.label}
             </Button>
           </div>
         </div>

@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PORTS,
+  appFailureWords,
   parseSetupArguments,
   publicUrlCorrections,
   readEnvValues,
   runCommand,
   setupEnvUpdates,
+  type AppWait,
 } from '../../scripts/setup';
 import { harness, type Harness, type HarnessOptions } from './setup-harness';
 
@@ -60,7 +62,9 @@ interface InstallBed {
   run(args: readonly string[]): Promise<number>;
 }
 
-function installBed(options: HarnessOptions & { readonly appAnswers?: boolean } = {}): InstallBed {
+function installBed(
+  options: HarnessOptions & { readonly appAnswers?: boolean; readonly lastError?: string } = {},
+): InstallBed {
   const bed = harness({ envLocal: INSTALLED, ...options });
   mkdirSync(join(bed.directory, 'docs-local'), { recursive: true });
   writeFileSync(
@@ -76,9 +80,14 @@ function installBed(options: HarnessOptions & { readonly appAnswers?: boolean } 
       await runCommand(parseSetupArguments(['--mode', 'real', ...args, '--record', record]), {
         ...bed.io,
         readStdin: async (): Promise<string> => STDIN,
-        waitForApp: async (url: string): Promise<boolean> => {
+        waitForApp: async (url: string): Promise<AppWait> => {
           expect(url).toBe('https://day0.acme.test');
-          return options.appAnswers ?? true;
+          return options.appAnswers === false
+            ? {
+                answered: false,
+                ...(options.lastError !== undefined ? { lastError: options.lastError } : {}),
+              }
+            : { answered: true };
         },
         fetch: async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
           const body = JSON.parse(String(init?.body)) as { path: string; args: { system: string } };
@@ -158,6 +167,23 @@ describe('setup: the install verb', (): void => {
     expect(checkOrder(bed.bed)).toEqual(['check:setup', 'check:access', 'check:setup', 'build']);
   });
 
+  it("says the last error when the app never answers, and names NODE_EXTRA_CA_CERTS for a certificate this machine does not trust (the review's m21)", async (): Promise<void> => {
+    const bed = installBed({
+      appAnswers: false,
+      lastError:
+        'fetch failed: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)',
+    });
+    expect(await bed.run(INSTALL)).toBe(1);
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      'The app did not answer at https://day0.acme.test within 10 minutes. The last attempt: fetch failed: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE).',
+    );
+    expect(said).toContain(
+      "This machine's Node does not trust the certificate the proxy presents: run the install again with NODE_EXTRA_CA_CERTS naming the customer's CA bundle (docs/running/install.md, step 6).",
+    );
+    expect(said).toContain('The install stopped at the app');
+  });
+
   it('runs the lifecycle verbs’ target checks first, which the sign-in verb alone skips', async (): Promise<void> => {
     const moved = installBed({ envLocal: `${INSTALLED}DAY0_SETUP_ROOT=/somewhere/else\n` });
     expect(await moved.run(INSTALL)).toBe(1);
@@ -224,5 +250,17 @@ describe('setup: the install verb', (): void => {
         NEXT_PUBLIC_CONVEX_URL: 'https://convex.acme.test',
       }).NEXT_PUBLIC_CONVEX_URL,
     ).toBe('http://127.0.0.1:3740');
+  });
+});
+
+describe("the last error of the install's wait for the app (the review's m21)", (): void => {
+  it('names the transport cause under fetch failed, and a 5xx answer by its status', (): void => {
+    const cause = Object.assign(new Error('unable to verify the first certificate'), {
+      code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    });
+    expect(appFailureWords(new TypeError('fetch failed', { cause }))).toBe(
+      'fetch failed: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)',
+    );
+    expect(appFailureWords(new Response('', { status: 502 }))).toBe('the proxy answered HTTP 502');
   });
 });

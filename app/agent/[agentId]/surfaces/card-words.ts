@@ -1,7 +1,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfacePath } from '@/surfaces/types';
-import type { ActsAsKind, OrganisationConnectionMode } from '@/surfaces/access-identity';
-import { MCP_SYSTEM_PREFIX, organisationSystemOf } from '@/surfaces/access-request';
+import type { OrganisationConnectionMode } from '@/surfaces/access-identity';
+import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
@@ -199,60 +199,6 @@ export interface OrganisationSystem {
   readonly connectedAt: number;
 }
 
-/**
- * Whom a card acts as in its system (D2): the identity the connect path wrote, or, before one has
- * landed, the one it will land, so the manager approves knowing which (the access plan, section
- * 4.3). `planned` says which of the two it is; `label` is the identity's name as the system shows
- * it, known only once it has landed.
- */
-export interface CardIdentity {
-  readonly kind: ActsAsKind;
-  readonly label?: string;
-  readonly planned: boolean;
-}
-
-/** What the identity is read from: the card's identity once written, its endpoint and path. */
-export type IdentityCard = Partial<
-  Pick<Doc<'surfaces'>, 'actsAs' | 'endpoint' | 'path' | 'credentialId'>
->;
-
-/**
- * Whom a card acts as, or will once connected. An identity a connect path wrote is read as it is.
- * Before one has, the card's system and the organisation's active connection for it decide, by the
- * issuers' own rules: an MCP server's authorisation is the manager's delegated consent (AM6); a
- * shared connection is the organisation's one app (11-AL's shared app actor); a per-employee one
- * is the employee's own app (11-AS, 11-AL). With no active connection, a Slack card that registers
- * its own app acts as it, and any other card as the key someone pastes, which is what
- * `landCredential` writes (`actsAsAtUpgrade`). A connection that needs IT's attention covers
- * nothing: `landCredential` refuses only while one is active.
- *
- * @param card - The card's identity, endpoint and path.
- * @param connection - The organisation's connection for the card's system, when it has one.
- * @param options - Whether, with no connection, the card registers the employee's own app itself.
- */
-export function cardIdentity(
-  card: IdentityCard,
-  connection: OrganisationSystem | undefined,
-  options: { readonly selfProvisions: boolean },
-): CardIdentity {
-  // A Disconnect leaves a pasted key's identity on the card with no key held: it acts as nothing
-  // pasted any more, so the card says whom it will act as instead.
-  const keyGone = card.actsAs?.kind === 'shared-key' && card.credentialId === undefined;
-  if (card.actsAs !== undefined && !keyGone) {
-    return { kind: card.actsAs.kind, label: card.actsAs.label, planned: false };
-  }
-  const system = organisationSystemOf(card);
-  const covering =
-    connection !== undefined && connection.status === 'active' && connection.system === system
-      ? connection
-      : undefined;
-  if (covering === undefined) {
-    return { kind: options.selfProvisions ? 'own-app' : 'shared-key', planned: true };
-  }
-  if (covering.system.startsWith(MCP_SYSTEM_PREFIX)) return { kind: 'delegated', planned: true };
-  return { kind: covering.mode === 'shared' ? 'shared-app' : 'own-app', planned: true };
-}
-
 /** Who and where an identity's words name: the employee, and the system as the card names it. */
 export interface IdentityNames {
   readonly employee: string;
@@ -283,8 +229,13 @@ export function actsAsWords(identity: CardIdentity, names: IdentityNames): strin
       return 'the Day0 app shared by your employees; Day0 records which employee did what';
     case 'delegated':
       return `you in ${system}: what it touches shows your name`;
-    case 'shared-key':
-      return `a key someone ${identity.planned ? 'pastes here' : 'pasted'}; its writes show that key's owner, and Day0 adds ${employee}'s name to each`;
+    case 'shared-key': {
+      const key =
+        identity.keyFrom === 'documentation'
+          ? 'a key found in your documentation'
+          : `a key someone ${identity.planned ? 'pastes here' : 'pasted'}`;
+      return `${key}; its writes show that key's owner, and Day0 adds ${employee}'s name to each write`;
+    }
     case 'browser-seat':
       return `${employee}, signed in to its own seat in ${system}`;
     default: {
@@ -296,17 +247,19 @@ export function actsAsWords(identity: CardIdentity, names: IdentityNames): strin
 
 /**
  * The warning chip beside an identity the employee shares with someone (a person's delegated
- * grant, a pasted key), as the card draws one for a governance finding (the access plan, section
- * 4.3), or nothing for the employee's own identity and the organisation's shared app.
+ * grant, a pasted or documented key), as the card draws one for a governance finding (the access
+ * plan, section 4.3), or nothing for the employee's own identity and the organisation's shared
+ * app.
  *
- * @param kind - Whom the card acts as.
+ * @param identity - Whom the card acts as, and where a key it holds came from.
  */
-export function identityChip(kind: ActsAsKind): string | undefined {
+export function identityChip(identity: Pick<CardIdentity, 'kind' | 'keyFrom'>): string | undefined {
+  const { kind } = identity;
   switch (kind) {
     case 'delegated':
       return 'Delegated';
     case 'shared-key':
-      return 'Pasted key';
+      return identity.keyFrom === 'documentation' ? 'Documented key' : 'Pasted key';
     case 'own-app':
     case 'shared-app':
     case 'browser-seat':
@@ -393,7 +346,9 @@ export function disconnectLines(
     case 'shared-key':
     case 'browser-seat':
       return [
-        `The key someone pasted is left as it is at ${system}: Day0 stops using it and never revokes a pasted key, and it stays in your stored credentials. Revoke it there if it should end.`,
+        identity.keyFrom === 'documentation'
+          ? `The key found in your documentation is left as it is at ${system}: Day0 stops using it and never revokes a key it did not obtain, and it stays in your stored credentials. Revoke it there if it should end.`
+          : `The key someone pasted is left as it is at ${system}: Day0 stops using it and never revokes a pasted key, and it stays in your stored credentials. Revoke it there if it should end.`,
       ];
     default: {
       const unknown: never = identity.kind;
@@ -422,15 +377,42 @@ export function slackChannelsGoWords(employee: string, restoredBy: string): stri
  *
  * @param target - Whom the card would act as through the organisation's connection.
  * @param names - The employee's name and the system's.
+ * @param from - Where the key the card holds came from: a paste, or the documentation (B1).
  */
-export function moveOfferWords(target: CardIdentity, names: IdentityNames): string {
+export function moveOfferWords(
+  target: CardIdentity,
+  names: IdentityNames,
+  from: KeyOrigin = 'paste',
+): string {
   const instead =
     target.kind === 'delegated'
       ? 'act as you there'
       : target.kind === 'shared-app'
         ? 'use the Day0 app your employees share'
         : `use its own ${names.system} app`;
-  return `IT has connected ${names.system}. ${names.employee} can ${instead} instead of the pasted key, which keeps working until you move it.`;
+  const key = from === 'documentation' ? 'the key found in your documentation' : 'the pasted key';
+  return `IT has connected ${names.system}. ${names.employee} can ${instead} instead of ${key}, which keeps working until you move it.`;
+}
+
+/**
+ * The move's button, naming the key it moves off (A27; B1).
+ *
+ * @param from - Where the key the card holds came from.
+ */
+export function moveLabel(from: KeyOrigin): string {
+  return from === 'documentation' ? 'Move off the documented key' : 'Move off the pasted key';
+}
+
+/**
+ * What a card says of a key its documentation gives where IT's active connection covers the
+ * system (B1, decision 1 (a), a product call, flagged): the orientation found it, Day0 bound none,
+ * and the employee acts through IT's connection. A draft.
+ *
+ * @param system - The system's name.
+ * @param employee - The employee's name.
+ */
+export function documentedKeyUnusedWords(employee: string): string {
+  return `Found and not used: ${employee} acts through IT's connection.`;
 }
 
 /**

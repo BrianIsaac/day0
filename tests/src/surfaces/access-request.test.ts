@@ -225,6 +225,30 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     ).toBe('install-needed');
   });
 
+  it("asks nothing of an ended Slack card whose own app is installed: its reinstall is the card's own click (11-AC's cockpit item 9)", (): void => {
+    expect(
+      accessRequestReason(
+        {
+          slug: 'slack',
+          displayName: 'Slack',
+          endpoint: 'https://slack.com/api/',
+          managerApprovedAt: 1,
+          provisioning: {
+            installUrl: 'https://slack.com/oauth/v2/authorize?x=1',
+            installedAt: 2,
+          },
+        },
+        {
+          system: 'slack',
+          displayName: 'Slack',
+          kind: 'slack-configuration',
+          mode: 'per-employee',
+          scopes: ['chat:write'],
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it('never asks for a card not yet approved, one holding a credential, or one on no organisation system', (): void => {
     expect(accessRequestReason({ ...linearCard, managerApprovedAt: undefined }, null)).toBe(
       undefined,
@@ -238,6 +262,7 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
 
 describe('the access request’s words, the same wherever they are shown', (): void => {
   const card = {
+    _id: 'j57card',
     slug: 'linear',
     displayName: 'Linear',
     endpoint: 'https://api.linear.app/graphql',
@@ -272,7 +297,7 @@ describe('the access request’s words, the same wherever they are shown', (): v
         'Linear is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.',
         'Access needed: linear:read, linear:write.',
         'Why Maya needs it, from the team’s documentation: “Linear is the formal work queue”; “Tickets are triaged every morning”.',
-        'For how long: until 2026-12-31.',
+        'For how long: until 31 December 2026.',
         'How to connect it: an administrator runs ./setup.sh access for linear, following docs/running/access-linear.md, or uses the organisation page at https://day0.acme.test/organisation.',
         'Nothing changes until IT connects it; then Connect appears on Maya’s card.',
       ].join('\n'),
@@ -308,6 +333,57 @@ describe('the access request’s words, the same wherever they are shown', (): v
       'How to connect it: install it here: https://linear.app/oauth/authorize?client_id=leo',
     );
     expect(draft.text).not.toContain('documentation:');
+  });
+
+  it("names the card on the organisation page for an employee's own Linear app IT must create and record, never the setup verb (M4)", (): void => {
+    const draft = draftAccessRequest({
+      ...base,
+      publicUrl: 'https://day0.acme.test/',
+      reason: 'install-needed',
+      connection: {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write'],
+      },
+    });
+    expect(draft.text).toContain(
+      'How to connect it: a Linear administrator creates Maya’s own app as docs/running/access-linear.md says and records it on the organisation page, which then opens Linear to install it: https://day0.acme.test/organisation?card=j57card',
+    );
+    expect(draft.text).not.toContain('./setup.sh');
+    const noOrigin = draftAccessRequest({
+      ...base,
+      reason: 'install-needed',
+      connection: {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write'],
+      },
+    });
+    expect(noOrigin.text).toContain('to install it: /organisation?card=j57card\n');
+  });
+
+  it('never names the setup verb for a system already connected for the organisation (M4)', (): void => {
+    const widening = draftAccessRequest({
+      ...base,
+      publicUrl: 'https://day0.acme.test',
+      reason: 'scope-widening',
+      scopes: ['issues:create'],
+      connection: {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read'],
+      },
+    });
+    expect(widening.text).not.toContain('./setup.sh');
+    expect(widening.text).toContain(
+      'How to connect it: an administrator follows docs/running/access-linear.md, on the organisation page at https://day0.acme.test/organisation.',
+    );
   });
 
   it('names the scopes the registration lacks for a widening, and the MCP recipe for a server', (): void => {

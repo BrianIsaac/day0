@@ -292,6 +292,71 @@ describe('the organisation’s ledger on a busy connection (join 11, the second 
   });
 });
 
+describe("the configuration token's uses on an employee's export (the review's m1)", (): void => {
+  it("keeps the creation of the employee's own Slack app and leaves out every other use", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const slack = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: ['chat:write'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      const clientSecretCredentialId = await ctx.db.insert('credentials', {
+        userId: 'day0:organisation',
+        holder: 'organisation',
+        kind: 'oauth',
+        label: 'Own (Day0) client secret',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      await ctx.db.patch(surface!._id, {
+        organisationConnectionId: slack,
+        provisioning: {
+          clientSecretCredentialId,
+          appId: 'A_OWN',
+          appName: 'Own (Day0)',
+          clientId: '1.1',
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.acme.test/api/oauth/slack',
+          scopes: ['chat:write'],
+          createdAt: 1,
+        },
+      });
+      const named = { organisationConnectionId: slack, system: 'slack', displayName: 'Slack' };
+      const used = async (payload: Record<string, unknown>, createdAt: number) =>
+        await ctx.db.insert('connectionEvents', {
+          organisationConnectionId: slack,
+          type: 'organisation.configuration-used',
+          payload: { ...named, ...payload },
+          createdAt,
+        });
+      await used({ method: 'apps.manifest.create', outcome: 'done', appId: 'A_OWN' }, 2);
+      await used({ method: 'apps.manifest.create', outcome: 'done', appId: 'A_OTHER' }, 3);
+      await used({ method: 'tooling.tokens.rotate', outcome: 'done' }, 4);
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(
+      head.organisationLedger.map((one) => [one.type, (one.payload as { appId?: string }).appId]),
+    ).toEqual([['organisation.configuration-used', 'A_OWN']]);
+    expect(JSON.stringify(head)).not.toContain('A_OTHER');
+  });
+});
+
 describe('the paged trace export', (): void => {
   afterEach((): void => {
     vi.useRealTimers();

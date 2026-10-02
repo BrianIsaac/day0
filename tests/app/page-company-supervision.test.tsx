@@ -125,6 +125,8 @@ vi.mock('convex/react', () => {
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
+  // The home reads the address for an authorisation sent back unfinished (M2): none here.
+  useSearchParams: (): URLSearchParams => new URLSearchParams(),
 }));
 
 import LandingPage from '../../app/page';

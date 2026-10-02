@@ -19,6 +19,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 import { ConvexError } from 'convex/values';
 import { DeployForm } from '../../../app/home/DeployForm';
 import { UNVERIFIED_FOR_DEPLOY } from '../../../src/agent/manager-address';
+import { underTarget } from '../../fixtures/dom/targets';
 
 // The browser's own word for the address (Clerk's client value), which the form no longer takes,
 // shows or sends: the address is the server's verified one (9-U1), and its dead prop is gone (9-U4).
@@ -100,6 +101,18 @@ describe('DeployForm', (): void => {
       <DeployForm docSources={sources} surfaceMode="mock" pickerOpen={false} />,
     );
     expect(another).not.toMatch(/<details\b[^>]*\bopen/);
+  });
+
+  it("gives every control a 44 px target, the Deploy button, the name field and each source's box included (11-AC's cockpit item 10)", (): void => {
+    const host = document.createElement('div');
+    host.innerHTML = renderToStaticMarkup(
+      <DeployForm docSources={sources} surfaceMode="real" pickerOpen onCancel={() => undefined} />,
+    );
+    // The faces are 48 px tall (`h-12`), which the helper's class rule does not read.
+    const faces = host.querySelector('details');
+    expect(faces?.querySelectorAll('button.h-12').length).toBeGreaterThan(0);
+    faces?.remove();
+    expect(underTarget(host)).toEqual([]);
   });
 
   it('sets no type below the 12 px floor', (): void => {

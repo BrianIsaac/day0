@@ -193,6 +193,7 @@ describe('what a renewal needs next, and the move off a pasted key (11-AR; A26, 
           move={{
             words:
               'IT connected Linear for your organisation: Maya can act as its own Linear app instead of the pasted key, which keeps working until you move.',
+            label: 'Move off the pasted key',
             onMove,
           }}
         />
@@ -212,7 +213,11 @@ describe('what a renewal needs next, and the move off a pasted key (11-AR; A26, 
           surface={ended({ displayName: 'Linear', verdict: 'connected', reason: undefined })}
           now={AT - 60 * DAY}
           onSetDays={async () => ({ expiresAt: AT })}
-          move={{ words: 'IT connected Linear.', onMove: (): void => undefined }}
+          move={{
+            words: 'IT connected Linear.',
+            label: 'Move off the pasted key',
+            onMove: (): void => undefined,
+          }}
         />
       </AgentZoneContext>,
     );

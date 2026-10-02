@@ -10,6 +10,7 @@ import {
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import type { OrganisationSystem } from '../../../../../app/agent/[agentId]/surfaces/card-words';
+import { withListedIdentity } from './fakes/listed-identity';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** 29 Sep 2026, 12:00 UTC. */
@@ -64,11 +65,12 @@ function render(
   overrides: Partial<SurfaceCardContext> = {},
   extra: { accessRequest?: AccessRequestView | null; connect?: () => void } = {},
 ): string {
+  const cardContext = { ...context, ...overrides };
   return renderToStaticMarkup(
     <AgentZoneContext value="UTC">
       <SurfaceCard
-        surface={surface}
-        context={{ ...context, ...overrides }}
+        surface={withListedIdentity(surface, cardContext)}
+        context={cardContext}
         operation={undefined}
         actions={{ ...actions, ...(extra.connect ? { connect: extra.connect } : {}) }}
         accessRequest={extra.accessRequest}
@@ -341,7 +343,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
   it('draws the warning chip beside a pasted key and a delegated grant, and none beside an own app', (): void => {
     const pasted = render(listed({ verdict: 'proposed' }));
     expect(fact(pasted, 'Acts as')).toContain(
-      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     expect(fact(pasted, 'Acts as')).toMatch(
       /text-\[var\(--color-warn\)\][^"]*">Pasted key<\/span>/,
@@ -665,5 +667,107 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(fact(markup, 'Acts as')).toBe(
       'the Day0 app shared by your employees; Day0 records which employee did what',
     );
+  });
+});
+
+describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
+  const documented = {
+    request: { credential: { found: 'value', label: 'Linear API key' } },
+  } as Partial<ListedSurface>;
+  const wikiKey = new Map([
+    [
+      'cred-wiki',
+      { _id: 'cred-wiki', label: 'Linear API key', source: { sourceId: 'wiki', ref: 'linear.md' } },
+    ],
+  ]);
+
+  it("names IT's connection where it covers the system, and says the documented key was found and is not used", (): void => {
+    const markup = render(listed(documented), {
+      organisation: organisation({ system: 'linear', mode: 'shared' }),
+    });
+    expect(fact(markup, 'Acts as')).toBe(
+      'the Day0 app shared by your employees; Day0 records which employee did what',
+    );
+    expect(fact(markup, 'Key in your docs')).toBe(
+      "Found and not used: Maya acts through IT's connection.",
+    );
+  });
+
+  it('claims no documented key the orientation could not resolve to a stored one (second pass)', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        credentialLocation:
+          'Ask the system administrator to land a valid credential; the stored marker could not be resolved.',
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+    );
+    expect(fact(markup, 'Key in your docs')).toBeUndefined();
+  });
+
+  it('stamps a documented key bound with no connection a shared key, never one someone pasted', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        credentialId: 'cred-wiki' as ListedSurface['credentialId'],
+        credentialKind: 'value',
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { credentials: wikiKey },
+    );
+    const actsAs = fact(markup, 'Acts as') ?? '';
+    expect(actsAs).toContain(
+      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each write",
+    );
+    expect(actsAs).toContain('>Documented key</span>');
+    expect(actsAs).not.toMatch(/past/i);
+    expect(fact(markup, 'Key in your docs')).toBeUndefined();
+  });
+
+  it('offers the move off a documented key in its own words once IT connected the system', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-wiki' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - 85 * DAY,
+        expiresAt: NOW + 3 * DAY,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { credentials: wikiKey, organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).toContain('instead of the key found in your documentation');
+    expect(markup).toMatch(/<button[^>]*>Move off the documented key<\/button>/);
+  });
+});
+
+describe("the administrator's reason on a card a revoke ended (the wave 11 review's M13)", (): void => {
+  it('draws the reason whatever else the card skips', (): void => {
+    const reason = 'The docs server is being moved; ask IT before reconnecting.';
+    const markup = render(
+      listed({
+        endpoint: 'https://docs.acme.test/mcp',
+        displayName: 'Acme docs',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        reason,
+        intakeSkipReason: 'no intake reader for connected docs surface',
+        actsAs: { kind: 'delegated', label: 'sam@acme.test' },
+      }),
+    );
+    expect(markup).toContain('Skipped: no intake reader for connected docs surface');
+    expect(markup).toContain(reason);
+    // The reason comes first: it is why the card ended (design pass).
+    expect(markup.indexOf(reason)).toBeLessThan(markup.indexOf('Skipped:'));
+  });
+
+  it('says a reason that is the skip line once', (): void => {
+    const markup = render(
+      listed({ verdict: 'listed-dead', reason: 'Slack policy does not allow required methods' }),
+    );
+    expect(markup.split('Slack policy does not allow required methods')).toHaveLength(2);
   });
 });

@@ -190,8 +190,8 @@ function redirectCheck(row: ConnectionRow, values: Values, redirectPath: string)
       'redirect',
       'gap',
       `${row.displayName} has ${row.redirectUrl} registered, and Day0 returns to ${expected}: ` +
-        `change the registration at ${row.displayName} (or ${PUBLIC_URL_VAR}) so they are the same, ` +
-        'byte for byte.',
+        `register ${expected} at ${row.displayName}, byte for byte, then record it with ` +
+        `\`./setup.sh access --correct ${row.system}\` (or set ${PUBLIC_URL_VAR} back).`,
     );
   }
   return check(row.system, 'redirect', 'ok', `Registered ${expected}, where Day0 returns.`);
@@ -215,11 +215,23 @@ function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
       'gap',
       `Missing scope ${[...new Set(lacking)].join(', ')}: the registration holds ` +
         `${row.scopes.join(', ') || 'none'}, and Day0 needs ${mode.scopes.join(', ')}. Grant ` +
-        'them at the vendor, then rotate the connection with them on the organisation page.',
+        `them at the vendor, then record them with \`./setup.sh access --correct ${row.system}\`.`,
     );
   }
   if (mode.scopes.length === 0 && row.scopes.length === 0) {
     return check(row.system, 'scopes', 'ok', 'No scopes listed: the server offers its own.');
+  }
+  // A kit that names its scopes is the whole of what Day0 uses: more is held for nothing (m20).
+  const unused = mode.scopes.length === 0 ? [] : missing(mode.scopes, row.scopes);
+  if (unused.length > 0) {
+    return check(
+      row.system,
+      'scopes',
+      'warn',
+      `Holds ${row.scopes.join(', ')}, of which Day0 never uses ${unused.join(', ')}: IT may ` +
+        `remove them at ${row.displayName}, then record the change with ` +
+        `\`./setup.sh access --correct ${row.system}\`.`,
+    );
   }
   return check(row.system, 'scopes', 'ok', `Holds ${row.scopes.join(', ')}.`);
 }
@@ -345,7 +357,7 @@ async function slackIdentity(
       'identity',
       'warn',
       'The configuration token has expired (12 hours after it was generated). Its refresh token ' +
-        'renews it when Day0 next creates an app; the check does not rotate it, since a rotation ' +
+        "renews it at Day0's next use of it; the check does not rotate it, since a rotation " +
         'replaces the pair.',
     );
   }

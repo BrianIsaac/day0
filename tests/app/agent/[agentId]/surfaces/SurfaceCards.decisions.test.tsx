@@ -24,6 +24,8 @@ const tab = vi.hoisted(() => ({
   credential: false,
 }));
 
+import { withListedIdentity } from './fakes/listed-identity';
+
 vi.mock('convex/react', () => {
   const call =
     (reference: unknown): (() => Promise<unknown>) =>
@@ -88,7 +90,7 @@ vi.mock('convex/react', () => {
             ...(tab.credential ? { credentialId: 'credential-1' } : {}),
             createdAt: 1,
           },
-        ];
+        ].map((row) => withListedIdentity(row));
       }
       if (name === 'charters:latest') {
         return tab.unnamed

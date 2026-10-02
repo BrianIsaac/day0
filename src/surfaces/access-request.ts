@@ -1,4 +1,3 @@
-import { dayKey } from '../lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS } from './access';
 import type {
   AccessRequestReason,
@@ -157,7 +156,12 @@ export interface AccessRequestCard extends SystemCard {
    * The employee's own app, once Day0 created it (Slack) or an administrator recorded it (Linear):
    * its client id, and the install link IT follows.
    */
-  readonly provisioning?: { readonly clientId?: string; readonly installUrl?: string };
+  readonly provisioning?: {
+    readonly clientId?: string;
+    readonly installUrl?: string;
+    /** When the employee's own app was installed: an ended card reinstalls it from its own row. */
+    readonly installedAt?: number;
+  };
 }
 
 /** The parts of an organisation connection the access request reads. */
@@ -199,7 +203,12 @@ export function accessRequestReason(
   if (connection.mode === 'shared') return undefined;
   switch (connection.kind) {
     case 'slack-configuration':
-      return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+      // An app installed once is installed again from the card's own reinstall row, which an
+      // administrator approves in Slack: one way on, not two (11-AC's cockpit item 9).
+      return card.provisioning?.installUrl === undefined ||
+        card.provisioning.installedAt !== undefined
+        ? undefined
+        : 'install-needed';
     case 'oauth-app':
       return card.provisioning?.clientId === undefined ? 'install-needed' : undefined;
     case 'mcp-client':
@@ -214,9 +223,14 @@ export function accessRequestReason(
   }
 }
 
+/** A card whose request is drafted: its id, which the organisation page's link names (M4). */
+export interface DraftedAccessRequestCard extends AccessRequestCard {
+  readonly _id: string;
+}
+
 /** Everything the request's words are built from. */
 export interface AccessRequestInput {
-  readonly card: AccessRequestCard;
+  readonly card: DraftedAccessRequestCard;
   readonly connection: AccessRequestConnection | null;
   readonly reason: AccessRequestReason;
   /** The scopes to ask for; the card's approved scopes when not given (a widening names its own). */
@@ -287,23 +301,47 @@ function evidenceLine(card: AccessRequestCard, employee: string): string | undef
     : `Why ${employee} needs it, from the team’s documentation: ${quotes.join('; ')}.`;
 }
 
-/** How long the access is for: the card's end date, or the approval's default length. */
+/**
+ * How long the access is for: the card's end date as a person reads a date ("31 December 2026",
+ * in the employee's zone; the cockpit's kit item), or the approval's default length.
+ */
 function lengthLine(card: AccessRequestCard, zone: string): string {
-  return card.expiresAt === undefined
-    ? `For how long: ${SURFACE_ACCESS_DEFAULT_DAYS} days from approval, renewed by the manager.`
-    : `For how long: until ${dayKey(card.expiresAt, zone)}.`;
+  if (card.expiresAt === undefined) {
+    return `For how long: ${SURFACE_ACCESS_DEFAULT_DAYS} days from approval, renewed by the manager.`;
+  }
+  const until = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: zone,
+  }).format(card.expiresAt);
+  return `For how long: until ${until}.`;
 }
 
-/** What IT does: the install link when the employee's app waits on it, else the kit's recipe. */
-function howLine(input: AccessRequestInput, system: string): string {
+/**
+ * What IT does (the wave 11 review's M4): the install link when the employee's app waits on it;
+ * for an employee's own OAuth app no administrator has recorded yet, the organisation page's link
+ * that names the card, where the app is recorded; for a system already connected, the kit's recipe
+ * and the organisation page, never the setup verb, which IT has already run; else the setup verb
+ * that connects the system, or the organisation page.
+ */
+function howLine(input: AccessRequestInput, system: string, name: string): string {
   const installUrl = input.card.provisioning?.installUrl;
   if (input.reason === 'install-needed' && installUrl !== undefined) {
     return `How to connect it: install it here: ${installUrl}`;
   }
-  const recipe = system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp' : system;
-  const origin = input.publicUrl?.trim().replace(/\/+$/, '');
+  const recipe = `docs/running/access-${system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp' : system}.md`;
+  const origin = input.publicUrl?.trim().replace(/\/+$/, '') ?? '';
+  if (input.reason === 'install-needed' && input.connection?.kind === 'oauth-app') {
+    const page = `${origin}/organisation?card=${encodeURIComponent(input.card._id)}`;
+    return `How to connect it: a ${name} administrator creates ${input.employeeName}’s own app as ${recipe} says and records it on the organisation page, which then opens ${name} to install it: ${page}`;
+  }
+  if (input.connection !== null) {
+    const page = origin ? `, on the organisation page at ${origin}/organisation` : '';
+    return `How to connect it: an administrator follows ${recipe}${page}.`;
+  }
   const page = origin ? `, or uses the organisation page at ${origin}/organisation` : '';
-  return `How to connect it: an administrator runs ./setup.sh access for ${system}, following docs/running/access-${recipe}.md${page}.`;
+  return `How to connect it: an administrator runs ./setup.sh access for ${system}, following ${recipe}${page}.`;
 }
 
 /**
@@ -331,7 +369,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     `Access needed: ${scopes.join(', ')}.`,
     evidenceLine(input.card, employee),
     lengthLine(input.card, input.zone),
-    howLine(input, system),
+    howLine(input, system, name),
     `Nothing changes until IT connects it; then Connect appears on ${employee}’s card.`,
   ].filter((line): line is string => line !== undefined);
   const text = lines.join('\n');

@@ -3,31 +3,28 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   authorisationUrl,
-  checkResponseIssuer,
   discoverAuthorisation,
   pkceChallenge,
-  requestTokens,
   type McpAuthorisationTarget,
   type OauthFetch,
 } from '../../src/surfaces/mcp-oauth';
 
 /*
- * The MCP rung's authorisation driven end to end in a headless browser (wave 11, 11-AM): the
- * test issuer as the authorisation server and the protected MCP resource, the person's consent on
- * its page, the redirect into Day0's own `app/api/oauth/mcp` route on a second `next start` of the
- * job's build, and the completion the route asks the deployment for. The browser job holds no
- * backend (playwright.config.ts), so the deployment is a fake Convex endpoint that completes the
- * authorisation with the real client in `src/surfaces/mcp-oauth.ts`; the Convex half itself is
- * `tests/convex/mcpOauthActions.test.ts` and the bed walk.
+ * The MCP rung's authorisation driven in a headless browser (wave 11, 11-AM): the test issuer as
+ * the authorisation server and the protected MCP resource, the person's consent on its page, and
+ * the redirect into Day0's own `app/api/oauth/mcp` route on a second `next start` of the job's
+ * build. Only the card's manager, signed in, completes an authorisation (the wave 11 review's M2,
+ * decision 3 (a)), so the route is off the sign-in's public list and this job, which holds no
+ * session, meets the proxy's refusal there: no deployment is asked and no code is exchanged. The
+ * completion itself is `tests/app/api/oauth/mcp/route.test.ts` and
+ * `tests/convex/mcpOauthActions.test.ts`, and the signed-in walk is the bed's.
  */
 
 const FAKE_OIDC = fileURLToPath(new URL('../../fake-oidc/server.js', import.meta.url));
 const NEXT_BIN = fileURLToPath(new URL('../../node_modules/next/dist/bin/next', import.meta.url));
-const AGENT = 'e2eagent';
-const SLUG = 'docs';
 
 interface Started {
   readonly state: string;
@@ -73,74 +70,15 @@ let issuer: ChildProcess | undefined;
 let dayZero: ChildProcess | undefined;
 let convex: Server | undefined;
 const pending = new Map<string, Started>();
-const answered: { whoami?: string; args?: Record<string, string> } = {};
+/** Every call the app's server made to the fake deployment. */
+const convexCalls: string[] = [];
 
-/** The deployment's half, faked: what `mcpOauthActions.completeAuthorisation` decides, by the real client. */
-async function completeAuthorisation(args: Record<string, string>): Promise<unknown> {
-  answered.args = args;
-  const started = pending.get(args.state ?? '');
-  pending.delete(args.state ?? '');
-  if (!started) return { ok: false, reason: 'That authorisation has already been used.' };
-  const card = { agentId: AGENT, surfaceSlug: SLUG };
-  const issuerCheck = checkResponseIssuer({
-    iss: args.iss ?? null,
-    recordedIssuer: started.target.server.issuer,
-    issParameterSupported: started.target.server.issParameterSupported,
-  });
-  if (!issuerCheck.ok) {
-    return { ok: false, reason: 'The response came from another authorisation server.', ...card };
-  }
-  if (args.error !== undefined) {
-    return { ok: false, reason: 'The authorisation was declined.', ...card };
-  }
-  const tokens = await requestTokens(
-    plainFetch,
-    {
-      tokenEndpoint: started.target.server.tokenEndpoint,
-      clientId: 'day0-mcp',
-      auth: { method: 'none' },
-      resource: started.target.resource,
-      grant: {
-        grant: 'authorization_code',
-        code: args.code ?? '',
-        redirectUrl: `${dayZeroBase}/api/oauth/mcp`,
-        verifier: started.verifier,
-      },
-    },
-    Date.now(),
-  );
-  const called = (await (
-    await fetch(started.target.resource, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${tokens.accessToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name: 'whoami', arguments: {} },
-      }),
-    })
-  ).json()) as { result: { content: { text: string }[] } };
-  answered.whoami = called.result.content[0]?.text;
-  return { ok: true, ...card };
-}
-
+/** The deployment, faked: it records every call the app's server makes to it, and answers none. */
 async function serveConvex(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const body = JSON.parse(await bodyOf(request)) as {
-    path: string;
-    args: Record<string, string>[];
-  };
-  const value =
-    request.url === '/api/action' && body.path === 'mcpOauthActions:completeAuthorisation'
-      ? await completeAuthorisation(body.args[0] ?? {})
-      : undefined;
-  response.writeHead(value === undefined ? 404 : 200, { 'content-type': 'application/json' });
-  response.end(
-    JSON.stringify(value === undefined ? {} : { status: 'success', value, logLines: [] }),
-  );
+  const body = JSON.parse((await bodyOf(request)) || '{}') as { path?: string };
+  convexCalls.push(`${request.url ?? ''} ${body.path ?? ''}`);
+  response.writeHead(404, { 'content-type': 'application/json' });
+  response.end('{}');
 }
 
 /** The card's start, as `startAuthorisation` makes it: discovery, PKCE and the URL. */
@@ -160,20 +98,6 @@ async function startAuthorisation(): Promise<string> {
     resource: target.resource,
     scopes: target.scopes,
   }).href;
-}
-
-/**
- * Where the redirect route sent the browser (its `Location`, with the fragment a request never
- * carries), once the browser has asked for that card. The card itself needs a backend the job
- * does not hold, so it goes on to the sign-in and is not waited for.
- */
-async function cardRequest(page: Page): Promise<URL> {
-  const [redirected] = await Promise.all([
-    page.waitForResponse((candidate) => candidate.url().startsWith(`${dayZeroBase}/api/oauth/mcp`)),
-    page.waitForRequest((candidate) => candidate.url().startsWith(`${dayZeroBase}/agent/`)),
-  ]);
-  expect(redirected.status()).toBe(307);
-  return new URL(redirected.headers().location ?? '', dayZeroBase);
 }
 
 async function adminState(): Promise<Record<string, unknown>> {
@@ -233,53 +157,18 @@ test.describe('the MCP authorisation, walked in the browser', () => {
     await new Promise<void>((resolve) => (convex ? convex.close(() => resolve()) : resolve()));
   });
 
-  test('a manager consents and lands back on the card, authorised as the person they chose', async ({
+  test("holds the redirect to a signed-in session: a consent in a browser with no Day0 session reaches no deployment and exchanges no code (the wave 11 review's M2, decision 3 (a))", async ({
     page,
   }) => {
     await page.goto(await startAuthorisation());
     await expect(page.getByRole('heading', { name: 'Test issuer' })).toBeVisible();
-    const landing = cardRequest(page);
+    const redirected = page.waitForResponse((candidate) =>
+      candidate.url().startsWith(`${dayZeroBase}/api/oauth/mcp`),
+    );
     await page.getByRole('button', { name: /Priya Raman/ }).click();
 
-    const landed = await landing;
-    expect(landed.searchParams.get('authorisation')).toBe('authorised');
-    expect(landed.searchParams.get('surface')).toBe(SLUG);
-    expect(landed.hash).toBe('#surfaces');
-    expect(answered.whoami).toBe('priya@acme.test');
-    expect(await adminState()).toMatchObject({
-      codeExchanges: 1,
-      lastResource: `${issuerBase}/mcp`,
-    });
-  });
-
-  test('a response naming another issuer lands as failed and its code is never exchanged', async ({
-    page,
-  }) => {
-    const exchangesBefore = (await adminState()).codeExchanges;
-    let landed: URL;
-    await fetch(`${issuerBase}/admin/iss?value=https://rogue.acme.test`, { method: 'POST' });
-    try {
-      await page.goto(await startAuthorisation());
-      const landing = cardRequest(page);
-      await page.getByRole('button', { name: /Mateo Silva/ }).click();
-      landed = await landing;
-    } finally {
-      await fetch(`${issuerBase}/admin/iss?value=`, { method: 'POST' });
-    }
-    expect(landed.searchParams.get('authorisation')).toBe('failed');
-    expect(landed.searchParams.get('reason')).toContain('another authorisation server');
-    expect((await adminState()).codeExchanges).toBe(exchangesBefore);
-  });
-
-  test('a decline lands as failed, the server’s description never handed on', async ({ page }) => {
-    await page.goto(await startAuthorisation());
-    const landing = cardRequest(page);
-    await page.getByRole('button', { name: 'Decline' }).click();
-    const landed = await landing;
-    expect(landed.searchParams.get('authorisation')).toBe('failed');
-    expect(landed.searchParams.get('reason')).toBe('The authorisation was declined.');
-    // What the route handed the deployment: the error code and the iss, never the description.
-    expect(Object.keys(answered.args ?? {}).sort()).toEqual(['error', 'iss', 'state']);
-    expect(answered.args?.error).toBe('access_denied');
+    expect((await redirected).status()).toBe(401);
+    expect(convexCalls).toEqual([]);
+    expect(await adminState()).toMatchObject({ codeExchanges: 0 });
   });
 });

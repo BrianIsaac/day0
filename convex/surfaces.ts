@@ -41,6 +41,7 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
+import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
@@ -54,6 +55,12 @@ import {
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { organisationSystemOf } from '../src/surfaces/access-request';
+import { activeConnectionFor } from './organisationConnectionReads';
+import {
+  listedCardIdentity,
+  type CardIdentity,
+  type ListedIdentity,
+} from '../src/surfaces/card-identity';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
@@ -236,7 +243,16 @@ export async function backfillCharterProvenance(
  * against this deployment's component, why a proposed card cannot be approved now, and what has
  * changed on the pages its approved scope quotes.
  */
-export interface ListedSurface extends Doc<'surfaces'> {
+export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisation'> {
+  /**
+   * An authorisation the manager started and has not finished: when it started and when its link
+   * lapses, never its sealed verifier, nonce or client (11-AC's cockpit item 7).
+   */
+  readonly pendingAuthorisation?: { readonly startedAt: number; readonly stateExpiresAt: number };
+  /** Whom the card acts as, or will once connected (cockpit item 1; `listedCardIdentity`). */
+  readonly identity: CardIdentity;
+  /** Whom the organisation's active connection for its system would make it act as, if one covers it. */
+  readonly connectionIdentity?: CardIdentity;
   /**
    * Why `approve` would refuse this card now (a documented intake queue changed, or its browser
    * component is absent), so the card disables Approve with the reason (E-63). Only on a
@@ -331,13 +347,49 @@ function intakeQueueRefusal(drift: readonly ScopeValue[]): string | undefined {
 }
 
 /**
+ * Whom each card acts as, by the one rule (`listedCardIdentity`; 11-AC's cockpit item 1): the
+ * organisation's active connection for each card's system read once per system, and the source of
+ * the credential each card holds.
+ *
+ * @param ctx - The query's reader.
+ * @param surfaces - The employee's cards.
+ */
+async function identitiesOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<Map<Id<'surfaces'>, ListedIdentity>> {
+  const connections = new Map<string, Doc<'organisationConnections'> | null>();
+  const hasPublicUrl = publicUrlConfigured();
+  const identities = new Map<Id<'surfaces'>, ListedIdentity>();
+  for (const surface of surfaces) {
+    const system = organisationSystemOf(surface);
+    if (system !== undefined && !connections.has(system)) {
+      connections.set(system, await activeConnectionFor(ctx, system));
+    }
+    const connection = system === undefined ? null : (connections.get(system) ?? null);
+    const held = surface.credentialId === undefined ? null : await ctx.db.get(surface.credentialId);
+    identities.set(
+      surface._id,
+      listedCardIdentity({
+        card: surface,
+        ...(connection !== null ? { connection } : {}),
+        ...(held !== null ? { heldCredentialSource: held.source } : {}),
+        hasPublicUrl,
+      }),
+    );
+  }
+  return identities;
+}
+
+/**
  * List one owned agent's surfaces as their cards read them.
  *
  * Public, owner-guarded; reads, writes nothing. The rows come in the documented order (the
  * systems table on the pages the cards cite, then class), each with its browser component's
- * state, the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what
- * changed on its approved scope's pages (`scopeChange`). The pages are read here, once, and both
- * the refusal and the change are judged from them; the browser is never sent them.
+ * state, whom it acts as (`identity`, and `connectionIdentity` where IT's connection covers it),
+ * the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what changed on
+ * its approved scope's pages (`scopeChange`). The pages are read here, once, and both the refusal
+ * and the change are judged from them; the browser is never sent them.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -347,6 +399,7 @@ export const listForAgent = query({
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .take(CARD_SURFACE_LIMIT);
+    const identities = await identitiesOf(ctx, surfaces);
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
@@ -365,8 +418,20 @@ export const listForAgent = query({
         listed.verdict === 'proposed'
           ? (intakeQueueRefusal(drift) ?? browserRefusal(listed))
           : undefined;
+      const identity = identities.get(surface._id);
+      if (identity === undefined) throw new Error('A listed card has no identity read.');
+      const { pendingAuthorisation, ...card } = listed;
       return {
-        ...listed,
+        ...card,
+        ...(pendingAuthorisation === undefined
+          ? {}
+          : {
+              pendingAuthorisation: {
+                startedAt: pendingAuthorisation.startedAt,
+                stateExpiresAt: pendingAuthorisation.stateExpiresAt,
+              },
+            }),
+        ...identity,
         ...(refused === undefined ? {} : { approvalRefusal: refused }),
         ...(scopeChange === undefined ? {} : { scopeChange }),
       };
@@ -697,6 +762,50 @@ async function proposalOwnerRefusal(
   return null;
 }
 
+/** The credential a proposal leaves on its card, and whom the card acts as through it. */
+interface DocumentedKeyBinding {
+  readonly credentialId: Id<'credentials'> | undefined;
+  readonly credentialKind: Doc<'surfaces'>['credentialKind'];
+  readonly actsAs: Doc<'surfaces'>['actsAs'];
+}
+
+/**
+ * What a proposal binds of the key the orientation found in the documentation (the wave 11
+ * review's B1, decision 1 (a), a product call, flagged): nothing where IT's active organisation
+ * connection covers the card's system, since the card connects through that connection and never
+ * a key IT did not choose (the same rule `landCredential` keeps for a paste); otherwise the key,
+ * with the card stamped a shared key named by the key's label, so the manager approves knowing
+ * whom the employee acts as. A proposal that found no key binds none and names no identity.
+ *
+ * @param db - The proposal's reader.
+ * @param proposal - The card's name, the proposal's rung and endpoint, and the documented key it
+ *   would bind.
+ */
+async function documentedKeyBinding(
+  db: QueryCtx['db'],
+  proposal: {
+    readonly displayName: string;
+    readonly path: string;
+    readonly endpoint?: string;
+    readonly credentialId?: Id<'credentials'>;
+    readonly credentialKind?: Doc<'surfaces'>['credentialKind'];
+  },
+): Promise<DocumentedKeyBinding> {
+  const unbound = { credentialId: undefined, credentialKind: undefined, actsAs: undefined };
+  if (proposal.credentialId === undefined || proposal.credentialKind === undefined) return unbound;
+  const system = organisationSystemOf({ endpoint: proposal.endpoint, path: proposal.path });
+  if (system !== undefined && (await activeConnectionFor({ db }, system)) !== null) return unbound;
+  const credential = await db.get(proposal.credentialId);
+  return {
+    credentialId: proposal.credentialId,
+    credentialKind: proposal.credentialKind,
+    actsAs: actsAsAtUpgrade(
+      { displayName: proposal.displayName },
+      { kind: proposal.credentialKind, label: credential?.label ?? '' },
+    ),
+  };
+}
+
 /**
  * Store an evidence-backed connect request.
  *
@@ -709,7 +818,9 @@ async function proposalOwnerRefusal(
  * `declared`, and for a proposal that binds a credential not the employee's current owner's or
  * quotes documentation that owner does not hold ({@link proposalOwnerRefusal}): an orientation
  * still running when a handover moved the employee read the old owner's pages and credentials.
- * The card stays declared for the new manager's own proposal.
+ * The card stays declared for the new manager's own proposal. A documented key is bound only
+ * where no active organisation connection covers the system, and the card is then stamped a
+ * shared key ({@link documentedKeyBinding}; B1).
  */
 export const propose = internalMutation({
   args: {
@@ -737,6 +848,10 @@ export const propose = internalMutation({
       });
       return false;
     }
+    const binding = await documentedKeyBinding(ctx.db, {
+      ...args,
+      displayName: surface.displayName,
+    });
     const now = Date.now();
     await ctx.db.patch(args.surfaceId, {
       verdict: 'proposed',
@@ -752,8 +867,7 @@ export const propose = internalMutation({
             : undefined,
       endpoint: args.endpoint,
       probeAttempts: undefined,
-      credentialId: args.credentialId,
-      credentialKind: args.credentialId ? args.credentialKind : undefined,
+      ...binding,
       credentialLocation: args.credentialLocation,
       expiresAt: undefined,
       accessSetBy: undefined,
@@ -1901,8 +2015,12 @@ async function ownCredentialRows(
     .withIndex('by_credentialId', (q) => q.eq('credentialId', credential._id))
     .take(2);
   if (binders.some((binder) => binder._id !== surface._id)) {
-    // A key a colleague's card binds too (N1) is never ended by this one; only a pasted key can.
-    return credential.issuedBy === undefined ? [credential] : [];
+    // A key a colleague's card binds too (N1) is never ended by this one. A pasted key and the
+    // organisation's shared token are passed on all the same: the end never sends or revokes
+    // either, and writes the card's line for its system (the wave 11 review's M7).
+    return credential.issuedBy === undefined || sharedByOrganisation(credential)
+      ? [credential]
+      : [];
   }
   const refresh =
     credential.refreshCredentialId === undefined
@@ -2153,8 +2271,10 @@ function reissueOf(surface: Doc<'surfaces'>): 'install' | 'authorise' {
 
 /**
  * What renewing an ended card needs: a card whose expiry revoked its credential at the vendor
- * (its latest `surface.expired` says so) needs it issued again; a card renewing a pasted key while
- * linked to an active organisation connection is offered the move to the employee's own identity.
+ * (its latest `surface.expired` says so) needs it issued again; a card renewing a pasted key whose
+ * system has an active organisation connection is offered the move to the employee's own identity.
+ * The connection is read for the card's system, as the card reads it, since no path links a card
+ * that holds a pasted key to a connection (the wave 11 review's M5).
  *
  * @param ctx - The renewal's transaction.
  * @param surface - The card as it stood before the renewal.
@@ -2172,11 +2292,9 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
   if (credential === null || credential.issuedBy !== undefined || credential.holder !== undefined) {
     return {};
   }
-  const connection =
-    surface.organisationConnectionId === undefined
-      ? null
-      : await db.get(surface.organisationConnectionId);
-  return connection?.status === 'active' ? { offer: 'own-identity' } : {};
+  const system = organisationSystemOf(surface);
+  if (system === undefined) return {};
+  return (await activeConnectionFor(ctx, system)) === null ? {} : { offer: 'own-identity' };
 }
 
 /**
@@ -2990,8 +3108,13 @@ export const approveTools = mutation({
  */
 export const installRedirectConfigured = query({
   args: {},
-  handler: async (): Promise<boolean> => (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '',
+  handler: async (): Promise<boolean> => publicUrlConfigured(),
 });
+
+/** Whether this deployment has a public address for a dedicated app's install to return to. */
+function publicUrlConfigured(): boolean {
+  return (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '';
+}
 
 /**
  * Re-run orientation for the owner's declared surfaces.

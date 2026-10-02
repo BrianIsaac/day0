@@ -102,10 +102,6 @@ export function endRemovesApp(end: AccessEnd): boolean {
   }
 }
 
-/** The words for a handover, which calls no vendor (A25). */
-export const HANDOVER_WORDS =
-  'A handover changes nothing at the vendor; the new manager re-approves the system.';
-
 /** The words for a token every employee shares (L2). */
 const SHARED_WORDS = "Shared app token: not revoked (the app's other employees use it).";
 
@@ -140,10 +136,11 @@ function slackPlan(
 /**
  * Choose how to end one credential Day0 obtained at its vendor, for one end of access.
  *
- * A handover calls nothing (A25). A client-credentials app-actor token is shared by other
- * employees and never revoked (L2); a per-employee token is revoked whoever holds its row
- * ({@link sharedByOrganisation}). Slack's two calls follow
- * {@link endRemovesApp}; Linear revokes each token of the pair by its hint (L3); an MCP server is
+ * A handover's cut revokes as a Disconnect does (the wave 11 review's M1, decision 2 (a)): the
+ * card it keeps for re-approval never reaches here (A25). A client-credentials app-actor token is
+ * shared by other employees and never revoked (L2); a per-employee token is revoked whoever holds
+ * its row ({@link sharedByOrganisation}). Slack's two calls follow {@link endRemovesApp}; Linear
+ * revokes each token of the pair by its hint (L3); an MCP server is
  * revoked at the endpoint it advertises (RFC 7009); a system with no revoker, or an app Linear
  * cannot delete by API (L1), is named as such.
  *
@@ -156,7 +153,6 @@ export function revocationPlanFor(
   end: AccessEnd,
   means: RevocationMeans,
 ): RevocationPlan {
-  if (end === 'transfer') return { kind: 'none', outcome: 'not-at-vendor', words: HANDOVER_WORDS };
   const { system, grant, clientId } = subject.issuedBy;
   if (grant === 'client-credentials') {
     return { kind: 'none', outcome: 'shared', words: SHARED_WORDS };

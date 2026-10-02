@@ -11,6 +11,7 @@ import { appendEvent } from './eventLog';
 import { assertOwnsAgent } from './ownership';
 import { endAccessAtSource } from './sourceRevocation';
 import type { HeldTokenRows, RotationOutcome } from '../src/surfaces/token-store';
+import { MCP_REDIRECT_PATH } from '../src/surfaces/access-kit/mcp';
 
 /** The token store's row shapes, declared in `src/surfaces/token-store.ts` (11-AT) and named here as before. */
 export type { HeldTokenRows, RotationOutcome };
@@ -42,7 +43,7 @@ export const MCP_MIN_REFRESH_INTERVAL_MS = 30_000;
 const sealedValidator = v.object({ ciphertext: v.string(), iv: v.string(), keyId: v.string() });
 
 /** Why a redirect found no authorisation to complete. */
-export type PendingClaimFailure = 'none' | 'used' | 'expired';
+export type PendingClaimFailure = 'none' | 'used' | 'expired' | 'not-the-manager';
 
 /** What an authorisation needs to know about its card, its employee and its server's client. */
 export interface AuthorisationContext {
@@ -181,6 +182,17 @@ export const cancelAuthorisation = mutation({
   },
 });
 
+/** Whether a pending authorisation returns to the MCP redirect, as only this flow's do. */
+function returnsToMcpRedirect(redirectUrl: string): boolean {
+  try {
+    // IT may have recorded the redirect with a trailing slash; the path is the same.
+    return new URL(redirectUrl).pathname.replace(/\/+$/, '') === MCP_REDIRECT_PATH;
+  } catch {
+    // Not an address: no authorisation this flow started.
+    return false;
+  }
+}
+
 /** A pending authorisation the redirect consumed, with what completing it needs. */
 export interface ClaimedAuthorisation {
   readonly ok: true;
@@ -195,11 +207,19 @@ export interface ClaimedAuthorisation {
 /**
  * Consume a card's pending authorisation for the redirect that names its nonce: one transaction,
  * so two redirects cannot both win and a replay finds nothing. An expired one is cleared and
- * refused. Internal, for `mcpOauthActions.completeAuthorisation`, which has verified the state's
- * signature.
+ * refused. Only the card's manager, signed in, completes it (the wave 11 review's M2, decision
+ * 3 (a)): a caller whose owner key is not the employee's owner's is refused before anything is
+ * claimed, so the manager's own authorisation stays pending and nothing of another person's
+ * consent lands. Internal, for `mcpOauthActions.completeAuthorisation`, which has verified the
+ * state's signature and read the caller.
  */
 export const claimPendingAuthorisation = internalMutation({
-  args: { surfaceId: v.id('surfaces'), stateNonce: v.string(), now: v.number() },
+  args: {
+    surfaceId: v.id('surfaces'),
+    stateNonce: v.string(),
+    callerOwnerKey: v.string(),
+    now: v.number(),
+  },
   handler: async (
     ctx,
     args,
@@ -208,10 +228,14 @@ export const claimPendingAuthorisation = internalMutation({
     const pending = surface?.pendingAuthorisation;
     if (!surface || !pending) return { ok: false, reason: 'none' };
     if (pending.stateNonce !== args.stateNonce) return { ok: false, reason: 'used' };
-    await clearPending(ctx, surface);
-    if (pending.stateExpiresAt <= args.now) return { ok: false, reason: 'expired' };
+    // Another flow's authorisation (11-AL's Linear install shares the row) is left for its own
+    // redirect, as Linear's claim leaves an MCP one (the wave 11 review's m3).
+    if (!returnsToMcpRedirect(pending.redirectUrl)) return { ok: false, reason: 'none' };
     const agent = await ctx.db.get(surface.agentId);
     if (!agent?.userId) return { ok: false, reason: 'none' };
+    if (agent.userId !== args.callerOwnerKey) return { ok: false, reason: 'not-the-manager' };
+    await clearPending(ctx, surface);
+    if (pending.stateExpiresAt <= args.now) return { ok: false, reason: 'expired' };
     return {
       ok: true,
       pending,

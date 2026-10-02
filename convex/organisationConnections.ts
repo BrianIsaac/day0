@@ -13,6 +13,8 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
+import { purgeCredential } from './credentials';
+import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
 import { endCardsOnConnection } from './surfaces';
@@ -140,12 +142,12 @@ const SECRET_NOUNS: { readonly [Kind in OrganisationConnectionKind]: string } = 
 };
 
 /** Trimmed, without blanks or repeats, in order. */
-function cleanScopes(scopes: readonly string[]): readonly string[] {
+export function cleanScopes(scopes: readonly string[]): readonly string[] {
   return [...new Set(scopes.map((scope: string): string => scope.trim()))];
 }
 
 /** Why a scope list is not one, or undefined when it is. */
-function scopesRefusal(scopes: readonly string[], name: string): string | undefined {
+export function scopesRefusal(scopes: readonly string[], name: string): string | undefined {
   if (scopes.length > SCOPE_COUNT_MAX) return `${name} lists more than ${SCOPE_COUNT_MAX} scopes.`;
   if (scopes.some((scope: string): boolean => scope.trim() === '' || scope.length > SCOPE_MAX)) {
     return `${name} holds an empty scope, or one longer than ${SCOPE_MAX} characters.`;
@@ -216,6 +218,11 @@ export function landingRefusal(landing: Landing): string | undefined {
     }
     if (landing.clientId === undefined || landing.clientId.trim() === '') {
       return 'An MCP client connection needs the client id IT registered.';
+    }
+    // With no issuer the secret could go to whichever server a resource names, so every card
+    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f).
+    if (landing.secret !== undefined && (landing.issuer ?? '').trim() === '') {
+      return "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone.";
     }
   } else if (mcpField) {
     return 'The issuer, the resource and the client registration belong to an MCP client only.';
@@ -397,9 +404,14 @@ export const releaseStoredSecrets = internalMutation({
   },
 });
 
-/** Revoke organisation credential rows, keeping each ciphertext for the vendor call (F19). */
+/**
+ * Revoke organisation credential rows a landing or a rotation stored and never put to use, and
+ * delete their values: nothing was done with them, so nothing at the vendor needs them (the wave 11
+ * review's M6). Secrets a revoke or a rotation takes out of use go through
+ * {@link endOrganisationSecrets} instead.
+ */
 async function revokeSecrets(
-  ctx: Pick<MutationCtx, 'db'>,
+  ctx: MutationCtx,
   credentialIds: ReadonlyArray<Id<'credentials'> | undefined>,
   now: number,
 ): Promise<void> {
@@ -407,7 +419,7 @@ async function revokeSecrets(
     if (credentialId === undefined) continue;
     const row = await ctx.db.get(credentialId);
     if (row === null || row.holder !== ORGANISATION_HOLDER || row.revokedAt !== undefined) continue;
-    await ctx.db.patch(credentialId, { revokedAt: now });
+    await purgeCredential(ctx, row, now);
   }
 }
 
@@ -638,7 +650,7 @@ async function emptySharedToken(
 /**
  * Record a rotation and its ledger line, in one transaction. Internal, for
  * {@link rotateConnection}. The new secret replaces the old, which is revoked with its refresh
- * token (its ciphertext kept for the vendor call, F19), and the shared token issued with it is
+ * token and ended by its kind ({@link endOrganisationSecrets}; M6), and the shared token issued with it is
  * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
  * and the secrets the action stored are revoked here.
@@ -668,7 +680,16 @@ export const recordRotated = internalMutation({
         refreshCredentialId: secrets.refreshCredentialId,
       });
     }
-    await revokeSecrets(ctx, await secretAndRefresh(ctx, connection.secretCredentialId), now);
+    await endOrganisationSecrets(
+      ctx,
+      {
+        organisationConnectionId: connection._id,
+        kind: connection.kind,
+        secretCredentialId: connection.secretCredentialId,
+        credentialIds: await secretAndRefresh(ctx, connection.secretCredentialId),
+      },
+      now,
+    );
     await emptySharedToken(ctx, connection.sharedTokenCredentialId);
     const scopes = args.scopes === undefined ? connection.scopes : [...cleanScopes(args.scopes)];
     const changed = scopes.join('\n') !== connection.scopes.join('\n');
@@ -793,12 +814,17 @@ export async function revokeConnection(
   if (connection.status === 'revoked') throw new ConvexError(CONNECTION_REVOKED);
   const now = Date.now();
   const reason = revocation.reason.trim();
-  await revokeSecrets(
+  await endOrganisationSecrets(
     ctx,
-    [
-      ...(await secretAndRefresh(ctx, connection.secretCredentialId)),
-      connection.sharedTokenCredentialId,
-    ],
+    {
+      organisationConnectionId: connection._id,
+      kind: connection.kind,
+      secretCredentialId: connection.secretCredentialId,
+      credentialIds: [
+        ...(await secretAndRefresh(ctx, connection.secretCredentialId)),
+        connection.sharedTokenCredentialId,
+      ],
+    },
     now,
   );
   await ctx.db.patch(connection._id, { status: 'revoked', statusReason: reason, revokedAt: now });

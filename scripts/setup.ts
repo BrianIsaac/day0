@@ -384,11 +384,16 @@ export interface SetupIo {
   /** All of stdin, for `--secrets-stdin`; a terminal on stdin is refused, a pipe or a file read whole. */
   readStdin?(): Promise<string>;
   /**
-   * Wait for the app to answer at its public address; true once it does. Absent, `install` polls
-   * the address through `fetch`.
+   * Wait for the app to answer at its public address, and say whether it did and, when it never
+   * did, the last attempt's failure. Absent, `install` polls the address through `fetch`.
    */
-  waitForApp?(url: string, timeoutMs: number): Promise<boolean>;
+  waitForApp?(url: string, timeoutMs: number): Promise<AppWait>;
 }
+
+/** Whether the app answered `install`'s wait, and the last attempt's failure when it never did. */
+export type AppWait =
+  | { readonly answered: true }
+  | { readonly answered: false; readonly lastError?: string };
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
 export class SetupCancelled extends Error {}
@@ -501,6 +506,9 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
     --record <dir>                        where the install record goes (default
                                           ~/day0-install/<project>)
     --print-manifest <slack|linear>       print the kit's manifest for that system and stop
+    --correct <slack|linear|https://...>  record the redirect Day0 returns to and the kit's
+                                          scopes on that system's connection, after IT fixed
+                                          them at the vendor; no secret changes, no card ends
   ./setup.sh install --provider entra     the lifecycle target checks, then sign-in, then access,
                                           then check:setup and check:sign-in; stops at the first
                                           that fails and says which. Takes both verbs' flags;
@@ -556,6 +564,7 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     '--connect-mode': 'connectModes',
     '--record': 'record',
     '--print-manifest': 'printManifest',
+    '--correct': 'correct',
   };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {
     '--port': 'backend',
@@ -5121,6 +5130,27 @@ async function runAccessVerb(options: SetupOptions, io: SetupIo): Promise<number
 const APP_WAIT_MS = 10 * 60_000;
 
 /**
+ * One failed attempt of the wait, in words: a server error by its status, or a transport failure
+ * with the cause Node's fetch hides under "fetch failed" (a certificate it does not trust, a
+ * refused connection), so a wait that gives up can say why (the review's m21).
+ *
+ * @param failure - The answer with a server error's status, or what the fetch threw.
+ */
+export function appFailureWords(failure: unknown): string {
+  if (failure instanceof Response) return `the proxy answered HTTP ${failure.status}`;
+  if (!(failure instanceof Error)) return String(failure);
+  const cause: unknown = failure.cause;
+  if (!(cause instanceof Error)) return failure.message;
+  const code = (cause as { readonly code?: unknown }).code;
+  return `${failure.message}: ${cause.message}${typeof code === 'string' ? ` (${code})` : ''}`;
+}
+
+/** Whether a failure is Node refusing the proxy's certificate, which NODE_EXTRA_CA_CERTS cures. */
+function untrustedCertificate(words: string): boolean {
+  return /CERT|certificate|UNABLE_TO_VERIFY|SELF_SIGNED/i.test(words);
+}
+
+/**
  * Poll an address until anything but a server error answers it, or the time runs out.
  *
  * Args:
@@ -5128,20 +5158,23 @@ const APP_WAIT_MS = 10 * 60_000;
  *   timeoutMs: How long to keep asking.
  *
  * Returns:
- *   True once the app answers; false when it never did.
+ *   Answered once the app answers; else the last attempt's failure.
  */
-async function appAnswers(url: string, timeoutMs: number): Promise<boolean> {
+async function appAnswers(url: string, timeoutMs: number): Promise<AppWait> {
   const deadline = Date.now() + timeoutMs;
+  let lastError: string | undefined;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5_000) });
-      if (response.status < 500) return true;
-    } catch {
-      // Not up yet, or the proxy has no upstream yet; the deadline is the only thing that ends this.
+      if (response.status < 500) return { answered: true };
+      lastError = appFailureWords(response);
+    } catch (err) {
+      // Not up yet, or the proxy has no upstream yet: kept for the words if the deadline passes.
+      lastError = appFailureWords(err);
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 2_000));
   }
-  return false;
+  return { answered: false, ...(lastError !== undefined ? { lastError } : {}) };
 }
 
 /** The variable the sign-in verb reads its client secret from when nothing can be asked. */
@@ -5297,7 +5330,18 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
   );
   const answering =
     io.waitForApp ?? ((url: string, timeoutMs: number) => appAnswers(url, timeoutMs));
-  if (!(await answering(publicUrl, APP_WAIT_MS))) return stopped('the app', 1);
+  const waited = await answering(publicUrl, APP_WAIT_MS);
+  if (!waited.answered) {
+    const last = waited.lastError === undefined ? '' : ` The last attempt: ${waited.lastError}.`;
+    io.log(`The app did not answer at ${publicUrl} within ${APP_WAIT_MS / 60_000} minutes.${last}`);
+    if (waited.lastError !== undefined && untrustedCertificate(waited.lastError)) {
+      io.log(
+        "This machine's Node does not trust the certificate the proxy presents: run the install " +
+          "again with NODE_EXTRA_CA_CERTS naming the customer's CA bundle (docs/running/install.md, step 6).",
+      );
+    }
+    return stopped('the app', 1);
+  }
 
   io.log('\n== 5. One test sign-in, with the customer’s IT ==');
   io.log('pnpm run check:sign-in');

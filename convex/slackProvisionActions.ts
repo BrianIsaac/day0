@@ -606,7 +606,7 @@ export async function runProvisionApp(
     publicUrl,
   });
   const created = await createEmployeeApp(ctx, surface, ownerKey, pasted, built, dependencies);
-  return await recordCreatedApp(ctx, surface, created, built, dependencies, now);
+  return await recordCreatedApp(ctx, { surface, ownerKey }, created, built, dependencies, now);
 }
 
 /** The card an app is provisioned for, its employee, and the owner the action started under. */
@@ -735,7 +735,7 @@ async function createEmployeeApp(
  */
 async function recordCreatedApp(
   ctx: ActionCtx,
-  surface: Doc<'surfaces'>,
+  { surface, ownerKey }: { readonly surface: Doc<'surfaces'>; readonly ownerKey: string },
   created: CreatedApp,
   built: SlackAppManifest,
   dependencies: ProvisionDependencies,
@@ -771,6 +771,7 @@ async function recordCreatedApp(
         ? {}
         : { organisationConnectionId: created.organisationConnectionId }),
       ...link,
+      startedUnder: ownerKey,
       now,
     });
   } catch (error: unknown) {

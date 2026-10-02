@@ -31,11 +31,13 @@ shows its **client id** and **client secret**.
 **Per employee.** When an employee's Linear card asks for access, its manager
 forwards the access request to IT. A Linear administrator creates the
 employee's own app from the same manifest with the employee's name
-(`<employee name> (Day0)`) and without client credentials, an administrator
-records its client id and client secret on the employee's card, and the card
-then asks IT for nothing more: Connect gives a fresh installation link (valid
-15 minutes), which a Linear administrator follows to authorise it with
-`actor=app`.
+(`<employee name> (Day0)`) and without client credentials. An administrator
+then opens the link in the access request, which names the employee's card on
+the organisation page (`${DAY0_PUBLIC_URL}/organisation?card=<card>`), and
+records the app's client id and client secret there; Day0 then opens Linear
+for a Linear administrator to install it with `actor=app`. The card asks IT for
+nothing more: afterwards its Connect gives a fresh installation link (valid 15
+minutes) whenever the employee's app needs installing again.
 
 ## 2. The manifest or the form
 

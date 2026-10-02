@@ -520,7 +520,24 @@ describe('the access request and the organisation connection ledger in the recor
         { type: 'organisation.connection-rotated', payload: { ...named, via: 'setup-cli' } },
         subject,
       ),
-    ).toBe("The organisation's Slack connection was given a new secret by the setup verb.");
+    ).toBe("The organisation's Slack connection was given a new secret by the setup command.");
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-corrected',
+          payload: {
+            ...named,
+            via: 'setup-cli',
+            redirectCorrected: true,
+            scopes: ['chat:write', 'im:write'],
+            previousScopes: ['chat:write'],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "The organisation's Slack connection had its recorded redirect and scopes (now chat:write, im:write) corrected by the setup command.",
+    );
     expect(
       recordWords(
         {

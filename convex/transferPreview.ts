@@ -10,6 +10,7 @@ import { needsYouOfEmployee, type NeedsYouEntry } from './work';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { clippedEmployeeName } from '../src/agent/employee-name';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { ACTS_AS_KINDS } from '../src/surfaces/access-identity';
 import { shownEmployeeState } from '../src/work/state-labels';
 
 /*
@@ -118,7 +119,10 @@ const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
 const previewReapproval = v.object({
   slug: v.string(),
   displayName: v.string(),
+  /** The identity's name as the system shows it. */
   identity: v.string(),
+  /** Whom the card keeps acting as (11-AC's cockpit item 6), so the dialog says the kind. */
+  kind: v.union(...ACTS_AS_KINDS.map((kind) => v.literal(kind))),
 });
 
 /** One permission scope the employee holds, with the path that granted it. */
@@ -388,6 +392,8 @@ export async function transferPreviewOf(
         slug: surface.slug,
         displayName: surface.displayName,
         identity: surface.actsAs?.label ?? surface.displayName,
+        // A card kept for re-approval acts as the employee's own identity (A25).
+        kind: surface.actsAs?.kind ?? 'own-app',
       })),
       scopesRevoked,
       mirroredPages: mirrors.count,
