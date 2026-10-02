@@ -520,25 +520,23 @@ export function RegisteredSkillsPanel({
               );
             })}
           </ul>
-          {/* Two backends can run the check, so naming one of them is advice
-              half the readers cannot act on. The rule that picks between them
-              is what tells a reader which line is theirs. And a retry costs an
-              authoring call for some of these rows and none for others, which
-              is the difference between waiting on a sandbox and waiting on the
-              model, so the text says which is which rather than claiming one
-              for all of them. */}
+          {/* A retry costs an authoring call for some of these rows and none for others, which
+              is the difference between waiting on a sandbox and waiting on the model, so the
+              text says which is which rather than claiming one for all of them. Starting a
+              sandbox is the operator's step, not the manager's: the card says whom to ask, as
+              the stalled adoption card does (A-m6), and the operator's commands stay in the
+              running guide (docs/running/components.md). */}
           <div className="mt-3">
-            <Disclosure summary="What Retry does, and starting a sandbox">
+            <Disclosure summary="What Retry does">
               <p className="text-xs leading-relaxed text-[var(--color-muted)]">
-                Retry picks a skill up where it stopped. One parked because the check never ran -
-                the sandbox was busy, absent, or threw - keeps its body and smoke test and is
+                Retry picks a skill up where it stopped. One parked because the check never ran (the
+                sandbox was busy, not running, or failed) keeps its body and smoke test and is
                 checked again as it stands, with no second authoring call; one the gate or the check
                 itself turned down is authored again, with the reason fed back. Either way it has to
-                pass the check before it is callable. If the sandbox was skipped, start one first:
-                run pnpm sandbox:up for the bundled local sandbox, or set DAYTONA_API_KEY on the
-                deployment to use Daytona instead. Only one authoring run holds a skill at a time,
-                so a retry while one is still running is refused until that run finishes or its
-                claim lapses.
+                pass the check before it is callable. If no sandbox was running, ask whoever runs
+                this Day0 installation to start one, then press Retry. Only one authoring run holds
+                a skill at a time, so a retry while one is still running is refused until that run
+                finishes or its claim lapses.
               </p>
             </Disclosure>
           </div>

@@ -260,8 +260,9 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).not.toContain('Retry re-authors the skill');
     expect(markup).toContain('is checked again as it stands, with no second authoring call');
     expect(markup).toContain('is authored again, with the reason fed back');
-    expect(markup).toContain('pnpm sandbox:up');
-    expect(markup).toContain('DAYTONA_API_KEY');
+    expect(markup).toContain(
+      'If no sandbox was running, ask whoever runs this Day0 installation to start one, then press Retry.',
+    );
     expect(markup).toContain('Only one authoring run holds a skill at a time');
   });
 
@@ -531,11 +532,13 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('>Being written<');
   });
 
-  it('keeps the operator’s sandbox instructions behind a disclosure', (): void => {
+  it('says what Retry does in the manager’s words behind a disclosure, never the operator’s commands (as A-m6 did for the stalled card)', (): void => {
     const markup = panel([refused]);
     expect(markup).toMatch(
-      /What Retry does, and starting a sandbox<\/summary>[\s\S]*pnpm sandbox:up/,
+      /What Retry does<\/summary>[\s\S]*ask whoever runs this Day0 installation/,
     );
+    expect(markup).not.toContain('pnpm sandbox:up');
+    expect(markup).not.toContain('DAYTONA_API_KEY');
   });
 });
 
