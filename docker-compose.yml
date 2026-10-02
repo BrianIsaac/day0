@@ -589,13 +589,15 @@ services:
   # providers themselves: the self-hosted edition sends no telemetry, and the
   # spike ran it on a network with no route out.
   #
-  # Only the backend can reach it. The database and the cache sit on `nango`,
-  # an internal network with no route out that the backend joins; the server
-  # alone also joins `nango-egress` for the providers' token endpoints. It is
-  # never on `default`, where the browser component a model drives lives,
-  # because its dashboard runs without a sign-in (FLAG_AUTH_ENABLED=false is
-  # how the spike's API key resolved to an environment with no account
-  # created). Nothing is published on the host.
+  # Only the backend can reach it, and only the server can reach the rest.
+  # `nango` (internal, no route out) carries the backend and the server alone;
+  # `nango-store` (internal) carries the server, its database and its cache, so
+  # nothing else can dial the database the tokens are kept in; the server alone
+  # also joins `nango-egress` for the providers' token endpoints. It is never
+  # on `default`, where the browser component a model drives lives, because its
+  # dashboard runs without a sign-in (FLAG_AUTH_ENABLED=false is how the
+  # spike's API key resolved to an environment with no account created).
+  # Nothing is published on the host.
   #
   # The three keys are minted once by `pnpm dev:no-auth-key` (every setup and
   # `pnpm dev` run it): DAY0_NANGO_SECRET_KEY is the environment key the
@@ -609,7 +611,7 @@ services:
     image: nangohq/nango-server:hosted-0.71.11@sha256:c41e96bcbaceb2cd6b6643d9cfcead759c46678ad443f88dc34bdab2653d9984
     # The image is built for amd64 only; another host runs it emulated.
     platform: linux/amd64
-    networks: ['nango', 'nango-egress']
+    networks: ['nango', 'nango-store', 'nango-egress']
     entrypoint:
       [
         'sh',
@@ -653,13 +655,13 @@ services:
       timeout: 5s
       start_period: 90s
 
-  # Nango's database (the upstream compose file's PostgreSQL), on the internal
-  # network alone. Its volume holds the tokens, sealed with
+  # Nango's database (the upstream compose file's PostgreSQL), reachable from
+  # the Nango server alone. Its volume holds the tokens, sealed with
   # DAY0_NANGO_ENCRYPTION_KEY.
   nango-db:
     profiles: ['token-store']
     image: postgres:16.0-alpine@sha256:acf5271bbecd4b8733f4e93959a8d2b536a57aeee6cc4b6a71890aaf646425b8
-    networks: ['nango']
+    networks: ['nango-store']
     environment:
       - POSTGRES_USER=nango
       - POSTGRES_DB=nango
@@ -674,12 +676,12 @@ services:
       retries: 30
 
   # Nango's cache (token refresh locks and rate limits; the upstream compose
-  # file's Redis), on the internal network alone. It keeps nothing worth a
-  # volume.
+  # file's Redis), reachable from the Nango server alone. It keeps nothing
+  # worth a volume.
   nango-redis:
     profiles: ['token-store']
     image: redis:7.2.4@sha256:5a93f6b2e391b78e8bd3f9e7e1e1e06aeb5295043b4703fb88392835cec924a0
-    networks: ['nango']
+    networks: ['nango-store']
     restart: unless-stopped
 
 volumes:
@@ -701,9 +703,12 @@ volumes:
   nango_db:
 
 networks:
-  # The token store's private network: the backend, Nango and Nango's database
-  # and cache, with no route out. See `nango-server`.
+  # The token store's private networks, with no route out (see `nango-server`):
+  # `nango` between the backend and the Nango server, `nango-store` between the
+  # server and its database and cache.
   nango:
+    internal: true
+  nango-store:
     internal: true
   # Nango's own way out, to the providers' token endpoints; nothing else joins it.
   nango-egress:

@@ -163,21 +163,21 @@ describe("the token store's Nango component (11-AT)", (): void => {
     );
   });
 
-  it('keeps the database and the cache on a network only the backend and Nango join', (): void => {
+  it('lets the backend reach the Nango server alone, and only the server reach its database, its cache and the outside', (): void => {
     expect(networks?.nango).toEqual({ internal: true });
-    expect(services['nango-db'].networks).toEqual(['nango']);
-    expect(services['nango-redis'].networks).toEqual(['nango']);
-    expect(services['nango-server'].networks).toEqual(['nango', 'nango-egress']);
+    expect(networks?.['nango-store']).toEqual({ internal: true });
+    expect(services['nango-db'].networks).toEqual(['nango-store']);
+    expect(services['nango-redis'].networks).toEqual(['nango-store']);
+    expect(services['nango-server'].networks).toEqual(['nango', 'nango-store', 'nango-egress']);
     expect(networkNames(services.backend)).toEqual(['default', 'nango']);
-    const joined = Object.entries(services)
-      .filter(([, service]) => networkNames(service).includes('nango'))
-      .map(([name]) => name)
-      .sort();
-    expect(joined).toEqual(['backend', 'nango-db', 'nango-redis', 'nango-server']);
-    const egress = Object.entries(services)
-      .filter(([, service]) => networkNames(service).includes('nango-egress'))
-      .map(([name]) => name);
-    expect(egress).toEqual(['nango-server']);
+    const members = (network: string): string[] =>
+      Object.entries(services)
+        .filter(([, service]) => networkNames(service).includes(network))
+        .map(([name]) => name)
+        .sort();
+    expect(members('nango')).toEqual(['backend', 'nango-server']);
+    expect(members('nango-store')).toEqual(['nango-db', 'nango-redis', 'nango-server']);
+    expect(members('nango-egress')).toEqual(['nango-server']);
   });
 
   it('passes the setup-minted keys and refuses to start Nango without them', (): void => {

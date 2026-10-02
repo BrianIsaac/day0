@@ -58,7 +58,7 @@ nothing else on your machine can dial them.
 | `looker-tile` | `demo` | none | `http://looker-tile:8080` |
 | `redactor` | `redactor` | none | `http://redactor:8000` |
 | `sandbox` | `sandbox` | none | a unix socket on the `sandbox_socket` volume |
-| `nango-server` | `token-store` | none | `http://nango-server:3003`, on the `nango` network the backend alone joins |
+| `nango-server` | `token-store` | none | `http://nango-server:3003`, on the `nango` network only the backend shares |
 
 `pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
 `--app-port`), outside Docker.
@@ -387,9 +387,11 @@ rather than store tokens unencrypted.
 Linear, a pasted key or a web UI. Nothing reads it until a credential names it.
 
 **What it never sees.** Anything the backend does not send it, and no browser:
-it publishes no host port, its database and cache sit on `nango`, an internal
-network with no route out that the backend alone joins, and the server alone
-also joins `nango-egress` to reach the providers' token endpoints. It is never
+it publishes no host port; the backend reaches the server on `nango`, an
+internal network with no route out that only the two of them join; the
+server's database and cache sit on `nango-store`, which only the server joins;
+and the server alone also joins `nango-egress` to reach the providers' token
+endpoints. It is never
 on the default network, where the browser component a model drives lives,
 because its own dashboard runs without a sign-in. The self-hosted edition sends
 nothing to Nango.
