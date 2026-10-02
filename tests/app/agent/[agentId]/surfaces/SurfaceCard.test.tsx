@@ -546,4 +546,30 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(organisationHeld).not.toContain('Stored credential metadata is unavailable');
   });
+
+  it("says the Slack channels' rule once on an ended card whose reinstall row already says it (bed, 2 Oct)", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        reason: 'expired',
+        managerApprovedAt: NOW - 100 * DAY,
+        expiresAt: NOW - DAY,
+        actsAs: { kind: 'own-app', label: 'Maya (Day0)' },
+        provisioning: {
+          appId: 'A1',
+          appName: 'Maya (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: 'cred-secret',
+          installUrl: 'https://slack.test/install',
+          redirectUrl: 'https://day0.test/api/slack/oauth',
+          scopes: ['chat:write'],
+          createdAt: 1,
+          installedAt: 2,
+        } as ListedSurface['provisioning'],
+      }),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup.match(/re-joins (its|the) public channels/g)).toHaveLength(1);
+  });
 });

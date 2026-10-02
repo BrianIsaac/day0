@@ -424,7 +424,8 @@ export function SurfaceCard({
           now={context.now}
           onSetDays={actions.setDays}
           endedNote={
-            slack && identity.kind === 'own-app'
+            // The reinstall row says the same rule beside its control (11-AS), so once is enough.
+            slack && identity.kind === 'own-app' && provisioningPresentation.stage !== 'reinstall'
               ? slackChannelsGoWords(context.employeeName, 'Renewing')
               : undefined
           }
