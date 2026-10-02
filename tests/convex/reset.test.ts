@@ -1578,7 +1578,7 @@ describe('holdings: what a deletion would remove, read before its control is pre
     });
   });
 
-  it('answers past the retirements cap instead of taking the home page down', async (): Promise<void> => {
+  it('answers past the retirements cap instead of taking the home page down, reading the newest first', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx) => {
@@ -1589,7 +1589,20 @@ describe('holdings: what a deletion would remove, read before its control is pre
         state: 'active',
         createdAt: 1,
       });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-8',
+        title: 'Rejected before the newest retire',
+        contentSummary: 'Synthetic work.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
       for (let index = 0; index <= RETIREMENT_READ_LIMIT; index += 1) {
+        const newest = index === RETIREMENT_READ_LIMIT;
         await ctx.db.insert('retirements', {
           userId: 'owner',
           agentId,
@@ -1598,15 +1611,16 @@ describe('holdings: what a deletion would remove, read before its control is pre
           revokedCredentials: 0,
           keptCredentials: 0,
           claims: [],
-          rejections: [],
+          rejections: newest ? [{ workItemId, keys: ['linear:REVOPS-8'], rejectedAt: index }] : [],
         });
       }
       await ctx.db.delete(agentId);
     });
 
-    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
-      NOTHING,
-    );
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual({
+      ...NOTHING,
+      retiredBoundaries: true,
+    });
   });
 
   it('holds a retired employee’s kept boundaries in real mode only, where the deletion releases them', async (): Promise<void> => {

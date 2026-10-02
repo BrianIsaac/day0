@@ -1082,12 +1082,13 @@ async function deletionHoldings(
               .first(),
       ]),
     ),
-    // Read up to the cap without `ownerRetirements`' refusal past it: a subscribed read that threw
-    // would take the whole home page down, and past the cap the deletion refuses in its own words.
+    // The newest up to the cap, without `ownerRetirements`' refusal past it: a subscribed read
+    // that threw would take the whole home page down. Past the cap the deletion itself refuses.
     SURFACE_MODE === 'real'
       ? db
           .query('retirements')
           .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+          .order('desc')
           .take(RETIREMENT_READ_LIMIT)
       : Promise.resolve([]),
   ]);
