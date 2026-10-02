@@ -44,9 +44,23 @@ interface CreatedApp {
   readonly clientSecret: string;
 }
 
-async function createApp(configurationToken: string = CONFIGURATION_TOKEN): Promise<CreatedApp> {
+/** A manifest whose bot asks for the given scopes. */
+function manifestWith(scopes: readonly string[]): string {
+  return JSON.stringify({
+    display_information: { name: 'Day0' },
+    oauth_config: {
+      redirect_urls: ['https://day0.example.test/api/oauth/slack'],
+      scopes: { bot: scopes },
+    },
+  });
+}
+
+async function createApp(
+  configurationToken: string = CONFIGURATION_TOKEN,
+  scopes: readonly string[] = ['chat:write', 'channels:read', 'channels:join'],
+): Promise<CreatedApp> {
   const created = await api('apps.manifest.create', configurationToken, {
-    manifest: '{"display_information":{"name":"Day0"}}',
+    manifest: manifestWith(scopes),
   });
   expect(created.ok).toBe(true);
   const credentials = created.credentials as Record<string, string>;
@@ -178,6 +192,17 @@ describe("a bot token's revoke and the re-join (S1, RM4)", (): void => {
       ok: true,
     });
     expect(await membership(renewed.token)).toEqual({ revops: true, 'revops-asks': false });
+  });
+
+  it("refuses the join of a bot whose app's manifest did not ask for channels:join", async (): Promise<void> => {
+    await createApp();
+    const bot = await install(
+      await createApp(CONFIGURATION_TOKEN, ['chat:write', 'channels:read']),
+    );
+    expect(await api('conversations.join', bot.token, { channel: 'C_REVOPS' })).toEqual({
+      ok: false,
+      error: 'missing_scope',
+    });
   });
 
   it('refuses to join a channel it does not have', async (): Promise<void> => {

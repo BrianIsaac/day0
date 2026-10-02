@@ -31,6 +31,8 @@ export interface DoubleApp {
   readonly code: string;
   readonly botToken: string;
   readonly botUserId: string;
+  /** The bot scopes its manifest asked for; a method needing one it did not is refused. */
+  readonly scopes: readonly string[];
   deleted: boolean;
 }
 
@@ -167,7 +169,11 @@ async function respond(
       if (refused !== undefined) return answer({ ok: false, error: refused });
       if (!form.manifest) return answer({ ok: false, error: 'invalid_manifest' });
       const n = double.apps.length + 1;
+      const manifest = JSON.parse(form.manifest) as {
+        oauth_config?: { scopes?: { bot?: string[] } };
+      };
       const app: DoubleApp = {
+        scopes: manifest.oauth_config?.scopes?.bot ?? [],
         appId: `A0APP${n}`,
         clientId: `1234.${n}`,
         clientSecret: `w11as-secret-${n}`,
@@ -246,6 +252,8 @@ async function respond(
     case 'conversations.join': {
       const channel = PUBLIC_CHANNELS.find((candidate) => candidate.id === form.channel);
       if (!channel) return answer({ ok: false, error: 'channel_not_found' });
+      if (!bot.scopes.includes('channels:join'))
+        return answer({ ok: false, error: 'missing_scope' });
       const joined = double.memberships.get(bot.botUserId) ?? new Set<string>();
       joined.add(channel.id);
       double.memberships.set(bot.botUserId, joined);

@@ -237,6 +237,14 @@ const server = createServer(async (request, response) => {
       apps.push(app);
     }
     app.created = true;
+    // The bot scopes the manifest asked for: a method that needs one it did not is refused.
+    try {
+      const parsed = JSON.parse(manifest);
+      const bot = parsed && parsed.oauth_config && parsed.oauth_config.scopes;
+      app.scopes = Array.isArray(bot && bot.bot) ? bot.bot : [];
+    } catch {
+      app.scopes = [];
+    }
     return json(response, 200, {
       ok: true,
       app_id: app.appId,
@@ -328,6 +336,10 @@ const server = createServer(async (request, response) => {
       (candidate) => candidate.id === readArguments(url, request, body).get('channel'),
     );
     if (!channel) return json(response, 200, { ok: false, error: 'channel_not_found' });
+    // The first app, which the fake answered for before any manifest, holds every scope.
+    if (bot.scopes && !bot.scopes.includes('channels:join')) {
+      return json(response, 200, { ok: false, error: 'missing_scope' });
+    }
     const joined = memberships.get(bot.botUserId) || new Set();
     joined.add(channel.id);
     memberships.set(bot.botUserId, joined);

@@ -42,6 +42,9 @@ const POLICY = readFileSync(
 const PUBLIC_URL = 'https://day0.example.test';
 const HOUR = 60 * 60 * 1000;
 
+/** Documentation that carries no manifest template, so the app is built from the kit's. */
+const KIT_ONLY = '# RevOps handbook\n\nThe team works in Slack.';
+
 let slack: SlackDouble;
 
 beforeEach((): void => {
@@ -551,10 +554,20 @@ describe('keeping the configuration token current (B9; 11-AR re-check)', (): voi
 });
 
 describe('the renewal and the re-join (A26, RM4)', (): void => {
-  /** Leo with his own app installed, then his access expired: Slack revoked his bot token. */
-  async function expiredLeo(harness: Harness): Promise<Employee & { appId: string }> {
+  /**
+   * Leo with his own app installed, then his access expired: Slack revoked his bot token. His
+   * documentation carries no manifest template unless one is given, so his app is the kit's,
+   * which asks for `channels:join`.
+   */
+  async function expiredLeo(
+    harness: Harness,
+    documentation = KIT_ONLY,
+  ): Promise<Employee & { appId: string }> {
     await landSlack(harness);
-    const leo = await employee(harness, 'Leo', { channels: ['#revops', 'revops-leads'] });
+    const leo = await employee(harness, 'Leo', {
+      documentation,
+      channels: ['#revops', 'revops-leads'],
+    });
     const made = await provision(harness, leo.surfaceId);
     await install(harness, made);
     await settle(harness);
@@ -637,13 +650,12 @@ describe('the renewal and the re-join (A26, RM4)', (): void => {
     expect(callsOf(slack, 'conversations.join')).toEqual([]);
   });
 
-  it('names every channel as needing a person when Slack refuses the joins, and keeps the install', async (): Promise<void> => {
+  it("names every channel as needing a person when the documentation's template did not ask for channels:join, and keeps the install", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const leo = await expiredLeo(harness);
+    const leo = await expiredLeo(harness, POLICY);
     await harness
       .withIdentity(managerIdentity())
       .mutation(api.surfaces.setAccessDays, { surfaceId: leo.surfaceId, days: 30 });
-    slack.refusals.set('conversations.join', 'missing_scope');
 
     await install(harness, await provision(harness, leo.surfaceId));
 
