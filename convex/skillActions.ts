@@ -192,6 +192,27 @@ const PATH_VERBS: Record<string, string> = {
 };
 
 /**
+ * What a real-mode author is told when the employee has no connected chat surface, in place of
+ * naming one: the cause of the walk's refused first drafts was the prompt teaching a reply the
+ * employee could not send (m11), so the prompt says there is none rather than any check
+ * filtering the draft's words afterwards.
+ */
+const NO_CHAT_LINE =
+  '  No chat surface is connected to this employee, so no work reaches it from a channel and it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.';
+
+/**
+ * The connected chat surface a reply goes to, by a path the gate can reach, if any.
+ *
+ * @param connected - The agent's connected surfaces.
+ */
+function connectedChatSurface(connected: readonly SurfaceRecord[]): SurfaceRecord | undefined {
+  return connected.find(
+    (surface): boolean =>
+      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
+  );
+}
+
+/**
  * Which connected surface `<reply-surface>` is on this deployment, for a
  * real-mode author.
  *
@@ -200,29 +221,20 @@ const PATH_VERBS: Record<string, string> = {
  * takes, and names the target surface's verb beside it, so the author reads
  * that the ticket surface cannot carry a `chat.postMessage` rather than
  * inferring it. The executor binds the input per run; the slug here is for
- * the smoke test's cases.
+ * the smoke test's cases. With no chat surface connected it says there is no
+ * reply to send instead (m11).
  *
- * Args:
- *   skill: The proposed skill, for its target surface.
- *   surfaces: The agent's surfaces.
- *   now: Clock for the connection verdict.
- *
- * Returns:
- *   One prompt line, or none when no chat surface is connected.
+ * @param skill - The proposed skill, for its target surface.
+ * @param connected - The agent's connected surfaces.
+ * @param chat - The connected chat surface, if any, as {@link connectedChatSurface} finds it.
+ * @returns One prompt line.
  */
 function replySurfaceLines(
   skill: AuthorPromptSkill,
-  surfaces: readonly SurfaceRecord[],
-  now: number,
+  connected: readonly SurfaceRecord[],
+  chat: SurfaceRecord | undefined,
 ): string[] {
-  const connected = surfaces.filter(
-    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
-  );
-  const chat = connected.find(
-    (surface): boolean =>
-      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
-  );
-  if (!chat?.path) return [];
+  if (!chat?.path) return [NO_CHAT_LINE];
   const input = `\`<${REPLY_SURFACE_INPUT}>\``;
   const target = connected.find(
     (surface): boolean => surface.slug === skill.targetSurface && surface.slug !== chat.slug,
@@ -244,13 +256,17 @@ function shapeSection(
 ): string[] {
   if (!skill.surfaceClass || !skill.operation) return [];
   const shape = { surfaceClass: skill.surfaceClass, operation: skill.operation };
+  const connected = surfaces.filter(
+    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
+  );
+  const chat = connectedChatSurface(connected);
   return [
     `Shape: ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)} (${skillNameFor(shape)}).`,
     'The rationale names the first work item; it is an instance, and none of its identifiers, figures or quoted words belong in the skill.',
     '',
     'Execution inputs the executor can supply, to declare under `## Inputs` as the procedure needs them:',
-    ...executionInputLines(mode),
-    ...(mode === 'real' ? replySurfaceLines(skill, surfaces, now) : []),
+    ...executionInputLines(mode, { chatConnected: chat !== undefined }),
+    ...(mode === 'real' ? replySurfaceLines(skill, connected, chat) : []),
   ];
 }
 

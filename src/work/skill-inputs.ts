@@ -70,18 +70,40 @@ const REAL_EXECUTION_INPUT_LINES: readonly string[] = [
 ];
 
 /**
+ * The taught inputs in real mode for an employee with no connected chat surface. No work reaches
+ * it from a channel and it can send no reply, so nothing it is taught names one: taught a reply
+ * channel and a reply surface, a live author gave its cases a reply on a chat surface the employee
+ * never connected, and the sandbox refused the first draft every time (the real-Linear walk, m11,
+ * three of three on real beds).
+ */
+const REAL_NO_CHAT_INPUT_LINES: readonly string[] = [
+  EXECUTION_INPUT_LINES[0]!,
+  EXECUTION_INPUT_LINES[1]!,
+  '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket).',
+  EXECUTION_INPUT_LINES[4]!,
+];
+
+/** What the author is taught about the employee's connections; see {@link executionInputLines}. */
+export interface AuthorConnections {
+  /** Whether a chat surface is connected, so a reply has somewhere to go. */
+  readonly chatConnected: boolean;
+}
+
+/**
  * The taught input lines for a surface mode.
  *
- * Args:
- *   mode: The deployment's surface mode.
- *
- * Returns:
- *   The recorded list in mock mode, the very array, so the mock author's
- *   prompt is the one the recorded runs used; in real mode the list that
- *   names the reply surface.
+ * @param mode - The deployment's surface mode.
+ * @param connections - Whether the employee has a chat surface connected; read in real mode only.
+ * @returns The recorded list in mock mode, the very array, so the mock author's prompt is the one
+ *   the recorded runs used; in real mode the list that names the reply surface, or, with no chat
+ *   surface connected, the list with no reply input at all.
  */
-export function executionInputLines(mode: SurfaceMode): readonly string[] {
-  return mode === 'real' ? REAL_EXECUTION_INPUT_LINES : EXECUTION_INPUT_LINES;
+export function executionInputLines(
+  mode: SurfaceMode,
+  connections: AuthorConnections,
+): readonly string[] {
+  if (mode !== 'real') return EXECUTION_INPUT_LINES;
+  return connections.chatConnected ? REAL_EXECUTION_INPUT_LINES : REAL_NO_CHAT_INPUT_LINES;
 }
 
 /**
