@@ -1,10 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Dialog } from '../components/Dialog';
 import { StatusRegion } from '../components/StatusRegion';
 import { useChange } from '../components/use-change';
@@ -25,37 +26,81 @@ export function resetOutcome(unlinkedSources: number): string {
     : 'Your data is deleted.';
 }
 
-/**
- * What the deletion does, said in its confirmation.
- *
- * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
- */
-export function resetWarning(alsoUnlinkDocumentation: boolean): string {
-  return alsoUnlinkDocumentation
-    ? 'This deletes every employee and its data, your skill library and the notes on your handover requests, and unlinks every documentation source. It cannot be undone.'
-    : 'This deletes every employee and its data, your skill library and the notes on your handover requests. Your documentation stays linked. It cannot be undone.';
+/** One kind of stored row a deletion takes, in the words the card and its warning say it by. */
+interface HeldKind {
+  readonly kind: Exclude<keyof Holdings, 'documentation'>;
+  /** As the card lists what is stored. */
+  readonly stored: string;
+  /** As the warning lists what goes. */
+  readonly goes: string;
 }
 
-/** Each kind of stored row, in the words the card lists it by, in the order it lists them. */
-const HELD_WORDS: ReadonlyArray<readonly [keyof Holdings, string]> = [
-  ['employees', 'your employees'],
-  ['skillLibrary', 'your skill library'],
-  ['handoverWords', 'the notes on your handover requests'],
-  ['retiredBoundaries', 'the claims your retired employees kept'],
-  ['documentation', 'your linked documentation'],
+/** Each kind of stored row a deletion always takes, in the order they are said. */
+const HELD_KINDS: readonly HeldKind[] = [
+  { kind: 'employees', stored: 'your employees', goes: 'every employee and its data' },
+  { kind: 'skillLibrary', stored: 'your skill library', goes: 'your skill library' },
+  {
+    kind: 'handoverWords',
+    stored: 'the notes on your handover requests',
+    goes: 'the notes on your handover requests',
+  },
+  {
+    kind: 'retiredBoundaries',
+    stored: 'the claims and rejections your retired employees kept',
+    goes: 'the claims and rejections your retired employees kept',
+  },
 ];
+
+/** Phrases joined as a sentence lists them: "a", "a and b", "a, b and c". */
+function listed(phrases: readonly string[]): string {
+  return phrases.length <= 1
+    ? (phrases[0] ?? '')
+    : `${phrases.slice(0, -1).join(', ')} and ${phrases.at(-1)}`;
+}
 
 /**
  * What is stored for the manager now, so a live button says what it would take and a disabled
- * one says why it is disabled.
+ * one says why. Linked documentation is said apart, since only the unlink choice takes it.
  *
  * @param holdings - What the deletion would take, as the backend reads it.
+ * @param alsoUnlinkDocumentation - Whether the manager has ticked the unlink choice.
  */
-export function heldNow(holdings: Holdings): string {
-  const held = HELD_WORDS.filter(([kind]) => holdings[kind]).map(([, words]) => words);
-  if (held.length === 0) return 'Nothing of yours is stored now.';
-  const listed = held.length === 1 ? held[0] : `${held.slice(0, -1).join(', ')} and ${held.at(-1)}`;
-  return `Stored for you now: ${listed}.`;
+export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
+  const held = HELD_KINDS.filter(({ kind }) => holdings[kind]).map(({ stored }) => stored);
+  if (held.length === 0) {
+    if (!holdings.documentation) return 'Nothing of yours is stored now.';
+    return alsoUnlinkDocumentation
+      ? 'Only your linked documentation is stored now, and it goes with the box ticked.'
+      : 'Only your linked documentation is stored now: tick the box below to unlink it.';
+  }
+  const documentation = !holdings.documentation
+    ? ''
+    : alsoUnlinkDocumentation
+      ? ' Your linked documentation goes too.'
+      : ' Your linked documentation stays unless you tick the box below.';
+  return `Stored for you now: ${listed(held)}.${documentation}`;
+}
+
+/**
+ * What the deletion does, said in its confirmation: what goes, from what is stored, and what
+ * stays.
+ *
+ * @param holdings - What the deletion would take, as the backend reads it.
+ * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
+ */
+export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
+  const goes = HELD_KINDS.filter(({ kind }) => holdings[kind]).map(({ goes: words }) => words);
+  const unlinks = alsoUnlinkDocumentation && holdings.documentation;
+  const what =
+    goes.length === 0
+      ? 'This unlinks every documentation source.'
+      : `This deletes ${listed(goes)}${unlinks ? ', and unlinks every documentation source' : ''}.`;
+  const requests = holdings.handoverWords
+    ? ' The requests stay in the other manager’s record.'
+    : '';
+  const documentation =
+    holdings.documentation && !alsoUnlinkDocumentation ? ' Your documentation stays linked.' : '';
+  return `${what}${requests}${documentation} Your sign-in stays. It cannot be undone.`;
 }
 
 /**
@@ -64,10 +109,7 @@ export function heldNow(holdings: Holdings): string {
  */
 function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): boolean {
   return (
-    holdings.employees ||
-    holdings.skillLibrary ||
-    holdings.handoverWords ||
-    holdings.retiredBoundaries ||
+    HELD_KINDS.some(({ kind }) => holdings[kind]) ||
     (alsoUnlinkDocumentation && holdings.documentation)
   );
 }
@@ -76,9 +118,10 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
  * The deletion of the manager's data: every employee and what it made, the skill library, the
  * notes on their handover requests, and optionally the documentation. Live whenever the account
  * holds anything the deletion would take, an employee or not (the v0.13.0 walk), and disabled
- * while it holds nothing or the page has not read it yet. Pressing it opens the shared
- * confirmation dialog, Keep my data focused first; what the deletion came to is said on the card
- * and focus comes back to the button, or to the card once nothing is left for the button to take.
+ * while it holds nothing or the page has not read it yet; the line under the words says which.
+ * A danger card, as Retire's is. Pressing it opens the shared confirmation dialog, Keep my data
+ * focused first; what the deletion came to is said on the card and focus comes back to the
+ * button, or to the card once nothing is left for the button to take.
  */
 export function ResetCard() {
   const holdings = useQuery(api.reset.holdings);
@@ -89,6 +132,7 @@ export function ResetCard() {
   const keep = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
+  const storedId = useId();
   const deletable = holdings ? hasDataToDelete(holdings, alsoUnlinkDocumentation) : false;
 
   const close = (): void => {
@@ -97,25 +141,19 @@ export function ResetCard() {
   };
 
   return (
-    <section
-      ref={card}
-      tabIndex={-1}
-      aria-labelledby="delete-my-data-title"
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5 outline-none"
-    >
+    <Card title="Your data" tone="danger" focusRef={card}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 id="delete-my-data-title" className="mb-1 text-sm font-semibold">
-            Your data
-          </h2>
           <p className="text-sm text-[var(--color-muted)]">
-            Delete every employee and its workspace, charter, work items, skills and mock
-            environment rows, your skill library, and the notes on your handover requests. The
-            requests stay in the other manager’s record. Useful between demos.
+            Deletes your employees and everything they made, your skill library and the notes on
+            your handover requests. Your sign-in stays, and the requests stay in the other manager’s
+            record.
           </p>
-          {holdings ? (
-            <p className="mt-1 text-sm text-[var(--color-muted)]">{heldNow(holdings)}</p>
-          ) : null}
+          <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
+            {holdings
+              ? heldNow(holdings, alsoUnlinkDocumentation)
+              : 'Checking what is stored for you…'}
+          </p>
           <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
             <input
               type="checkbox"
@@ -129,6 +167,7 @@ export function ResetCard() {
           ref={opener}
           variant="danger"
           aria-haspopup="dialog"
+          aria-describedby={storedId}
           onClick={() => {
             change.clear();
             setConfirming(true);
@@ -136,15 +175,15 @@ export function ResetCard() {
           disabled={change.busy || !deletable}
           className="shrink-0 self-start sm:self-center"
         >
-          {change.busy ? 'Deleting…' : 'Delete my data'}
+          {change.busy ? 'Deleting…' : 'Delete my data…'}
         </Button>
       </div>
       <StatusRegion outcome={confirming ? null : change.outcome} />
-      {confirming ? (
+      {confirming && holdings ? (
         <Dialog
           role="alertdialog"
           title="Delete your data?"
-          description={resetWarning(alsoUnlinkDocumentation)}
+          description={deletionWarning(holdings, alsoUnlinkDocumentation)}
           onClose={close}
           initialFocus={keep}
           busy={change.busy}
@@ -174,6 +213,6 @@ export function ResetCard() {
           </div>
         </Dialog>
       ) : null}
-    </section>
+    </Card>
   );
 }
