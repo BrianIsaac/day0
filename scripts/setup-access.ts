@@ -29,7 +29,6 @@ import { redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-setti
 import { errorMessage } from '../src/lib/errors';
 import type { OrganisationConnectionMode } from '../src/surfaces/access-identity';
 import {
-  ACCESS_KIT,
   KNOWN_WITHOUT_ISSUER,
   documentedSystems,
   mcpConnectionSystem,
@@ -789,6 +788,3 @@ function writeRecord(
     io.log(`The install record could not be written to ${directory}: ${errorMessage(err)}`);
   }
 }
-
-/** The systems the kit connects, for the help text. */
-export const ACCESS_KIT_SYSTEM_NAMES: readonly string[] = Object.keys(ACCESS_KIT);
