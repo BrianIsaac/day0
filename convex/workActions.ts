@@ -141,6 +141,7 @@ import {
   withReusedRunNumbers,
 } from '../src/work/landed-writes';
 import {
+  appIdentityOf,
   personKey,
   recordFromText,
   ticketChange,
@@ -3050,15 +3051,30 @@ function earlierThisRun(
 }
 
 /**
- * The key's owner, from the surface's own `get_user` with `me`, as intake
- * asks it; undefined when the tool is not allowed or the answer names
- * nobody by id or email. The caller withholds on undefined, which is how a
- * failed read is reported: the card says the owner could not be read.
+ * The key's owner as intake reads it: for a card acting as an app (its own or the organisation's
+ * shared one), the app user its probe read, with no call (D6: a ticket assigned to the manager is
+ * then another person's); else the surface's own `get_user` with `me`. Undefined when the card's
+ * app user was never read and the tool is not allowed, or the answer names nobody by id or email.
+ * The caller withholds on undefined, which is how a failed read is reported: the card says the
+ * owner could not be read.
+ *
+ * @param ctx - The apply's action context, to read whom the card acts as.
+ * @param tools - The surface's tools for this re-read.
+ * @param surface - The card, as the adapters hold it.
+ * @param agentId - The employee whose card it is.
  */
 async function rereadKeyOwner(
+  ctx: ActionCtx,
   tools: Record<string, McpToolLike>,
   surface: SurfaceRecord,
+  agentId: Id<'agents'>,
 ): Promise<PersonIdentity | undefined> {
+  const acting = await ctx.runQuery(internal.linearIdentity.actingCard, {
+    agentId,
+    slug: surface.slug,
+  });
+  const app = acting === null ? undefined : appIdentityOf(acting);
+  if (app !== undefined) return app;
   if (!surface.toolAllowlist?.includes('get_user')) return undefined;
   const tool = tools[`${surface.slug}_get_user`];
   const probed = surface.toolArguments?.find((entry) => entry.tool === 'get_user')?.arguments;
@@ -3163,7 +3179,7 @@ async function ticketRereadRefusal(
         baseline: listings.planned ?? undefined,
         acknowledged: listings.acknowledged ?? undefined,
         ownStates,
-        owner: () => rereadKeyOwner(tools, surface),
+        owner: () => rereadKeyOwner(ctx, tools, surface, item.agentId),
       });
       return change === undefined ? undefined : withheldBeforeFirstWrite(ticket, change);
     } finally {

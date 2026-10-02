@@ -8273,6 +8273,69 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(recorded.mcp[0]?.args).toEqual({ id: 'iss-1' });
   });
 
+  describe('under the app actor (D6, AC8)', (): void => {
+    /** The card acting as Leo's own app user, as its landing and its probe recorded it. */
+    async function actingAsApp(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
+      await harness.run(async (ctx): Promise<void> => {
+        const item = await ctx.db.get(workItemId);
+        const card = await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (index) =>
+            index.eq('agentId', item!.agentId).eq('slug', 'linear'),
+          )
+          .first();
+        await ctx.db.patch(card!._id, {
+          actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-day0-leo' },
+          providerIdentityId: 'app-user-day0-leo',
+        });
+      });
+    }
+
+    it("keeps a ticket the manager delegated to the employee's app user since the plan as its own", async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await atFirstWrite(harness);
+      await actingAsApp(harness, workItemId);
+      recorded.issueRecordText = JSON.stringify({
+        id: 'iss-1',
+        assignee: 'Ana Lim',
+        assigneeId: 'user-ana',
+        delegate: 'Day0 Leo',
+        delegateId: 'app-user-day0-leo',
+        status: 'Todo',
+        statusType: 'unstarted',
+      });
+
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      expect((await readItem(harness, workItemId)).state).toBe('completed');
+      expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+    });
+
+    it('withholds a ticket assigned to the manager since the plan: the app user is not the manager', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await atFirstWrite(harness);
+      await actingAsApp(harness, workItemId);
+      recorded.issueRecordText = JSON.stringify({
+        id: 'iss-1',
+        assignee: 'Ana Lim',
+        assigneeId: 'user-ana',
+        status: 'Todo',
+        statusType: 'unstarted',
+      });
+
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      const stopped = await readItem(harness, workItemId);
+      expect(stopped.state).toBe('failed');
+      expect(stopped.skipReason).toBe(
+        'stopped: withheld before the first write: iss-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
+      );
+      expect(linearTools()).toEqual(['get_issue']);
+    });
+  });
+
   it('counts a state an earlier run of the item set as its own, not as a change', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
