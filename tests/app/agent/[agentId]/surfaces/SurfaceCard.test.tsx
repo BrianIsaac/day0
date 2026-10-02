@@ -730,3 +730,30 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
     expect(markup).toMatch(/<button[^>]*>Move off the documented key<\/button>/);
   });
 });
+
+describe("the administrator's reason on a card a revoke ended (the wave 11 review's M13)", (): void => {
+  it('draws the reason whatever else the card skips', (): void => {
+    const reason = 'The docs server is being moved; ask IT before reconnecting.';
+    const markup = render(
+      listed({
+        endpoint: 'https://docs.acme.test/mcp',
+        displayName: 'Acme docs',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        reason,
+        intakeSkipReason: 'no intake reader for connected docs surface',
+        actsAs: { kind: 'delegated', label: 'sam@acme.test' },
+      }),
+    );
+    expect(markup).toContain('Skipped: no intake reader for connected docs surface');
+    expect(markup).toContain(reason);
+  });
+
+  it('says a reason that is the skip line once', (): void => {
+    const markup = render(
+      listed({ verdict: 'listed-dead', reason: 'Slack policy does not allow required methods' }),
+    );
+    expect(markup.split('Slack policy does not allow required methods')).toHaveLength(2);
+  });
+});

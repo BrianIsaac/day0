@@ -378,7 +378,9 @@ export function SurfaceCard({
         {browserFloor.absent && surface.verdict !== 'proposed' ? (
           <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
         ) : null}
-        {surface.reason && !skipReason && surface.reason !== 'expired' ? (
+        {/* An ended card says why whatever else it skips (the administrator's revoke reason,
+            M13); a reason that is the skip line is said once. */}
+        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg-2)]">{surface.reason}</p>
         ) : null}
         {request?.target?.reasoning ? (
