@@ -485,6 +485,33 @@ export function renewalDueAt(expiresAt: number, now: number, lead: number): numb
   return Math.max(due, now + MIN_RENEWAL_INTERVAL_MS);
 }
 
+/** Linear's revocation endpoint (L3). */
+export const LINEAR_REVOKE_URL = 'https://api.linear.app/oauth/revoke';
+
+/**
+ * Revoke one token Linear issued that Day0 will not keep (`POST /oauth/revoke` with `token` and
+ * its `token_type_hint`, L3), so no grant is left live behind a refused landing. Linear's 400
+ * ("unable to revoke", the token already revoked) leaves nothing live and is taken as done.
+ *
+ * @throws LinearIssuerRefusal when Linear cannot be reached or refuses otherwise.
+ */
+export async function revokeLinearToken(
+  fetch: LinearFetch,
+  token: string,
+  hint: 'access_token' | 'refresh_token',
+): Promise<void> {
+  const response = await send(fetch, LINEAR_REVOKE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token, token_type_hint: hint }).toString(),
+  });
+  if (response.status === 200 || response.status === 400) return;
+  throw new LinearIssuerRefusal(
+    response.status >= 500 || response.status === 429 ? 'unavailable' : 'malformed',
+    `Linear did not revoke the token: HTTP ${response.status}.`,
+  );
+}
+
 /** How Linear's MCP server, or its API, says the bearer it was shown is no longer a token. */
 const TOKEN_REFUSED = /\bHTTP\s+401\b|\binvalid_token\b|\b401\b.*\bunauthori[sz]ed\b/i;
 
