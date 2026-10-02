@@ -7,7 +7,7 @@ import {
 } from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { type ScopeValue, type IntakeScope, presentIntakeScope } from '@/surfaces/intake-scope';
-import { useId, type FormEvent } from 'react';
+import { useId, useRef, type FormEvent } from 'react';
 import type { AccessRequestReason } from '@/surfaces/access-identity';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { Button, buttonClass } from '../../../components/Button';
@@ -438,6 +438,8 @@ export interface AccessRequestRowProps {
   readonly onDraft: () => Promise<unknown>;
   /** Record that it was copied or opened in the manager's email. */
   readonly onSent: (via: 'copied' | 'emailed') => Promise<unknown>;
+  /** Whether a connected Slack card can carry the manager's DM, so the request can go there. */
+  readonly dmReachable: boolean;
   /** Write the request's words to the clipboard; the browser's own when absent. */
   readonly writeClipboard?: (text: string) => Promise<void>;
 }
@@ -501,7 +503,9 @@ async function browserClipboard(text: string): Promise<void> {
  * became of it is said under it.
  */
 export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode {
-  const change = useChange();
+  // Send to me in Slack goes once the request is drafted: the block takes focus then.
+  const block = useRef<HTMLDivElement>(null);
+  const change = useChange(block);
   const { request } = props;
   const write = props.writeClipboard ?? browserClipboard;
   const textId = useId();
@@ -530,7 +534,7 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
       refused: 'The request was not sent to you in Slack.',
     });
   return (
-    <div className={INSET}>
+    <div ref={block} tabIndex={-1} className={INSET}>
       <p className="font-medium text-[var(--color-fg)]">
         {accessRequestTitle(request.reason, props.system, props.employee)}
       </p>
@@ -550,7 +554,7 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
         <a href={request.mailto} onClick={emailed} className={buttonClass('secondary', 'small')}>
           Email it
         </a>
-        {request.draftedAt === undefined ? (
+        {request.draftedAt === undefined && props.dmReachable ? (
           <Button size="small" disabled={change.busy} onClick={toSlack}>
             Send to me in Slack
           </Button>

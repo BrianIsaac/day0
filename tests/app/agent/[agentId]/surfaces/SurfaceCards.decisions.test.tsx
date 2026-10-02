@@ -20,6 +20,8 @@ const tab = vi.hoisted(() => ({
   second: false,
   /** A documented system the charter does not name, waiting on the manager's Propose, when set. */
   unnamed: false,
+  /** Whether the Linear card holds a credential, which Disconnect ends. */
+  credential: false,
 }));
 
 vi.mock('convex/react', () => {
@@ -82,7 +84,8 @@ vi.mock('convex/react', () => {
             verdict: tab.verdict,
             path: 'mcp',
             whereFound: [],
-            credentialLanded: false,
+            credentialLanded: tab.credential,
+            ...(tab.credential ? { credentialId: 'credential-1' } : {}),
             createdAt: 1,
           },
         ];
@@ -116,6 +119,23 @@ afterEach((): void => {
   tab.held = {};
   tab.second = false;
   tab.unnamed = false;
+  tab.credential = false;
+});
+
+describe("a card's Disconnect, confirmed in its dialog (11-AR's surfaces.disconnect)", (): void => {
+  it("says in the tab's live region that the card is disconnected, and gives the card focus", async (): Promise<void> => {
+    tab.verdict = 'connected';
+    tab.credential = true;
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
+    await press(view.container, 'Disconnect');
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    if (!dialog) throw new Error('no dialog');
+    await press(dialog, 'Disconnect Linear');
+    await settle();
+    expect(said(view.container)).toContain('Linear is disconnected.');
+    expect(document.activeElement?.id).toBe('surface-linear');
+    view.unmount();
+  });
 });
 
 describe('a decision on a surface card', (): void => {

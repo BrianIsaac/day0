@@ -132,6 +132,11 @@ export interface SurfaceCardContext {
   readonly employeeName: string;
   /** The systems IT connected for the organisation, by system (`summaryForManager`). */
   readonly organisation: ReadonlyMap<string, OrganisationSystem>;
+  /**
+   * Whether a connected Slack card of the employee's carries its manager's DM, so a drafted access
+   * request can be sent there (`accessRequests`'s `managerDmCardOf`, without its grant check).
+   */
+  readonly managerDmReachable: boolean;
 }
 
 /** What a card's controls do, each bound to the card's own change. */
@@ -305,7 +310,10 @@ export function SurfaceCard({
     identity.kind === 'shared-key' &&
     !identity.planned &&
     surface.credentialId !== undefined &&
-    onMove !== undefined
+    onMove !== undefined &&
+    // A per-employee Linear connection installs only an app IT has recorded for the card; until
+    // then its Connect refuses and asks for the access request (11-AL's `startInstall`).
+    !(system === 'linear' && covering.mode === 'per-employee' && surface.provisioning === undefined)
       ? {
           words: moveOfferWords(
             cardIdentity({ endpoint: surface.endpoint, path: surface.path }, covering, {
@@ -482,6 +490,7 @@ export function SurfaceCard({
             zone={zone ?? deploymentZone()}
             onDraft={actions.draftAccessRequest}
             onSent={actions.recordAccessRequestSent}
+            dmReachable={context.managerDmReachable}
           />
         ) : null}
         {/* Where IT's connection covers the card, the Acts as row names its identity: the field's

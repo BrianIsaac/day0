@@ -30,6 +30,7 @@ function mountRow(request: AccessRequestWords, refuse?: 'draft' | 'sent') {
       system="Linear"
       employee="Maya"
       zone="UTC"
+      dmReachable
       onDraft={vi.fn(async (): Promise<void> => {
         calls.push('draft');
         if (refuse === 'draft') throw new Error('That card no longer exists.');

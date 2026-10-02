@@ -212,7 +212,9 @@ export interface CardIdentity {
 }
 
 /** What the identity is read from: the card's identity once written, its endpoint and path. */
-export type IdentityCard = Partial<Pick<Doc<'surfaces'>, 'actsAs' | 'endpoint' | 'path'>>;
+export type IdentityCard = Partial<
+  Pick<Doc<'surfaces'>, 'actsAs' | 'endpoint' | 'path' | 'credentialId'>
+>;
 
 /**
  * Whom a card acts as, or will once connected. An identity a connect path wrote is read as it is.
@@ -233,7 +235,10 @@ export function cardIdentity(
   connection: OrganisationSystem | undefined,
   options: { readonly selfProvisions: boolean },
 ): CardIdentity {
-  if (card.actsAs !== undefined) {
+  // A Disconnect leaves a pasted key's identity on the card with no key held: it acts as nothing
+  // pasted any more, so the card says whom it will act as instead.
+  const keyGone = card.actsAs?.kind === 'shared-key' && card.credentialId === undefined;
+  if (card.actsAs !== undefined && !keyGone) {
     return { kind: card.actsAs.kind, label: card.actsAs.label, planned: false };
   }
   const system = organisationSystemOf(card);
@@ -388,7 +393,7 @@ export function disconnectLines(
     case 'shared-key':
     case 'browser-seat':
       return [
-        `The key someone pasted is left as it is at ${system}: Day0 deletes its copy and never revokes a pasted key. Revoke it there if it should end.`,
+        `The key someone pasted is left as it is at ${system}: Day0 stops using it and never revokes a pasted key, and it stays in your stored credentials. Revoke it there if it should end.`,
       ];
     default: {
       const unknown: never = identity.kind;
@@ -420,10 +425,12 @@ export function slackChannelsGoWords(employee: string, restoredBy: string): stri
  */
 export function moveOfferWords(target: CardIdentity, names: IdentityNames): string {
   const instead =
-    target.kind === 'shared-app'
-      ? 'the Day0 app your employees share'
-      : `its own ${names.system} app`;
-  return `IT has connected ${names.system}. ${names.employee} can use ${instead} instead of the pasted key, which keeps working until you move it.`;
+    target.kind === 'delegated'
+      ? 'act as you there'
+      : target.kind === 'shared-app'
+        ? 'use the Day0 app your employees share'
+        : `use its own ${names.system} app`;
+  return `IT has connected ${names.system}. ${names.employee} can ${instead} instead of the pasted key, which keeps working until you move it.`;
 }
 
 /**

@@ -64,8 +64,10 @@ describe("what a Disconnect does at the vendor, in the dialog's words", (): void
   });
 
   it('says a pasted key is left as it is at the vendor, for a key and a browser sign-in alike', (): void => {
+    // A Disconnect keeps the key in the manager's stored credentials (11-AR's AR10); only a
+    // retire deletes Day0's copy (code pass, M1).
     const left = [
-      'The key someone pasted is left as it is at Linear: Day0 deletes its copy and never revokes a pasted key. Revoke it there if it should end.',
+      'The key someone pasted is left as it is at Linear: Day0 stops using it and never revokes a pasted key, and it stays in your stored credentials. Revoke it there if it should end.',
     ];
     expect(
       disconnectLines({ kind: 'shared-key', planned: false }, names, { slack: false }),

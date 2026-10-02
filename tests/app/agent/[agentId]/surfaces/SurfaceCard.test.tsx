@@ -23,6 +23,7 @@ const context: SurfaceCardContext = {
   browserPresent: true,
   employeeName: 'Maya',
   organisation: new Map(),
+  managerDmReachable: false,
 };
 
 const actions: SurfaceCardActions = {
@@ -387,7 +388,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {
     const markup = render(
       listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
-      {},
+      { managerDmReachable: true },
       { accessRequest: REQUEST },
     );
     expect(markup).toContain('Ask IT to connect Linear');
@@ -480,11 +481,11 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         expiresAt: NOW + 3 * DAY,
         actsAs: { kind: 'shared-key', label: 'Linear API key' },
       }),
-      { organisation: organisation({ system: 'linear' }) },
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
       { connect: (): void => undefined },
     );
     expect(markup).toContain(
-      'IT has connected Linear. Maya can use its own Linear app instead of the pasted key, which keeps working until you move it.',
+      'IT has connected Linear. Maya can use the Day0 app your employees share instead of the pasted key, which keeps working until you move it.',
     );
     expect(markup).toMatch(/<button[^>]*>Move off the pasted key<\/button>/);
   });
@@ -622,5 +623,47 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { accessRequest: REQUEST },
     );
     expect(ended).not.toContain('Ask IT to connect Linear');
+  });
+
+  it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
+    const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
+    expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);
+    const reachable = render(
+      listed(LINEAR_APPROVED),
+      { managerDmReachable: true },
+      { accessRequest: REQUEST },
+    );
+    expect(reachable).toMatch(/>Send to me in Slack<\/button>/);
+  });
+
+  it('offers no move to a per-employee Linear app before IT has recorded one, since Connect then refuses (code pass, M3)', (): void => {
+    const markup = render(
+      listed({
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-1' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - 85 * DAY,
+        expiresAt: NOW + 3 * DAY,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'per-employee' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).not.toContain('Move off the pasted key');
+  });
+
+  it('says whom a disconnected pasted-key card will act as, not the key it no longer holds (code pass, m1)', (): void => {
+    const markup = render(
+      listed({
+        ...LINEAR_APPROVED,
+        reason: 'Disconnected by the manager.',
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(fact(markup, 'Acts as')).toBe(
+      'the Day0 app shared by your employees; Day0 records which employee did what',
+    );
   });
 });

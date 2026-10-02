@@ -9,6 +9,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { CredentialOwnerSummary } from '@/surfaces/credential-presentation';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '@/surfaces/charter-cards';
 import { MCP_SYSTEM_PREFIX, organisationSystemOf } from '@/surfaces/access-request';
+import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
@@ -137,6 +138,14 @@ export function SurfaceCards({
       installRedirectConfigured: installRedirectConfigured === true,
       browserPresent: componentStatus?.browser,
       employeeName,
+      managerDmReachable: (surfaces ?? []).some(
+        (surface) =>
+          surface.class === 'chat' &&
+          surface.verdict === 'connected' &&
+          surface.credentialLanded &&
+          surface.managerDmChannelId !== undefined &&
+          isSlackApiEndpoint(surface.endpoint),
+      ),
       organisation: new Map(
         (organisationSummary?.systems ?? []).map((system): [string, OrganisationSystem] => [
           system.system,
@@ -152,6 +161,7 @@ export function SurfaceCards({
       now,
       organisationSummary,
       sources,
+      surfaces,
     ],
   );
 
@@ -268,7 +278,16 @@ export function SurfaceCards({
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),
       approveTools: (tools) => approveTools({ surfaceId: surface._id, tools }),
       connect: connectFor(surface),
-      disconnect: () => disconnect({ surfaceId: surface._id }),
+      disconnect: async (): Promise<void> => {
+        await disconnect({ surfaceId: surface._id });
+        // The dialog that confirmed it closes with its own live region, so the tab says it, and
+        // the card, which stays, takes focus from the Disconnect that went with it.
+        cardFocus.current = document.getElementById(`surface-${surface.slug}`);
+        change.run((): void => undefined, {
+          done: `${surface.displayName} is disconnected.`,
+          refused: `${surface.displayName} was not disconnected.`,
+        });
+      },
       draftAccessRequest: () => draftAccessRequest({ surfaceId: surface._id }),
       recordAccessRequestSent: (via) => recordAccessRequestSent({ surfaceId: surface._id, via }),
     };
@@ -307,7 +326,12 @@ export function SurfaceCards({
       );
   }
 
-  const loaded = surfaces !== undefined && credentialRows !== undefined && charter !== undefined;
+  // The organisation's connections decide whom each card acts as and whether it takes a paste.
+  const loaded =
+    surfaces !== undefined &&
+    credentialRows !== undefined &&
+    charter !== undefined &&
+    organisationSummary !== undefined;
   // The server orients only what the approved charter names; the list follows the same rule, so
   // what waits for the manager's Propose is listed beside the cards rather than shown as a card
   // that will never be filed.

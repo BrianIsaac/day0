@@ -124,6 +124,7 @@ const row = (slug: string, fields: Record<string, unknown>): Record<string, unkn
 /** Every card state the tab draws, and a system waiting on the manager's Propose. */
 const SYSTEMS: Record<string, unknown> = {
   'config:components': { browser: true },
+  'organisationConnections:summaryForManager': { callerIsAdministrator: false, systems: [] },
   'surfaces:installRedirectConfigured': true,
   'credentials:summaryForOwner': [],
   'agents:permissionScopes': [

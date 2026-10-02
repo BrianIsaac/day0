@@ -377,6 +377,7 @@ describe('the dashboard driver', (): void => {
       browserPresent: true,
       employeeName: 'Maya',
       organisation: new Map(),
+      managerDmReachable: false,
     };
     const actions: SurfaceCardActions = {
       approve: (): void => undefined,

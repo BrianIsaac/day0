@@ -281,7 +281,7 @@ function ClerkSessionGate({ children, fallback, closed }: SessionGateProps) {
   const overdue = useOverdue((isLoading || awaitingToken) && timed, SESSION_WAIT_MS);
   const confirmOverdue = useOverdue(confirming && timed, SIGN_IN_CONFIRM_MS);
   // A Clerk that failed to load never answers; the page is let through to say what it can.
-  if (status === 'error') return <>{closed ?? children}</>;
+  if (status === 'error') return <>{closed !== undefined ? closed : children}</>;
   if (closed !== undefined && !(isAuthenticated && !isLoading)) return <>{closed}</>;
   if (isLoading || awaitingToken) return overdue ? <SessionUnconfirmed /> : <>{fallback}</>;
   if (confirming && !confirmOverdue) return <>{fallback}</>;

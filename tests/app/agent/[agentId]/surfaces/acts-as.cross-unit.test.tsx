@@ -30,6 +30,7 @@ const context: SurfaceCardContext = {
   browserPresent: true,
   employeeName: 'Leo',
   organisation: new Map(),
+  managerDmReachable: false,
 };
 
 const actions: SurfaceCardActions = {

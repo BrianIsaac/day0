@@ -207,7 +207,11 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
       "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
     );
     const landed = cardIdentity(
-      { ...LINEAR, actsAs: { kind: 'shared-key', label: 'Linear API key' } },
+      {
+        ...LINEAR,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+        credentialId: 'cred-1' as never,
+      },
       undefined,
       { selfProvisions: false },
     );
@@ -275,6 +279,17 @@ describe('the move off a pasted key at its renewal (A27)', (): void => {
       moveOfferWords({ kind: 'own-app', planned: true }, { employee: 'Maya', system: 'Linear' }),
     ).toBe(
       'IT has connected Linear. Maya can use its own Linear app instead of the pasted key, which keeps working until you move it.',
+    );
+  });
+
+  it("says a delegated target as acting as the manager, never as the employee's own app (code pass, M5)", (): void => {
+    expect(
+      moveOfferWords(
+        { kind: 'delegated', planned: true },
+        { employee: 'Maya', system: 'Acme docs' },
+      ),
+    ).toBe(
+      'IT has connected Acme docs. Maya can act as you there instead of the pasted key, which keeps working until you move it.',
     );
   });
 });
