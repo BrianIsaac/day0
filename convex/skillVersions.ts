@@ -13,6 +13,7 @@ import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import {
+  type AdoptedSource,
   CHECK_NOT_KEPT_REASON,
   HANDED_OVER_AUTHOR_NAME,
   HANDED_OVER_RECHECK_REASON,
@@ -852,6 +853,35 @@ export const library = query({
       operation: args.operation,
     });
     return versions.map(libraryEntry);
+  },
+});
+
+/** The most registered skills of one employee the adopted-source read looks at. */
+const ADOPTED_SOURCES_LIMIT = 200;
+
+/**
+ * Public, guarded by `assertOwnsAgent`: for each registered skill of the employee that was
+ * adopted, the version it holds and its author, as the owner's library names them, for the
+ * registered card (the real-Linear walk, m2: the card said "authored" and named nobody). A row
+ * whose version is not the owner's names nothing. Reads only.
+ */
+export const adoptedSources = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<AdoptedSource[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const registered = await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
+      .take(ADOPTED_SOURCES_LIMIT);
+    const sources = await Promise.all(
+      registered.map(async (row): Promise<AdoptedSource | null> => {
+        if (row.adoptedAt === undefined || row.versionId === undefined) return null;
+        const version = await ctx.db.get(row.versionId);
+        if (version === null || version.userId !== agent.userId) return null;
+        return { skillId: row._id, version: version.version, authorName: version.authorName };
+      }),
+    );
+    return sources.filter((source): source is AdoptedSource => source !== null);
   },
 });
 

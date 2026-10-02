@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adoptedFromWords,
+  registeredSourceChip,
   attemptLine,
   attemptsSpentSentence,
   givenUpOutcome,
@@ -111,5 +113,19 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(namesInWords(['Mira'])).toBe('Mira');
     expect(namesInWords(['Mira', 'Tomas'])).toBe('Mira and Tomas');
     expect(namesInWords(['Mira', 'Tomas', 'Aiko'])).toBe('Mira, Tomas and Aiko');
+  });
+});
+
+describe('where a registered skill came from (the real-Linear walk, m2)', (): void => {
+  it('chips a skill the employee wrote, one it adopted and a built-in one apart', (): void => {
+    expect(registeredSourceChip({ sourceType: 'agent-authored' })).toBe('authored');
+    expect(registeredSourceChip({ sourceType: 'agent-authored', adoptedAt: 5 })).toBe('adopted');
+    expect(registeredSourceChip({ sourceType: 'builtin' })).toBe('built in');
+  });
+
+  it('says whose version an adopted skill runs', (): void => {
+    expect(adoptedFromWords({ version: 2, authorName: 'Priya' })).toBe(
+      'version 2, adopted from Priya',
+    );
   });
 });

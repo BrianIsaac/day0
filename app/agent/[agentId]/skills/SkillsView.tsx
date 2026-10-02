@@ -38,6 +38,7 @@ export function SkillsView() {
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   // A revision approved and not yet being written appears in neither list above.
   const pendingRevisions = useQuery(api.skillControls.pendingRevisions, { agentId });
+  const adoptedSources = useQuery(api.skillVersions.adoptedSources, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -105,6 +106,7 @@ export function SkillsView() {
         loading={registeredSkills === undefined}
         employee={agent.name}
         autonomous={autonomousActionsOn(agent)}
+        adoptedFrom={adoptedSources ?? []}
       />
     </Columns>
   );

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import { declareUndeclaredInputs } from '../../../../../src/work/skill-inputs';
+import { HANDED_OVER_AUTHOR_NAME } from '../../../../../src/work/skill-library';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import {
   RegisteredSkillsPanel,
@@ -619,6 +620,36 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     expect(markupOf([builtin])).toContain(' · used 3 times · ');
     // A built-in skill comes with the employee: none of the controls is drawn on it.
     expect(markupOf([builtin])).not.toContain('Retire');
+  });
+
+  it('says whose version an adopted skill runs instead of "authored" (the real-Linear walk, m2)', (): void => {
+    const adopted = {
+      ...authored,
+      adoptedAt: 5,
+      versionId: 'version-1',
+    } as unknown as Doc<'skills'>;
+    const draw = (authorName: string): string =>
+      renderToStaticMarkup(
+        <RegisteredSkillsPanel
+          skills={[adopted]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          employee="Mira"
+          adoptedFrom={[{ skillId: adopted._id, version: 1, authorName }]}
+        />,
+      );
+    expect(draw('Priya')).toContain('>adopted<');
+    expect(draw('Priya')).not.toContain('>authored<');
+    expect(draw('Priya')).toContain(' · version 1, adopted from Priya · ');
+    // After a handover the new manager's library names no colleague of the old one.
+    expect(draw(HANDED_OVER_AUTHOR_NAME)).toContain(
+      ' · version 1, adopted from a colleague under the previous manager · ',
+    );
+    // A skill the employee wrote stays "authored"; while the source loads no author is guessed.
+    expect(markupOf([authored])).toContain('>authored<');
+    expect(markupOf([adopted])).toContain('>adopted<');
+    expect(markupOf([adopted])).not.toContain('adopted from');
   });
 
   it('draws Re-check due with its reason and Re-check now, and only on a skill that is due', async (): Promise<void> => {

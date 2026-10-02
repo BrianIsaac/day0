@@ -25,16 +25,19 @@ import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
 import { CODE_CHIP, plainSkillName, ScopeChips, SkillInputs, SkillStatusLine } from './skill-parts';
 import {
+  adoptedFromWords,
   attemptLine,
   attemptsSpentSentence,
   givenUpOutcome,
   recheckSentence,
   recheckStartedOutcome,
+  registeredSourceChip,
   revisionRowSentence,
   revisionStartedOutcome,
   revisionSentence,
   usedTimes,
 } from './skill-card-words';
+import type { AdoptedSource } from '@/work/skill-library';
 
 /**
  * Whether Retry on this row verifies the draft it already has rather than
@@ -121,6 +124,7 @@ export function RegisteredSkillsPanel({
   loading = false,
   employee = 'This employee',
   autonomous = false,
+  adoptedFrom = [],
 }: {
   skills: Doc<'skills'>[];
   /** The registered skills' query has not answered yet. */
@@ -152,6 +156,8 @@ export function RegisteredSkillsPanel({
   employee?: string;
   /** Whether the employee's autonomous actions are on, for what Retire says of a run under way. */
   autonomous?: boolean;
+  /** Whose version each adopted skill runs, as `skillVersions.adoptedSources` answers. */
+  adoptedFrom?: readonly AdoptedSource[];
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const askForRevision = useMutation(api.skillControls.askForRevision);
@@ -301,6 +307,8 @@ export function RegisteredSkillsPanel({
           <ul className="grid gap-4">
             {skills.map((s) => {
               const authored = s.sourceType === 'agent-authored';
+              const source = registeredSourceChip(s);
+              const adopted = adoptedFrom.find((entry) => entry.skillId === s._id);
               const checking = holdsLiveAuthoringClaim(s, now);
               const due = s.recheckDueAt !== undefined && s.recheckReason !== undefined;
               const hasRevision = revising.has(s._id);
@@ -312,14 +320,15 @@ export function RegisteredSkillsPanel({
                   <div className="min-w-0 flex-1 basis-64">
                     <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
                       <span className="font-medium break-words">{plainSkillName(s)}</span>
-                      <Chip tone={authored ? 'accent' : 'muted'}>
-                        {authored ? 'authored' : 'built in'}
-                      </Chip>
+                      <Chip tone={authored ? 'accent' : 'muted'}>{source}</Chip>
                       {checking ? <Chip tone="accent">Re-checking</Chip> : null}
                       {due && !checking ? <Chip tone="warn">Re-check due</Chip> : null}
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted)] break-words">
                       <code className={CODE_CHIP}>{s.name}</code>
+                      {source === 'adopted' && adopted !== undefined
+                        ? ` · ${adoptedFromWords(adopted)}`
+                        : ''}
                       {s.registeredAt !== undefined
                         ? ` · registered ${registeredOn(s.registeredAt, zone)}`
                         : ''}

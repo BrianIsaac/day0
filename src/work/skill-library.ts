@@ -118,6 +118,17 @@ export const HANDED_OVER_RECHECK_REASON = 'it was due a re-check when the employ
 export const HANDED_OVER_AUTHOR_NAME = 'a colleague under the previous manager';
 
 /**
+ * Whose version an adopted skill holds, as its registered card says it: the version's number and
+ * the author the owner's library names, which after a handover is
+ * {@link HANDED_OVER_AUTHOR_NAME} (the real-Linear walk, m2).
+ */
+export interface AdoptedSource {
+  readonly skillId: string;
+  readonly version: number;
+  readonly authorName: string;
+}
+
+/**
  * The re-check reason a moved employee's skill is stamped with when the handover cut the
  * connection the skill acts on.
  *

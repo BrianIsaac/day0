@@ -511,6 +511,50 @@ describe('skillVersions: lookups are the owner’s', (): void => {
   });
 });
 
+describe('skillVersions: whose version an adopted skill runs (the real-Linear walk, m2)', (): void => {
+  it('names the version and author of each adopted registered skill, to the owner only, and nothing for one the employee wrote', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    await register(harness, await claimedSkill(harness, priya), BODY_ONE);
+    const [version] = await versionsOf(harness);
+    const adopted = await claimedSkill(harness, mateo);
+    await register(harness, adopted, BODY_ONE);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(adopted.skillId, { adoptedAt: 5, versionId: version._id });
+      // A row pointing at another owner's version names nothing of it.
+      const stray = await ctx.db.insert('skillVersions', {
+        ...(await ctx.db.get(version._id))!,
+        _id: undefined,
+        _creationTime: undefined,
+        userId: 'rival',
+        authorName: 'Rival author',
+      } as never);
+      await ctx.db.insert('skills', {
+        agentId: mateo,
+        name: 'stray',
+        description: 'Adopted from elsewhere.',
+        body: BODY_ONE,
+        sourceType: 'agent-authored',
+        state: 'registered',
+        adoptedAt: 6,
+        versionId: stray,
+        createdAt: 1,
+      });
+    });
+
+    const asOwner = harness.withIdentity(managerIdentity());
+    expect(await asOwner.query(api.skillVersions.adoptedSources, { agentId: mateo })).toEqual([
+      { skillId: adopted.skillId, version: 1, authorName: 'Priya' },
+    ]);
+    expect(await asOwner.query(api.skillVersions.adoptedSources, { agentId: priya })).toEqual([]);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('rival'))
+        .query(api.skillVersions.adoptedSources, { agentId: mateo }),
+    ).rejects.toThrow('This employee is not yours.');
+  });
+});
+
 describe('skillVersions: the re-check stamp', (): void => {
   it('stamps a registered row once, keeps the first reason, records every trigger, and leaves other states alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

@@ -1,4 +1,4 @@
-import { MAX_AUTHORING_ATTEMPTS } from '@/work/skill-library';
+import { type AdoptedSource, MAX_AUTHORING_ATTEMPTS } from '@/work/skill-library';
 
 /*
  * The Skills tab's words for the five controls (10-C; the prototype's `agent-skills.html`): how
@@ -191,4 +191,28 @@ const NAME_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjuncti
  */
 export function namesInWords(names: readonly string[]): string {
   return NAME_LIST.format(names);
+}
+
+/**
+ * The chip on a registered skill, by where its body came from: written by the employee, adopted
+ * from a colleague's verified version (the real-Linear walk, m2), or built in.
+ *
+ * @param skill - The registered row.
+ */
+export function registeredSourceChip(skill: {
+  readonly sourceType: string;
+  readonly adoptedAt?: number;
+}): 'authored' | 'adopted' | 'built in' {
+  if (skill.sourceType !== 'agent-authored') return 'built in';
+  return skill.adoptedAt === undefined ? 'authored' : 'adopted';
+}
+
+/**
+ * Whose version an adopted skill runs, for its card's detail line: "version 1, adopted from
+ * Priya", or "from a colleague under the previous manager" once a handover brought it.
+ *
+ * @param source - The version and author the owner's library names.
+ */
+export function adoptedFromWords(source: Pick<AdoptedSource, 'version' | 'authorName'>): string {
+  return `version ${source.version}, adopted from ${source.authorName}`;
 }
