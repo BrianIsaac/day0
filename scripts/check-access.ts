@@ -353,16 +353,6 @@ async function linearIdentity(
   mode: RecipeMode,
   probes: VendorProbes,
 ): Promise<AccessCheck[]> {
-  if (row.mode !== 'shared') {
-    return [
-      check(
-        row.system,
-        'identity',
-        'warn',
-        "Each employee's own Linear app is checked when its card connects.",
-      ),
-    ];
-  }
   const fixed = row.clientCredentialsScopes ?? mode.clientCredentialsScopes ?? [];
   const granted = await askVendor(probes, `${LINEAR_API}/oauth/token`, {
     method: 'POST',
@@ -508,12 +498,34 @@ async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<Ac
   ];
 }
 
+/**
+ * A per-employee OAuth app's checks: the organisation holds no secret for it (each employee's own
+ * app brings its own, AI5), so nothing opens and the vendor is asked nothing until a card connects.
+ */
+function perEmployeeAppChecks(row: ConnectionRow): AccessCheck[] {
+  return [
+    check(
+      row.system,
+      'secret',
+      'ok',
+      "None is held for the organisation: each employee's own app holds its own.",
+    ),
+    check(
+      row.system,
+      'identity',
+      'warn',
+      `Each employee's own ${row.displayName} app is checked when its card connects.`,
+    ),
+  ];
+}
+
 /** The live checks: the secret opens, then the vendor answers with it. */
 async function liveChecks(
   row: ConnectionRow,
   values: Values,
   probes: VendorProbes,
 ): Promise<AccessCheck[]> {
+  if (row.kind === 'oauth-app' && row.mode === 'per-employee') return perEmployeeAppChecks(row);
   if (row.secretCredentialId === undefined) {
     if (row.kind === 'mcp-client') {
       return [

@@ -297,6 +297,26 @@ describe('check:access', (): void => {
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity').status).toBe('warn');
   });
 
+  it('passes a per-employee Linear connection, which holds no organisation secret, and asks Linear nothing (join 2)', async (): Promise<void> => {
+    const perEmployee: ConnectionRow = {
+      _id: 'conn-linear',
+      system: 'linear',
+      displayName: 'Linear',
+      kind: 'oauth-app',
+      mode: 'per-employee',
+      status: 'active',
+      scopes: ['read', 'write', 'app:assignable'],
+      redirectUrl: `${PUBLIC_URL}/api/oauth/linear`,
+    };
+    const probes = vendors();
+    const checks = await accessChecks([perEmployee], VALUES, probes);
+    expect(checks.filter((one) => one.status === 'gap')).toEqual([]);
+    expect(only(checks, 'linear', 'secret')).toMatchObject({ status: 'ok' });
+    expect(only(checks, 'linear', 'secret').detail).toContain('own app');
+    expect(accessExitCode(checks)).toBe(0);
+    expect(probes.calls).toEqual([]);
+  });
+
   it('reaches the fake Slack a bed publishes on this machine, and Slack itself otherwise', (): void => {
     expect(slackApiBaseForCheck({}).href).toBe('https://slack.com/api/');
     expect(

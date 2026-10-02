@@ -286,6 +286,71 @@ describe('landing an organisation connection', (): void => {
   });
 });
 
+describe('a per-employee OAuth app, which holds no organisation secret (AI5, join 2)', (): void => {
+  /** Linear per employee as the setup verb lands it: each employee's own app brings its secret. */
+  const PER_EMPLOYEE_LINEAR: Landing = {
+    system: 'linear',
+    displayName: 'Linear',
+    kind: 'oauth-app',
+    mode: 'per-employee',
+    scopes: ['read', 'write', 'app:assignable'],
+    redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+  };
+
+  it('lands with no secret and no client id, storing no secret for the organisation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      PER_EMPLOYEE_LINEAR,
+    );
+    const { connections, ledger, credentials } = await organisationRows(harness);
+    expect(connections[0]).toMatchObject({
+      _id: connectionId,
+      system: 'linear',
+      kind: 'oauth-app',
+      mode: 'per-employee',
+      status: 'active',
+    });
+    expect(connections[0]).not.toHaveProperty('secretCredentialId');
+    expect(connections[0]).not.toHaveProperty('clientId');
+    expect(credentials).toEqual([]);
+    expect(ledger.map((row) => row.type)).toEqual(['organisation.connection-landed']);
+  });
+
+  it('refuses one handed a secret or a client id, which no employee’s app would ever use', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ines = harness.withIdentity(INES);
+    for (const landing of [
+      { ...PER_EMPLOYEE_LINEAR, secret: CLIENT_SECRET },
+      { ...PER_EMPLOYEE_LINEAR, clientId: 'lin-client-1' },
+    ]) {
+      expect(await refusalOf(ines.action(api.organisationConnections.land, landing))).toBe(
+        'A per-employee OAuth app holds no organisation secret or client id: each employee’s own app brings its own.',
+      );
+    }
+    expect((await organisationRows(harness)).credentials).toEqual([]);
+  });
+
+  it('refuses a rotation, since there is no organisation secret to rotate', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ines = harness.withIdentity(INES);
+    const connectionId = await ines.action(api.organisationConnections.land, PER_EMPLOYEE_LINEAR);
+    expect(
+      await refusalOf(
+        ines.action(api.organisationConnections.rotate, {
+          organisationConnectionId: connectionId,
+          secret: 'lin_oauth_rotated_0001',
+        }),
+      ),
+    ).toBe(
+      'A per-employee OAuth app holds no organisation secret to rotate: each employee’s own app is rotated where it was created.',
+    );
+    const { connections, credentials } = await organisationRows(harness);
+    expect(connections[0]).not.toHaveProperty('secretCredentialId');
+    expect(credentials).toEqual([]);
+  });
+});
+
 describe('rotating and revoking an organisation connection', (): void => {
   it('writes one ledger line for every land, rotate and revoke, in order', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

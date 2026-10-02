@@ -138,7 +138,10 @@ export function linearAuthoriseUrl(input: {
   return url.toString();
 }
 
-/** Linear's recipe: shared by default (AI5), per employee recorded but landed by 11-AL's path. */
+/**
+ * Linear's recipe: shared by default (AI5), or per employee, landed with nothing handed over since
+ * each employee's own app brings its own client id and secret (join 2 of 11-AJ).
+ */
 export const LINEAR_RECIPE: AccessRecipe = {
   system: 'linear',
   displayName: 'Linear',
@@ -190,7 +193,7 @@ export const LINEAR_RECIPE: AccessRecipe = {
           "Each employee's app's client secret lasts until IT rotates it; the access tokens it " +
           'issues last 24 hours and are refreshed by Day0.',
       },
-      landsAtInstall: false,
+      landsAtInstall: true,
     },
   ],
 };

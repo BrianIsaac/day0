@@ -22,6 +22,7 @@ import {
   ORGANISATION_CONNECTION_KINDS,
   ORGANISATION_CONNECTION_MODES,
   type OrganisationConnectionKind,
+  type OrganisationConnectionMode,
   type OrganisationRegistrar,
 } from '../src/surfaces/access-identity';
 import { isOrganisationSystemKey, organisationSystemOf } from '../src/surfaces/access-request';
@@ -152,10 +153,23 @@ function scopesRefusal(scopes: readonly string[], name: string): string | undefi
 }
 
 /**
+ * Whether a connection holds no organisation secret by its nature: a per-employee OAuth app, whose
+ * every employee's own app carries its own client id and secret (Linear, L1; AI5), so the
+ * organisation's connection records only the system, its mode, its scopes and its redirect.
+ */
+function holdsNoOrganisationSecret(connection: {
+  readonly kind: OrganisationConnectionKind;
+  readonly mode: OrganisationConnectionMode;
+}): boolean {
+  return connection.kind === 'oauth-app' && connection.mode === 'per-employee';
+}
+
+/**
  * Why a landing cannot be one, or undefined when it can (the access plan, section 4.1): a system
  * key, a name, scopes, a secret for every kind but an MCP client (which may be a public client
- * with PKCE), the client-credentials scopes only on a shared OAuth app (L2), and the MCP fields
- * only on an MCP client, whose system names its server by host.
+ * with PKCE) and a per-employee OAuth app (which holds none, nor a client id), the
+ * client-credentials scopes only on a shared OAuth app (L2), and the MCP fields only on an MCP
+ * client, whose system names its server by host.
  *
  * @param landing - The landing as given.
  */
@@ -169,7 +183,12 @@ export function landingRefusal(landing: Landing): string | undefined {
   }
   const scopes = scopesRefusal(landing.scopes, 'The registration');
   if (scopes !== undefined) return scopes;
-  const secretNeeded = landing.kind !== 'mcp-client';
+  if (holdsNoOrganisationSecret(landing)) {
+    if (landing.secret !== undefined || landing.clientId !== undefined) {
+      return 'A per-employee OAuth app holds no organisation secret or client id: each employee’s own app brings its own.';
+    }
+  }
+  const secretNeeded = landing.kind !== 'mcp-client' && !holdsNoOrganisationSecret(landing);
   if (secretNeeded && (landing.secret === undefined || landing.secret.trim() === '')) {
     return `A ${landing.kind} connection needs its ${SECRET_NOUNS[landing.kind]}.`;
   }
@@ -688,6 +707,11 @@ async function rotateConnection(
   });
   if (connection === null) throw new ConvexError(CONNECTION_NOT_FOUND);
   if (connection.status === 'revoked') throw new ConvexError(CONNECTION_REVOKED);
+  if (holdsNoOrganisationSecret(connection)) {
+    throw new ConvexError(
+      'A per-employee OAuth app holds no organisation secret to rotate: each employee’s own app is rotated where it was created.',
+    );
+  }
   const secrets = await storeSecrets(ctx, connection, rotation);
   const recorded = await recordOrRelease(
     ctx,

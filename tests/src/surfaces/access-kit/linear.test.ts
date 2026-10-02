@@ -83,10 +83,10 @@ describe('the Linear recipe', (): void => {
     expect(manifest.oauth.redirect_uris).toEqual([url.searchParams.get('redirect_uri')]);
   });
 
-  it('offers shared first, with fixed client-credentials scopes, and per employee as a mode not landed at install', (): void => {
+  it('offers shared first, with fixed client-credentials scopes, and per employee landed with nothing asked', (): void => {
     expect(LINEAR_RECIPE.modes.map((mode) => [mode.mode, mode.kind, mode.landsAtInstall])).toEqual([
       ['shared', 'oauth-app', true],
-      ['per-employee', 'oauth-app', false],
+      ['per-employee', 'oauth-app', true],
     ]);
     const [shared, perEmployee] = LINEAR_RECIPE.modes;
     expect(shared.clientCredentialsScopes).toEqual(LINEAR_CLIENT_CREDENTIALS_SCOPES);
