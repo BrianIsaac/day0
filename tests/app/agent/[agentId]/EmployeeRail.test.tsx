@@ -189,7 +189,19 @@ describe('EmployeeRail', () => {
       'none since you took over',
     );
     expect(decisionsLine([])).toContain('>none yet<');
-    expect(decisionsLine(undefined)).toContain('>none yet<');
+    // Handed back: the reader held the employee before, so its count is not "since" anything.
+    for (const fromAddress of ['boss@day0.local', 'BOSS@day0.local']) {
+      expect(
+        decisionsLine([
+          { fromAddress, decidedAt: 1 },
+          { fromAddress: 'earlier@day0.local', decidedAt: 2 },
+        ]),
+      ).toContain('>none yet<');
+    }
+    // Until both reads answer the line waits, so its words never change under the reader.
+    const loading = decisionsLine(undefined);
+    expect(loading).toContain('Loading the figures');
+    expect(loading).not.toContain('none yet');
   });
 
   it('gives the link to the whole record a 44 px target both ways, its word kept at the right (review C5)', () => {

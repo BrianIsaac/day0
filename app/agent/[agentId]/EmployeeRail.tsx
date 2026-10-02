@@ -14,7 +14,7 @@ import { employeeTabHref } from './employee-tabs';
 import { eventItemTitle, eventLabel, recordKindOf } from './event-labels';
 import { connectedManagerChannel } from './manager-channel';
 import { clockTime, useAgentZone, useNow } from '../../components/time';
-import { normaliseManagerAddress } from '@/agent/manager-address';
+import { sameManagerAddress } from '@/agent/manager-address';
 
 /** How many of the newest events the rail's record lists. */
 export const RAIL_RECORD_LINES = 5;
@@ -111,16 +111,16 @@ export function EmployeeRail() {
   );
   const channel = surfaceMode === 'real' && connectedManagerChannel(surfaces, now) !== undefined;
   // Handed over to the reader and never held by them before: an employee handed back is the
-  // reader's from its deploy too, and its count is not "since" anything.
-  const reader = normaliseManagerAddress(agent.bossEmail);
+  // reader's from its deploy too, and its count is not "since" anything. Only accepted handovers
+  // are listed, so one the reader is still accepting names nobody here yet.
   const tookOver =
     earlier !== undefined &&
     earlier.length > 0 &&
-    !earlier.some((handover) => normaliseManagerAddress(handover.fromAddress) === reader);
+    !earlier.some((handover) => sameManagerAddress(handover.fromAddress, agent.bossEmail));
   return (
     <>
       <Card title="So far" meta="counts, not rates">
-        {metrics === undefined ? (
+        {metrics === undefined || earlier === undefined ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>
         ) : (
           <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-1.5">
