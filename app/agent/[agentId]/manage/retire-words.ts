@@ -176,14 +176,21 @@ const WAITING_NOUNS: Readonly<Record<InboxItem['kind'], readonly [one: string, m
  * @returns The count in words, or the empty string when nothing waits.
  */
 export function waitingWords(entries: readonly InboxItem[], total: number): string {
-  const tally = new Map<InboxItem['kind'], number>();
+  // A connection IT answered for waits on Connect, not on an approval (11-AJ's join 12).
+  const nounsOf = (entry: InboxItem): readonly [one: string, many: string] =>
+    entry.kind === 'surface' && entry.ready === 'connect'
+      ? ['connection to connect', 'connections to connect']
+      : WAITING_NOUNS[entry.kind];
+  const tally = new Map<string, { nouns: readonly [string, string]; count: number }>();
   for (const entry of entries) {
-    tally.set(
-      entry.kind,
-      (tally.get(entry.kind) ?? 0) + (entry.kind === 'held' ? entry.heldWrites : 1),
-    );
+    const nouns = nounsOf(entry);
+    const seen = tally.get(nouns[0]);
+    tally.set(nouns[0], {
+      nouns,
+      count: (seen?.count ?? 0) + (entry.kind === 'held' ? entry.heldWrites : 1),
+    });
   }
-  const parts = [...tally].map(([kind, count]) => counted(count, ...WAITING_NOUNS[kind]));
+  const parts = [...tally.values()].map(({ nouns, count }) => counted(count, ...nouns));
   const unread = total - entries.length;
   if (unread > 0) parts.push(`${counted(unread, 'more entry', 'more entries')}`);
   return listed(parts);

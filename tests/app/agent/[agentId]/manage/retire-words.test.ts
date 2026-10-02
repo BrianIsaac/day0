@@ -82,6 +82,9 @@ describe('the retire dialog in words', (): void => {
     expect(waitingWords([entry('skill'), entry('surface')], 5)).toBe(
       '1 skill to approve, 1 connection to approve and 3 more entries',
     );
+    expect(waitingWords([entry('surface'), entry('surface', { ready: 'connect' })], 2)).toBe(
+      '1 connection to approve and 1 connection to connect',
+    );
     expect(waitingWords([entry('transfer'), entry('transfer'), entry('plan')], 3)).toBe(
       '2 employees to take on and 1 plan',
     );
