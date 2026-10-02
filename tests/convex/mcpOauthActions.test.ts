@@ -133,7 +133,7 @@ async function liveApi(): Promise<typeof import('../../convex/_generated/api')> 
 async function start(
   harness: TestConvex<typeof schema>,
   surfaceId: Id<'surfaces'>,
-): Promise<{ ok: true; authoriseUrl: string } | { ok: false; reason: string }> {
+): Promise<{ ok: true; authoriseUrl: string } | { ok: false; reason: string; message: string }> {
   const { api } = await liveApi();
   return await harness
     .withIdentity(managerIdentity())
@@ -273,6 +273,32 @@ describe('starting an authorisation', (): void => {
       await ctx.db.patch(connectionId as Id<'organisationConnections'>, { system: 'mcp:10.1.2.3' });
     });
     expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'address-refused' });
+  });
+
+  it('says the server could not be reached when nothing answered, not that it publishes no metadata', async (): Promise<void> => {
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (): Promise<Response> => {
+        throw new Error('connect ETIMEDOUT');
+      },
+      now: () => clock,
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'unreachable' });
+  });
+
+  it('clips a refusal that repeats a long value to 300 characters', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, connectionId } = await seed(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(connectionId as Id<'organisationConnections'>, {
+        issuer: `https://${'a'.repeat(1_000)}.test`,
+      });
+    });
+    const refused = await start(harness, surfaceId);
+    expect(refused).toMatchObject({ ok: false, reason: 'issuer-mismatch' });
+    expect(refused.ok ? '' : refused.message).toHaveLength(300);
   });
 
   it('refuses someone who does not own the employee', async (): Promise<void> => {
@@ -617,6 +643,59 @@ describe('refreshing with rotation', (): void => {
     clock += 290_000;
     await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
     expect(await adminState()).toMatchObject({ refreshExchanges: 1, liveRefreshTokens: 0 });
+  });
+
+  it('leaves the winner’s grant alone when its own write loses as stale', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: fetchToServer(),
+      now: () => clock,
+      store: {
+        ...actions.nativeMcpTokenStore,
+        rotate: async () => ({ ok: false, reason: 'stale' }),
+      },
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    expect(await adminState()).toMatchObject({ refreshExchanges: 1, liveRefreshTokens: 1 });
+  });
+
+  it('records at once a refresh that fails for a reason no retry can pass, such as its client secret revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { confidential: { issuer: ISSUER } });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const credentialId = (await read(harness, surfaceId)).surface.credentialId as Id<'credentials'>;
+    await harness.run(async (ctx) => {
+      const secret = (await ctx.db.query('credentials').collect()).find(
+        (row) => row.holder === ORGANISATION_HOLDER,
+      );
+      await ctx.db.patch(secret?._id as Id<'credentials'>, { revokedAt: 1 });
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.refreshScheduled, {
+      credentialId,
+      generation: 0,
+    });
+    const { events, scheduled } = await harness.run(async (ctx) => ({
+      events: await ctx.db.query('events').collect(),
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    const failed = events.filter((event) => event.type === 'surface.authorisation-failed');
+    expect(failed).toHaveLength(1);
+    expect(String(failed[0].payload.reason)).not.toContain('could not be reached');
+    expect(
+      scheduled.some(
+        (job) =>
+          job.name.includes('refreshScheduled') &&
+          (job.args[0] as { attempt?: number }).attempt === 1,
+      ),
+    ).toBe(false);
   });
 
   it('tries a scheduled refresh again when the server is busy, and records nothing yet', async (): Promise<void> => {

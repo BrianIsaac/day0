@@ -3,13 +3,13 @@ import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import { serverConvexUrl } from '@/lib/convex-url';
 import { log } from '@/lib/logger';
-import { errorMessage } from '@/lib/errors';
 import {
   MCP_AUTHORISATION_UNAVAILABLE,
   mcpAuthorisationLanding,
   readMcpRedirect,
   type McpAuthorisationResult,
 } from '@/surfaces/mcp-oauth-redirect';
+import { safeFailureMessage } from '@/surfaces/redact';
 
 /**
  * The redirect an MCP server's authorisation returns to (wave 11, 11-AM).
@@ -35,7 +35,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     } catch (error) {
       // The deployment could not be asked, or failed before it answered: the manager is sent back
       // to start again rather than shown a server error, and the cause is logged without the query.
-      log.error('mcp authorisation completion failed', { error: errorMessage(error) });
+      log.error('mcp authorisation completion failed', {
+        error: safeFailureMessage(error, response.code ?? '', 'unknown error'),
+      });
       result = { ok: false, reason: MCP_AUTHORISATION_UNAVAILABLE };
     }
   }

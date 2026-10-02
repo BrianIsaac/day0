@@ -175,8 +175,28 @@ export const nativeMcpTokenStore: McpTokenStore = {
       credentialId,
     });
     if (rows && (rows.access.generation ?? 0) !== expectedGeneration) return null;
-    if (!rows?.refresh) throw new Error('No refresh token is held for this authorisation.');
-    return await decryptCredential(ctx, rows.refresh._id);
+    const refresh = rows?.refresh;
+    if (
+      !refresh ||
+      refresh.revokedAt !== undefined ||
+      refresh.status !== undefined ||
+      refresh.ciphertext === undefined ||
+      refresh.iv === undefined
+    ) {
+      throw new Error('No live refresh token is held for this authorisation.');
+    }
+    // Opened from the very snapshot the generation was read in: a second read could return the
+    // token a concurrent rotation has just written into the same row.
+    return openOwnedCredential(
+      {
+        ciphertext: refresh.ciphertext,
+        iv: refresh.iv,
+        userId: refresh.userId,
+        ...(refresh.keyId === undefined ? {} : { keyId: refresh.keyId }),
+      },
+      credentialKeyring(),
+      { allowUnbound: false },
+    );
   },
   rotate: async (ctx, rotation) =>
     await ctx.runMutation(internal.mcpOauth.rotateTokens, {
@@ -699,12 +719,12 @@ async function rotatedSince(
   held: HeldMcpTokens,
   deps: McpOauthDeps,
 ): Promise<HeldMcpTokens | null> {
-  for (let attempt = 0; attempt < ROTATION_WAITS; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     const again = await deps.store.read(ctx, held.credentialId);
     if (again && again.generation !== held.generation) return again;
+    if (attempt === ROTATION_WAITS) return null;
     await new Promise((resolve) => setTimeout(resolve, ROTATION_WAIT_MS));
   }
-  return null;
 }
 
 /** What a refresh revokes when it cannot keep what it was issued. */
@@ -719,10 +739,9 @@ interface UnkeptTokens {
 }
 
 /**
- * Revoke at the server a refresh token Day0 was issued and cannot keep (its write lost, or the
- * credential was revoked meanwhile), so it does not stay live at the vendor unrecorded. Only a
- * rotated one: a server that does not rotate handed back the very token the pair still holds.
- * Best effort; a failure is logged.
+ * Revoke at the server a refresh token Day0 was issued for a credential revoked meanwhile, so it
+ * does not stay live at the vendor unrecorded. Only a rotated one: a server that does not rotate
+ * handed back the very token the pair held. Best effort; a failure is logged.
  */
 async function revokeUnkept(deps: McpOauthDeps, unkept: UnkeptTokens): Promise<void> {
   const issued = unkept.issued.refreshToken;
@@ -747,8 +766,8 @@ async function revokeUnkept(deps: McpOauthDeps, unkept: UnkeptTokens): Promise<v
  * Refresh a held authorisation with rotation: exchange the refresh token of the generation read,
  * with the resource, at the issuer's token endpoint, and write the new pair only while the pair is
  * still at that generation. A refresh that loses to a concurrent one (the pair moved on before it
- * read the token, its write refused as stale, or its spent token refused) takes the winner's token,
- * and revokes what it was issued and cannot keep.
+ * read the token, its write refused as stale, or its spent token refused) takes the winner's token;
+ * one whose credential was revoked meanwhile revokes at the server what it was issued.
  *
  * @throws McpOauthRefusal or a transport error when the server cannot be reached or answers
  *   unusably; a refusal of the refresh by the server is the typed outcome instead.
@@ -767,16 +786,18 @@ async function refreshHeld(
         "The organisation's connection no longer says where this authorisation is refreshed.",
     };
   }
-  const presented = await deps.store.refreshToken(ctx, held.credentialId, held.generation);
-  if (presented === null) {
-    return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
-  }
   const server = await fetchAuthorisationServerMetadata(deps.fetch, connection.issuer);
   const secretId = held.issuedBy?.clientSecretCredentialId ?? connection.secretCredentialId;
   const auth = clientAuthentication(
     server,
     secretId ? await decryptCredential(ctx, secretId) : undefined,
   );
+  // Read last, just before it is sent: the shorter the gap, the less a concurrent rotation can
+  // overtake it (a server that detects reuse revokes the whole grant).
+  const presented = await deps.store.refreshToken(ctx, held.credentialId, held.generation);
+  if (presented === null) {
+    return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
+  }
   let issued: IssuedTokens;
   try {
     issued = await requestTokens(
@@ -805,6 +826,11 @@ async function refreshHeld(
     now: deps.now(),
   });
   if (rotation.ok) return { ok: true, accessToken: issued.accessToken };
+  if (rotation.reason === 'stale') {
+    // The winner's pair shares this grant: revoking the loser's sibling token could end the whole
+    // grant at a server that revokes by family (RFC 7009 section 2.1), so it is left to lapse.
+    return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
+  }
   await revokeUnkept(deps, {
     server,
     clientId,
@@ -813,9 +839,6 @@ async function refreshHeld(
     issued,
     credentialId: held.credentialId,
   });
-  if (rotation.reason === 'stale') {
-    return { ok: true, accessToken: await deps.store.accessToken(ctx, held.credentialId) };
-  }
   return { ok: false, refusal: 'The authorisation was revoked while it was being refreshed.' };
 }
 
@@ -859,7 +882,13 @@ export async function readMcpBearer(
     return await deps.store.accessToken(ctx, credentialId);
   }
   if (outcome.ok) return outcome.accessToken;
-  if (alive) return await deps.store.accessToken(ctx, credentialId);
+  if (alive) {
+    log.warn('mcp read-time refresh refused; the stored token still lives', {
+      credentialId,
+      reason: outcome.refusal,
+    });
+    return await deps.store.accessToken(ctx, credentialId);
+  }
   throw new Error(`${outcome.refusal} Authorise the card again.`);
 }
 
@@ -880,15 +909,25 @@ export const currentBearer = internalAction({
   handler: async (ctx, args): Promise<string> => await readMcpBearer(ctx, args.credentialId),
 });
 
+/** How a transport failure reads: a timeout, a refused or reset connection, a resolver's miss. */
+const TRANSPORT_FAILURE =
+  /(timed? ?out|timeout|aborted|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN|socket hang up|fetch failed|closed the connection)/i;
+
 /**
  * Whether a failed refresh may succeed later: a transport failure, a busy server, or metadata that
- * could not be read. A refusal of the client, a mismatched issuer or a malformed answer cannot.
+ * could not be read. A refusal of the client, a mismatched issuer, a malformed answer, an address
+ * the rules refuse or a secret no longer held cannot, and is recorded at once.
  */
 function retryable(error: unknown): boolean {
+  if (error instanceof McpOauthRefusal) {
+    return error.reason === 'token-unavailable' || error.reason === 'no-authorisation-server';
+  }
+  if (error instanceof McpAddressRefusal || error instanceof ConvexError) return false;
   return (
-    !(error instanceof McpOauthRefusal) ||
-    error.reason === 'token-unavailable' ||
-    error.reason === 'no-authorisation-server'
+    error instanceof Error &&
+    (error.name === 'AbortError' ||
+      error.name === 'TimeoutError' ||
+      TRANSPORT_FAILURE.test(error.message))
   );
 }
 
@@ -936,7 +975,7 @@ export const refreshScheduled = internalAction({
       }
       refusal = retryable(error)
         ? `The authorisation server could not be reached to refresh the token after ${attempt + 1} attempts: ${reason}`
-        : `Refreshing the authorisation was refused: ${reason}`;
+        : `Refreshing the authorisation failed: ${reason}`;
     }
     await ctx.runMutation(internal.mcpOauth.recordRefreshRefusal, {
       credentialId: args.credentialId,
