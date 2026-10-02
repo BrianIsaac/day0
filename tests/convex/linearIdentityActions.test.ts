@@ -71,6 +71,7 @@ afterEach(async (): Promise<void> => {
   actions.__setLinearIdentityDepsForTest(undefined);
   restoreSurfaceMode();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 /** The generated API as the reset module registry evaluates it. */
@@ -693,6 +694,51 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(surface.pendingAuthorisation).toMatchObject({
       clientId: LEO_CLIENT,
       redirectUrl: REDIRECT,
+    });
+  });
+
+  it('ends a replaced pair at Linear through the end of access: held, and its revocation scheduled (join 4)', async (): Promise<void> => {
+    // The scheduled revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const first = (await read(harness, surfaceIds[0]!)).surface.credentialId!;
+    const { api } = await liveApi();
+
+    const started = await connect(harness, surfaceIds[0]!);
+    if (!started.ok || !('authoriseUrl' in started)) throw new Error('no installation started');
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const { surface, credentials, scheduled } = await read(harness, surfaceIds[0]!);
+    expect(surface.credentialId).not.toBe(first);
+    const replaced = credentials.find((row) => row._id === first);
+    expect(replaced).toMatchObject({
+      revokedAt: clock,
+      sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
+    });
+    expect(replaced?.ciphertext).toEqual(expect.any(String));
+    const attempts = scheduled.filter((job) => job.name === 'sourceRevocationActions:attempt');
+    expect(attempts.map((job) => (job.args[0] as { credentialId: string }).credentialId)).toEqual([
+      first,
+    ]);
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceIds[0]!);
+      expect(
+        events
+          .filter((event) => event.type === 'credential.revoked-at-source')
+          .map((event) => event.payload),
+      ).toEqual([expect.objectContaining({ credentialId: first, outcome: 'token-revoked' })]);
     });
   });
 

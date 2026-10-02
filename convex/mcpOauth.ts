@@ -9,6 +9,7 @@ import {
 } from './schema';
 import { appendEvent } from './eventLog';
 import { assertOwnsAgent } from './ownership';
+import { endAccessAtSource } from './sourceRevocation';
 import type { HeldTokenRows, RotationOutcome } from '../src/surfaces/token-store';
 
 /** The token store's row shapes, declared in `src/surfaces/token-store.ts` (11-AT) and named here as before. */
@@ -241,10 +242,11 @@ export const recordAuthorisationFailure = internalMutation({
 });
 
 /**
- * Stamp a credential Day0 obtained and the card no longer holds as revoked, with its revocation at
- * the vendor asked for (11-AR's revoker answers it), keeping its ciphertext for that call (F19).
- * A pasted key is only detached: Day0 never revokes one (D5); nor is a credential another card
- * still holds.
+ * End a credential Day0 obtained and the card no longer holds through the end of access
+ * (`endAccessAtSource`, end `disconnect`): revoked in Day0 with its refresh token, its ciphertext
+ * kept for the call (F19), and the revocation at the vendor scheduled (11-AR's revoker answers
+ * it). A pasted key is only detached: Day0 never revokes one (D5); nor is a credential another
+ * card still holds.
  */
 async function retireReplaced(
   ctx: MutationCtx,
@@ -259,13 +261,14 @@ async function retireReplaced(
     .take(2);
   if (holders.some((holder) => holder._id !== surface._id)) return;
   const pair = replaced.refreshCredentialId ? await ctx.db.get(replaced.refreshCredentialId) : null;
-  for (const row of [replaced, pair]) {
-    if (!row || row.revokedAt !== undefined) continue;
-    await ctx.db.patch(row._id, {
-      revokedAt: now,
-      sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
-    });
-  }
+  await endAccessAtSource(ctx, {
+    agentId: surface.agentId,
+    surfaceId: surface._id,
+    surfaceName: surface.displayName,
+    credentials: [replaced, ...(pair !== null && pair.revokedAt === undefined ? [pair] : [])],
+    end: 'disconnect',
+    now,
+  });
 }
 
 /**

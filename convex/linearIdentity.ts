@@ -11,6 +11,7 @@ import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { activeConnectionFor } from './organisationConnections';
 import { pendingAuthorisationValidator } from './schema';
+import { endAccessAtSource } from './sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import type { ActsAs } from '../src/surfaces/access-identity';
 import { organisationSystemOf } from '../src/surfaces/access-request';
@@ -250,10 +251,11 @@ export const landSharedToken = internalMutation({
 
 /**
  * Detach the credential a card held before a Linear identity lands on it. A token Day0 obtained for
- * this card alone is revoked with its refresh token and its revocation at Linear asked for (11-AR's
- * revoker answers it), its ciphertext kept for that call (F19). A pasted key is only detached: Day0
- * never revokes one (D5, A27). The organisation's shared token, and any credential another card
- * still holds, are left alone.
+ * this card alone is ended with its refresh token through the end of access (`endAccessAtSource`,
+ * end `disconnect`): revoked in Day0, its ciphertext kept for the call (F19), and the revocation
+ * at Linear scheduled (11-AR's seam: a card's pointer to such a row is never dropped without
+ * ending it). A pasted key is only detached: Day0 never revokes one (D5, A27). The organisation's
+ * shared token, and any credential another card still holds, are left alone.
  */
 async function retireReplaced(
   ctx: MutationCtx,
@@ -271,13 +273,14 @@ async function retireReplaced(
     .take(2);
   if (holders.some((holder) => holder._id !== surface._id)) return;
   const pair = replaced.refreshCredentialId ? await ctx.db.get(replaced.refreshCredentialId) : null;
-  for (const row of [replaced, pair]) {
-    if (!row || row.revokedAt !== undefined) continue;
-    await ctx.db.patch(row._id, {
-      revokedAt: now,
-      sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
-    });
-  }
+  await endAccessAtSource(ctx, {
+    agentId: surface.agentId,
+    surfaceId: surface._id,
+    surfaceName: surface.displayName,
+    credentials: [replaced, ...(pair !== null && pair.revokedAt === undefined ? [pair] : [])],
+    end: 'disconnect',
+    now,
+  });
 }
 
 /** The client secret the card's held token is refreshed with, if it holds one Day0 obtained. */
