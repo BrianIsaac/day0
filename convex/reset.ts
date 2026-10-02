@@ -613,11 +613,20 @@ function namesRow(args: readonly unknown[], named: NamedRows): boolean {
 }
 
 /**
+ * The module whose jobs end access at the vendor (11-AR): an attempt to revoke what Day0 obtained,
+ * or the token store's forget. Each reads what it needs off the credential row, never off the card,
+ * so it outlives the card it names; cancelling one leaves the row to wait for the hourly sweep and
+ * close `failed` with no further try (the wave 11 review's m5).
+ */
+const VENDOR_END_MODULE = 'sourceRevocationActions';
+
+/**
  * Cancel every pending job that names a row a reset deleted or a handover cut:
  * an evaluation, a draft, an apply's recovery, a probe or a note scheduled
  * ahead of time for a retired employee would otherwise run against nothing
  * (P4-7), and a probe or a poll of a cut surface would act on a connection the
- * new manager has not approved.
+ * new manager has not approved. A job that ends access at the vendor is kept
+ * ({@link VENDOR_END_MODULE}).
  *
  * @param ctx - The reset's or the handover's mutation context.
  * @param named - The ids it deleted or cut, and the employees it acted on.
@@ -629,7 +638,13 @@ export async function cancelJobsFor(ctx: MutationCtx, named: NamedRows): Promise
     .query('_scheduled_functions')
     .order('desc')
     .take(SCHEDULED_JOB_SCAN_LIMIT);
-  const doomed = recent.filter((job) => job.state.kind === 'pending' && namesRow(job.args, named));
+  const doomed = recent.filter(
+    (job) =>
+      job.state.kind === 'pending' &&
+      !job.name.startsWith(`${VENDOR_END_MODULE}:`) &&
+      !job.name.startsWith(`${VENDOR_END_MODULE}.js:`) &&
+      namesRow(job.args, named),
+  );
   await Promise.all(doomed.map((job) => ctx.scheduler.cancel(job._id)));
   return doomed.length;
 }
