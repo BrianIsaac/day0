@@ -283,19 +283,29 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 /**
  * What an intake card says when the provider did not answer before the poll's time ran out, in
  * place of the platform's abort (the real-Linear walk's m12: "TimeoutError: The operation was
- * aborted due to timeout").
+ * aborted due to timeout"). Every poll reads again, so the words say nothing of a retry: a
+ * partial read's line already says it reads the rest next time.
  */
-export const PROVIDER_DID_NOT_ANSWER =
-  'the provider did not answer in time; the next poll tries again';
+export const PROVIDER_DID_NOT_ANSWER = 'the provider did not answer in time';
+
+/** How far down an error's causes a timed-out request is looked for. */
+const TIMEOUT_CAUSE_DEPTH = 3;
 
 /**
- * Whether a failure is a timed-out request: the platform's `TimeoutError`, or a client's error
- * that carries one in its words (an MCP client hands the abort on as text).
+ * Whether a failure is a timed-out request: the platform's `TimeoutError`, a client's error that
+ * carries one in its words (an MCP client hands the abort on as text), or one that wraps it as
+ * its cause.
  */
-function isTimedOut(error: unknown): boolean {
+function isTimedOut(error: unknown, depth = 0): boolean {
   if (error instanceof Error && error.name === 'TimeoutError') return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /\bTimeoutError: The operation was aborted due to timeout/.test(message);
+  if (/\bTimeoutError: The operation was aborted due to timeout/.test(message)) return true;
+  return (
+    depth < TIMEOUT_CAUSE_DEPTH &&
+    error instanceof Error &&
+    error.cause !== undefined &&
+    isTimedOut(error.cause, depth + 1)
+  );
 }
 
 /**

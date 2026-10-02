@@ -4232,10 +4232,16 @@ describe("a provider that does not answer in time (the real-Linear walk's m12)",
       await timedOut(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
       // As a client that strings the abort into its own error hands it on.
       await timedOut(new Error('TimeoutError: The operation was aborted due to timeout')),
+      // As a client that wraps the abort as its error's cause.
+      await timedOut(
+        new Error('fetch failed', {
+          cause: new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+        }),
+      ),
     ];
-    const said = `intake failed: ${PROVIDER_DID_NOT_ANSWER}`;
-    expect(reasons).toEqual([said, said]);
-    expect(said).not.toContain('TimeoutError');
+    const said = 'intake failed: the provider did not answer in time';
+    expect(PROVIDER_DID_NOT_ANSWER).toBe('the provider did not answer in time');
+    expect(reasons).toEqual([said, said, said]);
   });
 
   it('keeps every other failure in its own words', async (): Promise<void> => {
