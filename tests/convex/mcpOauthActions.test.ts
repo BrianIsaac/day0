@@ -13,6 +13,8 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organ
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { vendorTransport } from './fakes/vendor-revocation';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 
 const PUBLIC_URL = 'https://day0.acme.test';
 const ISSUER = 'https://auth.acme.test';
@@ -930,13 +932,24 @@ describe('an employee acts at the vendor only as the identity its card names (cr
 });
 
 describe('the organisation’s revoke of a confidential client’s connection (join 8)', (): void => {
-  afterEach((): void => {
+  afterEach(async (): Promise<void> => {
     vi.unstubAllGlobals();
+    // The modules are reset per test: the seam is set on the instance the harness loads.
+    const revocation = await import('../../convex/sourceRevocationActions');
+    revocation.__setRevocationAddressingForTest(undefined);
   });
 
   it('revokes every card’s token at the server with the client secret it revoked in the same act', async (): Promise<void> => {
     vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
-    // The revocation reaches the authorisation server through the deployment's own fetch.
+    // The revocation meets the MCP rung's address rules (the wave 11 review's M3): the issuer's
+    // host answers a public address, and the pinned transport reaches the issuer through the
+    // stubbed fetch, so no socket opens.
+    const revocation = await import('../../convex/sourceRevocationActions');
+    revocation.__setRevocationAddressingForTest({
+      resolve: async (): Promise<string[]> => ['93.184.216.34'],
+      request: vendorTransport(),
+      privateHosts: privateHostAllowlist(''),
+    });
     vi.stubGlobal(
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>

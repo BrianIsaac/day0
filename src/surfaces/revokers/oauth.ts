@@ -17,12 +17,10 @@ export interface OAuthClient {
   readonly clientSecret?: string;
 }
 
-/** The hosts an http revocation endpoint may name: a local authorisation server under test. */
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
-
 /**
- * The endpoint, refused unless it is https (or http on the loopback, where a local authorisation
- * server runs), so a token is never sent in the clear.
+ * The endpoint, refused unless it is https, so a token is never sent in the clear. Loopback is no
+ * exception: the call is dialled through the MCP rung's address rules (the wave 11 review's M3),
+ * which admit https alone.
  *
  * @throws Error when the endpoint is not an absolute https address.
  */
@@ -33,8 +31,7 @@ function revocationEndpoint(endpoint: string): URL {
   } catch {
     throw new Error('A revocation endpoint must be an https address.');
   }
-  const loopback = parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname);
-  if (parsed.protocol !== 'https:' && !loopback) {
+  if (parsed.protocol !== 'https:') {
     throw new Error('A revocation endpoint must be an https address.');
   }
   return parsed;

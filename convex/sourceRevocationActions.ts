@@ -19,6 +19,12 @@ import {
   parseNangoLocation,
 } from '../src/surfaces/nango-token-store';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { McpAddressRefusal } from '../src/surfaces/mcp-address';
+import {
+  addressCheckedFetch,
+  type AddressCheckedFetchOptions,
+  type OauthFetch,
+} from '../src/surfaces/mcp-oauth';
 import { linearTokenRevocation, readLinearAnswer } from '../src/surfaces/revokers/linear';
 import { oauthTokenRevocation, readOAuthRevocationAnswer } from '../src/surfaces/revokers/oauth';
 import {
@@ -185,19 +191,49 @@ function cleanAnswer(answer: RevocationAnswer, secrets: readonly string[]): Revo
   }
 }
 
+/** The platform's fetch, for the vendors whose revocation address is fixed (Slack, Linear). */
+const platformFetch: OauthFetch = async (url: URL, init: RequestInit): Promise<Response> =>
+  await fetch(url, init);
+
+let addressingForTest: AddressCheckedFetchOptions | undefined;
+
+/**
+ * Replace the resolver and the transport an RFC 7009 revocation is dialled with, in a test, so it
+ * meets the address rules without a socket; undefined restores the deployment's.
+ */
+export function __setRevocationAddressingForTest(
+  options: AddressCheckedFetchOptions | undefined,
+): void {
+  addressingForTest = options;
+}
+
+/**
+ * The fetch an RFC 7009 revocation goes through: the MCP rung's address-checked, pinned fetch, the
+ * same every other OAuth request of the rung obeys (the wave 11 review's M3), since its endpoint
+ * comes from the authorisation server's own metadata and may name any host.
+ */
+function revocationFetch(): OauthFetch {
+  return addressCheckedFetch(addressingForTest);
+}
+
 /**
  * Send one revocation request and read its answer. A redirect is never followed, so a token in the
- * body never reaches another address: its 3xx answer is a refusal; a network failure asks for
- * another attempt.
+ * body never reaches another address: its 3xx answer is a refusal. An address the MCP rung's rules
+ * refuse is a refusal before a socket opens, and a name that does not resolve or any other network
+ * failure asks for another attempt.
+ *
+ * @param fetcher - The fetch the request goes through: the address-checked one for an endpoint an
+ *   authorisation server advertised, the platform's for a vendor's fixed address.
  */
 async function send(
   request: RevocationRequest,
   read: (status: number, body: unknown) => RevocationAnswer,
   secrets: readonly string[],
+  fetcher: OauthFetch = platformFetch,
 ): Promise<RevocationAnswer> {
   let response: Response;
   try {
-    response = await fetch(request.url, {
+    response = await fetcher(new URL(request.url), {
       method: 'POST',
       headers: request.headers,
       body: request.body,
@@ -207,6 +243,9 @@ async function send(
       signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
   } catch (error: unknown) {
+    if (error instanceof McpAddressRefusal && error.limitation) {
+      return { kind: 'refused', words: cleanWords(error.message, secrets) };
+    }
     const host = new URL(request.url).host;
     return {
       kind: 'retry',
@@ -316,6 +355,7 @@ async function makeCall(
           request,
           (status, body) => readOAuthRevocationAnswer(vendor, status, body),
           secrets,
+          revocationFetch(),
         ),
         viaConnection: opened.connectionSecret !== undefined,
       };
