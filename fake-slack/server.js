@@ -172,6 +172,24 @@ const server = createServer(async (request, response) => {
     revokedTokens.add(botToken);
     return json(response, 200, { ok: true, revoked: true });
   }
+  // Validates a manifest with the configuration token (`check:access`, 11-AI): the token must be
+  // the configuration token and the manifest JSON that names a redirect and bot scopes.
+  if (method === 'apps.manifest.validate') {
+    if (!authorised(request, 'xoxe-day0-fake-configuration-token')) {
+      return json(response, 200, { ok: false, error: 'invalid_auth' });
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(new URLSearchParams(body).get('manifest') || '');
+    } catch {
+      return json(response, 200, { ok: false, error: 'invalid_manifest' });
+    }
+    const oauth = manifest && manifest.oauth_config;
+    if (!oauth || !Array.isArray(oauth.redirect_urls) || !Array.isArray(oauth.scopes && oauth.scopes.bot)) {
+      return json(response, 200, { ok: false, error: 'invalid_manifest' });
+    }
+    return json(response, 200, { ok: true });
+  }
   if (method === 'oauth.v2.access') {
     const form = new URLSearchParams(body);
     if (
