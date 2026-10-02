@@ -743,7 +743,7 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
           modeless as unknown as Doc<'organisationConnections'>,
         );
       }),
-    ).rejects.toThrow(/mode/);
+    ).rejects.toThrow(/Missing required field `mode`/);
     await expect(
       harness.run(async (ctx) => {
         await ctx.db.insert('organisationConnections', {
@@ -775,12 +775,28 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
         issuedBy: { system: 'linear', grant: 'authorisation-code' },
         createdAt: 2,
       });
+      const appSecret = await ctx.db.insert('credentials', {
+        ...base,
+        kind: 'value',
+        userId: 'owner',
+        label: 'Maya (Day0) client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 2,
+      });
       const access = await ctx.db.insert('credentials', {
         ...base,
         userId: 'owner',
         ciphertext: 'sealed',
         iv: 'iv',
-        issuedBy: { system: 'linear', grant: 'authorisation-code' },
+        // The app it was issued to outlives the card a retire deletes, for the vendor's call.
+        issuedBy: {
+          system: 'linear',
+          grant: 'authorisation-code',
+          appId: 'app-maya',
+          clientId: 'lin_client_maya',
+          clientSecretCredentialId: appSecret,
+        },
         expiresAt: 2 + 24 * 3_600_000,
         refreshCredentialId: refresh,
         generation: 3,
@@ -831,6 +847,7 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
     ]) {
       expect(read.older, field).not.toHaveProperty(field);
     }
+    expect(read.access?.issuedBy).toMatchObject({ appId: 'app-maya', clientId: 'lin_client_maya' });
     expect(read.access?.sourceRevocation).toEqual({
       state: 'pending',
       attempts: 1,
@@ -853,10 +870,10 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
         state: 'active',
         createdAt: 1,
       });
-      const verifier = await ctx.db.insert('credentials', {
+      const clientSecret = await ctx.db.insert('credentials', {
         userId: 'owner',
         kind: 'value',
-        label: 'PKCE verifier',
+        label: 'Maya (Day0) client secret',
         source: 'oauth',
         ciphertext: 'sealed',
         iv: 'iv',
@@ -890,7 +907,10 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
         pendingAuthorisation: {
           stateNonce: 'nonce-1',
           stateExpiresAt: 600_002,
-          verifierCredentialId: verifier,
+          clientId: 'linear-mcp-client',
+          verifierCiphertext: 'sealed-verifier',
+          verifierIv: 'iv',
+          verifierKeyId: 'key-1',
           issuer: 'https://mcp.linear.app',
           resource: 'https://mcp.linear.app/mcp',
           redirectUrl: 'http://localhost:3000/api/oauth/mcp',
@@ -901,7 +921,7 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
           appId: 'A0DAY0',
           appName: 'Maya (Day0)',
           clientId: 'client-1',
-          clientSecretCredentialId: verifier,
+          clientSecretCredentialId: clientSecret,
           installUrl: 'https://slack.com/oauth/v2/authorize',
           redirectUrl: 'http://localhost:3000/api/oauth/slack',
           scopes: ['chat:write'],
@@ -929,6 +949,11 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
       expect(read.older, field).not.toHaveProperty(field);
     }
     expect(read.onConnection.map((row) => row._id)).toEqual([read.linked]);
+    // The PKCE verifier is sealed in the authorisation's own row, never a credential an owner lists.
+    expect(read.onConnection[0]?.pendingAuthorisation).toMatchObject({
+      clientId: 'linear-mcp-client',
+      verifierCiphertext: 'sealed-verifier',
+    });
     expect(read.onConnection[0]?.actsAs).toEqual({
       kind: 'shared-app',
       label: 'Day0',

@@ -90,14 +90,21 @@ export const actsAsValidator = v.object({
 });
 
 /**
- * How Day0 itself obtained a credential (11-AK; section 4.4): the system, the grant, and the
- * organisation connection whose registration it came through, when one did. Only a credential
- * that carries it is revoked at the vendor; a pasted key never is (D5, AC4).
+ * How Day0 itself obtained a credential (11-AK; section 4.4): the system, the grant, the
+ * organisation connection whose registration it came through, when one did, and the app it was
+ * issued to, when it was an app's: the app's id and client id and the client secret's row. The
+ * app is kept here because the card that named it goes with a retire while the revocation at
+ * the vendor still needs it (`apps.manifest.delete` takes the app's id, `apps.uninstall` and an
+ * RFC 7009 revoke the client's). Only a credential that carries this is revoked at the vendor; a
+ * pasted key never is (D5, AC4).
  */
 export const credentialIssuerValidator = v.object({
   system: v.string(),
   grant: v.union(...CREDENTIAL_GRANTS.map((grant) => v.literal(grant))),
   organisationConnectionId: v.optional(v.id('organisationConnections')),
+  appId: v.optional(v.string()),
+  clientId: v.optional(v.string()),
+  clientSecretCredentialId: v.optional(v.id('credentials')),
 });
 
 /**
@@ -132,15 +139,20 @@ export const accessRequestValidator = v.object({
 
 /**
  * An OAuth authorisation a card has started and its redirect has not consumed (11-AK for 11-AM;
- * section 4.6): the single-use state nonce and its expiry, the PKCE verifier sealed as a
- * credential row (never in the URL), the authorisation server the response's `iss` must name,
- * the resource indicator sent on both requests, the redirect, and the connection whose client it
- * runs under. Cleared the first time a redirect consumes it.
+ * section 4.6): the single-use state nonce and its expiry, the client it runs under, the PKCE
+ * verifier sealed in this row with the credential key (never in the URL, and never a credential
+ * row an owner's summary would list), the authorisation server the response's `iss` must name,
+ * the resource indicator sent on both requests, the redirect, and the organisation connection
+ * whose client it is, when it is one. Cleared the first time a redirect consumes it.
  */
 export const pendingAuthorisationValidator = v.object({
   stateNonce: v.string(),
   stateExpiresAt: v.number(),
-  verifierCredentialId: v.id('credentials'),
+  clientId: v.string(),
+  verifierCiphertext: v.string(),
+  verifierIv: v.string(),
+  /** Which credential key sealed the verifier, as `credentials.keyId` says it. */
+  verifierKeyId: v.optional(v.string()),
   issuer: v.string(),
   resource: v.string(),
   redirectUrl: v.string(),
@@ -683,9 +695,11 @@ export default defineSchema({
      */
     organisationConnectionId: v.optional(v.id('organisationConnections')),
     /**
-     * Whom the card acts as (11-AK; D2), written by the connect paths, never by the model, and
-     * read by the card (11-AC) and the export. The `surfaces-acts-as` migration writes it for
-     * every card holding a live credential before wave 11.
+     * Whom the card acts as (11-AK; D2), written by the paths that land a credential, never by
+     * the model, and read by the card (11-AC) and the export. The `surfaces-acts-as` migration
+     * writes it for every card holding a live credential before wave 11; a card connected after
+     * it by a path not yet writing it reads the same answer off its credential
+     * (`actsAsAtUpgrade`, `src/surfaces/access-identity.ts`).
      */
     actsAs: v.optional(actsAsValidator),
     /** The access request the card drafted for IT and how it went out (11-AO; A24). */
