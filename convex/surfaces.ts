@@ -359,7 +359,7 @@ async function identitiesOf(
   surfaces: readonly Doc<'surfaces'>[],
 ): Promise<Map<Id<'surfaces'>, ListedIdentity>> {
   const connections = new Map<string, Doc<'organisationConnections'> | null>();
-  const hasPublicUrl = (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '';
+  const hasPublicUrl = publicUrlConfigured();
   const identities = new Map<Id<'surfaces'>, ListedIdentity>();
   for (const surface of surfaces) {
     const system = organisationSystemOf(surface);
@@ -3108,8 +3108,13 @@ export const approveTools = mutation({
  */
 export const installRedirectConfigured = query({
   args: {},
-  handler: async (): Promise<boolean> => (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '',
+  handler: async (): Promise<boolean> => publicUrlConfigured(),
 });
+
+/** Whether this deployment has a public address for a dedicated app's install to return to. */
+function publicUrlConfigured(): boolean {
+  return (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '';
+}
 
 /**
  * Re-run orientation for the owner's declared surfaces.

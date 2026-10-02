@@ -213,6 +213,29 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     expect(network.calls).toEqual([]);
   });
 
+  it('asks Slack three times an hour apart while it fails, then deletes the pair and says so', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    network.answer('/api/auth.revoke', { status: 503, body: '' });
+    const connectionId = await harness
+      .withIdentity(INES)
+      .action(api.organisationConnections.land, SLACK);
+
+    await revoke(harness, connectionId);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await runDueNow(harness);
+      vi.advanceTimersByTime(60 * 60 * 1_000);
+    }
+    await runDueNow(harness);
+
+    expect(network.calls).toHaveLength(3);
+    const { credentials, ledger } = await rows(harness);
+    for (const row of credentials) expect(row.ciphertext).toBeUndefined();
+    expect(
+      ledger.find((line) => (line.payload as { method?: string }).method === 'auth.revoke')
+        ?.payload,
+    ).toMatchObject({ outcome: 'failed', reason: 'Slack auth.revoke returned HTTP 503.' });
+  });
+
   it('deletes the pair even when Slack refuses the revoke, and says so on the ledger', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     network.answer('/api/auth.revoke', {
