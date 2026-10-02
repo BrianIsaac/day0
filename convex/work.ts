@@ -58,6 +58,7 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { accessRequestReason, organisationSystemOf } from '../src/surfaces/access-request';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -123,6 +124,7 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
@@ -7327,7 +7329,16 @@ const needsYouEntryValidator = v.union(
     reason: v.union(v.literal('connection'), v.literal('permission'), v.literal('evaluation')),
   }),
   v.object({ kind: v.literal('stopped'), ...needsYouBaseFields, workItemId: v.id('workItems') }),
-  v.object({ kind: v.literal('surface'), ...needsYouBaseFields, surfaceId: v.id('surfaces') }),
+  v.object({
+    kind: v.literal('surface'),
+    ...needsYouBaseFields,
+    surfaceId: v.id('surfaces'),
+    /**
+     * `connect` for a card whose access request IT has answered (its organisation connection
+     * landed): the manager's Connect is the way on. Absent for a system waiting on approval.
+     */
+    ready: v.optional(v.literal('connect')),
+  }),
   /**
    * A handover naming the caller (the transfer plan, section 5.1), read by the
    * caller's verified address rather than through the caller's employees: its
@@ -7471,6 +7482,44 @@ interface WaitingRows {
   readonly skills: ReadonlyArray<{ readonly skill: Doc<'skills'>; readonly waitingItems: number }>;
   readonly stopped: readonly Doc<'workItems'>[];
   readonly proposed: readonly Doc<'surfaces'>[];
+  /** Cards whose access request IT has answered, each from when its connection landed. */
+  readonly connectable: ReadonlyArray<{
+    readonly surface: Doc<'surfaces'>;
+    readonly since: number;
+  }>;
+}
+
+/**
+ * The cards whose access request IT has answered (the access plan, section 4.5): approved,
+ * holding no credential, a request drafted for IT, and their system's organisation connection now
+ * active and asking an administrator for nothing more, so the manager's Connect is the way on.
+ * Each is dated from when that connection landed, or from the request when it was drafted after.
+ *
+ * @param ctx - Query context.
+ * @param surfaces - The employee's cards, as the inbox read them.
+ */
+async function connectReadyCards(
+  ctx: QueryCtx,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<WaitingRows['connectable']> {
+  const ready = await Promise.all(
+    surfaces.map(async (surface) => {
+      const request = surface.accessRequest;
+      const system = organisationSystemOf(surface);
+      if (
+        surface.verdict !== 'approved' ||
+        surface.credentialId !== undefined ||
+        request === undefined ||
+        system === undefined
+      ) {
+        return [];
+      }
+      const connection = await activeConnectionFor(ctx, system);
+      if (connection === null || accessRequestReason(surface, connection) !== undefined) return [];
+      return [{ surface, since: Math.max(connection.createdAt, request.draftedAt) }];
+    }),
+  );
+  return ready.flat();
 }
 
 /**
@@ -7522,7 +7571,10 @@ async function waitingRowsOf(
         .take(NEEDS_YOU_SURFACE_READ_LIMIT),
     ]);
   const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
-  const skills = await Promise.all(skillIds.map(async (id) => await ctx.db.get(id)));
+  const [skills, connectable] = await Promise.all([
+    Promise.all(skillIds.map(async (id) => await ctx.db.get(id))),
+    connectReadyCards(ctx, surfaces),
+  ]);
   return {
     charter: charter && !charter.approved ? charter : null,
     plans: planRows.filter((row) => !isRevocationTrialRow(row)),
@@ -7543,6 +7595,7 @@ async function waitingRowsOf(
     ),
     stopped: failedRows.filter((row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row)),
     proposed: surfaces.filter((surface) => surface.verdict === 'proposed'),
+    connectable,
   };
 }
 
@@ -7683,6 +7736,12 @@ export async function needsYouOfEmployee(
       kind: 'surface' as const,
       ...base(`surface:${surface._id}`, surface.displayName, enteredOf(surfaceEntered, surface)),
       surfaceId: surface._id,
+    })),
+    ...waiting.connectable.map(({ surface, since }) => ({
+      kind: 'surface' as const,
+      ...base(`surface:${surface._id}`, surface.displayName, exact(since)),
+      surfaceId: surface._id,
+      ready: 'connect' as const,
     })),
   ];
 }
