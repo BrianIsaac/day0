@@ -188,7 +188,8 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
 
   it('says the claims are a floor when the preview stopped counting items (m36)', (): void => {
     const kept = (preview: RetirePreview): readonly string[] =>
-      retireLines(preview, '').find((line) => line.term === 'Kept')?.details ?? [];
+      retireLines(preview, '', { name: 'Mira' }).find((line) => line.term === 'Kept')?.details ??
+      [];
     expect(kept({ ...REAL_PREVIEW, keptClaims: 7, keptClaimsAtLeast: true })).toContain(
       'The claims on at least 7 items it may already have written, so no colleague repeats those writes.',
     );
@@ -298,7 +299,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       keptClaims: 0,
       tombstone: false,
     };
-    expect(retireLines(mock, '')).toEqual([
+    expect(retireLines(mock, '', { name: 'Mira' })).toEqual([
       {
         term: 'Deleted',
         details: [
@@ -329,7 +330,8 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       tombstone: false,
     };
     const keptOf = (preview: RetirePreview, requests: number): readonly string[] =>
-      retireLines(preview, '', { requests }).find((line) => line.term === 'Kept')?.details ?? [];
+      retireLines(preview, '', { name: 'Mira', requests }).find((line) => line.term === 'Kept')
+        ?.details ?? [];
     expect(keptOf(mock, 2)).toEqual([
       "2 handover requests: the managers' addresses, the employee's name and any note or reason, kept as the record of the managers they name.",
     ]);
@@ -429,14 +431,52 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('says the cancel alone when nothing else waits, never under "Nothing." (second pass)', (): void => {
-    const waiting = retireLines(REAL_PREVIEW, '', { handover: HANDOVER, requests: 1 }).find(
-      (line) => line.term === 'Waiting on you',
-    );
+    const waiting = retireLines(REAL_PREVIEW, '', {
+      name: 'Mira',
+      handover: HANDOVER,
+      requests: 1,
+    }).find((line) => line.term === 'Waiting on you');
     expect(waiting?.details).toEqual(['Retiring cancels the handover to lead@day0.local.']);
   });
 
+  it("says what happens at the vendor per connection, the employee's own Slack app deleted in Slack (11-AR)", (): void => {
+    const lines = retireLines(
+      {
+        ...REAL_PREVIEW,
+        revoked: [
+          { slug: 'slack', displayName: 'Slack' },
+          { slug: 'linear', displayName: 'Linear' },
+        ],
+        kept: [],
+        outcomes: [
+          { slug: 'slack', displayName: 'Slack', system: 'slack', outcome: 'app-deleted' },
+          { slug: 'linear', displayName: 'Linear', system: 'Linear', outcome: 'pasted-key' },
+        ],
+      },
+      '',
+      { name: 'Leo' },
+    );
+    expect(lines[0]).toEqual({
+      term: 'Revoked',
+      details: [
+        "Leo's Slack app: deleted in Slack.",
+        'The Linear credential: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.',
+      ],
+    });
+  });
+
   it('says when no credential is bound only by the employee', (): void => {
-    const lines = retireLines({ ...REAL_PREVIEW, revoked: [], kept: [], keptClaims: 0 }, '');
+    const lines = retireLines(
+      {
+        ...REAL_PREVIEW,
+        revoked: [],
+        kept: [],
+        outcomes: REAL_PREVIEW.outcomes.filter((outcome) => outcome.outcome === 'kept'),
+        keptClaims: 0,
+      },
+      '',
+      { name: 'Mira' },
+    );
     expect(lines[0]).toEqual({
       term: 'Revoked',
       details: ['Nothing: no credential is bound only by this employee.'],

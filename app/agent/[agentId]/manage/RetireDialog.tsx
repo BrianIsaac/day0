@@ -20,6 +20,7 @@ import {
   confirmationMatches,
   credentialsWords,
   deletedWords,
+  revokedLines,
   waitingWords,
   type RetirePreview,
 } from './retire-words';
@@ -67,8 +68,13 @@ function keptClaimsLine(
     : `The claims on ${preview.keptClaims} items ${rest}`;
 }
 
-/** The handovers that bear on a retire: the one open on the employee, and how many name it. */
-export interface RetireHandovers {
+/**
+ * What the retire's account is drawn from beyond its preview: the employee's name, which the
+ * vendor lines name, the handover open on it, and how many handover requests name it.
+ */
+export interface RetireContext {
+  /** The employee's name. */
+  readonly name: string;
   /** The handover open on the employee, if any; an asked one is cancelled by the retire. */
   readonly handover?: OpenHandover | null;
   /** How many handover requests name the employee, each kept by the retire. */
@@ -82,14 +88,17 @@ export interface RetireHandovers {
  * wipes the employee and keeps nothing of it but the handover requests that name it, each the
  * other manager's record, so it says that rather than promising a record.
  *
+ * What is revoked is said per connection, by what happens at the vendor (11-AR's outcomes), with
+ * the sentence for a pasted key kept.
+ *
  * @param preview - What `reset.retirePreview` says the retire would do.
  * @param waiting - What waits on the manager, in words; empty when nothing does.
- * @param handovers - The handover open on the employee and the requests that name it.
+ * @param context - The employee's name, the handover open on it and the requests that name it.
  */
 export function retireLines(
   preview: RetirePreview,
   waiting: string,
-  { handover, requests = 0 }: RetireHandovers = {},
+  { name, handover, requests = 0 }: RetireContext,
 ): RetireLine[] {
   const deleted = { term: 'Deleted', details: [sentence(deletedWords(preview))] };
   const waits = {
@@ -118,6 +127,7 @@ export function retireLines(
     ];
   }
   const claims = keptClaimsLine(preview);
+  const revoked = revokedLines(preview, name);
   const kept = [
     'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
     ...(preview.kept.length > 0
@@ -133,11 +143,8 @@ export function retireLines(
   return [
     {
       term: 'Revoked',
-      details: [
-        preview.revoked.length > 0
-          ? `${sentence(`${credentialsWords(preview.revoked)}: Day0 deletes its copy at once, so no later run can use it`)} The token stays valid at the provider until you revoke it there.`
-          : 'Nothing: no credential is bound only by this employee.',
-      ],
+      details:
+        revoked.length > 0 ? revoked : ['Nothing: no credential is bound only by this employee.'],
     },
     deleted,
     { term: 'Kept', details: kept },
@@ -229,6 +236,7 @@ export function RetireDialog({
     account = (
       <dl className="grid gap-x-4 gap-y-2 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)]">
         {retireLines(preview, waitingWords(inbox.entries, inbox.total), {
+          name: agent.name,
           handover,
           requests: kept.requests,
         }).map((line) => (

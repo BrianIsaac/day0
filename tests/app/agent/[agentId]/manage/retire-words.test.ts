@@ -4,7 +4,9 @@ import {
   credentialsWords,
   deletedWords,
   listed,
+  revokedLines,
   waitingWords,
+  type RetirePreview,
 } from '../../../../../app/agent/[agentId]/manage/retire-words';
 import type { InboxItem } from '../../../../../app/components/InboxEntry';
 
@@ -92,5 +94,76 @@ describe('the retire dialog in words', (): void => {
     expect(confirmationMatches('', 'retire Mira')).toBe(false);
     // A name with a composed letter, typed as the letter and its combining mark (m37).
     expect(confirmationMatches('retire Zoe\u0301', 'retire Zo\u00e9')).toBe(true);
+  });
+});
+
+describe("what a retire does at the vendor, one line per credential (11-AR's outcomes)", (): void => {
+  const outcome = (
+    displayName: string,
+    system: string,
+    result: RetirePreview['outcomes'][number]['outcome'],
+  ): RetirePreview['outcomes'][number] => ({
+    slug: displayName.toLowerCase(),
+    displayName,
+    system,
+    outcome: result,
+  });
+  const preview = (
+    outcomes: RetirePreview['outcomes'],
+    revoked: RetirePreview['revoked'] = [],
+  ): Pick<RetirePreview, 'outcomes' | 'revoked'> => ({ outcomes, revoked });
+
+  it("says the employee's own Slack app is deleted in Slack and its Linear access revoked at Linear", (): void => {
+    expect(
+      revokedLines(
+        preview([
+          outcome('Slack', 'slack', 'app-deleted'),
+          outcome('Linear', 'linear', 'token-revoked'),
+        ]),
+        'Leo',
+      ),
+    ).toEqual(["Leo's Slack app: deleted in Slack.", "Leo's Linear access: revoked at Linear."]);
+  });
+
+  it('says every other outcome in its own words, a shared app and a server with no revocation included', (): void => {
+    expect(
+      revokedLines(
+        preview([
+          outcome('Slack', 'slack', 'app-uninstalled'),
+          outcome('Linear', 'linear', 'shared'),
+          outcome('Acme docs', 'mcp:docs.acme.test', 'not-supported'),
+          outcome('Tracker', 'mcp:tracker.acme.test', 'failed'),
+          outcome('Wiki', 'mcp:wiki.acme.test', 'not-at-vendor'),
+        ]),
+        'Leo',
+      ),
+    ).toEqual([
+      "Leo's Slack app: uninstalled from Slack.",
+      "Leo's Linear access: ends for Leo only; the app your employees share is not revoked at Linear.",
+      "Leo's Acme docs access: docs.acme.test offers no way to revoke it, so Day0 deletes its copy.",
+      "Leo's Tracker access: Day0 can no longer revoke it at tracker.acme.test, so revoke it there.",
+      "Leo's Wiki access: ends in Day0, with nothing to revoke at wiki.acme.test.",
+    ]);
+  });
+
+  it('keeps the pasted-key sentence for the keys someone pasted, and says nothing here of a kept key', (): void => {
+    expect(
+      revokedLines(
+        preview(
+          [outcome('Linear', 'Linear', 'pasted-key'), outcome('Slack', 'Slack', 'kept')],
+          [{ slug: 'linear', displayName: 'Linear' }],
+        ),
+        'Leo',
+      ),
+    ).toEqual([
+      'The Linear credential: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.',
+    ]);
+  });
+
+  it('says the revoked credentials as before where the preview carries no outcome for them', (): void => {
+    expect(revokedLines(preview([], [{ slug: 'linear', displayName: 'Linear' }]), 'Leo')).toEqual([
+      'The Linear credential: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.',
+    ]);
+    expect(revokedLines(preview([]), 'Leo')).toEqual([]);
   });
 });

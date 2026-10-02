@@ -1,5 +1,6 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
+import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import type { InboxItem } from '../../../components/InboxEntry';
 
 /** What `reset.retirePreview` answers for an employee that is still there. */
@@ -77,6 +78,77 @@ export function deletedWords(preview: Pick<RetirePreview, 'rowCounts' | 'atLeast
 export function credentialsWords(surfaces: RetirePreview['revoked']): string {
   const names = [...new Set(surfaces.map((surface) => surface.displayName))];
   return `the ${listed(names)} ${names.length === 1 ? 'credential' : 'credentials'}`;
+}
+
+/** One connection's outcome at the vendor, as `reset.retirePreview` answers it (11-AR). */
+type PreviewOutcome = RetirePreview['outcomes'][number];
+
+/**
+ * What the retire does at the vendor for one connection, after its name: the employee's own app
+ * deleted or uninstalled, its access revoked, a shared app left for the others, a system with no
+ * way to revoke, a token Day0 can no longer revoke, or nothing at the vendor. A pasted key and a
+ * kept one are said elsewhere, so they have no line here.
+ */
+function outcomeLine(outcome: PreviewOutcome, name: string): string | undefined {
+  const system = systemDisplayName(outcome.system);
+  const access = `${name}'s ${outcome.displayName} access`;
+  switch (outcome.outcome) {
+    case 'app-deleted':
+      return `${name}'s ${system} app: deleted in ${system}.`;
+    case 'app-uninstalled':
+      return `${name}'s ${system} app: uninstalled from ${system}.`;
+    case 'token-revoked':
+      return `${access}: revoked at ${system}.`;
+    case 'shared':
+      return `${access}: ends for ${name} only; the app your employees share is not revoked at ${system}.`;
+    case 'not-supported':
+      return `${access}: ${system} offers no way to revoke it, so Day0 deletes its copy.`;
+    case 'failed':
+      return `${access}: Day0 can no longer revoke it at ${system}, so revoke it there.`;
+    case 'not-at-vendor':
+      return `${access}: ends in Day0, with nothing to revoke at ${system}.`;
+    case 'pasted-key':
+    case 'kept':
+      return undefined;
+    default: {
+      const unknown: never = outcome.outcome;
+      throw new Error(`unhandled retire outcome ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * The retire dialog's Revoked lines (11-AR's `retirePreview.outcomes`; the wave file's words,
+ * flagged as a product call): one per connection Day0 obtained access for, saying what happens at
+ * the vendor ("Leo's Slack app: deleted in Slack."), then the sentence for the keys someone pasted,
+ * kept as it was: Day0 deletes its copy and the key stays valid until revoked where it was made
+ * (D5). A revoked connection the preview gives no outcome for is said with the pasted keys, as
+ * before the outcomes existed.
+ *
+ * @param preview - The preview's outcomes and its revoked connections.
+ * @param name - The employee's name.
+ */
+export function revokedLines(
+  preview: Pick<RetirePreview, 'outcomes' | 'revoked'>,
+  name: string,
+): string[] {
+  const described = new Set(preview.outcomes.map((outcome) => outcome.slug));
+  const pasted = [
+    ...preview.outcomes
+      .filter((outcome) => outcome.outcome === 'pasted-key')
+      .map(({ slug, displayName }) => ({ slug, displayName })),
+    ...preview.revoked.filter((surface) => !described.has(surface.slug)),
+  ];
+  const atVendor = preview.outcomes.flatMap((outcome) => {
+    const line = outcomeLine(outcome, name);
+    return line === undefined ? [] : [line];
+  });
+  if (pasted.length === 0) return atVendor;
+  const words = credentialsWords(pasted);
+  return [
+    ...atVendor,
+    `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.`,
+  ];
 }
 
 /** How each kind of waiting entry is counted in the dialog, singular and plural. */
