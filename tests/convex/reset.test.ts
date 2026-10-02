@@ -18,6 +18,7 @@ import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import { RETIREMENT_READ_LIMIT } from '../../convex/retirements';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -1517,6 +1518,46 @@ describe('holdings: what a deletion would remove, read before its control is pre
     expect(request?.note).toBeUndefined();
   });
 
+  it('holds the words on a request the manager asked, and a decline’s reason alone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Wren',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Wren',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        note: 'Wren covers the close.',
+        state: 'accepted',
+        requestedAt: 1,
+        expiresAt: 2,
+        decidedAt: 2,
+        toOwnerKey: 'colleague',
+      });
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, handoverWords: true });
+
+    await owner.mutation(api.reset.deleteMyData, {});
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.query('managerTransfers').unique();
+      await ctx.db.patch(row!._id, {
+        state: 'declined',
+        declineReason: 'I am leaving in March.',
+      });
+    });
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, handoverWords: true });
+  });
+
   it('counts a request only while it carries words a deletion scrubs', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedNamingRequest(harness, undefined);
@@ -1535,6 +1576,37 @@ describe('holdings: what a deletion would remove, read before its control is pre
       employees: true,
       documentation: true,
     });
+  });
+
+  it('answers past the retirements cap instead of taking the home page down', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index <= RETIREMENT_READ_LIMIT; index += 1) {
+        await ctx.db.insert('retirements', {
+          userId: 'owner',
+          agentId,
+          retiredAt: index,
+          rowCounts: {},
+          revokedCredentials: 0,
+          keptCredentials: 0,
+          claims: [],
+          rejections: [],
+        });
+      }
+      await ctx.db.delete(agentId);
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
   });
 
   it('holds a retired employee’s kept boundaries in real mode only, where the deletion releases them', async (): Promise<void> => {

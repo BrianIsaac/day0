@@ -23,7 +23,12 @@ import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
-import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
+import {
+  RETIREMENT_READ_LIMIT,
+  ownerRetirements,
+  type RetiredClaim,
+  type RetiredRejection,
+} from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { providerReconciliationEntries } from '../src/work/reconciliation';
@@ -1032,8 +1037,9 @@ const holdingsValidator = v.object({
  * employee (evaluation agents included), a version in the owner's skill library, a handover
  * request carrying words the scrub clears (one the owner asked, or one naming their verified
  * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
- * releases; and the documentation only the unlink choice takes. Every read is bounded (a first
- * row, or the owner's retirements under their cap), so the home page can subscribe to it.
+ * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * match, the handover reads scanning the party's requests of one state until one carries words,
+ * and the retirements read stops at their cap, so the home page can subscribe to it.
  *
  * @param db - The query's reader.
  * @param party - The owner and their verified address, when they have one.
@@ -1076,7 +1082,14 @@ async function deletionHoldings(
               .first(),
       ]),
     ),
-    SURFACE_MODE === 'real' ? ownerRetirements({ db }, ownerKey) : Promise.resolve([]),
+    // Read up to the cap without `ownerRetirements`' refusal past it: a subscribed read that threw
+    // would take the whole home page down, and past the cap the deletion refuses in its own words.
+    SURFACE_MODE === 'real'
+      ? db
+          .query('retirements')
+          .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+          .take(RETIREMENT_READ_LIMIT)
+      : Promise.resolve([]),
   ]);
   return {
     employees: employee !== null,
