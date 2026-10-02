@@ -132,7 +132,10 @@ describe('the access request a card shows (A24)', (): void => {
     const view = await owner.query(api.accessRequests.forCard, { surfaceId });
     expect(view).toMatchObject({ system: 'linear', reason: 'install-needed' });
     expect(view?.text).toContain('Maya’s own app needs an administrator to install it.');
-    expect(view?.text).toContain('./setup.sh access for linear');
+    // The setup verb already ran: the request names the card on the organisation page, where the
+    // app is recorded (the wave 11 review's M4).
+    expect(view?.text).not.toContain('./setup.sh');
+    expect(view?.text).toContain(`/organisation?card=${surfaceId}`);
 
     // An administrator recorded Maya's app; its installation link has since lapsed.
     await harness.run(async (ctx) => {

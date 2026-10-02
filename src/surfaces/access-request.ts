@@ -214,9 +214,14 @@ export function accessRequestReason(
   }
 }
 
+/** A card whose request is drafted: its id, which the organisation page's link names (M4). */
+export interface DraftedAccessRequestCard extends AccessRequestCard {
+  readonly _id: string;
+}
+
 /** Everything the request's words are built from. */
 export interface AccessRequestInput {
-  readonly card: AccessRequestCard;
+  readonly card: DraftedAccessRequestCard;
   readonly connection: AccessRequestConnection | null;
   readonly reason: AccessRequestReason;
   /** The scopes to ask for; the card's approved scopes when not given (a widening names its own). */
@@ -294,16 +299,30 @@ function lengthLine(card: AccessRequestCard, zone: string): string {
     : `For how long: until ${dayKey(card.expiresAt, zone)}.`;
 }
 
-/** What IT does: the install link when the employee's app waits on it, else the kit's recipe. */
-function howLine(input: AccessRequestInput, system: string): string {
+/**
+ * What IT does (the wave 11 review's M4): the install link when the employee's app waits on it;
+ * for an employee's own OAuth app no administrator has recorded yet, the organisation page's link
+ * that names the card, where the app is recorded; for a system already connected, the kit's recipe
+ * and the organisation page, never the setup verb, which IT has already run; else the setup verb
+ * that connects the system, or the organisation page.
+ */
+function howLine(input: AccessRequestInput, system: string, name: string): string {
   const installUrl = input.card.provisioning?.installUrl;
   if (input.reason === 'install-needed' && installUrl !== undefined) {
     return `How to connect it: install it here: ${installUrl}`;
   }
-  const recipe = system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp' : system;
-  const origin = input.publicUrl?.trim().replace(/\/+$/, '');
+  const recipe = `docs/running/access-${system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp' : system}.md`;
+  const origin = input.publicUrl?.trim().replace(/\/+$/, '') ?? '';
+  if (input.reason === 'install-needed' && input.connection?.kind === 'oauth-app') {
+    const page = `${origin}/organisation?card=${encodeURIComponent(input.card._id)}`;
+    return `How to connect it: a ${name} administrator creates ${input.employeeName}’s own app as ${recipe} says, then records it on the organisation page at ${page}; Day0 then opens ${name} to install it.`;
+  }
+  if (input.connection !== null) {
+    const page = origin ? `, on the organisation page at ${origin}/organisation` : '';
+    return `How to connect it: an administrator follows ${recipe}${page}.`;
+  }
   const page = origin ? `, or uses the organisation page at ${origin}/organisation` : '';
-  return `How to connect it: an administrator runs ./setup.sh access for ${system}, following docs/running/access-${recipe}.md${page}.`;
+  return `How to connect it: an administrator runs ./setup.sh access for ${system}, following ${recipe}${page}.`;
 }
 
 /**
@@ -331,7 +350,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     `Access needed: ${scopes.join(', ')}.`,
     evidenceLine(input.card, employee),
     lengthLine(input.card, input.zone),
-    howLine(input, system),
+    howLine(input, system, name),
     `Nothing changes until IT connects it; then Connect appears on ${employee}’s card.`,
   ].filter((line): line is string => line !== undefined);
   const text = lines.join('\n');

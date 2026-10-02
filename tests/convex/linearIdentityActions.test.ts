@@ -847,6 +847,35 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(tokenRequests()).toEqual([]);
   });
 
+  it("walks the access request to the installed app: its link names the card IT records the app for on the organisation page (the wave 11 review's M4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+
+    const request = await harness
+      .withIdentity(managerIdentity())
+      .query(api.accessRequests.forCard, { surfaceId: surfaceIds[0]! });
+    expect(request?.reason).toBe('install-needed');
+    expect(request?.text).not.toContain('./setup.sh');
+    const link = /(https:\/\/\S+\/organisation\?card=[^\s;]+)/.exec(request?.text ?? '')?.[1];
+    expect(link).toBeDefined();
+    const opened = new URL(link!);
+    expect(opened.origin).toBe(PUBLIC_URL);
+    const cardId = opened.searchParams.get('card') as Id<'surfaces'>;
+    expect(cardId).toBe(surfaceIds[0]);
+
+    // The organisation page records the app for the card its link names, as `registerEmployeeApp`.
+    await expect(installLeo(harness, cardId)).resolves.toEqual({
+      ok: true,
+      agentId,
+      surfaceSlug: 'linear',
+    });
+    expect((await read(harness, surfaceIds[0]!)).surface.actsAs).toMatchObject({
+      kind: 'own-app',
+      label: 'Day0 Leo',
+    });
+  });
+
   it('lets only an administrator record the app, and answers the access request before one is recorded', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
