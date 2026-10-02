@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
 import type { FunctionReference } from 'convex/server';
@@ -55,6 +56,8 @@ import {
 import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { LIST_ISSUES_SELECTABLE_FIELDS } from '../fixtures/linear/linear-oauth-2026-10-02';
+import { sealForOwner } from '../../src/lib/credential-crypto';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -3779,6 +3782,90 @@ describe('the read grant (Q7, N2)', (): void => {
     await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
     expect(await skipReason()).toBe(
       'read scope jira:read is not granted; intake reads nothing here until the manager grants it again',
+    );
+  });
+});
+
+describe("intake's Linear bearer (11-AL)", (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('reads a Linear app token through the issuer: a revoked organisation connection stops the poll before Linear', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const credentialKey = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
+    const { internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Leo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        clientCredentialsScopes: ['read', 'write'],
+        clientId: 'day0-shared',
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 2,
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: 'Linear app token',
+        ...sealForOwner('lin_oauth_shared_1', { current: credentialKey }, ORGANISATION_OWNER_KEY),
+        source: 'oauth',
+        issuedBy: {
+          system: 'linear',
+          grant: 'client-credentials',
+          organisationConnectionId: connectionId,
+          clientId: 'day0-shared',
+        },
+        expiresAt: Date.now() + 20 * 24 * 60 * 60 * 1_000,
+        generation: 0,
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId,
+        scope: 'linear:read',
+        source: 'surface',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        credentialId,
+        credentialKind: 'value',
+        credentialLanded: true,
+        // No list_issues: before the issuer's read, the poll stopped here instead, with no request.
+        toolAllowlist: [],
+        actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: 'app-user-day0-shared' },
+        organisationConnectionId: connectionId,
+        createdAt: 1,
+      });
+    });
+
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.intakeSkipReason).toBe(
+      "intake failed: The organisation's Linear connection is no longer active.",
     );
   });
 });

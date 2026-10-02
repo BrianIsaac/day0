@@ -8,6 +8,7 @@ import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { readLinearBearer } from './linearIdentityActions';
 import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
@@ -2215,8 +2216,11 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
         (grant: Doc<'permissionGrants'>): string => grant.scope,
       ),
+    // A Linear token Day0 obtained is read through the issuer (11-AL): renewed when it is due, and
+    // refused once the organisation's connection has ended; any other credential decrypts as before.
     decrypt: async (credentialId: CredentialId): Promise<string> =>
-      await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId }),
+      (await readLinearBearer(ctx, credentialId)) ??
+      (await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId })),
     recordIntake: async (record: IntakeRecord): Promise<void> => {
       await ctx.runMutation(internal.surfaces.recordIntake, record);
     },
