@@ -17,6 +17,9 @@ const SHELL_KEYS = [
   'DEV_NO_AUTH_JWKS',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_NANGO_SECRET_KEY',
+  'DAY0_NANGO_ENCRYPTION_KEY',
+  'DAY0_NANGO_DB_PASSWORD',
   'CONVEX_DEPLOYMENT',
   'CONVEX_SELF_HOSTED_URL',
   'CONVEX_SELF_HOSTED_ADMIN_KEY',
@@ -210,6 +213,46 @@ describe('the real-mode keys on their own', (): void => {
     expect(valueOf(envFile, 'DAY0_NOTION_MCP_AUTH_TOKEN')).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(valueOf(envFile, 'DEV_NO_AUTH_SECRET')).toBeUndefined();
     expect(valueOf(envFile, 'DEV_NO_AUTH_SIGNING_KEY')).toBeUndefined();
+  });
+});
+
+describe("the token store's Nango keys (11-AT)", (): void => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('mints the three Nango keys once, in the shapes Nango takes, without printing them', (): void => {
+    const { cwd, envFile } = envDirectory('NEXT_PUBLIC_DEV_NO_AUTH=false\n');
+    const first = runScript(cwd, ['url']);
+    expect(first.status).toBe(0);
+    const secretKey = valueOf(envFile, 'DAY0_NANGO_SECRET_KEY') ?? '';
+    const encryptionKey = valueOf(envFile, 'DAY0_NANGO_ENCRYPTION_KEY') ?? '';
+    const password = valueOf(envFile, 'DAY0_NANGO_DB_PASSWORD') ?? '';
+    expect(secretKey).toMatch(UUID_V4);
+    expect(Buffer.from(encryptionKey, 'base64')).toHaveLength(32);
+    expect(password).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    for (const value of [secretKey, encryptionKey, password]) {
+      expect(first.output).not.toContain(value);
+    }
+    const written = readFileSync(envFile, 'utf8');
+    expect(runScript(cwd, ['url']).status).toBe(0);
+    expect(readFileSync(envFile, 'utf8')).toBe(written);
+  });
+
+  it('never asks the deployment for a Nango key and never replaces one the file holds', (): void => {
+    const encryptionKey = Buffer.alloc(32, 7).toString('base64');
+    const { cwd, envFile } = envDirectory(
+      `NEXT_PUBLIC_DEV_NO_AUTH=false\n${SELF_HOSTED}DAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}\nDAY0_NOTION_MCP_AUTH_TOKEN=${DEPLOYMENT_TOKEN}\nDAY0_NANGO_ENCRYPTION_KEY=${encryptionKey}\n`,
+    );
+    const run = runScript(cwd, ['surface-keys', '--force'], { unreachable: true });
+    expect(run.status).toBe(0);
+    expect(run.calls).toEqual([]);
+    expect(valueOf(envFile, 'DAY0_NANGO_ENCRYPTION_KEY')).toBe(encryptionKey);
+    expect(valueOf(envFile, 'DAY0_NANGO_SECRET_KEY')).toMatch(UUID_V4);
+  });
+
+  it('writes the Nango keys in init as well', (): void => {
+    const { cwd, envFile } = envDirectory('NEXT_PUBLIC_DEV_NO_AUTH=true\n');
+    expect(runScript(cwd, ['init']).status).toBe(0);
+    expect(valueOf(envFile, 'DAY0_NANGO_SECRET_KEY')).toMatch(UUID_V4);
   });
 });
 

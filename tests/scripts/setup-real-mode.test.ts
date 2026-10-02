@@ -922,6 +922,13 @@ describe('--dry-run', (): void => {
     expect(printableUpdate('OPENAI_API_KEY', 'x')).toBe('OPENAI_API_KEY=<hidden>');
     expect(printableUpdate('DAYTONA_API_KEY', '')).toBe('DAYTONA_API_KEY= (emptied)');
     expect(printableUpdate('CONVEX_PORT', '3210')).toBe('CONVEX_PORT=3210');
+    for (const name of [
+      'DAY0_NANGO_SECRET_KEY',
+      'DAY0_NANGO_ENCRYPTION_KEY',
+      'DAY0_NANGO_DB_PASSWORD',
+    ]) {
+      expect(printableUpdate(name, 'x')).toBe(`${name}=<hidden>`);
+    }
     const lines = planLines({
       mode: 'mock',
       route: 'key',

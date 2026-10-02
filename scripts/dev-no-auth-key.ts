@@ -44,7 +44,7 @@
  * (`scripts/rotate-credential-key.ts`).
  */
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { writePrivateEnv } from './private-env';
 import { DEV_NO_AUTH_KEY_ID } from '../src/lib/dev-auth-issuer';
@@ -66,6 +66,9 @@ const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 const FLAG_VAR = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const CREDENTIAL_KEY_VAR = 'DAY0_CREDENTIAL_KEY';
 const NOTION_MCP_AUTH_TOKEN_VAR = 'DAY0_NOTION_MCP_AUTH_TOKEN';
+const NANGO_SECRET_KEY_VAR = 'DAY0_NANGO_SECRET_KEY';
+const NANGO_ENCRYPTION_KEY_VAR = 'DAY0_NANGO_ENCRYPTION_KEY';
+const NANGO_DB_PASSWORD_VAR = 'DAY0_NANGO_DB_PASSWORD';
 const APP_PORT_VAR = 'DAY0_APP_PORT';
 const APP_HOST_VAR = 'DAY0_APP_HOST';
 const CONVEX_DEPLOYMENT_VAR = 'CONVEX_DEPLOYMENT';
@@ -90,6 +93,30 @@ const SURFACE_KEYS = [
     forceable: true,
   },
 ] as const;
+
+/**
+ * The token store's Nango keys (11-AT), minted once and never adopted or forced: Nango's
+ * environment key (a version 4 UUID, the only shape it accepts), its encryption key (a base64
+ * 256-bit key it cannot rotate, so a new one over its volume would leave every token it keeps
+ * unreadable) and its database's password. The compose file passes them to the `token-store`
+ * profile; only the environment key reaches the deployment (`sync-convex-env.sh`), so there is no
+ * copy to adopt and a missing one is minted without asking the deployment.
+ */
+const NANGO_KEYS = [
+  { name: NANGO_SECRET_KEY_VAR, mint: (): string => randomUUID() },
+  { name: NANGO_ENCRYPTION_KEY_VAR, mint: (): string => randomBytes(32).toString('base64') },
+  { name: NANGO_DB_PASSWORD_VAR, mint: (): string => randomBytes(32).toString('base64url') },
+] as const;
+
+/** The Nango keys the file lacks, minted. */
+function nangoKeyUpdates(existing: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    NANGO_KEYS.filter((key): boolean => !existing[key.name]).map((key): [string, string] => [
+      key.name,
+      key.mint(),
+    ]),
+  );
+}
 
 /** What the Convex deployment this file points at holds, as far as it could be read. */
 type DeploymentEnv =
@@ -134,6 +161,9 @@ function readEnvFile(): Record<string, string> {
     JWKS_VAR,
     CREDENTIAL_KEY_VAR,
     NOTION_MCP_AUTH_TOKEN_VAR,
+    NANGO_SECRET_KEY_VAR,
+    NANGO_ENCRYPTION_KEY_VAR,
+    NANGO_DB_PASSWORD_VAR,
     APP_PORT_VAR,
     APP_HOST_VAR,
     CONVEX_DEPLOYMENT_VAR,
@@ -265,7 +295,8 @@ async function init(force: boolean): Promise<void> {
   const existing = readEnvFile();
   const authComplete =
     !!existing[SECRET_VAR] && !!existing[SIGNING_KEY_VAR] && !!existing[JWKS_VAR];
-  const { updates: surfaceUpdates, adopted } = surfaceKeyUpdates(existing, false);
+  const { updates: keyUpdates, adopted } = surfaceKeyUpdates(existing, false);
+  const surfaceUpdates = { ...keyUpdates, ...nangoKeyUpdates(existing) };
   if (authComplete && Object.keys(surfaceUpdates).length === 0 && !force) {
     console.log(
       `${ENV_FILE} already carries a no-auth key. Pass --rotate-unlock to sign every browser ` +
@@ -349,7 +380,9 @@ function rotateUnlockSecret(): void {
  */
 function ensureRealSurfaceKeys(force: boolean): void {
   if (!existsSync(ENV_FILE)) return;
-  const { updates, adopted } = surfaceKeyUpdates(readEnvFile(), force);
+  const existing = readEnvFile();
+  const { updates: keyUpdates, adopted } = surfaceKeyUpdates(existing, force);
+  const updates = { ...keyUpdates, ...nangoKeyUpdates(existing) };
   if (Object.keys(updates).length === 0) return;
   upsertEnvFile(updates);
   reportWrite(updates, adopted);
