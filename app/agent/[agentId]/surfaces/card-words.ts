@@ -329,3 +329,60 @@ export function connectedForOrganisationWords(
 ): string {
   return `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
 }
+
+/**
+ * What a card's Disconnect does at the vendor, line by line, for the dialog that confirms it
+ * (11-AR's `surfaces.disconnect`; D4, D5): what Day0 obtained is revoked there and an app it
+ * created stays, a shared app is not revoked, a delegated grant is revoked where the system offers
+ * a way, and a pasted key is left as it is. A Slack app's bot also loses its channels (S1), which
+ * a renewal restores by RM4's rule (ruled 1 October: public channels re-joined by the employee,
+ * private ones by a person). The wave file's draft, flagged as a product call.
+ *
+ * @param identity - Whom the card acts as.
+ * @param names - The employee's name and the system's.
+ * @param options - Whether the card is on Slack, whose bot leaves its channels at the end.
+ */
+export function disconnectLines(
+  identity: CardIdentity,
+  names: IdentityNames,
+  options: { readonly slack: boolean },
+): string[] {
+  const { employee, system } = names;
+  switch (identity.kind) {
+    case 'own-app':
+      return [
+        `${employee}'s own ${system} app: its token is revoked at ${system}. The app stays, so Connect brings it back.`,
+        ...(options.slack ? [slackChannelsGoWords(employee, 'Connecting again')] : []),
+      ];
+    case 'shared-app':
+      return [
+        `The Day0 app your employees share is not revoked at ${system}: the others still use it. Day0 stops using it for ${employee}.`,
+      ];
+    case 'delegated':
+      return [
+        `Your authorisation for ${employee} is revoked at ${system}, where ${system} offers a way to.`,
+      ];
+    case 'shared-key':
+    case 'browser-seat':
+      return [
+        `The key someone pasted is left as it is at ${system}: Day0 deletes its copy and never revokes a pasted key. Revoke it there if it should end.`,
+      ];
+    default: {
+      const unknown: never = identity.kind;
+      throw new Error(`unhandled identity kind ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * What ending a Slack own-app card does to its bot's channels, and what bringing it back restores
+ * (S1; RM4, ruled 1 October). The wave file's draft said the manager adds it to its channels
+ * again; RM4's ruling has the employee re-join its public channels itself.
+ *
+ * @param employee - The employee's name.
+ * @param restoredBy - What brings the card back, as the sentence's subject: "Renewing",
+ *   "Connecting again".
+ */
+export function slackChannelsGoWords(employee: string, restoredBy: string): string {
+  return `Slack: ${employee}'s bot is switched off and removed from its channels. ${restoredBy} turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.`;
+}
