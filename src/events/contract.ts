@@ -1702,6 +1702,15 @@ export type AgentEventType = Exclude<EventType, ConnectionEventType>;
 const CONNECTION_LISTED: ReadonlySet<string> = new Set(CONNECTION_EVENT_TYPES);
 
 /**
+ * The types an employee's ledger (`events`) takes, in the contract's order: every type but the
+ * organisation's. The runtime list `eventLog.log`'s validator admits, so a call to it by name cannot
+ * write an organisation connection's line onto an employee.
+ */
+export const AGENT_EVENT_TYPES: readonly AgentEventType[] = EVENT_TYPES.filter(
+  (type): type is AgentEventType => !CONNECTION_LISTED.has(type),
+);
+
+/**
  * Whether a value is one of the organisation connections' event types.
  *
  * @returns True for a type `connectionEvents` takes; false for anything else.
