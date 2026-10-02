@@ -272,6 +272,14 @@ async function sharedToken(
     const winner = await ctx.runQuery(internal.linearIdentity.heldToken, {
       credentialId: landed.credentialId,
     });
+    if (winner?.access.ciphertext === undefined) {
+      // The app's secret was rotated while this token was requested (join 3): it may carry the
+      // old secret, and the emptied row waits for a request made after the rotation.
+      throw new LinearIssuerRefusal(
+        'unavailable',
+        "The organisation's Linear app was rotated while its token was renewed: the next read requests one with the new secret.",
+      );
+    }
     return {
       credentialId: landed.credentialId,
       generation: winner?.access.generation ?? 0,

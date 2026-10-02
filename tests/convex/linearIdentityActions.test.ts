@@ -351,6 +351,84 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(tokenRequests()).toHaveLength(2);
   });
 
+  it('empties the shared token in place when IT rotates the app’s secret, so the next read never meets the 401 (join 3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { api } = await liveApi();
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    expect(linear.live(await bearerOf(harness, tokenId))).toBe(true);
+
+    // IT rotates the secret in Linear, which ends every app-actor token issued with the old one
+    // (L2), then records the new secret on the organisation page.
+    const rotatedSecret = 'shared-client-secret-rotated';
+    const rotated = fakeLinear(
+      [
+        {
+          clientId: SHARED_CLIENT,
+          clientSecret: rotatedSecret,
+          clientCredentials: true,
+          appUser: { id: 'app-user-day0-shared', name: 'Day0' },
+          redirectUris: [REDIRECT],
+        },
+      ],
+      () => clock,
+    );
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({ fetch: rotated.fetch, now: () => clock });
+    await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.organisationConnections.rotate, {
+        organisationConnectionId: connectionId,
+        secret: rotatedSecret,
+      });
+
+    const emptied = (await read(harness, surfaceIds[0]!)).credentials.find(
+      (row) => row._id === tokenId,
+    );
+    expect(emptied).toMatchObject({ _id: tokenId });
+    expect(emptied?.ciphertext).toBeUndefined();
+    expect(emptied?.revokedAt).toBeUndefined();
+
+    expect(rotated.live(await bearerOf(harness, tokenId))).toBe(true);
+    expect(rotated.requests.filter((request) => request.path === '/oauth/token')).toHaveLength(1);
+    const { surface, connection, credentials } = await read(harness, surfaceIds[0]!);
+    expect(connection.sharedTokenCredentialId).toBe(tokenId);
+    expect(surface.credentialId).toBe(tokenId);
+    expect(credentials.find((row) => row._id === tokenId)?.generation).toBe(2);
+  });
+
+  it('refuses to land a token a renewal requested before the rotation emptied the shared row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { api, internal } = await liveApi();
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.organisationConnections.rotate, {
+        organisationConnectionId: connectionId,
+        secret: 'shared-client-secret-rotated',
+      });
+
+    const late = await harness.mutation(internal.linearIdentity.landSharedToken, {
+      organisationConnectionId: connectionId,
+      sealed: sealForOwner(
+        'lin_oauth_shared_minted_before',
+        { current: credentialKey },
+        ORGANISATION_OWNER_KEY,
+      ),
+      expectedGeneration: 0,
+      now: clock,
+    });
+
+    expect(late).toEqual({ ok: false, reason: 'stale', credentialId: tokenId });
+    const row = (await read(harness, surfaceIds[0]!)).credentials.find(
+      (one) => one._id === tokenId,
+    );
+    expect(row?.ciphertext).toBeUndefined();
+  });
+
   it('names an app without client credentials turned on, and connects nothing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });

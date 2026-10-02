@@ -179,8 +179,9 @@ function holdsValue(row: Doc<'credentials'> | null): row is Doc<'credentials'> {
 /**
  * Write the shared app-actor token a `client_credentials` request returned (L2), the one row per
  * connection every shared-mode card holds: renewed in place, so no card is touched, and only while
- * the row is still at the generation the renewal read, so two renewals racing write once and the
- * loser uses the winner's token (both are live: Linear keeps up to 1,000 with the same scopes).
+ * the row is still at the generation the renewal read (or still empty, after a rotation of the
+ * app's secret emptied it), so two renewals racing write once and the loser uses the winner's
+ * token (both are live: Linear keeps up to 1,000 with the same scopes).
  * Queues the next renewal for the token's last day. Internal, for `linearIdentityActions`.
  */
 export const landSharedToken = internalMutation({
@@ -200,11 +201,14 @@ export const landSharedToken = internalMutation({
       : null;
     let credentialId: Id<'credentials'>;
     let generation: number;
-    if (holdsValue(held)) {
-      generation = (held.generation ?? 0) + 1;
-      if (args.expectedGeneration !== generation - 1) {
+    if (held !== null && held.revokedAt === undefined) {
+      // A rotation of the app's secret empties the row in place (join 3): only a renewal that read
+      // it empty fills it, so a token requested with the old secret never lands.
+      const read = held.ciphertext === undefined ? undefined : (held.generation ?? 0);
+      if (args.expectedGeneration !== read) {
         return { ok: false, reason: 'stale', credentialId: held._id };
       }
+      generation = (held.generation ?? 0) + 1;
       await ctx.db.patch(held._id, {
         ...args.sealed,
         expiresAt: args.expiresAt,

@@ -624,9 +624,37 @@ export const landFromSetup = internalAction({
 });
 
 /**
+ * Empty the shared token a connection's cards hold, in place, when its app's secret is rotated:
+ * rotating the secret ends every client-credentials token issued with the old one at the vendor
+ * (Linear, L2), so the stored value would only meet a 401. The row keeps its id, which every
+ * shared-mode card holds (AL6), and its next read requests a token with the new secret into it
+ * (`linearIdentity.landSharedToken`); its generation moves, so a renewal that read the old value
+ * never lands a token requested with the old secret. A revoke ends the row instead.
+ *
+ * @param credentialId - The connection's shared token, when it holds one.
+ */
+async function emptySharedToken(
+  ctx: MutationCtx,
+  credentialId: Id<'credentials'> | undefined,
+): Promise<void> {
+  if (credentialId === undefined) return;
+  const row = await ctx.db.get(credentialId);
+  if (row === null || row.revokedAt !== undefined || row.ciphertext === undefined) return;
+  await ctx.db.patch(credentialId, {
+    ciphertext: undefined,
+    iv: undefined,
+    keyId: undefined,
+    expiresAt: undefined,
+    lastUsedAt: undefined,
+    generation: (row.generation ?? 0) + 1,
+  });
+}
+
+/**
  * Record a rotation and its ledger line, in one transaction. Internal, for
  * {@link rotateConnection}. The new secret replaces the old, which is revoked with its refresh
- * token (its ciphertext kept for the vendor call, F19); the scopes change only when given, and the
+ * token (its ciphertext kept for the vendor call, F19), and the shared token issued with it is
+ * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
  * and the secrets the action stored are revoked here.
  */
@@ -656,6 +684,7 @@ export const recordRotated = internalMutation({
       });
     }
     await revokeSecrets(ctx, await secretAndRefresh(ctx, connection.secretCredentialId), now);
+    await emptySharedToken(ctx, connection.sharedTokenCredentialId);
     const scopes = args.scopes === undefined ? connection.scopes : [...cleanScopes(args.scopes)];
     const changed = scopes.join('\n') !== connection.scopes.join('\n');
     await ctx.db.patch(connection._id, {
