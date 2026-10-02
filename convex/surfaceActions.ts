@@ -8,6 +8,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import {
+  actsAsLinearApp,
+  linearProbeIdentity,
+  probeLinearApp,
+  type LinearProbeIdentity,
+} from './linearIdentityActions';
 import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
@@ -125,6 +131,8 @@ interface ProbeDependencies {
   now(): number;
   /** The pause before a probe's one retry; real time unless a test replaces it. */
   wait?(milliseconds: number): Promise<void>;
+  /** Linear's issuer for a card acting as a Linear app; the probe's own unless a test replaces it. */
+  linearIdentity?: LinearProbeIdentity;
 }
 
 export interface ProbeOutcome {
@@ -1447,7 +1455,32 @@ export async function runSurfaceProbe(
       let managerName: string | undefined;
       let providerIdentityId: string | undefined;
       let providerWorkspaceId: string | undefined;
-      if (surface.path === 'mcp') {
+      if (surface.path === 'mcp' && surface.credentialId && actsAsLinearApp(surface)) {
+        // The card acts as a Linear app user (11-AL): its token is read through the issuer, a 401
+        // is answered with one new token, and the app user it acts as is recorded (D6).
+        const linear = await probeLinearApp(
+          dependencies.linearIdentity ?? linearProbeIdentity(ctx),
+          surface.credentialId,
+          async (bearer: string): Promise<McpDiscovery> => {
+            credential = bearer;
+            return await withOneRetry(bearer, known, () =>
+              dependencies.probeMcp(surface.endpoint, bearer),
+            );
+          },
+        );
+        if (!linear.ok) {
+          // Linear withdrew the authority the card was approved on: no other rung stands in.
+          return (
+            (await failOrDemote(linear.reason, 'ungranted', false)) ?? {
+              verdict: 'ungranted',
+              reason: linear.reason,
+            }
+          );
+        }
+        toolAllowlist = linear.discovery.toolAllowlist;
+        toolArguments = linear.discovery.toolArguments;
+        providerIdentityId = linear.appUser.id;
+      } else if (surface.path === 'mcp') {
         const discovery = await withOneRetry(credential, known, () =>
           dependencies.probeMcp(surface.endpoint, credential),
         );

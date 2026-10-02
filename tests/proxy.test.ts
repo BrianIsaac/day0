@@ -90,6 +90,11 @@ describe('the no-auth proxy gate', (): void => {
     expect(await status('/api/oauth/slack')).toBe(200);
   });
 
+  it("lets the Linear app's installation redirect through without the unlock key", async (): Promise<void> => {
+    expect(await status('/api/oauth/linear')).toBe(200);
+    expect(await status('/api/oauth/linear-other')).toBe(403);
+  });
+
   it('lets the voice webhook through without the unlock key', async (): Promise<void> => {
     expect(await status('/api/voice/elevenlabs/webhook')).toBe(200);
   });

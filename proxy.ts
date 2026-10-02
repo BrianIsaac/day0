@@ -53,6 +53,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/voice/elevenlabs/webhook(.*)',
   '/api/oauth/slack(.*)',
   '/api/oauth/mcp',
+  '/api/oauth/linear',
   '/api/seed(.*)',
   '/api/onboarding/synthesise(.*)',
 ]);
@@ -78,9 +79,9 @@ const clerkProxy = clerkMiddleware(async (auth, req) => {
 });
 
 /**
- * The two routes that are meant to be reached from off this machine even in
- * no-auth mode. Both carry no caller identity and both authenticate the
- * delivery itself rather than the caller, so neither is exempt from a boundary -
+ * The three routes that are meant to be reached from off this machine even in
+ * no-auth mode. Each carries no caller identity and authenticates the
+ * delivery itself rather than the caller, so none is exempt from a boundary:
  * each simply has a different one from the unlock cookie.
  *
  * ElevenLabs posts call transcripts to the first: it verifies the
@@ -96,12 +97,18 @@ const clerkProxy = clerkMiddleware(async (auth, req) => {
  * expiring in fifteen minutes, and single-use because the surface holds the
  * nonce. Without one it exchanges nothing and writes nothing.
  *
- * A tunnel pointed at either grants nothing that the deployed Vercel app does
+ * Linear redirects an employee's own app's installation to the third, for the
+ * same reason: installing with `actor=app` needs a Linear administrator, who is
+ * often not the manager. It requires the same signed, single-use state, and a
+ * PKCE verifier the card holds sealed.
+ *
+ * A tunnel pointed at any of them grants nothing that the deployed Vercel app does
  * not already expose.
  */
 const isExternallyCalledRoute = createRouteMatcher([
   '/api/voice/elevenlabs/webhook(.*)',
   '/api/oauth/slack(.*)',
+  '/api/oauth/linear',
 ]);
 
 export default function proxy(...args: Parameters<typeof clerkProxy>) {

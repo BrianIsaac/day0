@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appIdentityOf,
   recordFromText,
   samePerson,
   ticketAssignee,
+  ticketHolder,
   ticketChange,
   ticketRecordRefusal,
   ticketRereadStopReason,
@@ -248,5 +250,98 @@ describe('ticket ownership', () => {
     ).toBe(
       `${withheld} Sent before the re-read: http.request slack · POST /chat.postMessage; mcp.call notion · update_page.`,
     );
+  });
+
+  describe('under the app actor (D6, AC8)', () => {
+    const APP_USER: PersonIdentity = { id: 'app-user-day0-leo' };
+    const MANAGER = { id: 'user-ana', email: 'ana@kestrel.test' };
+
+    it("holds a ticket by its delegate when one is set, else by its assignee: Linear's agent model", () => {
+      // Assigning an issue to an app sets it as the delegate; the person stays the assignee.
+      expect(
+        ticketHolder({
+          assigneeId: MANAGER.id,
+          delegateId: 'APP-USER-DAY0-LEO',
+          delegate: 'Day0 Leo',
+        }),
+      ).toEqual({ id: 'app-user-day0-leo', email: undefined });
+      expect(
+        ticketHolder({ assignee: { id: MANAGER.id }, delegate: { id: 'app-user-other' } }),
+      ).toEqual({
+        id: 'app-user-other',
+        email: undefined,
+      });
+      expect(ticketHolder({ assigneeId: MANAGER.id })).toEqual({
+        id: 'user-ana',
+        email: undefined,
+      });
+      expect(ticketHolder({ delegate: null, assignee: null })).toBeUndefined();
+    });
+
+    it('snapshots the holder, so a ticket delegated to the app user at listing stays its own', async () => {
+      const listed = ticketSnapshot({
+        status: 'Todo',
+        statusType: 'unstarted',
+        assigneeId: MANAGER.id,
+        delegateId: APP_USER.id,
+      });
+      expect(listed).toMatchObject({ assigned: true, assigneeId: 'app-user-day0-leo' });
+      const appUser = ownerRead(APP_USER);
+
+      await expect(
+        ticketChange(listed, { baseline: listed, owner: appUser.read }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('takes a ticket delegated to the app user and leaves one assigned to the manager', async () => {
+      const delegated = ticketSnapshot({
+        statusType: 'unstarted',
+        assigneeId: MANAGER.id,
+        delegateId: APP_USER.id,
+      });
+      const managers = ticketSnapshot({ statusType: 'unstarted', assigneeId: MANAGER.id });
+
+      await expect(
+        ticketChange(delegated, { owner: ownerRead(APP_USER).read }),
+      ).resolves.toBeUndefined();
+      await expect(ticketChange(managers, { owner: ownerRead(APP_USER).read })).resolves.toBe(
+        'it is assigned to another person',
+      );
+    });
+
+    it('names a delegation taken away since the listing as a change of hands', async () => {
+      const baseline = ticketSnapshot({
+        statusType: 'unstarted',
+        assigneeId: MANAGER.id,
+        delegateId: APP_USER.id,
+      });
+      const now = ticketSnapshot({ statusType: 'unstarted', assigneeId: MANAGER.id });
+
+      await expect(ticketChange(now, { baseline, owner: ownerRead(APP_USER).read })).resolves.toBe(
+        'it changed hands: it is assigned to another person',
+      );
+    });
+
+    it('reads the app user a card acts as from its probe, then from the landing, and never for a key', () => {
+      expect(
+        appIdentityOf({
+          actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-landed' },
+          providerIdentityId: 'APP-USER-PROBED',
+        }),
+      ).toEqual({ id: 'app-user-probed' });
+      expect(
+        appIdentityOf({
+          actsAs: { kind: 'shared-app', label: 'Day0', providerIdentityId: 'app-user-day0-shared' },
+        }),
+      ).toEqual({ id: 'app-user-day0-shared' });
+      expect(appIdentityOf({ actsAs: { kind: 'own-app', label: 'Day0 Leo' } })).toBeUndefined();
+      expect(
+        appIdentityOf({
+          actsAs: { kind: 'shared-key', label: 'Ana key' },
+          providerIdentityId: 'user-ana',
+        }),
+      ).toBeUndefined();
+      expect(appIdentityOf({})).toBeUndefined();
+    });
   });
 });
