@@ -338,6 +338,28 @@ describe('the dedicated-app procedure on the card', (): void => {
     ).toBe('installed');
   });
 
+  it("names why a renewal's install did not complete, and offers it again", (): void => {
+    const shown = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: {
+        appId: 'A1',
+        appName: 'Leo (Day0)',
+        installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+        installedAt: 1_787_800_000_000,
+        lastError: 'Slack oauth.v2.access failed: invalid_code.',
+      },
+      credentialHeld: false,
+    });
+    expect(shown).toMatchObject({
+      stage: 'reinstall',
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+    });
+    expect(shown.note).toContain('invalid_code');
+    expect(shown.note).toContain('Leo (Day0) stays in the workspace');
+  });
+
   it('keeps the shared-token fallback beside the procedure until one is stored', (): void => {
     expect(presentSurfaceCredential({ credential: oauth })).toMatchObject({
       canLand: true,

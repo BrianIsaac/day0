@@ -298,6 +298,12 @@ describe('the live feed labels', (): void => {
     expect(
       eventLabel({
         type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: [], needsPerson: ['#revops', '#revops-leads'] },
+      }),
+    ).toBe('#revops, #revops-leads need a person to add it');
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
         payload: { surfaceId: 's1', joined: [], needsPerson: [] },
       }),
     ).toBe('no channel to re-join');

@@ -456,7 +456,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     const joined = listed(payload.joined);
     const needing = listed(payload.needsPerson);
     if (joined === undefined && needing === undefined) return 'no channel to re-join';
-    const needs = needing === undefined ? '' : `${needing} needs a person to add it`;
+    const many = Array.isArray(payload.needsPerson) && payload.needsPerson.length > 1;
+    const needs =
+      needing === undefined ? '' : `${needing} ${many ? 'need' : 'needs'} a person to add it`;
     return joined === undefined ? needs : `re-joined ${joined}${needs ? `; ${needs}` : ''}`;
   },
   'plan.obligations-judged': 'plan obligations judged',

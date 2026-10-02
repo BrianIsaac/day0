@@ -163,6 +163,7 @@ export function presentProvisioning(input: {
     return {
       ...(provisioning.stateExpiresAt !== undefined ? { installUrl: provisioning.installUrl } : {}),
       note:
+        (provisioning.lastError ? `${provisioning.lastError} ` : '') +
         `${provisioning.appName} stays in the workspace, but its access ended and Slack took its ` +
         'bot out of every channel. Issue its install link again and have an administrator ' +
         'approve it: after the install the employee re-joins the public channels its approved ' +

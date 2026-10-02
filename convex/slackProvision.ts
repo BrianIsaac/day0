@@ -288,7 +288,7 @@ export const recordConfigurationUse = internalMutation({
   },
 });
 
-/** Why an app's record was refused: the card already has one, or the secret is not the app's. */
+/** Why an app's record was refused: the card was given an app meanwhile. */
 export const CARD_HAS_APP = 'This card already has its own Slack app.';
 
 const installLinkFields = {
