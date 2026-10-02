@@ -181,7 +181,7 @@ function organisationSystem(displayName: unknown): string {
 /** Who changed an organisation connection, at the end of a sentence: an administrator, or the setup verb. */
 function registeredVia(via: unknown): string {
   if (via === 'organisation-page') return ' by an administrator';
-  if (via === 'setup-cli') return ' by the setup verb';
+  if (via === 'setup-cli') return ' by the setup command';
   return '';
 }
 

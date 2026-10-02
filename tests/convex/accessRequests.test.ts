@@ -111,7 +111,7 @@ describe('the access request a card shows (A24)', (): void => {
     });
     expect(view?.text).toContain('Maya, a Day0 employee, needs access to Linear');
     expect(view?.text).toContain('“Linear is the formal work queue”');
-    expect(view?.text).toContain('For how long: until 2026-12-31.');
+    expect(view?.text).toContain('For how long: until 31 December 2026.');
     expect(view).not.toHaveProperty('draftedAt');
     await connectLinear(harness);
     await expect(owner.query(api.accessRequests.forCard, { surfaceId })).resolves.toBeNull();

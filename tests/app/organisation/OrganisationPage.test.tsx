@@ -222,7 +222,7 @@ describe('the organisation page for an administrator', (): void => {
     expect(lines[0]).toContain(
       "The organisation's Acme docs connection was revoked by an administrator: The server moved. By ines@acme.test.",
     );
-    expect(lines[1]).toContain('Slack was connected for the organisation by the setup verb.');
+    expect(lines[1]).toContain('Slack was connected for the organisation by the setup command.');
   });
 
   it('says no system is connected yet, and how IT connects one', async (): Promise<void> => {

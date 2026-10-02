@@ -273,7 +273,7 @@ describe('the access request’s words, the same wherever they are shown', (): v
         'Linear is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.',
         'Access needed: linear:read, linear:write.',
         'Why Maya needs it, from the team’s documentation: “Linear is the formal work queue”; “Tickets are triaged every morning”.',
-        'For how long: until 2026-12-31.',
+        'For how long: until 31 December 2026.',
         'How to connect it: an administrator runs ./setup.sh access for linear, following docs/running/access-linear.md, or uses the organisation page at https://day0.acme.test/organisation.',
         'Nothing changes until IT connects it; then Connect appears on Maya’s card.',
       ].join('\n'),

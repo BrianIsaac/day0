@@ -124,12 +124,14 @@ step 1.4 is the gate.
 
 ## 5. The secret and its lifetime
 
-The configuration token expires 12 hours after it is generated; Day0 renews it with its refresh token each time it creates an app, and each renewal returns a new pair.
+The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token an hour before it lapses and before any use in its last half hour, and the refresh token also renews a token that has lapsed; each renewal returns a new pair.
 
-So hand both to the setup verb within 12 hours of generating them. If an
-install runs later than that, generate a new pair. The refresh token keeps the
-connection usable for as long as Day0 keeps renewing it; an administrator
-rotates or revokes the connection on Day0's organisation page.
+So hand both to the setup verb together: an install that runs after the
+configuration token has lapsed still lands, and Day0 renews the token with the
+refresh token at its first use. The refresh token keeps the connection usable
+for as long as Day0 keeps renewing it; once Day0 has renewed the pair, the one
+you generated is spent. An administrator rotates or revokes the connection on
+Day0's organisation page.
 
 ## 6. What to hand to the setup verb
 
@@ -166,7 +168,7 @@ redirect URI above.
 | `redirect` | `pass`: the registered redirect is `${DAY0_PUBLIC_URL}/api/oauth/slack` |
 | `scopes` | `pass`: the nine scopes above |
 | `secret` | `pass`: opens under the deployment's key |
-| `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token is more than 12 hours old, which the refresh token renews when Day0 next creates an app |
+| `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token has lapsed, which the refresh token renews at Day0's next use of it |
 
 A `GAP` names what to fix: a redirect that is not Day0's (the public address
 changed since the connection was landed), a scope the connection lacks, a

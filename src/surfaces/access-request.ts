@@ -1,4 +1,3 @@
-import { dayKey } from '../lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS } from './access';
 import type {
   AccessRequestReason,
@@ -292,11 +291,21 @@ function evidenceLine(card: AccessRequestCard, employee: string): string | undef
     : `Why ${employee} needs it, from the team’s documentation: ${quotes.join('; ')}.`;
 }
 
-/** How long the access is for: the card's end date, or the approval's default length. */
+/**
+ * How long the access is for: the card's end date as a person reads a date ("31 December 2026",
+ * in the employee's zone; the cockpit's kit item), or the approval's default length.
+ */
 function lengthLine(card: AccessRequestCard, zone: string): string {
-  return card.expiresAt === undefined
-    ? `For how long: ${SURFACE_ACCESS_DEFAULT_DAYS} days from approval, renewed by the manager.`
-    : `For how long: until ${dayKey(card.expiresAt, zone)}.`;
+  if (card.expiresAt === undefined) {
+    return `For how long: ${SURFACE_ACCESS_DEFAULT_DAYS} days from approval, renewed by the manager.`;
+  }
+  const until = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: zone,
+  }).format(card.expiresAt);
+  return `For how long: until ${until}.`;
 }
 
 /**

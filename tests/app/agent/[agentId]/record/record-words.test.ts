@@ -520,7 +520,7 @@ describe('the access request and the organisation connection ledger in the recor
         { type: 'organisation.connection-rotated', payload: { ...named, via: 'setup-cli' } },
         subject,
       ),
-    ).toBe("The organisation's Slack connection was given a new secret by the setup verb.");
+    ).toBe("The organisation's Slack connection was given a new secret by the setup command.");
     expect(
       recordWords(
         {

@@ -345,7 +345,7 @@ async function slackIdentity(
       'identity',
       'warn',
       'The configuration token has expired (12 hours after it was generated). Its refresh token ' +
-        'renews it when Day0 next creates an app; the check does not rotate it, since a rotation ' +
+        "renews it at Day0's next use of it; the check does not rotate it, since a rotation " +
         'replaces the pair.',
     );
   }
