@@ -14,6 +14,7 @@ import {
   recordOrRelease,
   storeSecrets,
   type Landing,
+  type Registration,
 } from '../../convex/organisationConnections';
 import type { ActionCtx } from '../../convex/_generated/server';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
@@ -71,6 +72,13 @@ beforeEach((): void => {
 afterEach((): void => {
   vi.unstubAllEnvs();
 });
+
+/** A landing's registration: the landing without its secret and refresh token. */
+function withoutSecrets(landing: Landing): Registration {
+  return Object.fromEntries(
+    Object.entries(landing).filter(([key]) => key !== 'secret' && key !== 'refreshToken'),
+  ) as Registration;
+}
 
 /** Every row of the organisation's two tables and its credentials, as stored. */
 async function organisationRows(harness: TestConvex<typeof schema>): Promise<{
@@ -517,7 +525,7 @@ describe('the second pass on landing, rotating and the system key (11-AO review)
     const harness = convexTest(schema, allConvexModules());
     await harness.action(internal.organisationConnections.landFromSetup, LINEAR);
     const late = await storedSecret(harness, 'lin_oauth_late_000');
-    const { secret: _secret, refreshToken: _refresh, ...registration } = LINEAR;
+    const registration = withoutSecrets(LINEAR);
     await expect(
       harness.mutation(internal.organisationConnections.recordLanded, {
         landing: registration,
@@ -666,7 +674,7 @@ describe('the re-review of the release path and the page reads (11-AO)', (): voi
 
   it('hands the recording mutation no secret: it refuses a landing that carries one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { refreshToken: _refreshToken, ...withSecret } = SLACK;
+    const withSecret = { ...withoutSecrets(SLACK), secret: SLACK.secret };
     await expect(
       harness.mutation(internal.organisationConnections.recordLanded, {
         landing: withSecret as never,
