@@ -63,6 +63,16 @@ export const TRANSFER_ROW_CANCEL_REASONS = [
 export type TransferRowCancelReason = (typeof TRANSFER_ROW_CANCEL_REASONS)[number];
 
 /**
+ * Whether a cancelled request's reason says an accepted handover ended without its move: the
+ * end's own reason, or none, which is how a release before the wave 11 schema step stored it.
+ *
+ * @param reason - The row's `cancelReason`.
+ */
+export function endedWithoutMove(reason: TransferRowCancelReason | undefined): boolean {
+  return reason === undefined || reason === HANDOVER_ENDED_CANCEL_REASON;
+}
+
+/**
  * The states each state may move to. There is no reopening: a declined or
  * expired request is asked again as a new row, so the record keeps each
  * attempt, and an acceptance once given is irrevocable.

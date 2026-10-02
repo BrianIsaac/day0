@@ -57,6 +57,7 @@ import {
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
   type TransferCancelReason,
+  endedWithoutMove,
   transferExpiresAt,
   transferStateRefusal,
   UNVERIFIED_FOR_ASK,
@@ -794,7 +795,8 @@ const endedHandoverValidator = v.object({
  * without the move in the last 30 days (decision 4: the settle's automatic end, or the
  * operator's), so the acceptor's home says the employee is not coming, as the old manager's
  * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
- * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`); one whose employee
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`): `handover-ended`, or
+ * none on a row an older release ended ({@link endedWithoutMove}); one whose employee
  * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
  * anonymous caller, or one without a verified address, has none. Reads at most
  * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
@@ -811,7 +813,7 @@ export const endedForMe = query({
     const ended = cancelled.filter(
       (transfer) =>
         transfer.toOwnerKey === caller.ownerKey &&
-        transfer.cancelReason === undefined &&
+        endedWithoutMove(transfer.cancelReason) &&
         transfer.decidedAt !== undefined &&
         transfer.decidedAt >= since,
     );
