@@ -96,6 +96,16 @@ export const MAX_DECLINE_REASON_LENGTH = 500;
 /** How long a finished request stays among the old manager's notices. */
 export const TRANSFER_DEPARTURES_WINDOW_MS = 30 * DAY_MS;
 
+/**
+ * Whether a request answered at `decidedAt` is still the old manager's to read at `now`: one
+ * rule for the home's line and the old link to a handed-over employee (the operator's ruling of
+ * 2 October, decision 8), so the link never outlives the "Your home lists the handover for 30
+ * days." it says.
+ */
+export function isDepartureListed(decidedAt: number, now: number): boolean {
+  return decidedAt >= now - TRANSFER_DEPARTURES_WINDOW_MS;
+}
+
 /** Whether a request in this state is still open. */
 export function isOpenTransferState(
   state: ManagerTransferState,

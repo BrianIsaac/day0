@@ -2,11 +2,14 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import type { WithoutSystemFields } from 'convex/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { TRANSFER_EXPIRY_MS } from '../../src/agent/manager-transfer';
+import {
+  TRANSFER_DEPARTURES_WINDOW_MS,
+  TRANSFER_EXPIRY_MS,
+} from '../../src/agent/manager-transfer';
 import { allConvexModules } from './all-modules';
 import {
   fixtureAddressOf,
@@ -22,6 +25,12 @@ const OWNER = managerIdentity();
 const PRIYA = managerIdentity('priya');
 const PRIYA_ADDRESS = fixtureAddressOf('priya');
 const WEI = managerIdentity('wei');
+
+// The fixtures answer their requests a few seconds after the epoch; the clock stands just after
+// them, inside the thirty days the old manager reads a handover for (decision 8).
+beforeEach((): void => {
+  vi.useFakeTimers({ now: 10_000, toFake: ['Date'] });
+});
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -238,6 +247,50 @@ describe('transferDepartures.employeePage, the harder cases', (): void => {
         .withIdentity(OWNER)
         .query(api.transferDepartures.employeePage, { agentId: orphan }),
     ).toEqual({ page: 'not-yours' });
+  });
+});
+
+describe('transferDepartures.employeePage, the thirty days (decision 8)', (): void => {
+  it('answers the old link as any employee not the caller’s once thirty days have passed since the acceptance, as the home stops listing it', async (): Promise<void> => {
+    const accepted = Date.UTC(2026, 8, 1);
+    // The requests are written at the acceptance, as the home's read bounds them by creation.
+    vi.setSystemTime(accepted);
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, 'Maya', { userId: 'priya' });
+    const wren = await employee(harness, 'Wren', { userId: 'priya' });
+    for (const agentId of [maya, wren]) {
+      await insertRequest(harness, {
+        agentId,
+        agentName: agentId === maya ? 'Maya' : 'Wren',
+        requestedAt: accepted - 1_000,
+        state: 'accepted',
+        decidedAt: accepted,
+        toOwnerKey: 'priya',
+      });
+    }
+    await harness.run(async (ctx) => await ctx.db.delete(wren));
+    const asOwner = harness.withIdentity(OWNER);
+    const read = async (): Promise<unknown[]> => [
+      await asOwner.query(api.transferDepartures.employeePage, { agentId: maya }),
+      await asOwner.query(api.transferDepartures.employeePage, { agentId: wren }),
+      (await asOwner.query(api.managerTransfers.departures, {}))
+        .map((row) => row.agentName)
+        .toSorted(),
+    ];
+
+    vi.setSystemTime(accepted + TRANSFER_DEPARTURES_WINDOW_MS - 1);
+    expect(await read()).toEqual([
+      { page: 'departed', departure: expect.objectContaining({ agentName: 'Maya' }) },
+      {
+        page: 'departed',
+        departure: expect.objectContaining({ agentName: 'Wren', afterwards: 'retired' }),
+      },
+      ['Maya', 'Wren'],
+    ]);
+
+    // One rule for the home's line and the page: past it, neither names the handover.
+    vi.setSystemTime(accepted + TRANSFER_DEPARTURES_WINDOW_MS + 1);
+    expect(await read()).toEqual([{ page: 'not-yours' }, { page: 'employee' }, []]);
   });
 });
 

@@ -640,8 +640,8 @@ function sinceWords(
 
 /**
  * Where the old manager's own record of a handover is, for as long as the home lists it: the
- * departed page has no window, so it says the home's (the second pass: "your record ... is on
- * your home" was untrue after 30 days).
+ * departed page answers for the same thirty days (`isDepartureListed`, decision 8), so the line
+ * stays true for as long as the page draws it.
  */
 const HOME_LISTS_IT = `Your home lists the handover for ${Math.round(TRANSFER_DEPARTURES_WINDOW_MS / 86_400_000)} days.`;
 

@@ -1,4 +1,5 @@
 import { v, type Infer } from 'convex/values';
+import { isDepartureListed } from '../src/agent/manager-transfer';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
 import { assertOwnsAgent, getCaller } from './ownership';
@@ -100,8 +101,10 @@ function lastDeparture(
  * subscribes to the read that refuses it (the v0.12.0 walk: that refusal reached the old
  * manager's console on every load). `employee` for the caller's own employee, and for an id that
  * names no employee or none the caller ever handed over, which the page's own read then answers;
- * `departed` with where it went and what became of it since, for one the caller handed over;
- * `not-yours` for another account's employee, as the page's own read would refuse it. An
+ * `departed` with where it went and what became of it since, for one the caller handed over in
+ * the thirty days the home lists it (`isDepartureListed`, the operator's ruling of 2 October,
+ * decision 8), and past them as any employee not the caller's; `not-yours` for another account's
+ * employee, as the page's own read would refuse it. An
  * anonymous caller is left to the page's own read. Writes nothing.
  */
 export const employeePage = query({
@@ -119,7 +122,11 @@ export const employeePage = query({
       .order('desc')
       .take(EMPLOYEE_REQUESTS_LIMIT);
     const own = lastDeparture(accepted, caller.ownerKey);
-    if (own === undefined) return employee === null ? { page: 'employee' } : { page: 'not-yours' };
+    // Past the home's window the handover is no longer the reader's to read (decision 8): the
+    // link answers as any employee that is not theirs does.
+    if (own === undefined || !isDepartureListed(own.decidedAt ?? own.requestedAt, Date.now())) {
+      return employee === null ? { page: 'employee' } : { page: 'not-yours' };
+    }
     const afterwards = await afterwardsOf(ctx, own, caller.ownerKey);
     return {
       page: 'departed',

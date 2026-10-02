@@ -35,6 +35,7 @@ import {
   DECLINE_REASON_TOO_LONG,
   EVALUATION_ADDRESS_TRANSFER_REFUSAL,
   EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  isDepartureListed,
   isTransferDue,
   LOCAL_DEV_TRANSFER_REFUSAL,
   MANAGER_TRANSFER_STATES,
@@ -905,7 +906,7 @@ export const departures = query({
           transfer.state === 'asked'
             ? transfer.expiresAt
             : (transfer.decidedAt ?? transfer.expiresAt);
-        return decidedAt < since ? [] : [{ transfer, state, decidedAt }];
+        return isDepartureListed(decidedAt, now) ? [{ transfer, state, decidedAt }] : [];
       })
       .sort((left, right) => right.decidedAt - left.decidedAt)
       .slice(0, DEPARTURES_LIMIT);
