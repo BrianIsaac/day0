@@ -11,6 +11,7 @@ import {
   newPkcePair,
   readLinearViewer,
   readTokenResponse,
+  revokeLinearToken,
   renewalDueAt,
   requestAppActorToken,
   requestLinearTokens,
@@ -309,5 +310,25 @@ describe('a refused bearer', (): void => {
     expect(isTokenRefusal('HTTP 401')).toBe(true);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe('revoking a token Day0 will not keep', (): void => {
+  it('posts the token with its hint, and takes an already revoked one as done', async (): Promise<void> => {
+    const { fetch, sent } = answering(200, {});
+    await revokeLinearToken(fetch, 'lin_refresh_1', 'refresh_token');
+    expect(sent[0]?.url).toBe('https://api.linear.app/oauth/revoke');
+    expect(formOf(sent[0]!.init)).toEqual({
+      token: 'lin_refresh_1',
+      token_type_hint: 'refresh_token',
+    });
+
+    await expect(
+      revokeLinearToken(answering(400, { error: 'invalid_token' }).fetch, 'gone', 'access_token'),
+    ).resolves.toBeUndefined();
+    expect(
+      (await refusalOf(revokeLinearToken(answering(503, 'busy').fetch, 't', 'access_token')))
+        .reason,
+    ).toBe('unavailable');
   });
 });
