@@ -70,10 +70,14 @@ const EMPLOYEE_METRICS = {
 vi.mock('convex/react', () => {
   const answer = (reference: FunctionReference<'query'>): unknown => {
     const name = getFunctionName(reference);
-    if (name === 'agents:listForUser') {
-      return [
-        { _id: 'synthetic-owner-agent', name: 'Recorded colleague', state: 'active', createdAt: 1 },
-      ];
+    if (name === 'reset:holdings') {
+      return {
+        employees: true,
+        skillLibrary: false,
+        handoverWords: false,
+        retiredBoundaries: false,
+        documentation: false,
+      };
     }
     if (name === 'metrics:forOwner') {
       return {
@@ -133,7 +137,7 @@ describe('the landing page with a company', (): void => {
     expect(card).toBeGreaterThan(-1);
     expect(card).toBeGreaterThan(html.indexOf('Your employees'));
     expect(card).toBeGreaterThan(html.indexOf('Mini office world'));
-    expect(card).toBeLessThan(html.indexOf('Reset demo'));
+    expect(card).toBeLessThan(html.indexOf('>Your data<'));
     expect(html).toContain('1 min 7 s');
   });
 });

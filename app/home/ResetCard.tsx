@@ -1,53 +1,87 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { StatusRegion } from '../components/StatusRegion';
 import { useChange } from '../components/use-change';
 
+/** What a deletion of the manager's data would take, as the backend reads it. */
+type Holdings = NonNullable<FunctionReturnType<typeof api.reset.holdings>>;
+
 /**
- * What a reset came to, in the warning's own verbs. The count of employees is not said: the
- * reset also clears evaluation agents the roster never shows, so a number would not match the
+ * What a deletion came to, in the warning's own verbs. The count of employees is not said: the
+ * deletion also clears evaluation agents the roster never shows, so a number would not match the
  * page the manager just saw.
  *
- * @param unlinkedSources - How many documentation sources the reset unlinked.
+ * @param unlinkedSources - How many documentation sources the deletion unlinked.
  */
 export function resetOutcome(unlinkedSources: number): string {
   return unlinkedSources > 0
-    ? `Every employee and its data are deleted, and ${unlinkedSources} documentation ${unlinkedSources === 1 ? 'source is' : 'sources are'} unlinked.`
-    : 'Every employee and its data are deleted.';
+    ? `Your data is deleted, and ${unlinkedSources} documentation ${unlinkedSources === 1 ? 'source is' : 'sources are'} unlinked.`
+    : 'Your data is deleted.';
 }
 
 /**
- * What the reset does, said in its confirmation.
+ * What the deletion does, said in its confirmation.
  *
  * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
  */
 export function resetWarning(alsoUnlinkDocumentation: boolean): string {
   return alsoUnlinkDocumentation
-    ? 'This deletes every employee and its data, and unlinks every documentation source. It cannot be undone.'
-    : 'This deletes every employee and its data. Your documentation stays linked. It cannot be undone.';
+    ? 'This deletes every employee and its data, your skill library and the notes on your handover requests, and unlinks every documentation source. It cannot be undone.'
+    : 'This deletes every employee and its data, your skill library and the notes on your handover requests. Your documentation stays linked. It cannot be undone.';
+}
+
+/** Each kind of stored row, in the words the card lists it by, in the order it lists them. */
+const HELD_WORDS: ReadonlyArray<readonly [keyof Holdings, string]> = [
+  ['employees', 'your employees'],
+  ['skillLibrary', 'your skill library'],
+  ['handoverWords', 'the notes on your handover requests'],
+  ['retiredBoundaries', 'the claims your retired employees kept'],
+  ['documentation', 'your linked documentation'],
+];
+
+/**
+ * What is stored for the manager now, so a live button says what it would take and a disabled
+ * one says why it is disabled.
+ *
+ * @param holdings - What the deletion would take, as the backend reads it.
+ */
+export function heldNow(holdings: Holdings): string {
+  const held = HELD_WORDS.filter(([kind]) => holdings[kind]).map(([, words]) => words);
+  if (held.length === 0) return 'Nothing of yours is stored now.';
+  const listed = held.length === 1 ? held[0] : `${held.slice(0, -1).join(', ')} and ${held.at(-1)}`;
+  return `Stored for you now: ${listed}.`;
 }
 
 /**
- * The demo reset: wipes every employee and what it made, and optionally unlinks the owner's
- * documentation. Disabled while there is nothing to wipe. Pressing it opens the shared
- * confirmation dialog, Keep everything focused first; what the reset came to is said on the card
- * and focus comes back to the button, or to the card once nothing is left for the button to wipe.
- *
- * @param hasEmployees - Whether the owner has any agent row, evaluation agents included.
- * @param hasDocumentation - Whether the owner has linked documentation.
+ * Whether a deletion would take anything: any stored row it removes, or the documentation once the
+ * manager has chosen to unlink it.
  */
-export function ResetCard({
-  hasEmployees,
-  hasDocumentation,
-}: {
-  hasEmployees: boolean;
-  hasDocumentation: boolean;
-}) {
+function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): boolean {
+  return (
+    holdings.employees ||
+    holdings.skillLibrary ||
+    holdings.handoverWords ||
+    holdings.retiredBoundaries ||
+    (alsoUnlinkDocumentation && holdings.documentation)
+  );
+}
+
+/**
+ * The deletion of the manager's data: every employee and what it made, the skill library, the
+ * notes on their handover requests, and optionally the documentation. Live whenever the account
+ * holds anything the deletion would take, an employee or not (the v0.13.0 walk), and disabled
+ * while it holds nothing or the page has not read it yet. Pressing it opens the shared
+ * confirmation dialog, Keep my data focused first; what the deletion came to is said on the card
+ * and focus comes back to the button, or to the card once nothing is left for the button to take.
+ */
+export function ResetCard() {
+  const holdings = useQuery(api.reset.holdings);
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -55,6 +89,7 @@ export function ResetCard({
   const keep = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
+  const deletable = holdings ? hasDataToDelete(holdings, alsoUnlinkDocumentation) : false;
 
   const close = (): void => {
     change.clear();
@@ -65,18 +100,22 @@ export function ResetCard({
     <section
       ref={card}
       tabIndex={-1}
-      aria-labelledby="reset-demo-title"
+      aria-labelledby="delete-my-data-title"
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5 outline-none"
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 id="reset-demo-title" className="mb-1 text-sm font-semibold">
-            Reset demo
+          <h2 id="delete-my-data-title" className="mb-1 text-sm font-semibold">
+            Your data
           </h2>
           <p className="text-sm text-[var(--color-muted)]">
-            Wipe every employee and its workspace, charter, work items, skills and mock environment
-            rows you’ve created. Useful between demos.
+            Delete every employee and its workspace, charter, work items, skills and mock
+            environment rows, your skill library, and the notes on your handover requests. The
+            requests stay in the other manager’s record. Useful between demos.
           </p>
+          {holdings ? (
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{heldNow(holdings)}</p>
+          ) : null}
           <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
             <input
               type="checkbox"
@@ -94,19 +133,17 @@ export function ResetCard({
             change.clear();
             setConfirming(true);
           }}
-          disabled={
-            change.busy || (!hasEmployees && (!alsoUnlinkDocumentation || !hasDocumentation))
-          }
+          disabled={change.busy || !deletable}
           className="shrink-0 self-start sm:self-center"
         >
-          {change.busy ? 'Resetting…' : 'Reset everything'}
+          {change.busy ? 'Deleting…' : 'Delete my data'}
         </Button>
       </div>
       <StatusRegion outcome={confirming ? null : change.outcome} />
       {confirming ? (
         <Dialog
           role="alertdialog"
-          title="Reset everything?"
+          title="Delete your data?"
           description={resetWarning(alsoUnlinkDocumentation)}
           onClose={close}
           initialFocus={keep}
@@ -115,7 +152,7 @@ export function ResetCard({
           <StatusRegion outcome={change.outcome} />
           <div className="flex flex-wrap justify-end gap-2">
             <Button ref={keep} size="large" disabled={change.busy} onClick={close}>
-              Keep everything
+              Keep my data
             </Button>
             <Button
               variant="danger"
@@ -124,15 +161,15 @@ export function ResetCard({
               onClick={() =>
                 change.run(() => reset({ alsoUnlinkDocumentation }), {
                   done: (result) => resetOutcome(result.unlinkedSources),
-                  refused: 'Nothing was reset.',
+                  refused: 'Nothing was deleted.',
                   after: () => setConfirming(false),
-                  // The button is disabled once nothing is left to wipe; the card takes focus then.
+                  // The button is disabled once nothing is left to take; the card takes focus then.
                   focus: () =>
                     opener.current && !opener.current.disabled ? opener.current : card.current,
                 })
               }
             >
-              Reset everything
+              Delete my data
             </Button>
           </div>
         </Dialog>
