@@ -314,6 +314,65 @@ describe('discovery', (): void => {
     ).toBe('issuer-mismatch');
   });
 
+  it('falls through to the next well-known URI when one cannot be reached or does not validate', async (): Promise<void> => {
+    const server = issuer();
+    const flaky: OauthFetch = async (url, init) => {
+      if (url.pathname === '/mcp') throw new Error('socket hang up');
+      if (url.pathname === '/.well-known/oauth-protected-resource/mcp') {
+        throw new Error('connect ECONNRESET');
+      }
+      if (url.pathname === '/.well-known/oauth-authorization-server') {
+        return Response.json({ issuer: ISSUER, authorization_endpoint: `${ISSUER}/authorize` });
+      }
+      return await fetchTo(server)(url, init);
+    };
+    const target = await discoverAuthorisation(flaky, new URL(RESOURCE));
+    expect(target.server.issuer).toBe(ISSUER);
+    expect(target.server.tokenEndpoint).toBe(`${ISSUER}/token`);
+  });
+
+  it('falls back to the well-known URIs when the challenge names a malformed metadata URL', async (): Promise<void> => {
+    const server = issuer();
+    const malformed: OauthFetch = async (url, init) =>
+      url.pathname === '/mcp' && init.method === 'POST'
+        ? new Response(null, {
+            status: 401,
+            headers: { 'www-authenticate': 'Bearer resource_metadata="not a url"' },
+          })
+        : await fetchTo(server)(url, init);
+    expect((await discoverAuthorisation(malformed, new URL(RESOURCE))).server.issuer).toBe(ISSUER);
+  });
+
+  it('refuses to choose between several authorisation servers when none was registered', async (): Promise<void> => {
+    const server = issuer();
+    const several: OauthFetch = async (url, init) =>
+      url.pathname === '/.well-known/oauth-protected-resource/mcp'
+        ? Response.json({
+            resource: RESOURCE,
+            authorization_servers: [ISSUER, 'https://second.acme.test'],
+          })
+        : await fetchTo(server)(url, init);
+    expect((await refusalOf(discoverAuthorisation(several, new URL(RESOURCE)))).reason).toBe(
+      'issuer-ambiguous',
+    );
+  });
+
+  it('gives every request a timeout when the caller set none', async (): Promise<void> => {
+    const server = issuer();
+    const signals: (AbortSignal | undefined)[] = [];
+    const fetch = addressCheckedFetch({
+      resolve: async (): Promise<string[]> => ['93.184.216.34'],
+      request: (url, options, callback) => {
+        signals.push(options.signal ?? undefined);
+        return issuerTransport(server, [])(url, options, callback);
+      },
+      privateHosts: privateHostAllowlist(''),
+    });
+    await fetchAuthorisationServerMetadata(fetch, ISSUER);
+    expect(signals.length).toBeGreaterThan(0);
+    for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('honours the address rules and the pinned fetch for every discovery request', async (): Promise<void> => {
     const server = issuer();
     const dialled: { url: URL; resolvedTo: unknown }[] = [];
@@ -501,6 +560,67 @@ describe('the token requests', (): void => {
         'secret',
       ),
     ).toThrow(McpOauthRefusal);
+  });
+
+  it('reads a busy or failing token endpoint as unavailable, not as a refusal', (): void => {
+    for (const status of [429, 500, 503]) {
+      expect(
+        reasonOf(() => readTokenResponse(status, { error: 'temporarily_unavailable' }, 0)),
+      ).toBe('token-unavailable');
+    }
+    expect(reasonOf(() => readTokenResponse(400, { error: 'invalid_grant' }, 0))).toBe(
+      'token-refused',
+    );
+  });
+
+  it('keeps an error code only when it is a code, never free text', (): void => {
+    let refusal: McpOauthRefusal | undefined;
+    try {
+      readTokenResponse(400, { error: 'the grant was revoked by an administrator' }, 0);
+    } catch (error) {
+      refusal = error as McpOauthRefusal;
+    }
+    expect(refusal?.oauthError).toBeUndefined();
+    expect(refusal?.message).toContain('HTTP 400');
+  });
+
+  it('takes a lifetime the server sent as a numeric string', (): void => {
+    expect(
+      readTokenResponse(
+        200,
+        { access_token: 'x', token_type: 'Bearer', expires_in: '3600' },
+        1_000,
+      ),
+    ).toEqual({ accessToken: 'x', expiresAt: 1_000 + 3_600_000 });
+  });
+
+  it('form-encodes the client id and secret before the Basic pair (RFC 6749 section 2.3.1)', async (): Promise<void> => {
+    const sent: Sent[] = [];
+    const capture: OauthFetch = async (url, init) => {
+      sent.push({
+        url: url.href,
+        method: init.method ?? 'GET',
+        headers: new Headers(init.headers),
+        body: String(init.body),
+      });
+      return Response.json({ access_token: 'a', token_type: 'Bearer' });
+    };
+    await requestTokens(
+      capture,
+      {
+        tokenEndpoint: `${ISSUER}/token`,
+        clientId: 'day0 mcp',
+        auth: { method: 'client_secret_basic', secret: 'a b~c' },
+        resource: RESOURCE,
+        grant: { grant: 'refresh_token', refreshToken: 'r' },
+      },
+      0,
+    );
+    const pair = Buffer.from(
+      (sent[0].headers.get('authorization') ?? '').replace(/^Basic /, ''),
+      'base64',
+    ).toString('utf8');
+    expect(pair).toBe('day0+mcp:a+b%7Ec');
   });
 
   it('names the server’s error code and never its description', (): void => {

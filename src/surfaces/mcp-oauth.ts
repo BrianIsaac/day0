@@ -34,8 +34,14 @@ const DISCOVERY_PROTOCOL_VERSION = '2025-11-25';
 /** The largest metadata or token response read, well above any real one. */
 const OAUTH_RESPONSE_LIMIT_CHARS = 64 * 1024;
 
-/** How an OAuth error code may look before it is repeated on a card (RFC 6749 section 5.2's charset). */
-const OAUTH_ERROR_CODE = /^[\x20-\x21\x23-\x5b\x5d-\x7e]{1,64}$/;
+/**
+ * How an OAuth error code looks before it is repeated on a card: the registered codes' shape
+ * (`invalid_grant`), never free text a server put in the field.
+ */
+const OAUTH_ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/** How long one discovery, token or registration request may take before it is abandoned. */
+export const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
 
 /** Why the client would not go on; each is a fact the card can name. */
 export const MCP_OAUTH_REFUSALS = [
@@ -43,10 +49,12 @@ export const MCP_OAUTH_REFUSALS = [
   'resource-mismatch',
   'no-authorisation-server',
   'issuer-mismatch',
+  'issuer-ambiguous',
   'pkce-unsupported',
   'insecure-endpoint',
   'client-authentication-unsupported',
   'token-refused',
+  'token-unavailable',
   'token-malformed',
   'registration-refused',
 ] as const;
@@ -351,7 +359,10 @@ export function readAuthorisationServerMetadata(
   };
 }
 
-/** A response's JSON body, read to a bound, or undefined when it is not JSON. */
+/**
+ * A response's JSON body, or undefined when it is not JSON or is larger than any metadata document
+ * or token response is. The pinned transport bounds the read itself (4 MiB).
+ */
 async function jsonOf(response: Response): Promise<unknown> {
   const text = await response.text();
   if (text.length > OAUTH_RESPONSE_LIMIT_CHARS) return undefined;
@@ -363,9 +374,19 @@ async function jsonOf(response: Response): Promise<unknown> {
   }
 }
 
-/** A GET of a metadata document, or undefined when that URL does not hold one. */
+/**
+ * A GET of a metadata document, or undefined when that URL holds none or cannot be reached: the
+ * revision has a client try every well-known URI, so one that fails is passed over, not fatal.
+ */
 async function metadataAt(fetch: OauthFetch, url: URL): Promise<unknown> {
-  const response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
+  } catch {
+    // Not reachable at this URL (a transport failure, or an address the rules refuse): the next
+    // well-known URI is tried, and a discovery that finds none says so.
+    return undefined;
+  }
   if (!response.ok) {
     await response.body?.cancel();
     return undefined;
@@ -374,59 +395,127 @@ async function metadataAt(fetch: OauthFetch, url: URL): Promise<unknown> {
 }
 
 /**
+ * The first candidate URL whose document validates, trying each in order; a document that fails
+ * validation is passed over like one that is absent, and its refusal is the answer if none passes.
+ */
+async function firstValid<T>(
+  fetch: OauthFetch,
+  candidates: readonly URL[],
+  read: (document: unknown) => T,
+): Promise<{ readonly value: T } | { readonly refusal?: McpOauthRefusal }> {
+  let refusal: McpOauthRefusal | undefined;
+  for (const url of candidates) {
+    const document = await metadataAt(fetch, url);
+    if (document === undefined) continue;
+    try {
+      return { value: read(document) };
+    } catch (error) {
+      if (!(error instanceof McpOauthRefusal)) throw error;
+      refusal ??= error;
+    }
+  }
+  return refusal ? { refusal } : {};
+}
+
+/**
  * Fetch and validate an issuer's metadata, trying the revision's well-known URIs in order.
  *
- * @throws McpOauthRefusal `no-authorisation-server` when none answers with a document, or the
- *   validation's refusal for the first that does.
+ * @throws McpOauthRefusal the first validation's refusal when no document passes, or
+ *   `no-authorisation-server` when none answers with a document.
  */
 export async function fetchAuthorisationServerMetadata(
   fetch: OauthFetch,
   issuer: string,
   options: MetadataOptions = {},
 ): Promise<AuthorisationServerMetadata> {
-  for (const url of authorisationServerMetadataUrls(issuer)) {
-    const document = await metadataAt(fetch, url);
-    if (document !== undefined) return readAuthorisationServerMetadata(document, issuer, options);
-  }
-  throw new McpOauthRefusal(
-    'no-authorisation-server',
-    `The authorisation server ${issuer} publishes no metadata Day0 can read.`,
+  const found = await firstValid(fetch, authorisationServerMetadataUrls(issuer), (document) =>
+    readAuthorisationServerMetadata(document, issuer, options),
+  );
+  if ('value' in found) return found.value;
+  throw (
+    found.refusal ??
+    new McpOauthRefusal(
+      'no-authorisation-server',
+      `The authorisation server ${issuer} publishes no metadata Day0 can read.`,
+    )
   );
 }
 
 /** The challenge an unauthenticated MCP request is answered with, if any. */
 async function challengeOf(fetch: OauthFetch, endpoint: URL): Promise<BearerChallenge | undefined> {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 0,
-      method: 'initialize',
-      params: {
-        protocolVersion: DISCOVERY_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: 'day0', version: '1' },
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
       },
-    }),
-  });
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'initialize',
+        params: {
+          protocolVersion: DISCOVERY_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'day0', version: '1' },
+        },
+      }),
+    });
+  } catch {
+    // No challenge to read: discovery goes on to the well-known URIs, as for a server that sends none.
+    return undefined;
+  }
   await response.body?.cancel();
   return response.status === 401
     ? parseBearerChallenge(response.headers.get('www-authenticate'))
     : undefined;
 }
 
+/** The challenge's metadata URL when it is one, then the well-known URIs, without repeats. */
+function resourceMetadataCandidates(endpoint: URL, named: string | undefined): URL[] {
+  const wellKnown = protectedResourceMetadataUrls(endpoint);
+  let fromChallenge: URL | undefined;
+  try {
+    fromChallenge = named === undefined ? undefined : new URL(named);
+  } catch {
+    // A malformed URL in the challenge is no URL: the well-known URIs stand alone.
+    fromChallenge = undefined;
+  }
+  if (!fromChallenge) return wellKnown;
+  return [fromChallenge, ...wellKnown.filter((url) => url.href !== fromChallenge.href)];
+}
+
+/** The authorisation server to use: the registered one, which the resource must list, or its only one. */
+function chosenIssuer(metadata: ProtectedResourceMetadata, registered: string | undefined): string {
+  if (registered !== undefined) {
+    if (!metadata.authorisationServers.includes(registered)) {
+      throw new McpOauthRefusal(
+        'issuer-mismatch',
+        `The server does not name ${registered}, the authorisation server its client was registered with.`,
+      );
+    }
+    return registered;
+  }
+  if (metadata.authorisationServers.length > 1) {
+    throw new McpOauthRefusal(
+      'issuer-ambiguous',
+      'The server names more than one authorisation server and none was registered with its client, so Day0 will not choose.',
+    );
+  }
+  return metadata.authorisationServers[0];
+}
+
 /**
  * Discover how to authorise against one MCP server: its challenge, its protected resource
- * metadata, and its authorisation server's metadata.
+ * metadata, and its authorisation server's metadata. Every well-known URI is tried in turn, the
+ * challenge's own metadata URL first.
  *
  * @param fetch - The fetch every request goes through (`addressCheckedFetch` in a deployment).
  * @param endpoint - The MCP server's endpoint, as the card holds it.
  * @param options.issuer - The issuer the organisation registered its client with; when given,
- *   the resource must list it (a client id is unique to the server that issued it).
+ *   the resource must list it (a client id is unique to the server that issued it); when not, the
+ *   resource must list exactly one.
  * @throws McpOauthRefusal for every way the server's documents fail the revision's rules.
  */
 export async function discoverAuthorisation(
@@ -436,31 +525,26 @@ export async function discoverAuthorisation(
 ): Promise<McpAuthorisationTarget> {
   const resource = canonicalResource(endpoint);
   const challenge = await challengeOf(fetch, endpoint);
-  const candidates = challenge?.resourceMetadata
-    ? [new URL(challenge.resourceMetadata)]
-    : protectedResourceMetadataUrls(endpoint);
-  let metadata: ProtectedResourceMetadata | undefined;
-  for (const url of candidates) {
-    const document = await metadataAt(fetch, url);
-    if (document !== undefined) {
-      metadata = readProtectedResourceMetadata(document, resource);
-      break;
-    }
-  }
-  if (!metadata) {
-    throw new McpOauthRefusal(
-      'no-resource-metadata',
-      'The server publishes no protected resource metadata, so Day0 cannot find where to authorise.',
+  const found = await firstValid(
+    fetch,
+    resourceMetadataCandidates(endpoint, challenge?.resourceMetadata),
+    (document) => readProtectedResourceMetadata(document, resource),
+  );
+  if (!('value' in found)) {
+    throw (
+      found.refusal ??
+      new McpOauthRefusal(
+        'no-resource-metadata',
+        'The server publishes no protected resource metadata, so Day0 cannot find where to authorise.',
+      )
     );
   }
-  const issuer = options.issuer ?? metadata.authorisationServers[0];
-  if (!metadata.authorisationServers.includes(issuer)) {
-    throw new McpOauthRefusal(
-      'issuer-mismatch',
-      `The server does not name ${issuer}, the authorisation server its client was registered with.`,
-    );
-  }
-  const server = await fetchAuthorisationServerMetadata(fetch, issuer, options);
+  const metadata = found.value;
+  const server = await fetchAuthorisationServerMetadata(
+    fetch,
+    chosenIssuer(metadata, options.issuer),
+    options,
+  );
   return { resource, scopes: challenge?.scopes ?? metadata.scopesSupported ?? [], server };
 }
 
@@ -608,6 +692,11 @@ function grantFields(grant: TokenGrant): Record<string, string> {
   }
 }
 
+/** A value as `application/x-www-form-urlencoded` writes it. */
+function formEncoded(value: string): string {
+  return new URLSearchParams({ value }).toString().slice('value='.length);
+}
+
 function tokenRequestInit(request: TokenRequest): RequestInit {
   const form = new URLSearchParams(grantFields(request.grant));
   const headers: Record<string, string> = {
@@ -625,7 +714,7 @@ function tokenRequestInit(request: TokenRequest): RequestInit {
       break;
     case 'client_secret_basic': {
       // RFC 6749 section 2.3.1: each part form-encoded before the pair is base64-encoded.
-      const pair = `${encodeURIComponent(request.clientId)}:${encodeURIComponent(auth.secret)}`;
+      const pair = `${formEncoded(request.clientId)}:${formEncoded(auth.secret)}`;
       headers.authorization = `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;
       break;
     }
@@ -644,11 +733,18 @@ function tokenRequestInit(request: TokenRequest): RequestInit {
  * @param status - The response's HTTP status.
  * @param body - Its parsed JSON body.
  * @param now - The clock the expiry is counted from, in milliseconds.
- * @throws McpOauthRefusal `token-refused` (with the server's error code, never its description)
- *   for a refusal, `token-malformed` for an answer without a bearer access token.
+ * @throws McpOauthRefusal `token-unavailable` for a busy or failing server (429 or 5xx), which a
+ *   retry may get past; `token-refused` (with the server's error code, never its description) for
+ *   a refusal; `token-malformed` for an answer without a bearer access token.
  */
 export function readTokenResponse(status: number, body: unknown, now: number): IssuedTokens {
   const document = recordOf(body);
+  if (status === 429 || status >= 500) {
+    throw new McpOauthRefusal(
+      'token-unavailable',
+      `The authorisation server could not answer the token request just now (HTTP ${status}).`,
+    );
+  }
   if (status < 200 || status > 299) {
     const code =
       typeof document.error === 'string' && OAUTH_ERROR_CODE.test(document.error)
@@ -672,7 +768,10 @@ export function readTokenResponse(status: number, body: unknown, now: number): I
       'The authorisation server answered without a bearer access token.',
     );
   }
-  const expiresIn = document.expires_in;
+  const expiresIn =
+    typeof document.expires_in === 'string' && /^\d{1,10}$/.test(document.expires_in)
+      ? Number(document.expires_in)
+      : document.expires_in;
   const refreshToken = document.refresh_token;
   const scope = document.scope;
   return {
@@ -755,7 +854,8 @@ export interface AddressCheckedFetchOptions {
 /**
  * The fetch every OAuth request of the MCP rung goes through: each URL's host is checked by the
  * MCP rung's address rules (https, public or listed in `DAY0_PRIVATE_HOSTS`, every answer checked)
- * and dialled only at the addresses checked, with redirects returned rather than followed.
+ * and dialled only at the addresses checked, with redirects returned rather than followed, and
+ * abandoned after {@link OAUTH_REQUEST_TIMEOUT_MS} unless the caller set its own signal.
  *
  * @throws McpAddressRefusal before a socket opens, for an address the rules refuse.
  */
@@ -766,6 +866,9 @@ export function addressCheckedFetch(options: AddressCheckedFetchOptions = {}): O
       options.resolve ?? resolveHostname,
       ...(options.privateHosts ? [options.privateHosts] : []),
     );
-    return await pinnedFetch(checked, options.request)(url, init);
+    return await pinnedFetch(checked, options.request)(url, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(OAUTH_REQUEST_TIMEOUT_MS),
+    });
   };
 }
