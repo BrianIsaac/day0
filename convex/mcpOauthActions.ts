@@ -22,6 +22,7 @@ import {
 } from '../src/lib/oauth-state';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { CredentialGrant } from '../src/surfaces/access-identity';
+import { MCP_SYSTEM_PREFIX, mcpSystemKey } from '../src/surfaces/access-request';
 import { decryptCredential, type DecryptCredential } from '../src/surfaces/credentials';
 import { McpAddressRefusal } from '../src/surfaces/mcp-address';
 import {
@@ -32,9 +33,7 @@ import {
   clientAuthentication,
   discoverAuthorisation,
   fetchAuthorisationServerMetadata,
-  MCP_SYSTEM_PREFIX,
   McpOauthRefusal,
-  mcpSystemKey,
   newPkcePair,
   requestTokens,
   revokeToken,

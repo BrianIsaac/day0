@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { createIssuer } from '../../fake-oidc/issuer.js';
 import type { FakeIssuer } from '../../fake-oidc/issuer';
 import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
+import { mcpConnectionSystem } from '../../src/surfaces/access-kit';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { sealForOwner } from '../../src/lib/credential-crypto';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -228,6 +229,41 @@ describe('starting an authorisation', (): void => {
     const { surfaceId } = await seed(harness, { connection: false });
     expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'no-connection' });
     expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeUndefined();
+  });
+
+  it('finds the connection the setup verb landed for a server on a non-default port, keyed as the card keys it', async (): Promise<void> => {
+    const ported = 'https://auth.acme.test:8443';
+    server = createIssuer({
+      issuer: ported,
+      clients: [{ id: CLIENT, redirectUris: [REDIRECT] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+      now: () => clock,
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { connection: false });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { endpoint: `${ported}/mcp` });
+    });
+    const { internal } = await liveApi();
+    const connectionId = await harness.action(internal.organisationConnections.landFromSetup, {
+      system: mcpConnectionSystem(`${ported}/mcp`),
+      displayName: 'Acme docs MCP',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      scopes: [],
+      clientId: CLIENT,
+      clientRegistration: 'pre-registered',
+    });
+
+    const started = await start(harness, surfaceId);
+
+    if (!started.ok) throw new Error(started.reason);
+    expect(new URL(started.authoriseUrl).origin).toBe(ported);
+    const { surface } = await read(harness, surfaceId);
+    expect(surface.pendingAuthorisation).toMatchObject({
+      organisationConnectionId: connectionId,
+      resource: `${ported}/mcp`,
+    });
   });
 
   it('refuses a connection registered with another authorisation server', async (): Promise<void> => {

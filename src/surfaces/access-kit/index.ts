@@ -50,7 +50,8 @@ export function recipeForSystem(system: string): AccessRecipe | undefined {
 
 /**
  * An MCP server's system key from its address, as the cards' rule keys it
- * (`organisationSystemOf`): `mcp:` and the host, lower case, without a port.
+ * (`organisationSystemOf`, through `mcpSystemKey`): `mcp:` and the host, lower case, with a
+ * non-default port.
  *
  * @param serverUrl - The MCP server's https address.
  * @throws AccessKitError when the address is not https, or names a system the kit knows otherwise.
