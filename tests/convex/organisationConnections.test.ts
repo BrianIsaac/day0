@@ -399,8 +399,9 @@ describe('rotating and revoking an organisation connection', (): void => {
     expect(connections[0].secretCredentialId).not.toBe(landed.secretCredentialId);
     const old = credentials.find((row) => row._id === landed.secretCredentialId);
     expect(old?.revokedAt).toEqual(expect.any(Number));
-    // The revoked secret's ciphertext stays for the vendor call (F19); 11-AR purges it.
-    expect(old?.ciphertext).toEqual(expect.any(String));
+    // An app's client secret has no call that ends it at the vendor, so its value goes at once
+    // (the wave 11 review's M6); only an MCP client's waits out its card revocations.
+    expect(old?.ciphertext).toBeUndefined();
     await expect(
       harness.action(internal.credentials.decrypt, {
         credentialId: connections[0].secretCredentialId!,

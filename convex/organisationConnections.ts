@@ -13,6 +13,8 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
+import { purgeCredential } from './credentials';
+import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
 import { endCardsOnConnection } from './surfaces';
@@ -397,9 +399,14 @@ export const releaseStoredSecrets = internalMutation({
   },
 });
 
-/** Revoke organisation credential rows, keeping each ciphertext for the vendor call (F19). */
+/**
+ * Revoke organisation credential rows a landing or a rotation stored and never put to use, and
+ * delete their values: nothing was done with them, so nothing at the vendor needs them (the wave 11
+ * review's M6). Secrets a revoke or a rotation takes out of use go through
+ * {@link endOrganisationSecrets} instead.
+ */
 async function revokeSecrets(
-  ctx: Pick<MutationCtx, 'db'>,
+  ctx: MutationCtx,
   credentialIds: ReadonlyArray<Id<'credentials'> | undefined>,
   now: number,
 ): Promise<void> {
@@ -407,7 +414,7 @@ async function revokeSecrets(
     if (credentialId === undefined) continue;
     const row = await ctx.db.get(credentialId);
     if (row === null || row.holder !== ORGANISATION_HOLDER || row.revokedAt !== undefined) continue;
-    await ctx.db.patch(credentialId, { revokedAt: now });
+    await purgeCredential(ctx, row, now);
   }
 }
 
@@ -668,7 +675,16 @@ export const recordRotated = internalMutation({
         refreshCredentialId: secrets.refreshCredentialId,
       });
     }
-    await revokeSecrets(ctx, await secretAndRefresh(ctx, connection.secretCredentialId), now);
+    await endOrganisationSecrets(
+      ctx,
+      {
+        organisationConnectionId: connection._id,
+        kind: connection.kind,
+        secretCredentialId: connection.secretCredentialId,
+        credentialIds: await secretAndRefresh(ctx, connection.secretCredentialId),
+      },
+      now,
+    );
     await emptySharedToken(ctx, connection.sharedTokenCredentialId);
     const scopes = args.scopes === undefined ? connection.scopes : [...cleanScopes(args.scopes)];
     const changed = scopes.join('\n') !== connection.scopes.join('\n');
@@ -793,12 +809,17 @@ export async function revokeConnection(
   if (connection.status === 'revoked') throw new ConvexError(CONNECTION_REVOKED);
   const now = Date.now();
   const reason = revocation.reason.trim();
-  await revokeSecrets(
+  await endOrganisationSecrets(
     ctx,
-    [
-      ...(await secretAndRefresh(ctx, connection.secretCredentialId)),
-      connection.sharedTokenCredentialId,
-    ],
+    {
+      organisationConnectionId: connection._id,
+      kind: connection.kind,
+      secretCredentialId: connection.secretCredentialId,
+      credentialIds: [
+        ...(await secretAndRefresh(ctx, connection.secretCredentialId)),
+        connection.sharedTokenCredentialId,
+      ],
+    },
     now,
   );
   await ctx.db.patch(connection._id, { status: 'revoked', statusReason: reason, revokedAt: now });

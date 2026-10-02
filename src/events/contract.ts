@@ -938,8 +938,15 @@ export interface OrganisationRevokedAtSourcePayload {
   readonly reason?: string;
 }
 
-/** The Slack methods Day0 calls with the organisation's configuration token or its refresh token (11-AS). */
-export type SlackConfigurationMethod = 'tooling.tokens.rotate' | 'apps.manifest.create';
+/**
+ * The Slack methods Day0 calls with the organisation's configuration token or its refresh token
+ * (11-AS), and `auth.revoke`, which ends a configuration token a revoke or a rotation took out of
+ * use (the wave 11 review's M6).
+ */
+export type SlackConfigurationMethod =
+  | 'tooling.tokens.rotate'
+  | 'apps.manifest.create'
+  | 'auth.revoke';
 
 /**
  * The payload of `organisation.configuration-used` (11-AS; B9, AC11): one call Day0 made with the

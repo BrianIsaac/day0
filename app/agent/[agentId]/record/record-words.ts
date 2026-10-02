@@ -215,6 +215,11 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
       ? `Day0 created an employee's own Slack app${app} with ${token}`
       : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
   }
+  if (p.method === 'auth.revoke') {
+    return p.outcome === 'done'
+      ? `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use`
+      : `Revoking ${token} at Slack failed${because(p.reason)}; Day0's copy was deleted`;
+  }
   switch (p.outcome) {
     case 'done':
       return `Day0 renewed ${token} with its refresh token`;

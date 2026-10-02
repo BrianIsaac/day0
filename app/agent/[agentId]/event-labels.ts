@@ -144,6 +144,11 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       ? `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''} created with the configuration token`
       : `an employee's ${name} app not created${because(payload.reason)}`;
   }
+  if (payload.method === 'auth.revoke') {
+    return payload.outcome === 'done'
+      ? `${name} configuration token revoked at ${name}`
+      : `${name} configuration token not revoked at ${name}${because(payload.reason)}`;
+  }
   switch (payload.outcome) {
     case 'done':
       return `${name} configuration token renewed`;

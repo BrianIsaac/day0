@@ -49,6 +49,7 @@ import type * as onboarding from '../onboarding.js';
 import type * as oneToOne from '../oneToOne.js';
 import type * as organisationConnectionReads from '../organisationConnectionReads.js';
 import type * as organisationConnections from '../organisationConnections.js';
+import type * as organisationSecrets from '../organisationSecrets.js';
 import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
 import type * as ownership from '../ownership.js';
@@ -136,6 +137,7 @@ declare const fullApi: ApiFromModules<{
   oneToOne: typeof oneToOne;
   organisationConnectionReads: typeof organisationConnectionReads;
   organisationConnections: typeof organisationConnections;
+  organisationSecrets: typeof organisationSecrets;
   orientationActions: typeof orientationActions;
   orientationData: typeof orientationData;
   ownership: typeof ownership;
