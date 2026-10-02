@@ -67,6 +67,50 @@ describe('a stop with a question open that is not the question stop (wave 1.5 m1
   });
 });
 
+describe('the lead of a stop beside a read that landed (the real-Linear walk, M1-w)', (): void => {
+  const read = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-30"}' },
+  };
+  const withdrawn =
+    'stopped: the skill kanban-comment-and-close was withdrawn from every employee while this ran';
+
+  it('says what landed when only reads did, rather than "nothing landed"', (): void => {
+    expect(
+      failedItemReason({
+        skipReason: withdrawn,
+        output: {
+          actions: [read],
+          applied: [{ tool: 'mcp.call', ok: true, effect: 'Read REVOPS-30' }],
+        },
+      }),
+    ).toBe(
+      'stopped after a read landed; nothing was written and nothing is left to decide: the skill kanban-comment-and-close was withdrawn from every employee while this ran',
+    );
+    expect(
+      failedItemReason({
+        skipReason: withdrawn,
+        output: {
+          initial: { actions: [read], applied: [{ tool: 'mcp.call', ok: true }] },
+          actions: [read],
+          applied: [{ tool: 'mcp.call', ok: true }],
+        },
+      }),
+    ).toContain('stopped after 2 reads landed; nothing was written');
+  });
+
+  it('keeps "nothing landed" when no row did, a refused or held read included', (): void => {
+    expect(
+      failedItemReason({
+        skipReason: withdrawn,
+        output: { actions: [read, read], applied: [{ ok: false }, { ok: true, held: true }] },
+      }),
+    ).toBe(
+      'stopped, nothing landed and nothing to decide: the skill kanban-comment-and-close was withdrawn from every employee while this ran',
+    );
+  });
+});
+
 describe('the landing moment’s key (M7)', (): void => {
   it('keys each landed row on its place in the ledger, held and failed rows left out', (): void => {
     expect(
