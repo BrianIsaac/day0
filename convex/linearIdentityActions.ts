@@ -274,6 +274,7 @@ async function sharedToken(
       sealed: sealed(issued.accessToken),
       ...(issued.expiresAt === undefined ? {} : { expiresAt: issued.expiresAt }),
       ...(usable ? { expectedGeneration: generation } : {}),
+      secretCredentialId: connection.secretCredentialId,
       now: deps.now(),
     },
   );
@@ -284,12 +285,15 @@ async function sharedToken(
       bearer: issued.accessToken,
     };
   }
-  if (landed.reason === 'stale' && landed.credentialId !== undefined) {
+  if (landed.reason === 'stale') {
     // Another renewal wrote first; its token is as good as this one, which lapses unused.
-    const winner = await ctx.runQuery(internal.linearIdentity.heldToken, {
-      credentialId: landed.credentialId,
-    });
-    if (winner?.access.ciphertext === undefined) {
+    const winner =
+      landed.credentialId === undefined
+        ? null
+        : await ctx.runQuery(internal.linearIdentity.heldToken, {
+            credentialId: landed.credentialId,
+          });
+    if (landed.credentialId === undefined || winner?.access.ciphertext === undefined) {
       // The app's secret was rotated while this token was requested (join 3): it may carry the
       // old secret, and the emptied row waits for a request made after the rotation.
       throw new LinearIssuerRefusal(

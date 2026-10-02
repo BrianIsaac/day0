@@ -192,6 +192,11 @@ export const landSharedToken = internalMutation({
     expiresAt: v.optional(v.number()),
     /** The generation the renewal read; absent for the connection's first token. */
     expectedGeneration: v.optional(v.number()),
+    /**
+     * The connection's secret the token was requested with: a token requested before a rotation
+     * replaced it may be dead at Linear (L2), so it never lands.
+     */
+    secretCredentialId: v.id('credentials'),
     now: v.number(),
   },
   handler: async (ctx, args): Promise<LinearRotationOutcome> => {
@@ -200,6 +205,9 @@ export const landSharedToken = internalMutation({
     const held = connection.sharedTokenCredentialId
       ? await ctx.db.get(connection.sharedTokenCredentialId)
       : null;
+    if (connection.secretCredentialId !== args.secretCredentialId) {
+      return { ok: false, reason: 'stale', ...(held ? { credentialId: held._id } : {}) };
+    }
     let credentialId: Id<'credentials'>;
     let generation: number;
     if (held !== null && held.revokedAt === undefined) {

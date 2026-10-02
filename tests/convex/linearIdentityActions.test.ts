@@ -434,7 +434,8 @@ describe('shared mode: the organisation app actor', (): void => {
     const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
     const { api, internal } = await liveApi();
     await connect(harness, surfaceIds[0]!);
-    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const before = (await read(harness, surfaceIds[0]!)).connection;
+    const tokenId = before.sharedTokenCredentialId!;
     await harness
       .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
       .action(api.organisationConnections.rotate, {
@@ -450,10 +451,23 @@ describe('shared mode: the organisation app actor', (): void => {
         ORGANISATION_OWNER_KEY,
       ),
       expectedGeneration: 0,
+      secretCredentialId: before.secretCredentialId!,
       now: clock,
     });
 
     expect(late).toEqual({ ok: false, reason: 'stale', credentialId: tokenId });
+    // A renewal that read the emptied row with the secret a second rotation has since replaced.
+    const afterSecondRotation = await harness.mutation(internal.linearIdentity.landSharedToken, {
+      organisationConnectionId: connectionId,
+      sealed: sealForOwner(
+        'lin_oauth_shared_minted_with_the_old_secret',
+        { current: credentialKey },
+        ORGANISATION_OWNER_KEY,
+      ),
+      secretCredentialId: before.secretCredentialId!,
+      now: clock,
+    });
+    expect(afterSecondRotation).toEqual({ ok: false, reason: 'stale', credentialId: tokenId });
     const row = (await read(harness, surfaceIds[0]!)).credentials.find(
       (one) => one._id === tokenId,
     );
