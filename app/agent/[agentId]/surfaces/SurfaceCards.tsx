@@ -3,10 +3,12 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { makeFunctionReference } from 'convex/server';
 import { useAction, useMutation, useQuery } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { CredentialOwnerSummary } from '@/surfaces/credential-presentation';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '@/surfaces/charter-cards';
+import { MCP_SYSTEM_PREFIX, organisationSystemOf } from '@/surfaces/access-request';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
@@ -14,8 +16,10 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { refusalText, useChange } from '../../../components/use-change';
 import { ENVIRONMENT_PANEL_ID } from '../environment-hash';
 import { useNow } from '../../../components/time';
+import type { OrganisationSystem } from './card-words';
 import {
   SurfaceCard,
+  type AccessRequestView,
   type CredentialStatus,
   type ListedSurface,
   type Operation,
@@ -69,15 +73,18 @@ function citedSourceIds(
  * keeping its own refusal beside its control; what a change came to is said once for the tab.
  *
  * @param agentId - The employee.
+ * @param employeeName - The employee's name, which each card's identity names.
  * @param arriving - Whether the page's cards are still arriving (`Columns`).
  * @param children - The tab's other cards, under the systems.
  */
 export function SurfaceCards({
   agentId,
+  employeeName,
   arriving = false,
   children,
 }: {
   agentId: Id<'agents'>;
+  employeeName: string;
   arriving?: boolean;
   children?: ReactNode;
 }) {
@@ -91,6 +98,7 @@ export function SurfaceCards({
   const sources = useQuery(api.docSources.byIds, { sourceIds });
   const installRedirectConfigured = useQuery(api.surfaces.installRedirectConfigured, {});
   const componentStatus = useQuery(api.config.components, {});
+  const organisationSummary = useQuery(api.organisationConnections.summaryForManager, {});
   const now = useNow();
   const approve = useMutation(api.surfaces.approve);
   const reject = useMutation(api.surfaces.reject);
@@ -101,6 +109,11 @@ export function SurfaceCards({
   const probe = useAction(api.surfaceActions.probe);
   const landCredential = useAction(api.surfaceActions.landCredential);
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
+  const connectLinear = useAction(api.linearIdentityActions.connect);
+  const authoriseMcp = useAction(api.mcpOauthActions.startAuthorisation);
+  const disconnect = useMutation(api.surfaces.disconnect);
+  const draftAccessRequest = useMutation(api.accessRequests.draft);
+  const recordAccessRequestSent = useMutation(api.accessRequests.recordSent);
   // One change per card at a time, and each card's own: a card's refusal or pending state
   // outlives a change made on another card meanwhile.
   const [operations, setOperations] = useState<Readonly<Record<string, Operation>>>({});
@@ -123,8 +136,23 @@ export function SurfaceCards({
       ),
       installRedirectConfigured: installRedirectConfigured === true,
       browserPresent: componentStatus?.browser,
+      employeeName,
+      organisation: new Map(
+        (organisationSummary?.systems ?? []).map((system): [string, OrganisationSystem] => [
+          system.system,
+          system,
+        ]),
+      ),
     }),
-    [componentStatus, credentialRows, installRedirectConfigured, now, sources],
+    [
+      componentStatus,
+      credentialRows,
+      employeeName,
+      installRedirectConfigured,
+      now,
+      organisationSummary,
+      sources,
+    ],
   );
 
   /** Set one card's operation, or clear it with `undefined`. */
@@ -227,7 +255,11 @@ export function SurfaceCards({
         operate(
           'provision',
           surface,
-          () => provisionApp({ surfaceId: surface._id, configurationToken }),
+          () =>
+            provisionApp({
+              surfaceId: surface._id,
+              ...(configurationToken === undefined ? {} : { configurationToken }),
+            }),
           {
             done: `The app for ${surface.displayName} is registered; install it from the link on the card.`,
             refused: 'The app was not registered.',
@@ -235,7 +267,44 @@ export function SurfaceCards({
         ),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),
       approveTools: (tools) => approveTools({ surfaceId: surface._id, tools }),
+      connect: connectFor(surface),
+      disconnect: () => disconnect({ surfaceId: surface._id }),
+      draftAccessRequest: () => draftAccessRequest({ surfaceId: surface._id }),
+      recordAccessRequestSent: (via) => recordAccessRequestSent({ surfaceId: surface._id, via }),
     };
+  }
+
+  /**
+   * The card's Connect through the organisation's connection, where its system has an issuer that
+   * takes one click (the access plan, section 4.3): Linear's app actor (`linearIdentityActions.connect`,
+   * landing the shared token or answering an installation link) and an MCP server's authorisation
+   * (`mcpOauthActions.startAuthorisation`). A link is followed in the same tab; a refusal is said
+   * beside the control. Slack's is its app's install (`provisionApp`), on its own row.
+   */
+  function connectFor(surface: ListedSurface): (() => void) | undefined {
+    const system = organisationSystemOf(surface);
+    const start =
+      system === 'linear'
+        ? () => connectLinear({ surfaceId: surface._id })
+        : system?.startsWith(MCP_SYSTEM_PREFIX) === true
+          ? () => authoriseMcp({ surfaceId: surface._id })
+          : undefined;
+    if (start === undefined) return undefined;
+    return () =>
+      operate(
+        'connect',
+        surface,
+        async (): Promise<string> => {
+          const outcome = await start();
+          if (!outcome.ok) throw new ConvexError(outcome.message);
+          if ('authoriseUrl' in outcome) {
+            window.location.assign(outcome.authoriseUrl);
+            return `Opening ${surface.displayName} to finish connecting it.`;
+          }
+          return `${surface.displayName} is connected; Day0 checks the connection now.`;
+        },
+        { done: (words) => words, refused: `${surface.displayName} was not connected.` },
+      );
   }
 
   const loaded = surfaces !== undefined && credentialRows !== undefined && charter !== undefined;
@@ -354,7 +423,7 @@ export function SurfaceCards({
         ) : null}
         {loaded
           ? cards.map((surface) => (
-              <SurfaceCard
+              <RequestingSurfaceCard
                 key={surface._id}
                 surface={surface}
                 context={context}
@@ -367,4 +436,34 @@ export function SurfaceCards({
       {children}
     </Columns>
   );
+}
+
+/**
+ * Whether a card may make an access request, by the rule `accessRequests.forCard` applies first:
+ * a card on an organisation system, approved, holding no credential. Only such a card asks.
+ */
+function mayRequestAccess(surface: ListedSurface): boolean {
+  return (
+    organisationSystemOf(surface) !== undefined &&
+    surface.managerApprovedAt !== undefined &&
+    surface.credentialId === undefined
+  );
+}
+
+/**
+ * One card with its access request read beside it (`accessRequests.forCard`), asked only of a card
+ * that may make one.
+ */
+function RequestingSurfaceCard(props: {
+  surface: ListedSurface;
+  context: SurfaceCardContext;
+  operation: Operation | undefined;
+  actions: SurfaceCardActions;
+}) {
+  const asks = mayRequestAccess(props.surface);
+  const request: AccessRequestView | null | undefined = useQuery(
+    api.accessRequests.forCard,
+    asks ? { surfaceId: props.surface._id } : 'skip',
+  );
+  return <SurfaceCard {...props} accessRequest={asks ? request : null} />;
 }

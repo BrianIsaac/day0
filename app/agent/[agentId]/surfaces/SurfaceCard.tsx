@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
 import {
@@ -18,18 +18,34 @@ import {
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { scopeFieldsFor } from '@/surfaces/intake-scope';
+import { organisationSystemOf } from '@/surfaces/access-request';
+import { deploymentZone } from '@/lib/zone';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
 import { Disclosure } from '../../../components/Disclosure';
 import type { Tone } from '../../../components/tone';
 import { clockTime, useAgentZone } from '../../../components/time';
-import { expectedCredential, reachedWords, stateChip } from './card-words';
+import {
+  accessStanding,
+  actsAsWords,
+  cardIdentity,
+  connectedForOrganisationWords,
+  disconnectLines,
+  expectedCredential,
+  identityChip,
+  reachedWords,
+  stateChip,
+  type OrganisationSystem,
+} from './card-words';
 import { CredentialField } from './CredentialField';
+import { DisconnectDialog } from './DisconnectDialog';
 import { ExpiryBlock } from './ExpiryBlock';
 import { ToolsRow } from './SurfaceControls';
 import {
+  AccessRequestRow,
   ApprovalRow,
+  ConnectRow,
   DiscoveryProvenance,
   EvidenceQuote,
   IntakeScopeRow,
@@ -40,6 +56,9 @@ import {
 
 /** One surface as `surfaces.listForAgent` lists it for its card. */
 export type ListedSurface = FunctionReturnType<typeof api.surfaces.listForAgent>[number];
+
+/** A card's access request as `accessRequests.forCard` answers it, when the card makes one. */
+export type AccessRequestView = NonNullable<FunctionReturnType<typeof api.accessRequests.forCard>>;
 
 /** One evidence line a proposal cites. */
 interface SurfaceEvidence {
@@ -70,7 +89,7 @@ interface ConnectRequestBody {
 /** A change in flight on one card, and its refusal once refused. */
 export interface Operation {
   readonly error?: string;
-  readonly kind: 'approve' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
+  readonly kind: 'approve' | 'connect' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
   readonly surfaceId: string;
 }
 
@@ -106,6 +125,10 @@ export interface SurfaceCardContext {
   readonly installRedirectConfigured: boolean;
   /** Whether this deployment runs the browser component; undefined while that is loading. */
   readonly browserPresent: boolean | undefined;
+  /** The employee's name, which the identity's words say. */
+  readonly employeeName: string;
+  /** The systems IT connected for the organisation, by system (`summaryForManager`). */
+  readonly organisation: ReadonlyMap<string, OrganisationSystem>;
 }
 
 /** What a card's controls do, each bound to the card's own change. */
@@ -115,10 +138,30 @@ export interface SurfaceCardActions {
   readonly probe: () => void;
   /** Store a credential under its name, as the card names it. */
   readonly land: (label: string, plaintext: string) => void;
-  readonly provision: (configurationToken: string) => void;
+  /** Register or install the employee's own Slack app: with a pasted token, or through IT's. */
+  readonly provision: (configurationToken?: string) => void;
   readonly setDays: (days: number) => Promise<{ expiresAt: number }>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
+  /** Connect through the organisation's connection, where the card's system has an issuer. */
+  readonly connect?: () => void;
+  /** End the card's access (`surfaces.disconnect`), once the dialog confirmed it. */
+  readonly disconnect: () => Promise<unknown>;
+  /** Draft the card's access request (`accessRequests.draft`). */
+  readonly draftAccessRequest: () => Promise<unknown>;
+  /** Record the request copied or opened in an email (`accessRequests.recordSent`). */
+  readonly recordAccessRequestSent: (via: 'copied' | 'emailed') => Promise<unknown>;
 }
+
+/** The verdicts of a card the manager approved, whose access can be connected and ended. */
+const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+]);
+
+/** The verdicts of a card that names no system to act in yet. */
+const NO_IDENTITY: ReadonlySet<string> = new Set(['declared', 'absent']);
 
 /** The verdicts a manual probe can check. */
 const PROBEABLE: ReadonlySet<string> = new Set([
@@ -158,13 +201,24 @@ export function SurfaceCard({
   context,
   operation,
   actions,
+  accessRequest,
 }: {
   surface: ListedSurface;
   context: SurfaceCardContext;
   operation: Operation | undefined;
   actions: SurfaceCardActions;
+  /** The card's access request, when it makes one; undefined while it is read. */
+  accessRequest?: AccessRequestView | null;
 }) {
   const zone = useAgentZone();
+  const [disconnecting, setDisconnecting] = useState(false);
+  // A disconnect that lands takes its button with it: the card takes focus once the dialog closed.
+  const focusCardOnClose = useRef(false);
+  useEffect(() => {
+    if (disconnecting || !focusCardOnClose.current) return;
+    focusCardOnClose.current = false;
+    document.getElementById(`surface-${surface.slug}`)?.focus();
+  }, [disconnecting, surface.slug]);
   const request = surface.request as ConnectRequestBody | undefined;
   const ladder = request?.target?.ladder ?? surface.pathCandidates;
   const evidence = request?.evidence ?? (surface.whereFound as SurfaceEvidence[]);
@@ -217,6 +271,38 @@ export function SurfaceCard({
   const reached = reachedWords(surface.path);
   const approvedAt = surface.verdict === 'proposed' ? undefined : surface.managerApprovedAt;
   const proposal = request ? <ProposalFacts request={request} surface={surface} /> : null;
+  const system = organisationSystemOf(surface);
+  const connection = system === undefined ? undefined : context.organisation.get(system);
+  // Only an active connection covers the card: `landCredential` refuses a paste while one is.
+  const covering = connection?.status === 'active' ? connection : undefined;
+  const slack = system === 'slack';
+  const provisioningPresentation = presentProvisioning({
+    credential: request?.credential,
+    hasPublicUrl: context.installRedirectConfigured,
+    provisioning,
+    organisationConnected: slack && covering !== undefined,
+    credentialHeld: surface.credentialId !== undefined,
+  });
+  const identity = cardIdentity(surface, connection, {
+    selfProvisions:
+      slack &&
+      provisioningPresentation.stage !== 'not-applicable' &&
+      provisioningPresentation.stage !== 'unavailable',
+  });
+  const identityNames = { employee: context.employeeName, system: surface.displayName };
+  const showsIdentity = !NO_IDENTITY.has(surface.verdict);
+  const chipForIdentity = identityChip(identity.kind);
+  const approvedAccess =
+    ACCESS_VERDICTS.has(surface.verdict) && surface.managerApprovedAt !== undefined;
+  const ended = accessStanding(surface, context.now, zone).kind === 'ended';
+  const connectable =
+    actions.connect !== undefined &&
+    covering !== undefined &&
+    !slack &&
+    approvedAccess &&
+    !ended &&
+    surface.credentialId === undefined &&
+    !accessRequest;
   return (
     <Card
       id={`surface-${surface.slug}`}
@@ -247,8 +333,22 @@ export function SurfaceCard({
         {request?.target?.reasoning ? (
           <p className="text-sm text-[var(--color-fg-2)]">{request.target.reasoning}</p>
         ) : null}
-        {reached || approvedAt !== undefined || (surface.verdict === 'proposed' && proposal) ? (
+        {showsIdentity ||
+        reached ||
+        approvedAt !== undefined ||
+        (surface.verdict === 'proposed' && proposal) ? (
           <dl className="grid gap-2.5">
+            {showsIdentity ? (
+              <Fact label="Acts as">
+                {actsAsWords(identity, identityNames)}
+                {chipForIdentity !== undefined ? (
+                  <>
+                    {' '}
+                    <Chip tone="warn">{chipForIdentity}</Chip>
+                  </>
+                ) : null}
+              </Fact>
+            ) : null}
             {reached ? (
               <Fact label="Reached">
                 {reached}
@@ -260,6 +360,11 @@ export function SurfaceCard({
                     </span>
                   </>
                 ) : null}
+              </Fact>
+            ) : null}
+            {covering !== undefined && showsIdentity ? (
+              <Fact label="Connection">
+                {connectedForOrganisationWords(covering, zone ?? deploymentZone())}
               </Fact>
             ) : null}
             {approvedAt !== undefined ? (
@@ -289,19 +394,37 @@ export function SurfaceCard({
           <ProvisioningRow
             error={failed('provision')}
             onProvision={actions.provision}
-            presentation={presentProvisioning({
-              credential: request?.credential,
-              hasPublicUrl: context.installRedirectConfigured,
-              provisioning,
-            })}
+            presentation={provisioningPresentation}
             provisioning={pending === 'provision'}
             surfaceSlug={surface.slug}
+          />
+        ) : null}
+        {connectable && actions.connect !== undefined ? (
+          <ConnectRow
+            system={surface.displayName}
+            employee={context.employeeName}
+            startedAt={surface.pendingAuthorisation?.startedAt}
+            zone={zone}
+            connecting={pending === 'connect'}
+            error={failed('connect')}
+            onConnect={actions.connect}
+          />
+        ) : null}
+        {accessRequest ? (
+          <AccessRequestRow
+            request={accessRequest}
+            system={surface.displayName}
+            employee={context.employeeName}
+            zone={zone ?? deploymentZone()}
+            onDraft={actions.draftAccessRequest}
+            onSent={actions.recordAccessRequestSent}
           />
         ) : null}
         {request || surface.credentialId || surface.credentialLocation ? (
           <CredentialField
             expected={expectedCredential(surface, presentation.label)}
             approved={surface.managerApprovedAt !== undefined}
+            covered={covering !== undefined}
             error={failed('landing')}
             landing={pending === 'landing'}
             onLand={(plaintext) => actions.land(credentialLabel, plaintext)}
@@ -324,6 +447,11 @@ export function SurfaceCard({
             <Button size="small" onClick={actions.probe} disabled={pending === 'probe'}>
               {pending === 'probe' ? 'Checking…' : 'Check the connection'}
             </Button>
+            {surface.credentialId !== undefined ? (
+              <Button size="small" variant="quiet" onClick={(): void => setDisconnecting(true)}>
+                Disconnect
+              </Button>
+            ) : null}
             {failed('probe') ? (
               <span role="alert" className="text-sm text-[var(--color-danger)]">
                 {failed('probe')}
@@ -368,6 +496,18 @@ export function SurfaceCard({
           </div>
         </Disclosure>
       </div>
+      {disconnecting ? (
+        <DisconnectDialog
+          system={surface.displayName}
+          employee={context.employeeName}
+          lines={disconnectLines(identity, identityNames, { slack })}
+          onConfirm={async (): Promise<void> => {
+            await actions.disconnect();
+            focusCardOnClose.current = true;
+          }}
+          onClose={(): void => setDisconnecting(false)}
+        />
+      ) : null}
     </Card>
   );
 }

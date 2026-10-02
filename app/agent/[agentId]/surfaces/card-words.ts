@@ -284,14 +284,27 @@ export function actsAsWords(identity: CardIdentity, names: IdentityNames): strin
 }
 
 /**
- * Whether an identity is one the employee shares with someone else (a person's delegated grant, a
- * pasted key): the card draws it with the warning chip it draws for a governance finding (the
- * access plan, section 4.3).
+ * The warning chip beside an identity the employee shares with someone (a person's delegated
+ * grant, a pasted key), as the card draws one for a governance finding (the access plan, section
+ * 4.3), or nothing for the employee's own identity and the organisation's shared app.
  *
  * @param kind - Whom the card acts as.
  */
-export function identityWarns(kind: ActsAsKind): boolean {
-  return kind === 'delegated' || kind === 'shared-key';
+export function identityChip(kind: ActsAsKind): string | undefined {
+  switch (kind) {
+    case 'delegated':
+      return 'Delegated';
+    case 'shared-key':
+      return 'Pasted key';
+    case 'own-app':
+    case 'shared-app':
+    case 'browser-seat':
+      return undefined;
+    default: {
+      const unknown: never = kind;
+      throw new Error(`unhandled identity kind ${String(unknown)}`);
+    }
+  }
 }
 
 /**

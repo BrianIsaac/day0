@@ -11,6 +11,7 @@ import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfaceCards } from './surfaces/SurfaceCards';
+import { mockActsAsWords } from './surfaces/card-words';
 import { PermissionsCard } from './surfaces/PermissionsCard';
 import { Card } from '../../components/Card';
 import { Columns } from '../../components/Columns';
@@ -47,15 +48,18 @@ const DOCS_CARD_ID = 'docs';
  * OAuth redirect's `#surfaces`, a card's link) selects it and scrolls here once.
  *
  * @param agentId - The employee.
+ * @param employeeName - The employee's name, which says whom it acts as in each system.
  * @param mode - The deployment's surface mode, as the page read it; undefined while it loads.
  * @param arriving - Whether the page's cards are still arriving (`Columns`).
  */
 export function MockEnvironment({
   agentId,
+  employeeName,
   mode,
   arriving = false,
 }: {
   agentId: Id<'agents'>;
+  employeeName: string;
   mode: SurfaceMode | undefined;
   arriving?: boolean;
 }) {
@@ -91,7 +95,7 @@ export function MockEnvironment({
   }
   if (mode === 'real') {
     return (
-      <SurfaceCards agentId={agentId} arriving={arriving}>
+      <SurfaceCards agentId={agentId} employeeName={employeeName} arriving={arriving}>
         <div id={DOCS_CARD_ID} className="scroll-mt-24">
           <Card title="Documentation it reads">
             <div
@@ -110,21 +114,30 @@ export function MockEnvironment({
   }
   return (
     <Columns arriving={arriving}>
-      <MockOffice agentId={agentId} active={active} onPick={setActive} />
+      <MockOffice
+        agentId={agentId}
+        employeeName={employeeName}
+        active={active}
+        onPick={setActive}
+      />
     </Columns>
   );
 }
 
 /**
  * The mock office as a card: the product's own Slack shape and the office's other surfaces, a
- * strip of tabs over one panel, the ARIA tabs pattern with the strip one tab stop.
+ * strip of tabs over one panel, the ARIA tabs pattern with the strip one tab stop. Over each
+ * surface it says whom the employee acts as there, the same in every one: its own app in this
+ * office (the access plan, section 8, the hosted walk's words).
  */
 function MockOffice({
   agentId,
+  employeeName,
   active,
   onPick,
 }: {
   agentId: Id<'agents'>;
+  employeeName: string;
   active: TabKey;
   onPick: (key: TabKey) => void;
 }) {
@@ -193,6 +206,10 @@ function MockOffice({
           );
         })}
       </div>
+      <dl className="mt-4 grid gap-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+        <dt className="text-[13px] text-[var(--color-muted)]">Acts as</dt>
+        <dd className="min-w-0 text-[var(--color-fg-2)]">{mockActsAsWords(employeeName)}</dd>
+      </dl>
       {/* The panel carries the id the card links name, so `#surfaces` scrolls here as well as
           selecting the tab above. */}
       <div

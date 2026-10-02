@@ -34,6 +34,8 @@ import { SurfaceCards } from '../../../../../app/agent/[agentId]/surfaces/Surfac
 
 it("keeps the Surfaces tab's cards output", () => {
   expect(
-    renderToStaticMarkup(<SurfaceCards agentId={'mock-agent' as Id<'agents'>} />),
+    renderToStaticMarkup(
+      <SurfaceCards agentId={'mock-agent' as Id<'agents'>} employeeName="Maya" />,
+    ),
   ).toMatchSnapshot();
 });

@@ -1,13 +1,22 @@
 'use client';
 
-import { type ProvisioningPresentation, PROVISION_LABEL } from '@/surfaces/credential-presentation';
+import {
+  type ProvisioningPresentation,
+  PROVISION_LABEL,
+  REINSTALL_LABEL,
+} from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { type ScopeValue, type IntakeScope, presentIntakeScope } from '@/surfaces/intake-scope';
 import { useId, type FormEvent } from 'react';
+import type { AccessRequestReason } from '@/surfaces/access-identity';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
-import { Button } from '../../../components/Button';
+import { Button, buttonClass } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { INPUT_CLASS } from '../../../components/Field';
+import { StatusRegion } from '../../../components/StatusRegion';
+import { clockTime } from '../../../components/time';
+import { useChange } from '../../../components/use-change';
+import { calendarDay } from './card-words';
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
@@ -24,7 +33,8 @@ const INSET = 'rounded-lg bg-[var(--color-inset)] p-3 text-sm';
 /** The Slack provisioning row's inputs: the token handler, its error and the presentation. */
 export interface ProvisioningRowProps {
   readonly error?: string;
-  readonly onProvision: (configurationToken: string) => void;
+  /** Register or install the app: with the token pasted, or with none through IT's connection. */
+  readonly onProvision: (configurationToken?: string) => void;
   readonly presentation: ProvisioningPresentation;
   readonly provisioning: boolean;
   readonly surfaceSlug: string;
@@ -341,6 +351,221 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
 }
 
 /**
+ * The label of the one control that registers or installs the employee's own app with nothing to
+ * paste: Connect where IT's connection creates it, the reinstall where its access ended, and the
+ * registration again where an install did not complete.
+ */
+function provisionLabel(presentation: ProvisioningPresentation): string {
+  if (presentation.stage === 'reinstall') return REINSTALL_LABEL;
+  if (presentation.stage === 'offer') return CONNECT_LABEL;
+  return PROVISION_LABEL;
+}
+
+/** The one control that connects a card through the organisation's connection (section 4.3). */
+export const CONNECT_LABEL = 'Connect';
+
+/** The Connect row's inputs: the system, the pending authorisation, the change and its refusal. */
+export interface ConnectRowProps {
+  readonly system: string;
+  readonly employee: string;
+  /** When an authorisation Connect started and nobody finished, if one did. */
+  readonly startedAt?: number;
+  readonly zone?: string;
+  readonly connecting: boolean;
+  readonly error?: string;
+  readonly onConnect: () => void;
+}
+
+/**
+ * Connect, for an approved card whose system IT connected for the organisation (the access plan,
+ * section 4.3): one click, the issuer runs, and no credential passes through the manager. An
+ * authorisation started and not finished is said, and Connect starts it again.
+ */
+export function ConnectRow(props: ConnectRowProps): React.ReactNode {
+  return (
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">Connect {props.system}</p>
+      <p className="mt-1 text-[var(--color-fg-2)]">
+        IT connected {props.system} for your organisation, so there is nothing to paste: Connect
+        gives {props.employee} its access.
+      </p>
+      {props.startedAt !== undefined ? (
+        <p className="mt-1 text-[var(--color-warn)]">
+          Authorisation started{' '}
+          <time dateTime={new Date(props.startedAt).toISOString()}>
+            {clockTime(props.startedAt, props.zone)}
+          </time>{' '}
+          and not finished: Connect starts it again.
+        </p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          variant="primary"
+          size="small"
+          disabled={props.connecting}
+          onClick={props.onConnect}
+        >
+          {props.connecting ? 'Connecting…' : CONNECT_LABEL}
+        </Button>
+        {props.error ? (
+          <span role="alert" className="text-[var(--color-danger)]">
+            {props.error}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The access request as `accessRequests.forCard` answers it, for the card to show. */
+export interface AccessRequestWords {
+  readonly reason: AccessRequestReason;
+  readonly text: string;
+  readonly mailto: string;
+  readonly draftedAt?: number;
+  readonly copiedAt?: number;
+  readonly emailedAt?: number;
+  readonly messagedAt?: number;
+}
+
+/** The access request row's inputs. */
+export interface AccessRequestRowProps {
+  readonly request: AccessRequestWords;
+  readonly system: string;
+  readonly employee: string;
+  /** The zone its days are named in. */
+  readonly zone: string;
+  /** Draft it: recorded on the card and the record, and in real mode sent to the manager's DM. */
+  readonly onDraft: () => Promise<unknown>;
+  /** Record that it was copied or opened in the manager's email. */
+  readonly onSent: (via: 'copied' | 'emailed') => Promise<unknown>;
+  /** Write the request's words to the clipboard; the browser's own when absent. */
+  readonly writeClipboard?: (text: string) => Promise<void>;
+}
+
+/**
+ * The heading of an access request, by why the card asks (A24, section 4.5).
+ *
+ * @param reason - Why the card asks IT.
+ * @param system - The system as the card names it.
+ * @param employee - The employee's name.
+ */
+export function accessRequestTitle(
+  reason: AccessRequestReason,
+  system: string,
+  employee: string,
+): string {
+  switch (reason) {
+    case 'no-connection':
+      return `Ask IT to connect ${system}`;
+    case 'install-needed':
+      return `Ask IT to install ${employee}'s own ${system} app`;
+    case 'scope-widening':
+      return `Ask IT for more ${system} access`;
+    default: {
+      const unknown: never = reason;
+      throw new Error(`unhandled access request reason ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * What became of the request, in the card's words: "Sent to IT on 3 October" once copied or
+ * emailed, "Sent to you in Slack on 3 October" once the DM landed. Nothing before.
+ *
+ * @param request - The request's dates.
+ * @param zone - The zone the days are named in.
+ */
+export function accessRequestSentLines(
+  request: Pick<AccessRequestWords, 'copiedAt' | 'emailedAt' | 'messagedAt'>,
+  zone: string,
+): string[] {
+  const toIt = [request.copiedAt, request.emailedAt].filter((at): at is number => at !== undefined);
+  return [
+    ...(toIt.length > 0 ? [`Sent to IT on ${calendarDay(Math.max(...toIt), zone)}`] : []),
+    ...(request.messagedAt !== undefined
+      ? [`Sent to you in Slack on ${calendarDay(request.messagedAt, zone)}`]
+      : []),
+  ];
+}
+
+/** The browser's clipboard, which takes the request's words while the press still counts. */
+async function browserClipboard(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text);
+}
+
+/**
+ * The access request (A24; the access plan, section 4.5), in place of a credential the card cannot
+ * take without IT: why it asks, the words IT receives, and three ways to send them, each the
+ * manager's own act from their own account: Copy, Email it (their mail client, `mailto:`), and
+ * Send to me in Slack, offered until the request is drafted (drafting sends the DM once). What
+ * became of it is said under it.
+ */
+export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode {
+  const change = useChange();
+  const { request } = props;
+  const write = props.writeClipboard ?? browserClipboard;
+  const textId = useId();
+  const sent = accessRequestSentLines(request, props.zone);
+  const copy = (): void =>
+    change.run(
+      async (): Promise<void> => {
+        // The words go to the clipboard first, while the press still lets the page write it.
+        await write(request.text);
+        await props.onDraft();
+        await props.onSent('copied');
+      },
+      { done: 'Copied: paste it to IT.', refused: 'The request was not copied.' },
+    );
+  const emailed = (): void =>
+    change.run(
+      async (): Promise<void> => {
+        await props.onDraft();
+        await props.onSent('emailed');
+      },
+      { done: 'Opened in your email.', refused: 'The request was not marked as emailed.' },
+    );
+  const toSlack = (): void =>
+    change.run(props.onDraft, {
+      done: 'Day0 is sending it to you in Slack.',
+      refused: 'The request was not sent to you in Slack.',
+    });
+  return (
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">
+        {accessRequestTitle(request.reason, props.system, props.employee)}
+      </p>
+      <p className="mt-1 text-[var(--color-fg-2)]">
+        Nothing changes until IT acts; then Connect appears here. This is what IT receives:
+      </p>
+      <p
+        id={textId}
+        className="mt-2 border-l-2 border-[var(--color-border-2)] pl-3 whitespace-pre-wrap break-words text-[var(--color-fg-2)]"
+      >
+        {request.text}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="small" disabled={change.busy} onClick={copy} aria-describedby={textId}>
+          Copy
+        </Button>
+        <a href={request.mailto} onClick={emailed} className={buttonClass('secondary', 'small')}>
+          Email it
+        </a>
+        {request.draftedAt === undefined ? (
+          <Button size="small" disabled={change.busy} onClick={toSlack}>
+            Send to me in Slack
+          </Button>
+        ) : null}
+      </div>
+      {sent.length > 0 ? (
+        <p className="mt-2 text-[13px] text-[var(--color-muted)]">{sent.join('. ')}.</p>
+      ) : null}
+      <StatusRegion outcome={change.outcome} />
+    </div>
+  );
+}
+
+/**
  * Render the documented self-provisioning procedure and whichever step is next.
  *
  * The configuration-token field is uncontrolled for the same reason the
@@ -383,7 +608,7 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
           </a>
         </p>
       ) : null}
-      {props.presentation.offerProvisioning ? (
+      {props.presentation.offerProvisioning && props.presentation.asksForConfigurationToken ? (
         <form onSubmit={onSubmit} className="mt-3 grid gap-1.5">
           <label
             htmlFor={`configuration-token-${props.surfaceSlug}`}
@@ -405,6 +630,18 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
             </Button>
           </div>
         </form>
+      ) : null}
+      {props.presentation.offerProvisioning && !props.presentation.asksForConfigurationToken ? (
+        <div className="mt-3">
+          <Button
+            variant="primary"
+            size="small"
+            disabled={props.provisioning}
+            onClick={(): void => props.onProvision()}
+          >
+            {props.provisioning ? 'Registering the app…' : provisionLabel(props.presentation)}
+          </Button>
+        </div>
       ) : null}
       {props.error ? (
         <p role="alert" className="mt-1 text-[var(--color-danger)]">

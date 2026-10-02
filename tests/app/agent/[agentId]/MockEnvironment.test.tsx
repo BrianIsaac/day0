@@ -79,7 +79,7 @@ const agentId = 'agent-1' as Id<'agents'>;
 
 /** The environment rendered to markup in one mode. */
 const markupIn = (mode: SurfaceMode): string =>
-  renderToStaticMarkup(<MockEnvironment agentId={agentId} mode={mode} />);
+  renderToStaticMarkup(<MockEnvironment agentId={agentId} employeeName="Maya" mode={mode} />);
 
 describe('MockEnvironment caption and tabs', (): void => {
   it('says the office is the seeded mock and shows no Surfaces tab in mock mode', (): void => {
@@ -112,9 +112,19 @@ describe('MockEnvironment caption and tabs', (): void => {
   });
 
   it('says it is loading, not the mock office, while the mode is unknown', (): void => {
-    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} mode={undefined} />);
+    const markup = renderToStaticMarkup(
+      <MockEnvironment agentId={agentId} employeeName="Maya" mode={undefined} />,
+    );
     expect(markup).toContain('Loading the work environment');
     expect(markup).not.toContain('Mock office');
+  });
+});
+
+describe('whom the employee acts as in the hosted office (wave 11, 11-AC)', (): void => {
+  it("says over every mock surface that it acts as the employee's own app in this office", (): void => {
+    expect(markupIn('mock')).toContain(
+      '<dt class="text-[13px] text-[var(--color-muted)]">Acts as</dt><dd class="min-w-0 text-[var(--color-fg-2)]">Maya, its own app in this office</dd>',
+    );
   });
 });
 
@@ -139,7 +149,9 @@ describe('the tab strip and the panel for a keyboard and a screen reader (step 4
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
-    act((): void => root.render(<MockEnvironment agentId={agentId} mode="mock" />));
+    act((): void =>
+      root.render(<MockEnvironment agentId={agentId} employeeName="Maya" mode="mock" />),
+    );
     const tab = (): HTMLElement | null =>
       container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     const press = (key: string): void => {
@@ -199,7 +211,9 @@ describe('a cold load whose hash names a tab', (): void => {
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
-    act((): void => root?.render(<MockEnvironment agentId={agentId} mode={mode} />));
+    act((): void =>
+      root?.render(<MockEnvironment agentId={agentId} employeeName="Maya" mode={mode} />),
+    );
   }
 
   afterEach((): void => {
@@ -223,7 +237,9 @@ describe('a cold load whose hash names a tab', (): void => {
     window.history.replaceState(null, '', '/agent/agent-1#surfaces');
     mount(undefined);
     expect(scrolled).toEqual([]);
-    act((): void => root?.render(<MockEnvironment agentId={agentId} mode="real" />));
+    act((): void =>
+      root?.render(<MockEnvironment agentId={agentId} employeeName="Maya" mode="real" />),
+    );
     expect(container?.textContent).toContain(LOADING_SURFACES);
     expect(scrolled.map((element) => element.id)).toEqual(['surfaces']);
     act((): void => {
@@ -261,7 +277,9 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
     document.body.append(container);
     root = createRoot(container);
     act((): void =>
-      root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} mode="mock" />),
+      root?.render(
+        <MockEnvironment agentId={'agent-1' as Id<'agents'>} employeeName="Maya" mode="mock" />,
+      ),
     );
     expect(docsBadge()?.innerHTML).toBe('2');
 
@@ -269,7 +287,9 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
     try {
       queries.newDoc = true;
       act((): void =>
-        root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} mode="mock" />),
+        root?.render(
+          <MockEnvironment agentId={'agent-1' as Id<'agents'>} employeeName="Maya" mode="mock" />,
+        ),
       );
       const roll = docsBadge()?.querySelector('.roll');
       expect(roll?.querySelector('.from')?.textContent).toBe('2');

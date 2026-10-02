@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   credentialStatusLine,
   SurfaceCard,
+  type AccessRequestView,
   type ListedSurface,
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
 import { AgentZoneContext } from '../../../../../app/components/time';
+import type { OrganisationSystem } from '../../../../../app/agent/[agentId]/surfaces/card-words';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** 29 Sep 2026, 12:00 UTC. */
@@ -19,6 +21,8 @@ const context: SurfaceCardContext = {
   credentials: new Map(),
   installRedirectConfigured: false,
   browserPresent: true,
+  employeeName: 'Maya',
+  organisation: new Map(),
 };
 
 const actions: SurfaceCardActions = {
@@ -29,6 +33,9 @@ const actions: SurfaceCardActions = {
   provision: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
+  disconnect: async () => undefined,
+  draftAccessRequest: async () => undefined,
+  recordAccessRequestSent: async () => undefined,
 };
 
 /** A listed surface with the fields a card state needs. */
@@ -51,14 +58,19 @@ function listed(fields: Partial<ListedSurface>): ListedSurface {
 }
 
 /** One card rendered in the employee's zone, with the entities React escapes read back. */
-function render(surface: ListedSurface, overrides: Partial<SurfaceCardContext> = {}): string {
+function render(
+  surface: ListedSurface,
+  overrides: Partial<SurfaceCardContext> = {},
+  extra: { accessRequest?: AccessRequestView | null; connect?: () => void } = {},
+): string {
   return renderToStaticMarkup(
     <AgentZoneContext value="UTC">
       <SurfaceCard
         surface={surface}
         context={{ ...context, ...overrides }}
         operation={undefined}
-        actions={actions}
+        actions={{ ...actions, ...(extra.connect ? { connect: extra.connect } : {}) }}
+        accessRequest={extra.accessRequest}
       />
     </AgentZoneContext>,
   ).replace(/&#x27;/g, "'");
@@ -238,5 +250,206 @@ describe("the stored credential's status (U19 D5)", (): void => {
     expect(credentialStatusLine({ revokedAt: 5, statusReason: undefined })).toBe('Revoked.');
     expect(credentialStatusLine({})).toBeUndefined();
     expect(credentialStatusLine(undefined)).toBeUndefined();
+  });
+});
+
+/** The organisation's connections a manager's summary lists, by system. */
+function organisation(
+  ...systems: Array<Partial<OrganisationSystem> & Pick<OrganisationSystem, 'system'>>
+) {
+  return new Map(
+    systems.map((fields): [string, OrganisationSystem] => [
+      fields.system,
+      {
+        displayName: fields.system.charAt(0).toUpperCase() + fields.system.slice(1),
+        mode: 'per-employee',
+        status: 'active',
+        connectedAt: Date.UTC(2026, 9, 1, 9),
+        ...fields,
+      },
+    ]),
+  );
+}
+
+/** The card's facts' labels, in the order the card draws them. */
+function factLabels(markup: string): string[] {
+  return [...markup.matchAll(/<dt class="[^"]*">([^<]*)<\/dt>/g)].map((match) => match[1]);
+}
+
+/** What one fact says, by its label. */
+function fact(markup: string, label: string): string | undefined {
+  return new RegExp(`<dt class="[^"]*">${label}</dt><dd[^>]*>(.*?)</dd>`).exec(markup)?.[1];
+}
+
+/** A Linear card whose documentation names a key, approved and waiting for its access. */
+const LINEAR_APPROVED = {
+  verdict: 'approved',
+  managerApprovedAt: NOW - DAY,
+  expiresAt: NOW + 89 * DAY,
+  request: { credential: { found: 'location', label: 'Linear API key', location: 'Access' } },
+  credentialLocation: 'Access',
+} as Partial<ListedSurface>;
+
+const SLACK_CARD = {
+  _id: 'surface-slack',
+  slug: 'slack',
+  displayName: 'Slack',
+  class: 'chat',
+  path: 'documented-api',
+  endpoint: 'https://slack.com/api/',
+  request: { credential: { method: 'oauth', label: 'Slack OAuth access' } },
+} as Partial<ListedSurface>;
+
+/** An access request as `accessRequests.forCard` answers it, not yet drafted. */
+const REQUEST: AccessRequestView = {
+  system: 'linear',
+  reason: 'no-connection',
+  scopes: ['linear:read', 'linear:write'],
+  subject: 'Day0 access request: Linear for Maya',
+  text: 'Maya, a Day0 employee, needs access to Linear.\nAccess needed: linear:read, linear:write.',
+  mailto: 'mailto:?subject=Day0%20access%20request',
+};
+
+describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void => {
+  it("puts Acts as first among the facts before approval, naming the employee's own Slack app IT's connection makes", (): void => {
+    const markup = render(listed({ ...SLACK_CARD, request: { blastRadius: 'one workspace' } }), {
+      organisation: organisation({ system: 'slack' }),
+    });
+    expect(factLabels(markup)[0]).toBe('Acts as');
+    expect(fact(markup, 'Acts as')).toBe('Maya, its own Slack app');
+  });
+
+  it('keeps Acts as first after approval, read from the identity the connect path wrote', (): void => {
+    const markup = render(
+      listed({
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-1' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        actsAs: { kind: 'shared-app', label: 'Linear' },
+      }),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+    );
+    expect(factLabels(markup).slice(0, 2)).toEqual(['Acts as', 'Reached']);
+    expect(fact(markup, 'Acts as')).toBe(
+      'the Day0 app shared by your employees; Day0 records which employee did what',
+    );
+  });
+
+  it('draws the warning chip beside a pasted key and a delegated grant, and none beside an own app', (): void => {
+    const pasted = render(listed({ verdict: 'proposed' }));
+    expect(fact(pasted, 'Acts as')).toContain(
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+    );
+    expect(fact(pasted, 'Acts as')).toMatch(
+      /text-\[var\(--color-warn\)\][^"]*">Pasted key<\/span>/,
+    );
+    const delegated = render(
+      listed({ endpoint: 'https://docs.acme.test/mcp', displayName: 'Acme docs' }),
+      { organisation: organisation({ system: 'mcp:docs.acme.test' }) },
+    );
+    expect(fact(delegated, 'Acts as')).toContain(
+      'you in Acme docs: what it touches shows your name',
+    );
+    expect(fact(delegated, 'Acts as')).toContain('>Delegated</span>');
+    const own = render(listed(SLACK_CARD), { organisation: organisation({ system: 'slack' }) });
+    expect(fact(own, 'Acts as')).not.toContain('</span>');
+  });
+
+  it("offers no credential field where the organisation's connection covers the system, and Connect instead", (): void => {
+    const markup = render(
+      listed(LINEAR_APPROVED),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).not.toContain('type="password"');
+    expect(fact(markup, 'Connection')).toBe('Connected for your organisation by IT on 1 October');
+    expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).not.toContain('Once you approve, the card asks for');
+  });
+
+  it('keeps the credential field where no organisation connection covers the system', (): void => {
+    const markup = render(listed(LINEAR_APPROVED));
+    expect(markup).toMatch(/<input id="credential-[^"\s]+" type="password"/);
+    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
+  });
+
+  it("creates a Slack card's own app through IT's connection with nothing to paste", (): void => {
+    const markup = render(
+      listed({ ...SLACK_CARD, verdict: 'approved', managerApprovedAt: NOW - DAY }),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toContain('type="password"');
+    expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
+  });
+
+  it('shows the access request with its three ways to send it while IT has not acted', (): void => {
+    const markup = render(
+      listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
+      {},
+      { accessRequest: REQUEST },
+    );
+    expect(markup).toContain('Ask IT to connect Linear');
+    expect(markup).toContain('Maya, a Day0 employee, needs access to Linear.');
+    expect(markup).toMatch(/<button[^>]*>Copy<\/button>/);
+    expect(markup).toMatch(
+      /<a[^>]*href="mailto:\?subject=Day0%20access%20request"[^>]*>Email it<\/a>/,
+    );
+    expect(markup).toMatch(/<button[^>]*>Send to me in Slack<\/button>/);
+  });
+
+  it('says when the request went to IT and to the manager, and offers the Slack message no more once drafted', (): void => {
+    const drafted = {
+      ...REQUEST,
+      draftedAt: Date.UTC(2026, 9, 3, 9),
+      copiedAt: Date.UTC(2026, 9, 3, 10),
+      messagedAt: Date.UTC(2026, 9, 3, 9, 1),
+    };
+    const markup = render(
+      listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
+      {},
+      { accessRequest: drafted },
+    );
+    expect(markup).toContain('Sent to IT on 3 October');
+    expect(markup).toContain('Sent to you in Slack on 3 October');
+    expect(markup).not.toMatch(/>Send to me in Slack<\/button>/);
+  });
+
+  it('offers Disconnect on a card that holds a credential, and none on one that holds none', (): void => {
+    const held = render(
+      listed({
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-1' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+      }),
+    );
+    expect(held).toMatch(/<button[^>]*>Disconnect<\/button>/);
+    const none = render(
+      listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
+    );
+    expect(none).not.toMatch(/>Disconnect<\/button>/);
+  });
+
+  it('says an authorisation that was started and not finished, and that Connect starts it again', (): void => {
+    const markup = render(
+      listed({
+        endpoint: 'https://docs.acme.test/mcp',
+        displayName: 'Acme docs',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 89 * DAY,
+        pendingAuthorisation: {
+          startedAt: Date.UTC(2026, 8, 29, 11, 50),
+        } as ListedSurface['pendingAuthorisation'],
+      }),
+      { organisation: organisation({ system: 'mcp:docs.acme.test' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup.replace(/<[^>]+>/g, '')).toContain(
+      'Authorisation started 29 Sep 2026, 11:50 and not finished: Connect starts it again.',
+    );
   });
 });
