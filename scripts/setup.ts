@@ -842,7 +842,8 @@ export interface TargetRefusal {
 }
 
 /**
- * Refuse every target that is not a backend on this machine.
+ * Refuse every target that is not a backend on this machine. A customer install's public
+ * backend address (`customerBackendUrl`) is the browser's way in, not a target, and stands.
  *
  * Args:
  *   values: What `.env.local` declares today.
@@ -876,6 +877,9 @@ export function localTargetRefusals(
   }
   for (const name of ['CONVEX_SELF_HOSTED_URL', 'NEXT_PUBLIC_CONVEX_URL', 'CONVEX_URL']) {
     const url = both(name);
+    // The browser's address for a customer install behind a proxy (`install --backend-url`):
+    // the setup's own calls still go to CONVEX_SELF_HOSTED_URL on this machine.
+    if (name === 'NEXT_PUBLIC_CONVEX_URL' && url === customerBackendUrl(values)) continue;
     if (url !== '' && !isLoopback(url)) {
       refusals.push({
         setting: name,

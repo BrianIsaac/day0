@@ -310,6 +310,28 @@ describe('clear', (): void => {
 });
 
 describe('resume', (): void => {
+  it('resumes a customer install behind a proxy, keeping the backend’s public address it was given (11-AI)', async (): Promise<void> => {
+    const h = configured({ services: ['backend', 'sandbox', 'redactor'], servicesBeforeUp: [] });
+    writeEnvValues(join(h.directory, '.env.local'), {
+      DAY0_PROFILE: 'customer-local',
+      NEXT_PUBLIC_CONVEX_URL: 'https://convex.acme.test',
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    expect(h.output.join('\n')).not.toContain('not a backend on this machine');
+    expect(readEnvValues(join(h.directory, '.env.local')).NEXT_PUBLIC_CONVEX_URL).toBe(
+      'https://convex.acme.test',
+    );
+  });
+
+  it('still refuses a remote backend address outside a customer install', async (): Promise<void> => {
+    const h = configured({ services: ['backend', 'sandbox', 'redactor'], servicesBeforeUp: [] });
+    writeEnvValues(join(h.directory, '.env.local'), {
+      NEXT_PUBLIC_CONVEX_URL: 'https://convex.acme.test',
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('not a backend on this machine');
+  });
+
   it('brings the same project back on the same ports, keeps the admin key and prints the unlock URL', async (): Promise<void> => {
     // After `stop`: nothing of the project runs until the setup's own `up`.
     const h = configured({ services: ['backend', 'sandbox', 'redactor'], servicesBeforeUp: [] });
