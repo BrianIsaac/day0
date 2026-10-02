@@ -130,6 +130,15 @@ describe('the customer-local proxy gate', (): void => {
     }
   });
 
+  it("keeps the MCP authorisation redirect behind the session: it returns to the manager's own browser", async (): Promise<void> => {
+    const proxy = await loadProxy();
+    expect(((await proxy(request('/api/oauth/mcp?code=x&state=y'))) as Response).status).toBe(401);
+    const cookie = await sessionCookie();
+    expect(
+      ((await proxy(request('/api/oauth/mcp?code=x&state=y', cookie))) as Response).status,
+    ).toBe(200);
+  });
+
   it("sends Clerk's sign-in pages to the company sign-in, never to Clerk", async (): Promise<void> => {
     const proxy = await loadProxy();
     const cookie = await sessionCookie();
