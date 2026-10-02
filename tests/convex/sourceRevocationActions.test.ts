@@ -35,7 +35,10 @@ afterEach((): void => {
   vi.unstubAllEnvs();
 });
 
-/** Store a value under an owner, then write the given fields on its row. */
+/**
+ * Store a value under an owner, then write the given fields on its row. A value under the reserved
+ * organisation key is stored with the organisation as its holder, as the store requires.
+ */
 async function stored(
   harness: Harness,
   userId: string,
@@ -48,6 +51,7 @@ async function stored(
     label: 'Slack',
     plaintext,
     source: 'oauth',
+    ...(userId === ORGANISATION_OWNER_KEY ? { holder: ORGANISATION_HOLDER } : {}),
   });
   await harness.run(async (ctx) => await ctx.db.patch(credentialId, fields));
   return credentialId;
@@ -66,9 +70,7 @@ async function leoWithOwnApp(
 }> {
   let connectionId: Id<'organisationConnections'> | undefined;
   if (options.connection) {
-    const configuration = await stored(harness, ORGANISATION_OWNER_KEY, CONFIGURATION_TOKEN, {
-      holder: ORGANISATION_HOLDER,
-    });
+    const configuration = await stored(harness, ORGANISATION_OWNER_KEY, CONFIGURATION_TOKEN, {});
     connectionId = await harness.run(
       async (ctx) =>
         await ctx.db.insert('organisationConnections', {

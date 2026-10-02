@@ -46,7 +46,10 @@ export interface IssuedIdentities {
   readonly connectionId?: Id<'organisationConnections'>;
 }
 
-/** Store a value as the store seals it, then write the given fields on its row. */
+/**
+ * Store a value as the store seals it, then write the given fields on its row. A value under the
+ * reserved organisation key is stored with the organisation as its holder, as the store requires.
+ */
 async function sealed(
   harness: TestConvex<typeof schema>,
   userId: string,
@@ -60,6 +63,7 @@ async function sealed(
     label,
     plaintext,
     source: 'oauth',
+    ...(userId === ORGANISATION_OWNER_KEY ? { holder: ORGANISATION_HOLDER } : {}),
   });
   await harness.run(async (ctx) => await ctx.db.patch(credentialId, fields));
   return credentialId;
@@ -84,7 +88,7 @@ export async function seedIssuedIdentities(
       ORGANISATION_OWNER_KEY,
       CONFIGURATION_TOKEN,
       'Slack configuration token',
-      { holder: ORGANISATION_HOLDER },
+      {},
     );
     connectionId = await harness.run(
       async (ctx) =>
