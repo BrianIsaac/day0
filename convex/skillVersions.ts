@@ -128,9 +128,9 @@ export async function newerVersionToRecheck(
 }
 
 /**
- * Every row that holds a version on an employee of the version's owner: the one place the owner
- * boundary on a version's holders is drawn (the wave 10 review K-m3), so no caller reaches a row
- * of another owner that points at the version.
+ * Every row that holds a version on an employee of the version's owner: the owner boundary on a
+ * version's holders is drawn in the read itself (the wave 10 review K-m3), so no caller reaches a
+ * row of another owner that points at the version, whether or not it compares the owner again.
  *
  * @remarks
  * `skills` carries no owner, so no index leads with one: the rows are read by `by_version` and
