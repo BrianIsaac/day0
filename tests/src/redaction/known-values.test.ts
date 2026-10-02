@@ -11,7 +11,12 @@ import schema from '../../../convex/schema';
 import { persistPageBatch } from '../../../convex/docSyncActions';
 import { credentialValueFingerprint, encrypt } from '../../../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../../../src/redaction/client';
-import { ownerValuesRef, scrubKnownValues } from '../../../src/redaction/known-values';
+import {
+  ownerKnownValues,
+  ownerValuesRef,
+  scrubKnownValues,
+} from '../../../src/redaction/known-values';
+import { ORGANISATION_OWNER_KEY } from '../../../src/lib/organisation-key';
 import { redactText } from '../../../src/redaction/redact';
 import { HttpAdapter } from '../../../src/surfaces/http';
 import { McpAdapter, type McpClientLike, type McpClientOptions } from '../../../src/surfaces/mcp';
@@ -349,5 +354,99 @@ describe('scrubKnownValues', (): void => {
       untouched: 'plain',
     });
     expect(scrubKnownValues(shape, [])).toBe(shape);
+  });
+});
+
+describe("the organisation's values join every owner's (11-AO, AC12)", (): void => {
+  /** An action context whose owner list answers by key, recording each key it was asked for. */
+  function listsByKey(lists: Readonly<Record<string, readonly string[]>>): {
+    ctx: ActionCtx;
+    asked: string[];
+  } {
+    const asked: string[] = [];
+    const fake = {
+      runAction: async (reference: unknown, args: { userId: string }): Promise<unknown> => {
+        if (getFunctionName(reference as never) !== getFunctionName(ownerValuesRef)) {
+          throw new Error('only the owner list is expected');
+        }
+        asked.push(args.userId);
+        return [...(lists[args.userId] ?? [])];
+      },
+    } as unknown as ActionCtx;
+    return { ctx: fake, asked };
+  }
+
+  it('lists the owner’s values and the organisation’s, once each', async (): Promise<void> => {
+    const { ctx: fake, asked } = listsByKey({
+      owner: ['owner-secret', 'shared-value'],
+      [ORGANISATION_OWNER_KEY]: ['xoxe-1234567890-abcdefghij', 'shared-value'],
+    });
+    const values = await ownerKnownValues(fake, 'owner');
+    expect([...values].sort()).toEqual(
+      ['owner-secret', 'shared-value', 'xoxe-1234567890-abcdefghij'].sort(),
+    );
+    expect(asked.sort()).toEqual(['owner', ORGANISATION_OWNER_KEY].sort());
+  });
+
+  it('asks once when the list is the organisation’s own', async (): Promise<void> => {
+    const { ctx: fake, asked } = listsByKey({ [ORGANISATION_OWNER_KEY]: ['org-value'] });
+    await expect(ownerKnownValues(fake, ORGANISATION_OWNER_KEY)).resolves.toEqual(['org-value']);
+    expect(asked).toEqual([ORGANISATION_OWNER_KEY]);
+  });
+
+  it('fails closed when the organisation’s list fails, as the owner’s does', async (): Promise<void> => {
+    const fake = {
+      runAction: async (_reference: unknown, args: { userId: string }): Promise<unknown> => {
+        if (args.userId === ORGANISATION_OWNER_KEY) throw new Error('too many');
+        return [];
+      },
+    } as unknown as ActionCtx;
+    await expect(ownerKnownValues(fake, 'owner')).rejects.toThrow('too many');
+  });
+
+  it("removes an organisation secret from any employee's stored text in the export", async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    // A client secret no structural rule recognises: only the exact-value layer removes it.
+    const ORGANISATION_SECRET = 'Quiet-Harbour-73';
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(internal.organisationConnections.landFromSetup, {
+      system: 'linear',
+      displayName: 'Linear',
+      kind: 'oauth-app',
+      mode: 'shared',
+      scopes: ['read'],
+      clientId: 'lin-client-1',
+      secret: ORGANISATION_SECRET,
+    });
+    for (const owner of ['owner', 'another-owner']) {
+      const agentId = await harness.run(async (db): Promise<Id<'agents'>> => {
+        const id = await db.db.insert('agents', {
+          bossEmail: owner === 'owner' ? MANAGER_ADDRESS : 'another-owner@day0.local',
+          name: 'Priya',
+          userId: owner,
+          state: 'active',
+          createdAt: 1,
+        });
+        await db.db.insert('workItems', {
+          agentId: id,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-9',
+          title: 'Rotate the Linear secret',
+          contentSummary: `Someone pasted ${ORGANISATION_SECRET} into the ticket.`,
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        return id;
+      });
+      const page = await harness
+        .withIdentity(managerIdentity(owner))
+        .action(api.exportActions.exportPage, { agentId, section: 'workItems', cursor: null });
+      const exported = JSON.stringify(page.rows);
+      expect(exported, owner).not.toContain(ORGANISATION_SECRET);
+      expect(exported, owner).toContain('Rotate the Linear secret');
+    }
   });
 });
