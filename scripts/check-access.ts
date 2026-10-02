@@ -221,6 +221,18 @@ function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
   if (mode.scopes.length === 0 && row.scopes.length === 0) {
     return check(row.system, 'scopes', 'ok', 'No scopes listed: the server offers its own.');
   }
+  // A kit that names its scopes is the whole of what Day0 uses: more is held for nothing (m20).
+  const unused = mode.scopes.length === 0 ? [] : missing(mode.scopes, row.scopes);
+  if (unused.length > 0) {
+    return check(
+      row.system,
+      'scopes',
+      'warn',
+      `Holds ${row.scopes.join(', ')}, of which Day0 never uses ${unused.join(', ')}: IT may ` +
+        `remove them at ${row.displayName}, then record the change with ` +
+        `\`./setup.sh access --correct ${row.system}\`.`,
+    );
+  }
   return check(row.system, 'scopes', 'ok', `Holds ${row.scopes.join(', ')}.`);
 }
 

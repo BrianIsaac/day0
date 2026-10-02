@@ -187,6 +187,18 @@ describe('check:access', (): void => {
     expect(only(granted, 'linear', 'scopes').detail).toContain('write');
   });
 
+  it("notes a registration holding scopes Day0 does not use, and passes still (the review's m20)", async (): Promise<void> => {
+    const checks = await accessChecks(
+      [{ ...SLACK, scopes: [...SLACK_KIT_BOT_SCOPES, 'admin', 'files:write'] }],
+      VALUES,
+      vendors(),
+    );
+    const scopes = only(checks, 'slack', 'scopes');
+    expect(scopes.status).toBe('warn');
+    expect(scopes.detail).toContain('admin, files:write');
+    expect(accessExitCode(checks)).toBe(0);
+  });
+
   it('says what Slack refused, and that an expired configuration token renews at the next app', async (): Promise<void> => {
     const refused = await accessChecks(
       [SLACK],
