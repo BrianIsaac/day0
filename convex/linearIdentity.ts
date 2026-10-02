@@ -16,6 +16,7 @@ import type { ActsAs } from '../src/surfaces/access-identity';
 import { organisationSystemOf } from '../src/surfaces/access-request';
 import {
   ACCESS_TOKEN_REFRESH_LEAD_MS,
+  LINEAR_ISSUER,
   LINEAR_SYSTEM,
   renewalDueAt,
   SHARED_TOKEN_RENEWAL_LEAD_MS,
@@ -275,6 +276,25 @@ async function retireReplaced(
   }
 }
 
+/** The client secret the card's held token is refreshed with, if it holds one Day0 obtained. */
+async function secretInUse(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+): Promise<Id<'credentials'> | undefined> {
+  const held = surface.credentialId ? await ctx.db.get(surface.credentialId) : null;
+  return held?.issuedBy?.clientSecretCredentialId;
+}
+
+/** Purge an employee app's client secret row, if it still holds its value. */
+async function purgeSecret(
+  ctx: MutationCtx,
+  credentialId: Id<'credentials'>,
+  now: number,
+): Promise<void> {
+  const row = await ctx.db.get(credentialId);
+  if (row) await purgeCredential(ctx, row, now);
+}
+
 /** The verdict and reason a card takes when a new identity lands: a failed check is cleared. */
 function landedVerdict(surface: Doc<'surfaces'>): Pick<Doc<'surfaces'>, 'verdict' | 'reason'> {
   const approved = surface.managerApprovedAt !== undefined;
@@ -357,6 +377,7 @@ export const connectSharedCard = internalMutation({
       credentialLocation: undefined,
       credentialLanded: false,
       actsAs,
+      providerIdentityId: args.appUser.id,
       ...landedVerdict(surface),
     });
     await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
@@ -407,10 +428,11 @@ export const recordEmployeeApp = internalMutation({
       },
       createdAt: args.now,
     });
-    const replaced = surface.provisioning?.clientSecretCredentialId;
-    if (replaced !== undefined) {
-      const row = await ctx.db.get(replaced);
-      if (row) await purgeCredential(ctx, row, args.now);
+    // An app recorded before and never installed has its secret purged now; one whose tokens the
+    // card holds keeps it, since they are refreshed with it, until this app's installation lands.
+    const previous = surface.provisioning?.clientSecretCredentialId;
+    if (previous !== undefined && (await secretInUse(ctx, surface)) !== previous) {
+      await purgeSecret(ctx, previous, args.now);
     }
     await ctx.db.patch(surface._id, {
       provisioning: {
@@ -509,6 +531,8 @@ export const claimPendingAuthorisation = internalMutation({
     const pending = surface?.pendingAuthorisation;
     if (!surface || !pending) return { ok: false, reason: 'none' };
     if (pending.stateNonce !== args.stateNonce) return { ok: false, reason: 'used' };
+    // Another flow's authorisation (11-AM's MCP rung shares the row) is left for its own redirect.
+    if (pending.issuer !== LINEAR_ISSUER) return { ok: false, reason: 'none' };
     await clearPending(ctx, surface);
     if (pending.stateExpiresAt <= args.now) return { ok: false, reason: 'expired' };
     const app = surface.provisioning;
@@ -582,7 +606,11 @@ export const landEmployeeTokens = internalMutation({
       ...(args.expiresAt === undefined ? {} : { expiresAt: args.expiresAt }),
       refreshCredentialId,
     });
+    const replacedSecret = await secretInUse(ctx, surface);
     await retireReplaced(ctx, surface, credentialId, args.now);
+    if (replacedSecret !== undefined && replacedSecret !== app.clientSecretCredentialId) {
+      await purgeSecret(ctx, replacedSecret, args.now);
+    }
     const actsAs: ActsAs = {
       kind: 'own-app',
       label: app.appName,
@@ -594,6 +622,7 @@ export const landEmployeeTokens = internalMutation({
       credentialLocation: undefined,
       credentialLanded: false,
       actsAs,
+      providerIdentityId: args.appUser.id,
       provisioning: { ...app, installedAt: args.now, lastError: undefined },
       ...landedVerdict(surface),
     });

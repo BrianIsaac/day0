@@ -549,6 +549,9 @@ export const registerEmployeeApp = action({
   },
 });
 
+/** An OAuth error code as RFC 6749 shapes them (`access_denied`), the only error text recorded. */
+const OAUTH_ERROR_CODE = /^[a-z_]{1,64}$/;
+
 /** The words a refused claim of a pending installation reads as. */
 const CLAIM_FAILURES: { readonly [Failure in LinearClaimFailure]: string } = {
   none: 'This installation link is not waiting on any card. Start it again from the card.',
@@ -608,7 +611,9 @@ export const completeAuthorisation = action({
       return { ok: false, ...landing, reason };
     };
     if (args.error !== undefined) {
-      return await fail(`Linear did not install the app: ${args.error.slice(0, 80)}.`);
+      // Only an OAuth error code is recorded: the redirect's text is the browser's, not Linear's.
+      const code = OAUTH_ERROR_CODE.test(args.error) ? args.error : 'an unrecognised error';
+      return await fail(`Linear did not install the app: ${code}.`);
     }
     if (!args.code) return await fail('Linear sent no code back.');
     const { pending } = claimed;
@@ -701,7 +706,21 @@ async function refreshEmployee(
   }
   const clientSecret = await valueOf(ctx, secretId);
   if (await rotatedSince(ctx, held)) return { ok: true, bearer: await valueOf(ctx, access._id) };
-  const presented = await valueOf(ctx, refresh._id);
+  // The refresh token of the generation `held` was read at, opened from that same read: a rotation
+  // landing since cannot hand this refresh a newer token than the generation its write expects.
+  if (refresh.revokedAt !== undefined || !refresh.ciphertext || !refresh.iv) {
+    return { ok: false, refusal: 'The Linear refresh token is no longer held.' };
+  }
+  const presented = openOwnedCredential(
+    {
+      ciphertext: refresh.ciphertext,
+      iv: refresh.iv,
+      userId: refresh.userId,
+      ...(refresh.keyId === undefined ? {} : { keyId: refresh.keyId }),
+    },
+    credentialKeyring(),
+    { allowUnbound: false },
+  );
   let issued: LinearIssuedTokens;
   try {
     issued = await requestLinearTokens(

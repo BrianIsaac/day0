@@ -19,6 +19,8 @@ const SHARED_CLIENT = 'day0-shared';
 const SHARED_SECRET = 'shared-client-secret';
 const LEO_CLIENT = 'day0-leo';
 const LEO_SECRET = 'leo-client-secret';
+const LEO_SECOND_CLIENT = 'day0-leo-2';
+const LEO_SECOND_SECRET = 'leo-second-secret';
 const SCOPE_SET = ['read', 'write', 'app:assignable'];
 const ADMINISTRATOR = 'ines@acme.test';
 const DAY = 24 * 60 * 60 * 1_000;
@@ -48,6 +50,13 @@ beforeEach(async (): Promise<void> => {
         clientSecret: LEO_SECRET,
         clientCredentials: false,
         appUser: { id: 'app-user-day0-leo', name: 'Day0 Leo' },
+        redirectUris: [REDIRECT],
+      },
+      {
+        clientId: LEO_SECOND_CLIENT,
+        clientSecret: LEO_SECOND_SECRET,
+        clientCredentials: false,
+        appUser: { id: 'app-user-day0-leo-2', name: 'Day0 Leo 2' },
         redirectUris: [REDIRECT],
       },
     ],
@@ -206,6 +215,7 @@ describe('shared mode: the organisation app actor', (): void => {
       credentialId: token?._id,
       organisationConnectionId: connectionId,
       actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: 'app-user-day0-shared' },
+      providerIdentityId: 'app-user-day0-shared',
     });
     expect(scheduled.map((job) => job.name)).toEqual(
       expect.arrayContaining([
@@ -431,6 +441,7 @@ describe("per-employee mode: the employee's own app", (): void => {
       credentialKind: 'oauth',
       organisationConnectionId: connectionId,
       actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-day0-leo' },
+      providerIdentityId: 'app-user-day0-leo',
       provisioning: { appName: 'Day0 Leo', clientId: LEO_CLIENT, redirectUrl: REDIRECT },
     });
     expect(surface.pendingAuthorisation).toBeUndefined();
@@ -604,6 +615,105 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(surface.pendingAuthorisation).toMatchObject({
       clientId: LEO_CLIENT,
       redirectUrl: REDIRECT,
+    });
+  });
+
+  it("keeps the installed app's secret until a newly recorded app's installation lands", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const installed = (await read(harness, surfaceIds[0]!)).surface;
+    const firstSecret = installed.provisioning!.clientSecretCredentialId;
+    const recorded = await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.linearIdentityActions.registerEmployeeApp, {
+        surfaceId: surfaceIds[0]!,
+        clientId: LEO_SECOND_CLIENT,
+        clientSecret: LEO_SECOND_SECRET,
+      });
+    if (!recorded.ok) throw new Error(recorded.message);
+
+    clock += DAY + 60_000;
+    const refreshed = await bearerOf(harness, installed.credentialId!);
+    expect(linear.live(refreshed)).toBe(true);
+
+    // The recorded link lapsed in the day that passed: a fresh one for the new app.
+    const fresh = await connect(harness, surfaceIds[0]!);
+    if (!('authoriseUrl' in fresh)) throw new Error('no installation link');
+    expect(new URL(fresh.authoriseUrl).searchParams.get('client_id')).toBe(LEO_SECOND_CLIENT);
+    const back = linear.consent(fresh.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const { surface, credentials } = await read(harness, surfaceIds[0]!);
+    expect(surface.providerIdentityId).toBe('app-user-day0-leo-2');
+    const purged = credentials.find((row) => row._id === firstSecret);
+    expect(purged?.revokedAt).toEqual(expect.any(Number));
+    expect(purged?.ciphertext).toBeUndefined();
+  });
+
+  it("refuses another flow's pending authorisation without consuming it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const registered = await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.linearIdentityActions.registerEmployeeApp, {
+        surfaceId: surfaceIds[0]!,
+        clientId: LEO_CLIENT,
+        clientSecret: LEO_SECRET,
+      });
+    if (!registered.ok) throw new Error(registered.message);
+    // An MCP server's authorisation took the card's pending row since (11-AM's flow).
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db.get(surfaceIds[0]!);
+      await ctx.db.patch(surfaceIds[0]!, {
+        pendingAuthorisation: {
+          ...surface!.pendingAuthorisation!,
+          issuer: 'https://auth.acme.test',
+        },
+      });
+    });
+    const back = linear.consent(registered.authoriseUrl);
+
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect((await read(harness, surfaceIds[0]!)).surface.pendingAuthorisation).toMatchObject({
+      issuer: 'https://auth.acme.test',
+    });
+    expect(tokenRequests()).toEqual([]);
+  });
+
+  it("records only an OAuth error code Linear could have sent, never the redirect's free text", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const registered = await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.linearIdentityActions.registerEmployeeApp, {
+        surfaceId: surfaceIds[0]!,
+        clientId: LEO_CLIENT,
+        clientSecret: LEO_SECRET,
+      });
+    if (!registered.ok) throw new Error(registered.message);
+    const state = new URL(registered.authoriseUrl).searchParams.get('state') ?? '';
+
+    const result = await harness.action(api.linearIdentityActions.completeAuthorisation, {
+      state,
+      error: '<a href="https://evil.test">click</a>',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'Linear did not install the app: an unrecognised error.',
     });
   });
 });

@@ -417,8 +417,9 @@ const VIEWER_QUERY = '{ viewer { id name app } }';
  * Read the identity a token acts as from Linear's `viewer`: the app user's id, which the ticket
  * rule compares assignees and delegates with (D6), and whether it is an app at all.
  *
- * @throws LinearIssuerRefusal `unauthorised` when Linear refuses the token, `malformed` when the
- *   answer names nobody, `unavailable` when Linear cannot be reached.
+ * @throws LinearIssuerRefusal `unauthorised` when Linear does not know the token (401),
+ *   `token-refused` when it forbids the read (403), `malformed` when the answer names nobody,
+ *   `unavailable` when Linear cannot be reached.
  */
 export async function readLinearViewer(
   fetch: LinearFetch,
@@ -434,11 +435,12 @@ export async function readLinearViewer(
     body: JSON.stringify({ query: VIEWER_QUERY }),
   });
   const body = await bodyOf(response);
-  if (response.status === 401 || response.status === 403) {
-    throw new LinearIssuerRefusal(
-      'unauthorised',
-      `${REFUSAL_LEADS.unauthorised}: HTTP ${response.status}.`,
-    );
+  if (response.status === 401) {
+    throw new LinearIssuerRefusal('unauthorised', `${REFUSAL_LEADS.unauthorised}: HTTP 401.`);
+  }
+  // Forbidden is the token known and refused this read: the authority, which a new token does not mend.
+  if (response.status === 403) {
+    throw new LinearIssuerRefusal('token-refused', `${REFUSAL_LEADS['token-refused']}: HTTP 403.`);
   }
   if (response.status >= 500 || response.status === 429) {
     throw new LinearIssuerRefusal(

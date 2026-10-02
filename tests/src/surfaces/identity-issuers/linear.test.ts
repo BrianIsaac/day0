@@ -373,3 +373,12 @@ describe('an answer without expires_in', (): void => {
     expect(own.expiresAt).toBe(NOW + 86_399_000);
   });
 });
+
+describe('a viewer Linear forbids', (): void => {
+  it('withdraws the authority without asking for a new token', async (): Promise<void> => {
+    const refusal = await refusalOf(readLinearViewer(answering(403, { errors: [] }).fetch, 't'));
+
+    expect(isAuthorityRefusal(refusal)).toBe(true);
+    expect(isTokenRefusal(refusal)).toBe(false);
+  });
+});
