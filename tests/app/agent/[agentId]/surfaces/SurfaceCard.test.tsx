@@ -343,7 +343,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
   it('draws the warning chip beside a pasted key and a delegated grant, and none beside an own app', (): void => {
     const pasted = render(listed({ verdict: 'proposed' }));
     expect(fact(pasted, 'Acts as')).toContain(
-      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     expect(fact(pasted, 'Acts as')).toMatch(
       /text-\[var\(--color-warn\)\][^"]*">Pasted key<\/span>/,
@@ -688,8 +688,8 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
     expect(fact(markup, 'Acts as')).toBe(
       'the Day0 app shared by your employees; Day0 records which employee did what',
     );
-    expect(fact(markup, 'Documented key')).toBe(
-      'Found in your documentation and not used: IT connected Linear for your organisation, so Maya acts through that connection.',
+    expect(fact(markup, 'Key in your docs')).toBe(
+      "Found and not used: Maya acts through IT's connection.",
     );
   });
 
@@ -702,7 +702,7 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
       }),
       { organisation: organisation({ system: 'linear', mode: 'shared' }) },
     );
-    expect(fact(markup, 'Documented key')).toBeUndefined();
+    expect(fact(markup, 'Key in your docs')).toBeUndefined();
   });
 
   it('stamps a documented key bound with no connection a shared key, never one someone pasted', (): void => {
@@ -717,11 +717,11 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
     );
     const actsAs = fact(markup, 'Acts as') ?? '';
     expect(actsAs).toContain(
-      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     expect(actsAs).toContain('>Documented key</span>');
     expect(actsAs).not.toMatch(/past/i);
-    expect(fact(markup, 'Documented key')).toBeUndefined();
+    expect(fact(markup, 'Key in your docs')).toBeUndefined();
   });
 
   it('offers the move off a documented key in its own words once IT connected the system', (): void => {
@@ -760,6 +760,8 @@ describe("the administrator's reason on a card a revoke ended (the wave 11 revie
     );
     expect(markup).toContain('Skipped: no intake reader for connected docs surface');
     expect(markup).toContain(reason);
+    // The reason comes first: it is why the card ended (design pass).
+    expect(markup.indexOf(reason)).toBeLessThan(markup.indexOf('Skipped:'));
   });
 
   it('says a reason that is the skip line once', (): void => {

@@ -366,6 +366,11 @@ export function SurfaceCard({
       tone={cardTone(chip.tone)}
     >
       <div className="grid gap-4">
+        {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
+            M13); a reason that is the skip line is said once, as the skip. */}
+        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
+          <p className="text-sm text-[var(--color-fg)]">{surface.reason}</p>
+        ) : null}
         {skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
@@ -380,11 +385,6 @@ export function SurfaceCard({
         {/* A proposed card says it beside its disabled Approve instead. */}
         {browserFloor.absent && surface.verdict !== 'proposed' ? (
           <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
-        ) : null}
-        {/* An ended card says why whatever else it skips (the administrator's revoke reason,
-            M13); a reason that is the skip line is said once. */}
-        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
-          <p className="text-sm text-[var(--color-fg-2)]">{surface.reason}</p>
         ) : null}
         {request?.target?.reasoning ? (
           <p className="text-sm text-[var(--color-fg-2)]">{request.target.reasoning}</p>
@@ -424,9 +424,7 @@ export function SurfaceCard({
               </Fact>
             ) : null}
             {documentedKeyUnused && showsIdentity ? (
-              <Fact label="Documented key">
-                {documentedKeyUnusedWords(surface.displayName, context.employeeName)}
-              </Fact>
+              <Fact label="Key in your docs">{documentedKeyUnusedWords(context.employeeName)}</Fact>
             ) : null}
             {approvedAt !== undefined ? (
               <Fact label="Approved">

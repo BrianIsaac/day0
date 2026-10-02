@@ -120,7 +120,7 @@ describe('an employee acts at the vendor only as the identity its card names (cr
       { kind: 'value', label: 'Linear API key' },
     );
     expect(actsAsRow(LINEAR, actsAs)).toBe(
-      "a key someone pasted; its writes show that key's owner, and Day0 adds Leo's name to each Pasted key",
+      "a key someone pasted; its writes show that key's owner, and Day0 adds Leo's name to each write Pasted key",
     );
   });
 

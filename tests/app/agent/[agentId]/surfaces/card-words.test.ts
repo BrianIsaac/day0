@@ -212,7 +212,7 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
     const planned = cardIdentity(LINEAR, undefined, { selfProvisions: false });
     expect(planned).toEqual({ kind: 'shared-key', planned: true });
     expect(actsAsWords(planned, { employee: 'Maya', system: 'Linear' })).toBe(
-      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pastes here; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     const landed = cardIdentity(
       {
@@ -224,7 +224,7 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
       { selfProvisions: false },
     );
     expect(actsAsWords(landed, { employee: 'Maya', system: 'Linear' })).toBe(
-      "a key someone pasted; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key someone pasted; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
   });
 
@@ -291,7 +291,7 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
     });
     const words = actsAsWords(identity, names);
     expect(words).toBe(
-      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each",
+      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each write",
     );
     expect(words).not.toMatch(/past/);
     expect(identityChip(identity)).toBe('Documented key');
@@ -324,8 +324,8 @@ describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
   });
 
   it("says a documented key IT's connection replaced was found and is not used", (): void => {
-    expect(documentedKeyUnusedWords('Linear', 'Maya')).toBe(
-      'Found in your documentation and not used: IT connected Linear for your organisation, so Maya acts through that connection.',
+    expect(documentedKeyUnusedWords('Maya')).toBe(
+      "Found and not used: Maya acts through IT's connection.",
     );
   });
 });

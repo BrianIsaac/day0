@@ -234,7 +234,7 @@ export function actsAsWords(identity: CardIdentity, names: IdentityNames): strin
         identity.keyFrom === 'documentation'
           ? 'a key found in your documentation'
           : `a key someone ${identity.planned ? 'pastes here' : 'pasted'}`;
-      return `${key}; its writes show that key's owner, and Day0 adds ${employee}'s name to each`;
+      return `${key}; its writes show that key's owner, and Day0 adds ${employee}'s name to each write`;
     }
     case 'browser-seat':
       return `${employee}, signed in to its own seat in ${system}`;
@@ -411,8 +411,8 @@ export function moveLabel(from: KeyOrigin): string {
  * @param system - The system's name.
  * @param employee - The employee's name.
  */
-export function documentedKeyUnusedWords(system: string, employee: string): string {
-  return `Found in your documentation and not used: IT connected ${system} for your organisation, so ${employee} acts through that connection.`;
+export function documentedKeyUnusedWords(employee: string): string {
+  return `Found and not used: ${employee} acts through IT's connection.`;
 }
 
 /**
