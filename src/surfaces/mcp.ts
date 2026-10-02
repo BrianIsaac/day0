@@ -18,6 +18,7 @@ import type { SpanModel } from '../redaction/client';
 import type { MCPClient } from '@mastra/mcp';
 import { createSecretMcpClient } from './mcp-client';
 import { log } from '../lib/logger';
+import { LINEAR_MCP_ENDPOINT } from './fixed-endpoints';
 import {
   checkMcpAddress,
   pinnedFetch,
@@ -202,24 +203,29 @@ export function isProviderUnavailableAnswer(error: unknown): boolean {
 }
 
 /**
- * Send an approved write, and send it once more when the server answered that the provider behind
- * it is unavailable (`isProviderUnavailableAnswer`). The second answer is the write's, whatever it
- * is: there is never a third send, and every other failure is the first send's.
+ * Send an approved write, and send it once more when Linear's MCP server answered that Linear is
+ * unavailable (`isProviderUnavailableAnswer`). The answer is Linear's MCP's own, so it is taken
+ * from that server alone: another server answering in the same words is not known to mean the
+ * call never reached its provider. The second answer is the write's, whatever it is: there is
+ * never a third send, and every other failure is the first send's.
  *
  * @param send - One fenced send of the write (`sendOnce`), so neither send is ever doubled by the
  *   client's own reconnect.
- * @param where - The surface and tool, for the log line.
+ * @param where - The surface's slug and endpoint and the tool, for the rule and the log line.
  */
 async function sendWriteResendingOnce(
   send: () => Promise<unknown>,
-  where: { readonly surface: string; readonly tool: string },
+  where: { readonly surface: string; readonly endpoint: string | undefined; readonly tool: string },
 ): Promise<unknown> {
   try {
     return await send();
   } catch (error) {
-    if (!isProviderUnavailableAnswer(error)) throw error;
+    if (where.endpoint !== LINEAR_MCP_ENDPOINT || !isProviderUnavailableAnswer(error)) throw error;
   }
-  log.warn('mcp write resent once: the provider was unavailable', where);
+  log.warn('mcp write resent once: the provider was unavailable', {
+    surface: where.surface,
+    tool: where.tool,
+  });
   return await send();
 }
 
@@ -978,7 +984,11 @@ export class McpAdapter implements SurfaceAdapter {
           client.sendOnce ? await client.sendOnce(send) : await send();
         const result = interpretToolResult(
           writeAttempted
-            ? await sendWriteResendingOnce(sendFenced, { surface: surface.slug, tool: call.tool })
+            ? await sendWriteResendingOnce(sendFenced, {
+                surface: surface.slug,
+                endpoint: surface.endpoint,
+                tool: call.tool,
+              })
             : await send(),
         );
         const removals = [bearer, ...(this.deps.knownValues ?? [])];

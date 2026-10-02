@@ -1854,9 +1854,9 @@ describe("a provider's temporarily unavailable on a write (the real-Linear walk'
     };
   }
 
-  /** The adapter on the production client, pointed at the fake in place of Linear's address. */
-  function realClientAdapter(fake: FakeLinear): McpAdapter {
-    return new McpAdapter([linear], {
+  /** The adapter on the production client, pointed at the fake in place of the card's address. */
+  function realClientAdapter(fake: FakeLinear, surfaces: SurfaceRecord[] = [linear]): McpAdapter {
+    return new McpAdapter(surfaces, {
       decrypt: vi.fn(async (): Promise<string> => 'lin-secret'),
       createClient: (options: McpClientOptions): McpClientLike =>
         createMastraMcpClient({ serverName: options.serverName, url: fake.url }),
@@ -1884,6 +1884,33 @@ describe("a provider's temporarily unavailable on a write (the real-Linear walk'
       expect(result).toMatchObject({ ok: false, reason: UNAVAILABLE });
       expect(result.outcomeUnknown).toBeUndefined();
       expect(fake.calls).toEqual(['save_comment', 'save_comment']);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("sends it once when another server answers in Linear's words: the resend is Linear's MCP alone", async (): Promise<void> => {
+    const tracker: SurfaceRecord = {
+      ...linear,
+      slug: 'tracker',
+      displayName: 'Tracker',
+      endpoint: 'https://mcp.tracker.example/mcp',
+    };
+    const trackerComment: MockAction = {
+      ...commentCall,
+      args: { ...commentCall.args, surface: 'tracker' },
+    };
+    const fake = await fakeLinear([UNAVAILABLE, { id: 'comment-1' }]);
+    try {
+      const result = await realClientAdapter(fake, [tracker]).apply(
+        ctx,
+        run,
+        trackerComment,
+        0,
+        'k',
+      );
+      expect(result).toMatchObject({ ok: false, reason: UNAVAILABLE });
+      expect(fake.calls).toEqual(['save_comment']);
     } finally {
       await fake.close();
     }
