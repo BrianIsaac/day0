@@ -38,6 +38,12 @@ export interface Adopter {
   readonly surfaces: readonly AdopterSurface[];
   /** The classes of the systems the employee's approved charter names (`namedSystems`). */
   readonly charterClasses: readonly string[];
+  /**
+   * The class of the system the work that needs the skill comes from: the proposal's shape, which
+   * the evaluation reads off the work item's own system. Only mock mode reads it; absent when the
+   * proposal kept no shape.
+   */
+  readonly workClass?: string;
 }
 
 /** The tools a version needs on one surface, as the library keeps them. */
@@ -112,7 +118,11 @@ function toolEntries(version: AdoptableVersion): readonly VersionSurfaceTools[] 
  *    the manager did not put in this employee's charter.
  *
  * In mock mode the mock office stands in for every connection and allowlist, as it does for an
- * approval, and only the charter is asked.
+ * approval, and only the charter is asked. There the work item's own system is the charter's
+ * evidence too: the mock office holds every system, and the employee's queue is drafted from its
+ * approved charter's duties, so work from a system of the class is work the manager chartered
+ * whether or not the drafter listed the system by name (the v0.13.0 walk: "the ticket queue"
+ * named no product, so no kanban system was listed). Real mode never reads it.
  *
  * @param version - The version as the library keeps it.
  * @param adopter - The employee it would be adopted for.
@@ -121,7 +131,7 @@ function toolEntries(version: AdoptableVersion): readonly VersionSurfaceTools[] 
 export function adoptionFit(version: AdoptableVersion, adopter: Adopter): AdoptionFit {
   const { surfaceClass } = version;
   if (adopter.mode === 'mock') {
-    return adopter.charterClasses.includes(surfaceClass)
+    return adopter.charterClasses.includes(surfaceClass) || adopter.workClass === surfaceClass
       ? { fits: true }
       : mismatch('no-charter-evidence', `the charter names no ${surfaceClass} system`);
   }
