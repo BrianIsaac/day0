@@ -56,6 +56,7 @@ import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
 import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
+import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
@@ -87,6 +88,7 @@ export const MIGRATION_NAMES = [
   'decision-batches-settled',
   'skills-library',
   'skills-use-count',
+  'surfaces-acts-as',
 ] as const;
 
 /** One migration's name. */
@@ -134,6 +136,9 @@ const SCHEMA_STEP_RELEASE = '0.6.0';
 
 /** The release of the owner's skill library (wave 10, 10-K): the library and the use count. */
 const SKILL_LIBRARY_RELEASE = '0.13.0';
+
+/** The release of the access track (wave 11, 11-AK): whom each connected card acts as. */
+const ACCESS_RELEASE = '0.14.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -239,6 +244,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SKILL_LIBRARY_RELEASE,
     does: 'gives every skill the number of execution claims that named it and the time of the newest, from its employee’s work.execution-claimed events: the used-N-times count an older release did not keep; a count already larger is kept',
     thenRemoves: 'nothing: the execution claim counts each use from here on',
+  },
+  'surfaces-acts-as': {
+    release: ACCESS_RELEASE,
+    does: 'records whom each card holding a live credential acts as: its own app for an installed app’s token, named as the app, and a shared key for every pasted value or location, named as the key; a card with no credential, or a revoked or emptied one, is left for its next connection',
+    thenRemoves:
+      'nothing: each path that lands a credential is to write actsAs as wave 11’s connect units land; until one does, a card it connects carries none',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -633,6 +644,28 @@ async function stampSupersededAt(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
+ * Record whom each card connected before the access track acts as (11-AK; the access plan,
+ * section 4.2): `actsAsAtUpgrade` over the credential the card holds, read off the credential row
+ * itself, since a card the older code attached may lack its copy of the kind. Only a live
+ * credential names an identity: a card holding none, a revoked one, an emptied one or one deleted
+ * under it is left for the connect path that next lands its credential. A card that already says
+ * whom it acts as is left, so a second run changes nothing.
+ */
+async function backfillActsAs(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.actsAs !== undefined || surface.credentialId === undefined) continue;
+    const credential = await ctx.db.get(surface.credentialId);
+    if (credential === null || credential.revokedAt !== undefined) continue;
+    if (credential.ciphertext === undefined) continue;
+    await ctx.db.patch(surface._id, { actsAs: actsAsAtUpgrade(surface, credential) });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -703,6 +736,7 @@ const MIGRATION_PAGES: Readonly<
   'decision-batches-settled': async (ctx, cursor) => await settleDecisionBatchesPage(ctx, cursor),
   'skills-library': async (ctx, cursor) => await backfillLibraryPage(ctx, cursor),
   'skills-use-count': async (ctx, cursor) => await backfillUseCountPage(ctx, cursor),
+  'surfaces-acts-as': backfillActsAs,
 };
 
 /** A migration's row, if it has started. */

@@ -925,7 +925,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 36 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the owner's skill library, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 38 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the owner's skill library, one is the transient lease on the verification sandbox, two are the deployment's own record of the migrations it has run and the release its rows are at, and two hold the systems IT connected for the whole organisation and their ledger, which no owner's reset touches.
 
 | Table | Purpose |
 |---|---|
@@ -933,7 +933,7 @@ The schema contains 36 tables: 24 carry per-agent or agent-owned runtime state, 
 | `charters` | Versioned charters with approval state, the constraints the manager confirmed or struck, and the version each amendment supersedes |
 | `managerQuestions` | One record per open charter question asked, with the plan or candidate that touched it and the answer that amended the charter |
 | `workspace` | 8-file workspace storage |
-| `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata |
+| `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata; a row the organisation holds is stored under a reserved key no signed-in owner has |
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
 | `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
 | `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
@@ -957,6 +957,8 @@ The schema contains 36 tables: 24 carry per-agent or agent-owned runtime state, 
 | `ticketListings` | Each intake listing that changed a ticket, by work item, which the re-read before apply compares with |
 | `migrations` | How far each upgrade migration has got, and when it finished |
 | `deploymentVersions` | The release the deployment's rows are at, one row per completed upgrade; the upgrade refuses to skip a release |
+| `organisationConnections` | One row per system IT connected for the whole deployment at install: its registration, whether each employee gets its own identity or all share one, its scopes and status; managed by the administrators only |
+| `connectionEvents` | The ledger of the organisation's connections: each install, rotation, revocation and vendor call made with a connection's secret |
 | `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
 
 ## Domain logic (`src/`)

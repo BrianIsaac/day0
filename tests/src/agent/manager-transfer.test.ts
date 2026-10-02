@@ -11,6 +11,9 @@ import {
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_ASK_WINDOW_MS,
   TRANSFER_CANCEL_REASONS,
+  TRANSFER_ROW_CANCEL_REASONS,
+  HANDOVER_ENDED_CANCEL_REASON,
+  endedWithoutMove,
   TRANSFER_DEPARTURES_WINDOW_MS,
   isDepartureListed,
   TRANSFER_EXPIRY_MS,
@@ -51,6 +54,21 @@ describe('the request states', (): void => {
 
   it('cancel for the owner, a retire or a change of address, and for nothing else', (): void => {
     expect([...TRANSFER_CANCEL_REASONS]).toEqual(['owner', 'retired', 'address-changed']);
+  });
+
+  it('read an end without the move from its own reason or from none, and never from an ask’s cancel', (): void => {
+    expect(endedWithoutMove(HANDOVER_ENDED_CANCEL_REASON)).toBe(true);
+    expect(endedWithoutMove(undefined)).toBe(true);
+    for (const reason of TRANSFER_CANCEL_REASONS)
+      expect(endedWithoutMove(reason), reason).toBe(false);
+  });
+
+  it('store on the row every ask cancel and, beside them, the end of an accepted handover that could not move', (): void => {
+    expect(HANDOVER_ENDED_CANCEL_REASON).toBe('handover-ended');
+    expect([...TRANSFER_ROW_CANCEL_REASONS]).toEqual([
+      ...TRANSFER_CANCEL_REASONS,
+      HANDOVER_ENDED_CANCEL_REASON,
+    ]);
   });
 });
 

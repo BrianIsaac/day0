@@ -19,6 +19,7 @@ import {
   openTransferRefusal,
   ownAddressRefusal,
   OWNER_DAILY_BOUND_REFUSAL,
+  HANDOVER_ENDED_CANCEL_REASON,
   OWNER_OPEN_BOUND_REFUSAL,
   sameAddressRefusal,
   TRANSFER_DEPARTURES_WINDOW_MS,
@@ -1121,6 +1122,32 @@ describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is tol
       harness.withIdentity(OWNER).query(api.managerTransfers.endedForMe, {}),
     ).resolves.toEqual([]);
     await expect(harness.query(api.managerTransfers.endedForMe, {})).resolves.toEqual([]);
+  });
+
+  it('lists an ended handover stored with its own cancel reason as it lists one stored with none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const acceptedAt = Date.now() - 60_000;
+    const withReason = await insertRequest(harness, {
+      agentId: maya,
+      state: 'cancelled',
+      cancelReason: HANDOVER_ENDED_CANCEL_REASON,
+      decidedAt: acceptedAt,
+      toOwnerKey: 'priya',
+    });
+    // An ask cancelled for a changed address after the caller had once accepted it is no end.
+    await insertRequest(harness, {
+      agentId: tomas,
+      state: 'cancelled',
+      cancelReason: 'address-changed',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'priya',
+    });
+
+    const shown = await harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {});
+
+    expect(shown.map((transfer) => transfer.transferId)).toEqual([withReason]);
   });
 });
 

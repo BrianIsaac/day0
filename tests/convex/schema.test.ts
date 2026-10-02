@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import type { WithoutSystemFields } from 'convex/server';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -643,5 +644,373 @@ describe('skill library schema (10-K, N10: additive and optional)', (): void => 
     expect(read.revision?.revisionOf).toBe(read.supersededId);
     expect(read.offered?.offeredVersionId).toBe(read.versionId);
     expect(read.holders.sort()).toEqual([read.retiredId, read.supersededId].sort());
+  });
+});
+
+describe('access schema (11-AK, N10: additive and optional)', (): void => {
+  /** A Linear app IT registered at install, shared by every employee. */
+  const linearApp: WithoutSystemFields<Doc<'organisationConnections'>> = {
+    system: 'linear',
+    displayName: 'Linear',
+    kind: 'oauth-app',
+    mode: 'shared',
+    clientId: 'lin_client_1234567890',
+    appId: 'app-0001',
+    providerWorkspaceId: 'org-0001',
+    redirectUrl: 'http://localhost:3000/api/oauth/linear',
+    scopes: ['read', 'write', 'app:assignable'],
+    clientCredentialsScopes: ['read', 'write'],
+    registeredBy: { via: 'setup-cli', at: 1 },
+    status: 'active',
+    createdAt: 1,
+  };
+
+  it('stores an organisation connection with its mode and fixed scope set, read by system and status, and its ledger by connection and by time', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const linear = await ctx.db.insert('organisationConnections', linearApp);
+      const mcp = await ctx.db.insert('organisationConnections', {
+        system: 'mcp:mcp.notion.com',
+        displayName: 'Notion',
+        kind: 'mcp-client',
+        mode: 'per-employee',
+        clientId: 'notion-client',
+        issuer: 'https://mcp.notion.com',
+        resource: 'https://mcp.notion.com/mcp',
+        clientRegistration: 'pre-registered',
+        authorisationEndpoints: {
+          authorisation: 'https://mcp.notion.com/authorize',
+          token: 'https://mcp.notion.com/token',
+          revocation: 'https://mcp.notion.com/revoke',
+          discoveredAt: 2,
+        },
+        scopes: [],
+        registeredBy: { via: 'organisation-page', address: 'ines@day0.local', at: 2 },
+        status: 'needs-attention',
+        statusReason: 'the client secret expires in 9 days',
+        lastRotatedAt: 3,
+        createdAt: 2,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: linear,
+        type: 'organisation.connection-landed',
+        payload: { system: 'linear' },
+        createdAt: 1,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: mcp,
+        type: 'organisation.connection-rotated',
+        payload: { system: 'mcp:mcp.notion.com' },
+        actorAddress: 'ines@day0.local',
+        createdAt: 3,
+      });
+      return {
+        activeLinear: await ctx.db
+          .query('organisationConnections')
+          .withIndex('by_system_status', (q) => q.eq('system', 'linear').eq('status', 'active'))
+          .collect(),
+        linearLedger: await ctx.db
+          .query('connectionEvents')
+          .withIndex('by_connection', (q) => q.eq('organisationConnectionId', linear))
+          .collect(),
+        since: await ctx.db
+          .query('connectionEvents')
+          .withIndex('by_created', (q) => q.gt('createdAt', 2))
+          .collect(),
+      };
+    });
+    expect(read.activeLinear).toEqual([expect.objectContaining(linearApp)]);
+    expect(read.linearLedger.map((event) => event.type)).toEqual([
+      'organisation.connection-landed',
+    ]);
+    expect(read.since).toEqual([
+      expect.objectContaining({
+        type: 'organisation.connection-rotated',
+        actorAddress: 'ines@day0.local',
+      }),
+    ]);
+  });
+
+  it('refuses an organisation connection without its mode, and a mode it cannot have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const modeless = Object.fromEntries(
+      Object.entries(linearApp).filter(([field]) => field !== 'mode'),
+    );
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'organisationConnections',
+          modeless as unknown as Doc<'organisationConnections'>,
+        );
+      }),
+    ).rejects.toThrow(/Missing required field `mode`/);
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert('organisationConnections', {
+          ...linearApp,
+          mode: 'per-team' as Doc<'organisationConnections'>['mode'],
+        });
+      }),
+    ).rejects.toThrow(/got `"per-team"`/);
+  });
+
+  it('gives a credential its holder, issuer, expiry, refresh pair, generation, store and revocation at source, read by revocation state; and keeps an older row with none of them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const connection = await ctx.db.insert('organisationConnections', linearApp);
+      const base = { kind: 'oauth', label: 'Linear app token', source: 'oauth' } as const;
+      const older = await ctx.db.insert('credentials', {
+        ...base,
+        userId: 'owner',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      });
+      const refresh = await ctx.db.insert('credentials', {
+        ...base,
+        userId: 'owner',
+        label: 'Linear refresh token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        issuedBy: { system: 'linear', grant: 'authorisation-code' },
+        createdAt: 2,
+      });
+      const appSecret = await ctx.db.insert('credentials', {
+        ...base,
+        kind: 'value',
+        userId: 'owner',
+        label: 'Maya (Day0) client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 2,
+      });
+      const access = await ctx.db.insert('credentials', {
+        ...base,
+        userId: 'owner',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        // The app it was issued to outlives the card a retire deletes, for the vendor's call.
+        issuedBy: {
+          system: 'linear',
+          grant: 'authorisation-code',
+          appId: 'app-maya',
+          clientId: 'lin_client_maya',
+          clientSecretCredentialId: appSecret,
+        },
+        expiresAt: 2 + 24 * 3_600_000,
+        refreshCredentialId: refresh,
+        generation: 3,
+        tokenStore: 'native',
+        revokedAt: 10,
+        sourceRevocation: {
+          state: 'pending',
+          attempts: 1,
+          lastError: 'HTTP 503',
+          at: 11,
+          end: 'disconnect',
+        },
+        createdAt: 2,
+      });
+      const shared = await ctx.db.insert('credentials', {
+        ...base,
+        userId: 'day0:organisation',
+        holder: 'organisation',
+        issuedBy: {
+          system: 'linear',
+          grant: 'client-credentials',
+          organisationConnectionId: connection,
+        },
+        expiresAt: 30 * 86_400_000,
+        tokenStore: 'nango',
+        createdAt: 3,
+      });
+      return {
+        older: await ctx.db.get(older),
+        access: await ctx.db.get(access),
+        shared: await ctx.db.get(shared),
+        pending: await ctx.db
+          .query('credentials')
+          .withIndex('by_source_revocation_state', (q) =>
+            q.eq('sourceRevocation.state', 'pending').lt('revokedAt', 11),
+          )
+          .collect(),
+      };
+    });
+    for (const field of [
+      'holder',
+      'issuedBy',
+      'expiresAt',
+      'refreshCredentialId',
+      'generation',
+      'tokenStore',
+      'sourceRevocation',
+    ]) {
+      expect(read.older, field).not.toHaveProperty(field);
+    }
+    expect(read.access?.issuedBy).toMatchObject({ appId: 'app-maya', clientId: 'lin_client_maya' });
+    expect(read.access?.sourceRevocation).toEqual({
+      state: 'pending',
+      attempts: 1,
+      lastError: 'HTTP 503',
+      at: 11,
+      end: 'disconnect',
+    });
+    expect(read.shared).toMatchObject({ holder: 'organisation', tokenStore: 'nango' });
+    expect(read.pending.map((row) => row._id)).toEqual([read.access?._id]);
+  });
+
+  it('gives a surface its organisation connection, whom it acts as, its access request and its pending authorisation, read by connection; an older card keeps none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const connection = await ctx.db.insert('organisationConnections', linearApp);
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const clientSecret = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Maya (Day0) client secret',
+        source: 'oauth',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      });
+      const card: WithoutSystemFields<Doc<'surfaces'>> = {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('surfaces', { ...card, slug: 'notion' });
+      const linked = await ctx.db.insert('surfaces', {
+        ...card,
+        organisationConnectionId: connection,
+        actsAs: { kind: 'shared-app', label: 'Day0', providerIdentityId: 'app-user-1' },
+        accessRequest: {
+          reason: 'scope-widening',
+          scopes: ['write'],
+          organisationConnectionId: connection,
+          draftedAt: 2,
+          copiedAt: 3,
+          emailedAt: 4,
+          messagedAt: 5,
+          messageProviderTs: '1700000000.000100',
+        },
+        pendingAuthorisation: {
+          stateNonce: 'nonce-1',
+          stateExpiresAt: 600_002,
+          clientId: 'linear-mcp-client',
+          verifierCiphertext: 'sealed-verifier',
+          verifierIv: 'iv',
+          verifierKeyId: 'key-1',
+          issuer: 'https://mcp.linear.app',
+          resource: 'https://mcp.linear.app/mcp',
+          redirectUrl: 'http://localhost:3000/api/oauth/mcp',
+          organisationConnectionId: connection,
+          startedAt: 2,
+        },
+        provisioning: {
+          appId: 'A0DAY0',
+          appName: 'Maya (Day0)',
+          clientId: 'client-1',
+          clientSecretCredentialId: clientSecret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'http://localhost:3000/api/oauth/slack',
+          scopes: ['chat:write'],
+          createdAt: 2,
+          organisationConnectionId: connection,
+        },
+      });
+      return {
+        older: await ctx.db.get(older),
+        onConnection: await ctx.db
+          .query('surfaces')
+          .withIndex('by_organisation_connection', (q) =>
+            q.eq('organisationConnectionId', connection),
+          )
+          .collect(),
+        linked,
+      };
+    });
+    for (const field of [
+      'organisationConnectionId',
+      'actsAs',
+      'accessRequest',
+      'pendingAuthorisation',
+    ]) {
+      expect(read.older, field).not.toHaveProperty(field);
+    }
+    expect(read.onConnection.map((row) => row._id)).toEqual([read.linked]);
+    // The PKCE verifier is sealed in the authorisation's own row, never a credential an owner lists.
+    expect(read.onConnection[0]?.pendingAuthorisation).toMatchObject({
+      clientId: 'linear-mcp-client',
+      verifierCiphertext: 'sealed-verifier',
+    });
+    expect(read.onConnection[0]?.actsAs).toEqual({
+      kind: 'shared-app',
+      label: 'Day0',
+      providerIdentityId: 'app-user-1',
+    });
+  });
+
+  it('refuses an identity a card cannot act as', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Maya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          actsAs: { kind: 'the-manager', label: 'Sam' } as unknown as Doc<'surfaces'>['actsAs'],
+          createdAt: 1,
+        });
+      }),
+    ).rejects.toThrow(/got `"the-manager"`/);
+  });
+
+  it('ends a handover with its own cancel reason and counts its failed settles', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const transfer = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const id = await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'boss@day0.local',
+        toAddress: 'lead@day0.local',
+        state: 'cancelled',
+        cancelReason: 'handover-ended',
+        settleFailures: 5,
+        requestedAt: 10,
+        expiresAt: 20,
+      });
+      return await ctx.db.get(id);
+    });
+    expect(transfer).toMatchObject({ cancelReason: 'handover-ended', settleFailures: 5 });
   });
 });
