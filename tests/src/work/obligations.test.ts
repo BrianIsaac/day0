@@ -100,4 +100,26 @@ describe('isOpenQuestionStop', (): void => {
     ).toBe(false);
     expect(isOpenQuestionStop('the closing phase asked the manager for evidence')).toBe(false);
   });
+
+  it('keeps recognising a stop recorded before v0.13.0, whose steps read "step step 2" (the real-Linear walk, m9)', (): void => {
+    expect(
+      isOpenQuestionStop(
+        "the approved plan leaves step step 2 and step 3 to the manager's answer, and the question put to the manager is still open: Which template?",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('openQuestionStopReason', (): void => {
+  it('names the steps that wait on the answer once each, never "step step" (the real-Linear walk, m9)', (): void => {
+    const reason = (steps: number[]): string =>
+      openQuestionStopReason({ question: 'Which template?', steps });
+    expect(reason([2])).toBe(
+      "the approved plan leaves step 2 to the manager's answer, and the question put to the manager is still open: Which template?",
+    );
+    expect(reason([2, 3])).toBe(
+      "the approved plan leaves steps 2 and 3 to the manager's answer, and the question put to the manager is still open: Which template?",
+    );
+    expect(reason([1, 2, 4])).toContain('leaves steps 1, 2 and 4 to');
+  });
 });
