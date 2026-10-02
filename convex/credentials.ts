@@ -15,6 +15,7 @@ import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/credential-ref';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
+import type { AccessEnd, SourceRevocationState } from '../src/surfaces/access-identity';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -333,6 +334,9 @@ export const getInternal = internalQuery({
  * The reset and unlink paths delete the value outright: nothing can be
  * rotated back into a source that no longer exists. The label, source and
  * dates stay so the audit trail still says what was held and when it ended.
+ * A credential Day0 obtained whose revocation at the vendor is still pending
+ * is revoked and keeps its ciphertext for that call (F19): its final state
+ * deletes it (`finishSourceRevocation`), within 24 hours in any case.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -347,10 +351,81 @@ export async function purgeCredential(
   if (credential.ciphertext === undefined && credential.iv === undefined && credential.revokedAt) {
     return;
   }
+  // Deferred deletion (F19): a credential whose revocation at the vendor is still pending keeps
+  // its ciphertext for that call, and only its final state deletes it (finishSourceRevocation).
+  if (credential.sourceRevocation?.state === 'pending') {
+    if (credential.revokedAt === undefined) await ctx.db.patch(credential._id, { revokedAt: now });
+    return;
+  }
   await ctx.db.patch(credential._id, {
     revokedAt: credential.revokedAt ?? now,
     ciphertext: undefined,
     iv: undefined,
+  });
+}
+
+/**
+ * Stop using a credential Day0 itself obtained and hold it for its revocation at the vendor (the
+ * access plan, section 4.4; F19): revoked at once, so `decrypt` refuses it from this transaction
+ * on, with its revocation `pending` for the end that asked and its ciphertext kept for the vendor
+ * call. A row already pending or final is left as it is.
+ *
+ * @param ctx - The ending transaction.
+ * @param credential - A row that carries `issuedBy`.
+ * @param end - The end of access that asked.
+ * @param now - When the access ended.
+ * @throws Error for a row without `issuedBy`: a pasted key is never revoked at the vendor (D5).
+ */
+export async function holdForSourceRevocation(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  end: AccessEnd,
+  now: number,
+): Promise<void> {
+  if (credential.issuedBy === undefined) {
+    throw new Error('A pasted key is never revoked at the vendor.');
+  }
+  if (credential.sourceRevocation !== undefined) return;
+  await ctx.db.patch(credential._id, {
+    revokedAt: credential.revokedAt ?? now,
+    sourceRevocation: { state: 'pending', attempts: 0, at: now, end },
+  });
+}
+
+/**
+ * Write a held credential's final revocation state and delete its ciphertext (F19): `done`,
+ * `not-supported`, or `failed` with the vendor's words. The attempts and the end are kept as the
+ * attempts wrote them.
+ *
+ * @param ctx - The recording transaction.
+ * @param credential - The held row.
+ * @param outcome - The final state, when it was reached, and the vendor's words for a failure.
+ */
+export async function finishSourceRevocation(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  outcome: {
+    readonly state: Exclude<SourceRevocationState, 'pending'>;
+    readonly now: number;
+    readonly lastError?: string;
+  },
+): Promise<void> {
+  const held = credential.sourceRevocation;
+  await ctx.db.patch(credential._id, {
+    revokedAt: credential.revokedAt ?? outcome.now,
+    ciphertext: undefined,
+    iv: undefined,
+    sourceRevocation: {
+      state: outcome.state,
+      attempts: held?.attempts ?? 0,
+      at: outcome.now,
+      ...(held?.end !== undefined ? { end: held.end } : {}),
+      ...(outcome.lastError !== undefined
+        ? { lastError: outcome.lastError }
+        : held?.lastError !== undefined
+          ? { lastError: held.lastError }
+          : {}),
+    },
   });
 }
 
@@ -690,15 +765,55 @@ export const decrypt = internalAction({
     ) {
       throw new Error('Credential is unavailable.');
     }
-    const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
-      ciphertext: credential.ciphertext,
-      iv: credential.iv,
-      userId: credential.userId,
-      keyId: credential.keyId,
-    });
-    if (!plaintext) throw new Error('Credential does not contain a landed value.');
+    const plaintext = await openSealed(ctx, credential, credential.ciphertext, credential.iv);
     await ctx.runMutation(internal.credentials.touch, args);
     return plaintext;
+  },
+});
+
+/**
+ * Open a row's sealed value on its owner's row.
+ *
+ * @throws Error when the row holds no landed value.
+ */
+async function openSealed(
+  ctx: ActionCtx,
+  credential: Doc<'credentials'>,
+  ciphertext: string,
+  iv: string,
+): Promise<string> {
+  const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
+    ciphertext,
+    iv,
+    userId: credential.userId,
+    keyId: credential.keyId,
+  });
+  if (!plaintext) throw new Error('Credential does not contain a landed value.');
+  return plaintext;
+}
+
+/**
+ * Decrypt a credential Day0 obtained for the one call that revokes it at the vendor (the access
+ * plan, section 4.4). Internal; `sourceRevocationActions` is its only caller. Admits a revoked row
+ * only while its revocation is `pending` and only when Day0 obtained it (`issuedBy`), so a pasted
+ * key never opens here; records no use, since the employee no longer acts through it.
+ *
+ * @throws Error when the row is not awaiting its revocation at the vendor.
+ */
+export const decryptForRevocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const credential = await ctx.runQuery(internal.credentials.getInternal, args);
+    if (
+      !credential ||
+      credential.issuedBy === undefined ||
+      credential.sourceRevocation?.state !== 'pending' ||
+      credential.ciphertext === undefined ||
+      credential.iv === undefined
+    ) {
+      throw new Error('Credential is not awaiting its revocation at the vendor.');
+    }
+    return await openSealed(ctx, credential, credential.ciphertext, credential.iv);
   },
 });
 

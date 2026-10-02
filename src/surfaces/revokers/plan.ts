@@ -1,4 +1,5 @@
 import type { AccessEnd, CredentialGrant } from '../access-identity';
+import { systemDisplayName } from './outcome';
 import type { TokenTypeHint } from './types';
 
 /*
@@ -87,15 +88,6 @@ const HANDOVER_WORDS =
 /** The words for a token every employee shares (L2). */
 const SHARED_WORDS = "Shared app token: not revoked (the app's other employees use it).";
 
-/**
- * The system's name as the record words it: an MCP system is named by its host.
- *
- * @param system - `issuedBy.system`.
- */
-function systemName(system: string): string {
-  return system.startsWith('mcp:') ? system.slice('mcp:'.length) : system;
-}
-
 /** Slack's plan: the token-keeping ends revoke the bot token; the others delete the app. */
 function slackPlan(
   subject: RevocationSubject,
@@ -164,7 +156,7 @@ export function revocationPlanFor(
       return {
         kind: 'none',
         outcome: 'not-supported',
-        words: `${systemName(system)} advertises no revocation endpoint; Day0's copy is deleted.`,
+        words: `${systemDisplayName(system)} advertises no revocation endpoint; Day0's copy is deleted.`,
       };
     }
     return {

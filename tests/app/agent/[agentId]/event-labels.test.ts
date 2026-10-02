@@ -484,3 +484,34 @@ describe('what a record line says an event did', (): void => {
     }
   });
 });
+
+describe('the labels of an end of access at the vendor (11-AR)', (): void => {
+  it('labels each outcome by the system, naming the channel memberships a revoked bot lost', (): void => {
+    const label = (payload: Record<string, unknown>): string =>
+      eventLabel({ type: 'credential.revoked-at-source', payload });
+    expect(
+      label({ system: 'slack', outcome: 'token-revoked', channelMembershipsRemoved: true }),
+    ).toBe('revoked at Slack; its channel memberships were removed');
+    expect(label({ system: 'slack', outcome: 'app-deleted' })).toBe('Slack app deleted in Slack');
+    expect(label({ system: 'slack', outcome: 'app-uninstalled' })).toBe(
+      'Slack app uninstalled from Slack',
+    );
+    expect(label({ system: 'linear', outcome: 'already-gone' })).toBe('already revoked at Linear');
+    expect(
+      label({ system: 'linear', outcome: 'retrying', reason: 'Linear answered HTTP 503.' }),
+    ).toBe('revocation at Linear failed, trying again (Linear answered HTTP 503)');
+    expect(label({ system: 'linear', outcome: 'failed', reason: 'Linear refused: x' })).toBe(
+      "revocation at Linear failed (Linear refused: x); Day0's copy deleted",
+    );
+    expect(label({ system: 'zendesk', outcome: 'not-supported' })).toBe(
+      "not revoked at zendesk: no revocation call; Day0's copy deleted",
+    );
+    expect(label({ system: 'linear', outcome: 'shared' })).toBe(
+      'shared app token: not revoked at Linear',
+    );
+    expect(label({ system: 'slack', outcome: 'not-at-vendor' })).toBe('nothing changed at Slack');
+    expect(label({ system: 'Zendesk', outcome: 'pasted-key' })).toBe(
+      'pasted key: never sent to Zendesk; revoke it there',
+    );
+  });
+});

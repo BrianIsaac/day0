@@ -660,3 +660,114 @@ describe('what the record says an authoring claim began (A-m9)', (): void => {
     }
   });
 });
+
+describe('what the record says an end of access did at the vendor (11-AR; the access plan 4.4)', (): void => {
+  const leo = { name: 'Leo', connection: 'Slack' };
+  const ended = (
+    payload: Record<string, unknown>,
+    at: { readonly name: string; readonly connection?: string } = leo,
+  ): string => recordWords({ type: 'credential.revoked-at-source', payload }, at);
+
+  it('says the bot token was revoked and its channel memberships removed, the app kept', (): void => {
+    expect(
+      ended({
+        system: 'slack',
+        surfaceName: 'Slack',
+        end: 'expiry',
+        outcome: 'token-revoked',
+        channelMembershipsRemoved: true,
+      }),
+    ).toBe(
+      'Access to the Slack connection was revoked at Slack; its channel memberships were removed.',
+    );
+  });
+
+  it("says the employee's own app was deleted in the system, by the card's name once the card is gone", (): void => {
+    expect(
+      ended(
+        { system: 'slack', surfaceName: 'Slack', end: 'retire', outcome: 'app-deleted' },
+        { name: 'Leo' },
+      ),
+    ).toBe("Leo's Slack app was deleted in Slack.");
+    expect(
+      ended({ system: 'slack', surfaceName: 'Slack', end: 'retire', outcome: 'app-uninstalled' }),
+    ).toBe("Leo's Slack app was uninstalled from Slack.");
+    expect(
+      ended(
+        { system: 'linear', surfaceName: 'Linear', end: 'disconnect', outcome: 'token-revoked' },
+        { name: 'Maya' },
+      ),
+    ).toBe('Access to the Linear connection was revoked at Linear.');
+  });
+
+  it("says a failure in the vendor's words, and whether another attempt follows", (): void => {
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'disconnect',
+        outcome: 'retrying',
+        reason: 'Linear answered HTTP 503.',
+      }),
+    ).toBe(
+      'Revoking access to the Slack connection at Linear failed and will be tried again: Linear answered HTTP 503.',
+    );
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'disconnect',
+        outcome: 'failed',
+        reason: 'Linear refused: invalid_client',
+      }),
+    ).toBe(
+      "Revoking access to the Slack connection at Linear failed: Linear refused: invalid_client; Day0's copy was deleted.",
+    );
+  });
+
+  it('says a pasted key was never sent to the vendor, and a shared token was not revoked', (): void => {
+    expect(
+      ended({
+        system: 'Zendesk',
+        surfaceName: 'Zendesk',
+        end: 'disconnect',
+        outcome: 'pasted-key',
+      }),
+    ).toBe(
+      'Day0 stopped using the key pasted for the Slack connection; it was not revoked at Zendesk, so revoke it there if it should end.',
+    );
+    expect(
+      ended({ system: 'linear', surfaceName: 'Linear', end: 'retire', outcome: 'shared' }),
+    ).toBe(
+      "Access to the Slack connection ended; its shared app token was not revoked at Linear, since the app's other employees use it.",
+    );
+  });
+
+  it('says what an end that calls no vendor did, in its own words', (): void => {
+    expect(
+      ended({
+        system: 'slack',
+        surfaceName: 'Slack',
+        end: 'transfer',
+        outcome: 'not-at-vendor',
+        reason: 'A handover changes nothing at the vendor; the new manager re-approves the system.',
+      }),
+    ).toBe(
+      'Access to the Slack connection ended with nothing changed at Slack: A handover changes nothing at the vendor; the new manager re-approves the system.',
+    );
+    expect(
+      ended({
+        system: 'zendesk',
+        surfaceName: 'Zendesk',
+        end: 'disconnect',
+        outcome: 'not-supported',
+        reason: "zendesk: no revocation endpoint; Day0's copy is deleted.",
+      }),
+    ).toBe(
+      "Access to the Slack connection could not be revoked at zendesk: zendesk: no revocation endpoint; Day0's copy is deleted.",
+    );
+    expect(
+      ended({ system: 'slack', surfaceName: 'Slack', end: 'disconnect', outcome: 'already-gone' }),
+    ).toBe('Access to the Slack connection was already revoked at Slack.');
+  });
+});

@@ -58,6 +58,8 @@ import type * as skillControls from '../skillControls.js';
 import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
+import type * as sourceRevocation from '../sourceRevocation.js';
+import type * as sourceRevocationActions from '../sourceRevocationActions.js';
 import type * as storedVerification from '../storedVerification.js';
 import type * as surfaceActions from '../surfaceActions.js';
 import type * as surfaceReopen from '../surfaceReopen.js';
@@ -127,6 +129,8 @@ declare const fullApi: ApiFromModules<{
   skillVersions: typeof skillVersions;
   skills: typeof skills;
   slackProvisionActions: typeof slackProvisionActions;
+  sourceRevocation: typeof sourceRevocation;
+  sourceRevocationActions: typeof sourceRevocationActions;
   storedVerification: typeof storedVerification;
   surfaceActions: typeof surfaceActions;
   surfaceReopen: typeof surfaceReopen;

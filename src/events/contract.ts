@@ -17,6 +17,8 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
+import type { AccessEnd } from '../surfaces/access-identity';
+import type { SourceRevocationOutcome } from '../surfaces/revokers/outcome';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -822,6 +824,30 @@ export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
 }
 
+// Ends of access at the vendor.
+
+/**
+ * The payload of `credential.revoked-at-source` (11-AR; the access plan, section 4.4): one ledger
+ * line per system per end of access, and one per further attempt. It names the card and its
+ * system as they stood when the access ended, since a retire deletes the card before the vendor
+ * answers.
+ */
+export interface CredentialRevokedAtSourcePayload extends SurfaceNamed {
+  readonly credentialId: Id<'credentials'>;
+  /** The card's name when the access ended. */
+  readonly surfaceName: string;
+  /** `issuedBy.system` for what Day0 obtained; the card's name for a pasted key. */
+  readonly system: string;
+  readonly end: AccessEnd;
+  readonly outcome: SourceRevocationOutcome;
+  /** Which attempt this line records, for an outcome a vendor call gave. */
+  readonly attempt?: number;
+  /** The vendor's words for a failure, or why no call was made. */
+  readonly reason?: string;
+  /** True where Slack's revoked bot token took the bot out of its channels (S1). */
+  readonly channelMembershipsRemoved?: boolean;
+}
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1386,6 +1412,7 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1550,6 +1577,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'credential.revoked-at-source',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
