@@ -460,12 +460,23 @@ describe('adoptionWords', (): void => {
 });
 
 describe('adoptionHelp', (): void => {
+  const proposalsOnly = { offersAdoption: false, proposals: true, adoptions: false };
+
   it('says what approving does, either way when a card offers an adoption', (): void => {
-    expect(adoptionHelp('Mateo', false)).toBe(
+    expect(adoptionHelp('Mateo', proposalsOnly)).toBe(
       "Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. Whether that work is within Mateo's charter is judged separately.",
     );
-    expect(adoptionHelp('Mateo', true)).toBe(
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, offersAdoption: true })).toBe(
       "Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
+    );
+  });
+
+  it('never says approving writes the skill on a card holding an adoption past its offer, which writes nothing', (): void => {
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, proposals: false, adoptions: true })).toBe(
+      "Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs. Writing a new one instead writes the skill and checks it there. Either way the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
+    );
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, adoptions: true })).toBe(
+      "Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
     );
   });
 });

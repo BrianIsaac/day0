@@ -621,6 +621,35 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     view.unmount();
   });
 
+  it('never says approving writes the skill under an adoption that writes nothing (the pre-tag walk)', (): void => {
+    const stalled = {
+      ...adoption,
+      state: 'verifying',
+      rowState: 'authoring',
+      missingScopes: [],
+      log: 'the stored skill was not verified: no sandbox backend answered',
+    };
+    backend.queries = { 'skillAdoption:adoptions': [stalled] };
+    const alone = mount(panel([]));
+    expect(alone.container.textContent).not.toContain('Approving writes the skill');
+    expect(alone.container.textContent).toContain(
+      "Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs. Writing a new one instead writes the skill and checks it there. Either way the item that needs it is evaluated again. Whether that work is within Mira's charter is judged separately.",
+    );
+    alone.unmount();
+
+    const proposal = {
+      ...offered,
+      _id: 'skill-10',
+      name: 'kanban-reply',
+      offeredVersionId: undefined,
+    };
+    const beside = mount(panel([proposal as Doc<'skills'>]));
+    expect(beside.container.textContent).toContain(
+      "Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. Whether that work is within Mira's charter is judged separately.",
+    );
+    beside.unmount();
+  });
+
   it('titles the card plainly, with no count, while nothing on it waits on the manager', (): void => {
     backend.queries = {
       'skillAdoption:adoptions': [

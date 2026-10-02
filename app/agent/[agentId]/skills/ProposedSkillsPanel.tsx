@@ -348,7 +348,11 @@ export function ProposedSkillsPanel({
             ))}
           </ul>
           <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
-            {adoptionHelp(name, offering)}
+            {adoptionHelp(name, {
+              offersAdoption: offering,
+              proposals: skills.length > 0,
+              adoptions: inFlight.length + shownDeclined.length > 0,
+            })}
           </p>
         </Card>
       ) : null}

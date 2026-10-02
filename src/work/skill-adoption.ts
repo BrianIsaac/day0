@@ -536,16 +536,34 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   }
 }
 
+/** What the proposals card holds, as the note under it reads it. */
+export interface ProposalsCardHolds {
+  /** A proposal on the card offers an adoption. */
+  readonly offersAdoption: boolean;
+  /** A proposal on the card waits for an approval, which writes a skill. */
+  readonly proposals: boolean;
+  /** An adoption past its offer is drawn: being checked, stalled, failed or declined. */
+  readonly adoptions: boolean;
+}
+
 /**
  * The note under the proposals: what approving does, said for either way when a card offers an
- * adoption (the prototype's "Approving either way").
+ * adoption (the prototype's "Approving either way"). An adoption past its offer writes nothing,
+ * so a card that holds one never says that approving writes the skill under it (the pre-tag
+ * walk: a stalled adoption's card did).
  *
  * @param adopterName - The employee.
- * @param offersAdoption - Whether any proposal on the card offers an adoption.
+ * @param holds - What the card holds.
  */
-export function adoptionHelp(adopterName: string, offersAdoption: boolean): string {
+export function adoptionHelp(adopterName: string, holds: ProposalsCardHolds): string {
   const charter = `Whether that work is within ${adopterName}'s charter is judged separately.`;
-  return offersAdoption
-    ? `Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`
-    : `Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. ${charter}`;
+  if (holds.offersAdoption) {
+    return `Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`;
+  }
+  if (!holds.adoptions) {
+    return `Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. ${charter}`;
+  }
+  return holds.proposals
+    ? `Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. ${charter}`
+    : `Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs. Writing a new one instead writes the skill and checks it there. Either way the item that needs it is evaluated again. ${charter}`;
 }
