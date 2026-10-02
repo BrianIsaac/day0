@@ -31,6 +31,15 @@ import {
 } from '../src/surfaces/access-identity';
 import { recipeForSystem, type RecipeMode } from '../src/surfaces/access-kit';
 import { slackKitManifest } from '../src/surfaces/access-kit/slack';
+import {
+  LinearIssuerRefusal,
+  readLinearViewer,
+  requestAppActorToken,
+  revokeLinearToken,
+  sharedTokenScopes,
+  type LinearFetch,
+  type LinearIssuedTokens,
+} from '../src/surfaces/identity-issuers/linear';
 import { SLACK_API_ENDPOINT } from '../src/surfaces/slack-endpoint';
 import type { CheckStatus } from './check-sign-in';
 import { adminTarget, deploymentAdmin } from './lib/convex-admin';
@@ -343,90 +352,99 @@ async function slackIdentity(
   return check(row.system, 'identity', 'gap', `Slack refused the configuration token: ${error}.`);
 }
 
-/** Linear's API, as the shared app reaches it. */
-const LINEAR_API = 'https://api.linear.app';
-
-/** Linear: a client-credentials token with the fixed scopes, `viewer` as the app, then revoked (L2). */
+/**
+ * Linear, as the shared app's issuer reaches it: an app-actor token requested only through
+ * `requestAppActorToken` with the connection's own client-credentials scope set (L2: a request
+ * with another set revokes and replaces the app's tokens, so a connection holding none is asked
+ * nothing), `viewer` read as the app, then the check's own token revoked again. Each check adds
+ * one of the app's 1,000 parallel tokens for the moments before its revocation.
+ */
 async function linearIdentity(
   row: ConnectionRow,
   secret: string,
-  mode: RecipeMode,
   probes: VendorProbes,
 ): Promise<AccessCheck[]> {
-  const fixed = row.clientCredentialsScopes ?? mode.clientCredentialsScopes ?? [];
-  const granted = await askVendor(probes, `${LINEAR_API}/oauth/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: row.clientId ?? '',
-      client_secret: secret,
-      // The fixed set: a request with other scopes would revoke the app's tokens (L2).
-      scope: fixed.join(','),
-    }).toString(),
-  });
-  if ('error' in granted) {
-    return [check(row.system, 'identity', 'gap', `Linear could not be reached: ${granted.error}`)];
+  const linearFetch: LinearFetch = async (url: URL, init: RequestInit): Promise<Response> =>
+    await probes.fetch(url, init);
+  const app = {
+    clientId: row.clientId ?? '',
+    ...(row.clientCredentialsScopes === undefined
+      ? {}
+      : { clientCredentialsScopes: row.clientCredentialsScopes }),
+  };
+  let issued: LinearIssuedTokens;
+  try {
+    issued = await requestAppActorToken(linearFetch, app, secret, Date.now());
+  } catch (err) {
+    return [check(row.system, 'identity', 'gap', linearRefusalWords(err))];
   }
-  const token = field(granted.body, 'access_token');
-  if (granted.status !== 200 || token === undefined) {
-    const error = field(granted.body, 'error') ?? `HTTP ${granted.status}`;
-    return [
-      check(
-        row.system,
-        'identity',
-        'gap',
-        `Linear refused the client id and secret: ${error}. Check that client credentials are ` +
-          'enabled on the app and that the secret is the current one.',
-      ),
-    ];
-  }
-  const grantedScopes = (field(granted.body, 'scope') ?? '').split(/[\s,]+/).filter(Boolean);
-  const lacking = missing(grantedScopes, fixed);
-  const viewer = await askVendor(probes, `${LINEAR_API}/graphql`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ query: '{ viewer { id name } }' }),
-  });
-  const revoked = await askVendor(probes, `${LINEAR_API}/oauth/revoke`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, token_type_hint: 'access_token' }).toString(),
-  });
-  const name =
-    'error' in viewer
-      ? undefined
-      : field((viewer.body as { data?: { viewer?: unknown } } | undefined)?.data?.viewer, 'name');
-  const leftOver =
-    'error' in revoked || revoked.status !== 200
-      ? ' The check could not revoke its own token again; it expires in 30 days.'
-      : '';
-  const identity =
-    name === undefined
-      ? check(
+  const fixed = sharedTokenScopes(app);
+  const lacking = missing(issued.scopes, fixed);
+  let identity: AccessCheck;
+  try {
+    const viewer = await readLinearViewer(linearFetch, issued.accessToken);
+    identity = viewer.app
+      ? check(row.system, 'identity', 'ok', `Linear answers as the app ${viewer.name}.`)
+      : check(
           row.system,
           'identity',
           'gap',
-          `Linear issued a token but did not answer viewer.${leftOver}`,
-        )
-      : leftOver === ''
-        ? check(
-            row.system,
-            'identity',
-            'ok',
-            `Linear answers as the app ${name}, with a token the check then revoked.`,
-          )
-        : check(row.system, 'identity', 'warn', `Linear answers as the app ${name}.${leftOver}`);
-  if (lacking.length === 0) return [identity];
+          `The token acts as a person (${viewer.name}), not as the app: check that the app ` +
+            'was created with client credentials and not authorised by a person.',
+        );
+  } catch (err) {
+    identity = check(
+      row.system,
+      'identity',
+      'gap',
+      `Linear issued a token but did not answer viewer: ${linearRefusalWords(err)}`,
+    );
+  }
+  let unrevoked: string | undefined;
+  try {
+    await revokeLinearToken(linearFetch, issued.accessToken, 'access_token');
+  } catch (err) {
+    unrevoked = linearRefusalWords(err);
+  }
+  const answered: AccessCheck =
+    identity.status !== 'ok'
+      ? identity
+      : unrevoked === undefined
+        ? {
+            ...identity,
+            detail: `${identity.detail.replace(/\.$/, '')}, with a token the check then revoked.`,
+          }
+        : {
+            ...identity,
+            status: 'warn',
+            detail: `${identity.detail} The check could not revoke its own token again (${unrevoked}); it expires in 30 days.`,
+          };
+  if (lacking.length === 0) return [answered];
   return [
-    identity,
+    answered,
     check(
       row.system,
       'scopes',
       'gap',
-      `Missing scope ${lacking.join(', ')}: Linear granted ${grantedScopes.join(', ') || 'none'}.`,
+      `Missing scope ${lacking.join(', ')}: Linear granted ${issued.scopes.join(', ') || 'none'}.`,
     ),
   ];
+}
+
+/** Why Linear's issuer refused, in its own words, which never carry a secret. */
+function linearRefusalWords(err: unknown): string {
+  if (err instanceof LinearIssuerRefusal) {
+    switch (err.reason) {
+      case 'client-refused':
+      case 'grant-not-enabled':
+        return `${err.message} Check that client credentials are enabled on the app and that the secret is the current one.`;
+      case 'no-scope-set':
+        return `${err.message} Land the connection again with its scope set; no token is requested without one (L2).`;
+      default:
+        return err.message;
+    }
+  }
+  return `Linear could not be reached: ${errorMessage(err)}`;
 }
 
 /** RFC 8414's metadata address for an issuer, then OpenID Connect's. */
@@ -559,7 +577,7 @@ async function liveChecks(
     case 'oauth-app':
       return mode === undefined || row.system !== 'linear'
         ? [opened]
-        : [opened, ...(await linearIdentity(row, secret, mode, probes))];
+        : [opened, ...(await linearIdentity(row, secret, probes))];
     case 'mcp-client':
       return [opened, ...(await mcpIdentity(row, probes))];
     case 'service-account':

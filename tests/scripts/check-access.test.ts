@@ -52,6 +52,7 @@ function vendors(
   overrides: {
     readonly slack?: unknown;
     readonly linearToken?: { status: number; body: unknown };
+    readonly linearViewer?: unknown;
     readonly opened?: Readonly<Record<string, string | Error>>;
   } = {},
 ): VendorProbes & { readonly calls: string[] } {
@@ -92,7 +93,11 @@ function vendors(
         return Response.json(answer.body, { status: answer.status });
       }
       if (request.url === 'https://api.linear.app/graphql') {
-        return Response.json({ data: { viewer: { id: 'app-user-1', name: 'Day0' } } });
+        return Response.json(
+          overrides.linearViewer ?? {
+            data: { viewer: { id: 'app-user-1', name: 'Day0', app: true } },
+          },
+        );
       }
       if (request.url === 'https://api.linear.app/oauth/revoke') {
         return new Response(null, { status: 200 });
@@ -295,6 +300,28 @@ describe('check:access', (): void => {
 
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity').status).toBe('warn');
+  });
+
+  it('requests no app-actor token for a connection that holds no scope set of its own (join 7)', async (): Promise<void> => {
+    const probes = vendors();
+    const checks = await accessChecks(
+      [{ ...LINEAR, clientCredentialsScopes: undefined }],
+      VALUES,
+      probes,
+    );
+    expect(only(checks, 'linear', 'identity')).toMatchObject({ status: 'gap' });
+    expect(only(checks, 'linear', 'identity').detail).toContain('no client-credentials scope set');
+    expect(probes.calls).toEqual([]);
+  });
+
+  it('names a token that acts as a person, not as the app, as a gap (join 7)', async (): Promise<void> => {
+    const probes = vendors({
+      linearViewer: { data: { viewer: { id: 'person-1', name: 'Ines', app: false } } },
+    });
+    const checks = await accessChecks([LINEAR], VALUES, probes);
+    expect(only(checks, 'linear', 'identity')).toMatchObject({ status: 'gap' });
+    expect(only(checks, 'linear', 'identity').detail).toContain('acts as a person');
+    expect(probes.calls).toContain('POST https://api.linear.app/oauth/revoke');
   });
 
   it('passes a per-employee Linear connection, which holds no organisation secret, and asks Linear nothing (join 2)', async (): Promise<void> => {
