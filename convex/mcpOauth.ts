@@ -348,11 +348,16 @@ export interface HeldTokenRows {
   readonly connection: Doc<'organisationConnections'> | null;
 }
 
-/** One access token's rows for a read or a refresh. Internal; writes nothing. */
+/**
+ * One access token's rows for a read or a refresh. Internal; writes nothing. The id arrives as the
+ * adapters hold it, a string: one that names no credential reads as none, and the caller decrypts
+ * it the plain way, whose own check then answers for it.
+ */
 export const heldTokens = internalQuery({
-  args: { credentialId: v.id('credentials') },
+  args: { credentialId: v.string() },
   handler: async (ctx, args): Promise<HeldTokenRows | null> => {
-    const access = await ctx.db.get(args.credentialId);
+    const id = ctx.db.normalizeId('credentials', args.credentialId);
+    const access = id === null ? null : await ctx.db.get(id);
     if (!access) return null;
     const refresh = access.refreshCredentialId
       ? await ctx.db.get(access.refreshCredentialId)
