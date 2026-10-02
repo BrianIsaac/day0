@@ -730,7 +730,7 @@ export const overdue = internalQuery({
  * where the scheduled purge itself was lost: finished `failed`, ciphertext deleted. No line is
  * written, since the row does not name the employee; the row keeps the words.
  *
- * Internal; for the hourly sweep (`convex/crons.ts`, the cockpit's to wire).
+ * Internal; the hourly sweep's (`convex/crons.ts`).
  *
  * @returns How many it closed.
  */
