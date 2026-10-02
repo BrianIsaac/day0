@@ -677,6 +677,26 @@ describe('the renewal and the re-join (A26, RM4)', (): void => {
 });
 
 describe('the install through the connection (the cockpit: recordInstalledApp)', (): void => {
+  it("installs an app while its connection needs IT's attention, since the install uses no configuration token", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    const ana = await employee(harness, 'Ana');
+    await provision(harness, leo.surfaceId);
+    vi.setSystemTime(Date.now() + 12 * HOUR);
+    slack.refusals.set('tooling.tokens.rotate', 'invalid_refresh_token');
+    await expect(provision(harness, ana.surfaceId)).rejects.toThrow('invalid_refresh_token');
+    expect(await harness.run(async (ctx) => await ctx.db.get(connectionId))).toMatchObject({
+      status: 'needs-attention',
+    });
+
+    await install(harness, await provision(harness, leo.surfaceId));
+
+    const row = await card(harness, leo.surfaceId);
+    expect(row.credentialId).toBeDefined();
+    expect(row.organisationConnectionId).toBe(connectionId);
+  });
+
   it("refuses to bind a row the organisation holds that no install just landed, such as IT's configuration token", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const connectionId = await landSlack(harness);

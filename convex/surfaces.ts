@@ -1164,8 +1164,9 @@ async function assertInstalledToken(
  * reads to revoke it at Slack, 11-AR) and the client secret's where it has none; whom the card acts
  * as (`actsAs`: its own app and its bot user, D2); and, for an app the organisation's Slack
  * configuration connection created (`provisioning.organisationConnectionId`), the card's link to
- * that connection (`organisationConnections.linkSurface`), so a revoke of the connection ends it.
- * An app whose connection IT revoked is not installed again.
+ * that connection (`organisationConnections.linkSurface`; written here while the connection needs
+ * IT's attention, which `linkSurface` refuses), so a revoke of the connection ends it. An app
+ * whose connection IT revoked is not installed again.
  *
  * Internal, for `slackProvisionActions`. Refuses a bot token that is not one the install just
  * landed (`assertInstalledToken`), before anything is retired.
@@ -1192,9 +1193,8 @@ export const recordInstalledApp = internalMutation({
       throw new Error('This surface already has a dedicated identity.');
     }
     const connectionId = provisioning.organisationConnectionId;
-    if (connectionId !== undefined && (await ctx.db.get(connectionId))?.status === 'revoked') {
-      throw new ConvexError(KEPT_APP_CONNECTION_REVOKED);
-    }
+    const creator = connectionId === undefined ? null : await ctx.db.get(connectionId);
+    if (creator?.status === 'revoked') throw new ConvexError(KEPT_APP_CONNECTION_REVOKED);
     const retired =
       previous && previous !== args.credentialId && surface.credentialKind !== 'oauth'
         ? previous
@@ -1235,11 +1235,16 @@ export const recordInstalledApp = internalMutation({
         lastError: undefined,
       },
     });
-    if (connectionId !== undefined) {
+    if (creator?.status === 'active') {
       await ctx.runMutation(internal.organisationConnections.linkSurface, {
         surfaceId: surface._id,
-        organisationConnectionId: connectionId,
+        organisationConnectionId: creator._id,
       });
+    } else if (creator?.status === 'needs-attention') {
+      // The install uses no configuration token, so a connection whose refresh token IT must
+      // replace does not hold it back; `linkSurface` links only through an active connection, and
+      // the card is linked to the one that created its app so that its revoke still ends the card.
+      await ctx.db.patch(surface._id, { organisationConnectionId: creator._id });
     }
     if (retired) {
       const credential = await ctx.db.get(retired);
