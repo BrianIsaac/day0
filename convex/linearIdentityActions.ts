@@ -28,6 +28,7 @@ import { organisationSystemOf } from '../src/surfaces/access-request';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
 import {
+  isAuthorityRefusal,
   isTokenRefusal,
   LINEAR_ISSUER,
   LINEAR_OAUTH_REDIRECT_PATH,
@@ -48,6 +49,7 @@ import {
   type LinearViewer,
 } from '../src/surfaces/identity-issuers/linear';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { isAppIdentity } from '../src/work/ticket-ownership';
 
 /*
  * Linear's issuer in the deployment (wave 11, 11-AL; the access plan, section 4.10). Shared mode:
@@ -208,7 +210,10 @@ async function sharedToken(
     organisationConnectionId,
   });
   if (held === null || held.connection.status !== 'active') {
-    throw new Error("The organisation's Linear connection is no longer active.");
+    throw new LinearIssuerRefusal(
+      'connection-ended',
+      "The organisation's Linear connection is no longer active.",
+    );
   }
   const { connection, token } = held;
   const usable = token !== null && token.revokedAt === undefined && token.ciphertext !== undefined;
@@ -221,7 +226,10 @@ async function sharedToken(
     return { credentialId: token._id, generation, bearer: await valueOf(ctx, token._id) };
   }
   if (!connection.clientId || !connection.secretCredentialId) {
-    throw new Error("The organisation's Linear connection holds no client id or secret.");
+    throw new LinearIssuerRefusal(
+      'connection-ended',
+      "The organisation's Linear connection holds no client id or secret.",
+    );
   }
   const issued = await requestAppActorToken(
     deps.fetch,
@@ -257,7 +265,8 @@ async function sharedToken(
       bearer: await valueOf(ctx, landed.credentialId),
     };
   }
-  throw new Error(
+  throw new LinearIssuerRefusal(
+    'connection-ended',
     "The organisation's Linear connection was revoked while its token was requested.",
   );
 }
@@ -706,7 +715,7 @@ async function refreshEmployee(
 
 /** The words a card ends with when its own app's token can no longer be renewed. */
 function reinstallWords(refusal: string): string {
-  return `${refusal} A Linear administrator installs the app again from the card.`;
+  return `${refusal} Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card.`;
 }
 
 /**
@@ -759,7 +768,7 @@ export async function readLinearBearer(
         });
         return await valueOf(ctx, held.access._id);
       }
-      throw new Error(reinstallWords(outcome.refusal));
+      throw new LinearIssuerRefusal('token-refused', reinstallWords(outcome.refusal));
     }
     case 'oauth-install':
     case 'app-created':
@@ -785,33 +794,125 @@ export const currentBearer = internalAction({
 /**
  * The one new token after Linear refused the card's bearer (a 401): the shared app-actor token is
  * requested again with the connection's scope set (L2), an employee's own token refreshed. A token
- * a concurrent renewal already replaced is not renewed twice: its successor is answered. Internal,
- * for the probe's Linear identity region.
+ * a concurrent renewal already replaced is not renewed twice: its successor is answered.
  *
- * @throws LinearIssuerRefusal or Error when no new token can be had; the caller ends the card.
+ * @param generation - The generation of the token Linear refused.
+ * @throws LinearIssuerRefusal when no new token can be had; the caller ends the card.
+ */
+export async function renewLinearTokenAfterRefusal(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  generation: number,
+  deps: LinearIdentityDeps = linearIdentityDeps(),
+): Promise<string> {
+  const held = await ctx.runQuery(internal.linearIdentity.heldToken, { credentialId });
+  const issuedBy = held?.access.issuedBy;
+  if (!held || issuedBy?.system !== LINEAR_SYSTEM) {
+    throw new LinearIssuerRefusal(
+      'connection-ended',
+      'The card holds no token Linear issued to Day0.',
+    );
+  }
+  if (issuedBy.grant === 'client-credentials' && issuedBy.organisationConnectionId) {
+    return (await sharedToken(ctx, issuedBy.organisationConnectionId, deps, generation)).bearer;
+  }
+  if ((held.access.generation ?? 0) !== generation) return await valueOf(ctx, held.access._id);
+  const outcome = await refreshEmployee(ctx, held, deps);
+  if (outcome.ok) return outcome.bearer;
+  throw new LinearIssuerRefusal('token-refused', reinstallWords(outcome.refusal));
+}
+
+/**
+ * {@link renewLinearTokenAfterRefusal} for an action in another module. Internal.
+ *
+ * @throws LinearIssuerRefusal's words when no new token can be had.
  */
 export const renewAfterRefusal = internalAction({
   args: { credentialId: v.id('credentials'), generation: v.number() },
-  handler: async (ctx, args): Promise<string> => {
-    const deps = linearIdentityDeps();
-    const held = await ctx.runQuery(internal.linearIdentity.heldToken, {
-      credentialId: args.credentialId,
-    });
-    const issuedBy = held?.access.issuedBy;
-    if (!held || issuedBy?.system !== LINEAR_SYSTEM) {
-      throw new Error('The card holds no token Linear issued to Day0.');
-    }
-    if (issuedBy.grant === 'client-credentials' && issuedBy.organisationConnectionId) {
-      return (await sharedToken(ctx, issuedBy.organisationConnectionId, deps, args.generation))
-        .bearer;
-    }
-    if ((held.access.generation ?? 0) !== args.generation)
-      return await valueOf(ctx, held.access._id);
-    const outcome = await refreshEmployee(ctx, held, deps);
-    if (outcome.ok) return outcome.bearer;
-    throw new Error(reinstallWords(outcome.refusal));
-  },
+  handler: async (ctx, args): Promise<string> =>
+    await renewLinearTokenAfterRefusal(ctx, args.credentialId, args.generation),
 });
+
+/** A card's Linear bearer as the probe holds it: the value and the generation it was read at. */
+export interface HeldBearer {
+  readonly bearer: string;
+  readonly generation: number;
+}
+
+/**
+ * What the probe's Linear identity region asks of the issuer (the probe's dependency; a test
+ * scripts it): the card's bearer, renewed when due; the one new token after a refusal; and the app
+ * user a token acts as.
+ */
+export interface LinearProbeIdentity {
+  bearer(credentialId: Id<'credentials'>): Promise<HeldBearer>;
+  renewAfterRefusal(credentialId: Id<'credentials'>, generation: number): Promise<string>;
+  appUser(bearer: string): Promise<LinearViewer>;
+}
+
+/**
+ * The issuer as the probe's Linear identity region uses it, in the probe's own action.
+ *
+ * @param ctx - The probe's action context.
+ */
+export function linearProbeIdentity(
+  ctx: ActionCtx,
+  deps: LinearIdentityDeps = linearIdentityDeps(),
+): LinearProbeIdentity {
+  return {
+    async bearer(credentialId) {
+      const bearer =
+        (await readLinearBearer(ctx, credentialId, deps)) ?? (await valueOf(ctx, credentialId));
+      const held = await ctx.runQuery(internal.linearIdentity.heldToken, { credentialId });
+      return { bearer, generation: held?.access.generation ?? 0 };
+    },
+    renewAfterRefusal: async (credentialId, generation) =>
+      await renewLinearTokenAfterRefusal(ctx, credentialId, generation, deps),
+    appUser: async (bearer) => await appUserOf(deps, bearer),
+  };
+}
+
+/** Whether a card acts as a Linear app user, its own or the organisation's shared one. */
+export function actsAsLinearApp(card: Doc<'surfaces'>): boolean {
+  return isAppIdentity(card) && organisationSystemOf(card) === LINEAR_SYSTEM;
+}
+
+/** What the probe's Linear identity region found: the discovery and the app user, or the refusal. */
+export type LinearProbeResult<Discovery> =
+  | { readonly ok: true; readonly discovery: Discovery; readonly appUser: LinearViewer }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Probe a card acting as a Linear app with its identity's own token (the access plan, section 4.10):
+ * the bearer read through the issuer (renewed when due), the server's tools discovered with it, a
+ * refusal of it (a 401) answered with one new token before the card ends (L2), and the app user the
+ * token acts as read, for `providerIdentityId` and the ticket rule (D6). Linear withdrawing the
+ * authority answers the refusal for the card; any other failure is the caller's to judge.
+ *
+ * @param discover - The probe's discovery with a bearer, which also tells the caller the bearer.
+ */
+export async function probeLinearApp<Discovery>(
+  identity: LinearProbeIdentity,
+  credentialId: Id<'credentials'>,
+  discover: (bearer: string) => Promise<Discovery>,
+): Promise<LinearProbeResult<Discovery>> {
+  try {
+    const held = await identity.bearer(credentialId);
+    let bearer = held.bearer;
+    let discovery: Discovery;
+    try {
+      discovery = await discover(bearer);
+    } catch (error) {
+      if (!isTokenRefusal(error)) throw error;
+      bearer = await identity.renewAfterRefusal(credentialId, held.generation);
+      discovery = await discover(bearer);
+    }
+    return { ok: true, discovery, appUser: await identity.appUser(bearer) };
+  } catch (error) {
+    if (isAuthorityRefusal(error)) return { ok: false, reason: error.message.slice(0, REASON_MAX) };
+    throw error;
+  }
+}
 
 /**
  * Renew the shared app-actor token in its last day, so every reader finds a live one. Does nothing

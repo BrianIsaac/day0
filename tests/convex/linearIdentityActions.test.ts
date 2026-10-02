@@ -492,7 +492,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     clock += DAY + 60_000;
 
     await expect(bearerOf(harness, surface.credentialId!)).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*A Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -515,7 +515,7 @@ describe("per-employee mode: the employee's own app", (): void => {
       type: 'surface.install-failed',
       payload: {
         surfaceId: surfaceIds[0],
-        reason: expect.stringContaining('A Linear administrator installs the app again'),
+        reason: expect.stringContaining('until a Linear administrator installs the app again'),
       },
     });
     expect(

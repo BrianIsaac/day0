@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ACCESS_TOKEN_REFRESH_LEAD_MS,
+  isAuthorityRefusal,
   isTokenRefusal,
   LINEAR_GRAPHQL_URL,
   LINEAR_TOKEN_URL,
@@ -330,5 +331,24 @@ describe('revoking a token Day0 will not keep', (): void => {
       (await refusalOf(revokeLinearToken(answering(503, 'busy').fetch, 't', 'access_token')))
         .reason,
     ).toBe('unavailable');
+  });
+});
+
+describe('an authority withdrawn', (): void => {
+  it('is a refused client, grant, token or connection, never Linear unreachable or unreadable', (): void => {
+    for (const reason of [
+      'client-refused',
+      'grant-not-enabled',
+      'token-refused',
+      'unauthorised',
+      'not-an-app',
+      'no-scope-set',
+      'connection-ended',
+    ] as const) {
+      expect(isAuthorityRefusal(new LinearIssuerRefusal(reason, reason))).toBe(true);
+    }
+    expect(isAuthorityRefusal(new LinearIssuerRefusal('unavailable', 'down'))).toBe(false);
+    expect(isAuthorityRefusal(new LinearIssuerRefusal('malformed', 'odd'))).toBe(false);
+    expect(isAuthorityRefusal(new Error('HTTP 401'))).toBe(false);
   });
 });

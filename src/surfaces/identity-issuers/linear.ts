@@ -67,6 +67,7 @@ export const LINEAR_ISSUER_REFUSALS = [
   'unauthorised',
   'not-an-app',
   'no-scope-set',
+  'connection-ended',
   'malformed',
   'unavailable',
 ] as const;
@@ -157,6 +158,7 @@ const REFUSAL_LEADS: { readonly [Reason in LinearIssuerRefusalReason]: string } 
   unauthorised: 'Linear refused the token',
   'not-an-app': 'The token acts as a person, not as an app',
   'no-scope-set': "The organisation's Linear connection has no client-credentials scope set",
+  'connection-ended': "The organisation's Linear connection was ended or holds no app",
   malformed: 'Linear answered with something Day0 cannot read',
   unavailable: 'Linear could not be reached',
 };
@@ -510,6 +512,26 @@ export async function revokeLinearToken(
     response.status >= 500 || response.status === 429 ? 'unavailable' : 'malformed',
     `Linear did not revoke the token: HTTP ${response.status}.`,
   );
+}
+
+/** The refusals that withdraw Day0's authority in Linear, which only IT or the manager restores. */
+const AUTHORITY_REFUSALS: ReadonlySet<LinearIssuerRefusalReason> = new Set([
+  'client-refused',
+  'grant-not-enabled',
+  'token-refused',
+  'unauthorised',
+  'not-an-app',
+  'no-scope-set',
+  'connection-ended',
+]);
+
+/**
+ * Whether a failure is Linear, or the organisation's connection, withdrawing the authority a card
+ * was approved on: the card ends with the reason and no other route stands in for it. Linear
+ * unreachable or answering unreadably is not: that is the system's state, not the authority's.
+ */
+export function isAuthorityRefusal(error: unknown): error is LinearIssuerRefusal {
+  return error instanceof LinearIssuerRefusal && AUTHORITY_REFUSALS.has(error.reason);
 }
 
 /** How Linear's MCP server, or its API, says the bearer it was shown is no longer a token. */
