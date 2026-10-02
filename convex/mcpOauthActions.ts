@@ -685,7 +685,9 @@ export function mcpTokenRefresher(deps: McpOauthDeps): TokenRefresher {
       }
       const resource = connection.resource;
       const server = await fetchAuthorisationServerMetadata(deps.fetch, connection.issuer);
-      const secretId = held.issuedBy?.clientSecretCredentialId ?? connection.secretCredentialId;
+      // The connection's current secret first: a rotation revokes the one a token was issued
+      // under, and the server takes only the new one (the wave 11 review's M9).
+      const secretId = connection.secretCredentialId ?? held.issuedBy?.clientSecretCredentialId;
       const auth = clientAuthentication(
         server,
         secretId ? await decryptCredential(ctx, secretId) : undefined,

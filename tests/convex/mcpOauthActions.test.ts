@@ -937,6 +937,39 @@ describe('an employee acts at the vendor only as the identity its card names (cr
   });
 });
 
+describe('a confidential client whose secret IT rotates (the wave 11 review’s M9)', (): void => {
+  it('refreshes a token issued under the old secret with the connection’s current one', async (): Promise<void> => {
+    const confidential = { id: CONFIDENTIAL, secret: CLIENT_SECRET, redirectUris: [REDIRECT] };
+    server = createIssuer({
+      issuer: ISSUER,
+      clients: [confidential],
+      protectedResource: { path: '/mcp', scopes: ['read', 'write'] },
+      now: () => clock,
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, connectionId } = await seed(harness, { confidential: { issuer: ISSUER } });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const { surface } = await read(harness, surfaceId);
+    const { internal } = await liveApi();
+
+    // IT gives the client a new secret at the server and on the organisation page ("No card ends").
+    confidential.secret = 'mcp-client-secret-rotated';
+    await harness.action(internal.organisationConnections.rotateFromSetup, {
+      organisationConnectionId: connectionId as Id<'organisationConnections'>,
+      secret: 'mcp-client-secret-rotated',
+    });
+    clock += 290_000;
+    const bearer = await harness.action(internal.mcpOauthActions.currentBearer, {
+      credentialId: surface.credentialId as Id<'credentials'>,
+    });
+
+    expect(bearer).toEqual(expect.any(String));
+    expect(await adminState()).toMatchObject({ codeExchanges: 1, refreshExchanges: 1 });
+  });
+});
+
 describe('who may complete an authorisation (the wave 11 review’s M2, decision 3 (a))', (): void => {
   it('refuses a second signed-in person’s consent, lands nothing and leaves the manager’s authorisation pending', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
