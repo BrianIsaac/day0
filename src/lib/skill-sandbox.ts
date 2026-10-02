@@ -159,11 +159,20 @@ function skipped(reason: string): SkillSandboxRun {
  *
  * Sandbox verification is an optional capability. With neither backend the run
  * is reported as skipped instead of throwing - the skill keeps its body, stays
- * visibly uncallable, and the caller records the skip in the event log.
+ * visibly uncallable, and the caller records the skip in the event log. A
+ * Daytona sandbox that never started is the same: nothing ran, so nothing was
+ * checked, and the skip says so rather than reporting the sandbox as throwing.
  */
 export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
   if (configuredSkillSandboxBackend() === 'daytona') {
-    return verdictFor('daytona', await authorAndVerifySkillOnDaytona(args));
+    const run = await authorAndVerifySkillOnDaytona(args);
+    if (!run.started) {
+      return skipped(
+        `Daytona did not start a sandbox within ${run.waitedSeconds / 60} minutes, ` +
+          'so nothing was checked; the draft is kept to check again',
+      );
+    }
+    return verdictFor('daytona', run.outcome);
   }
 
   const reachable = await probeLocalSandbox();

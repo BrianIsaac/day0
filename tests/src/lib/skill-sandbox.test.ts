@@ -1,5 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// A Daytona whose every start outlasts the bound it is given, as a cold start outlasted the SDK's
+// default on the hosted demo (the v0.13.0 walk); nothing else in this file starts a sandbox.
+vi.mock('@daytona/sdk', () => {
+  class DaytonaTimeoutError extends Error {}
+  class Daytona {
+    async create(_params: unknown, options?: { timeout?: number }): Promise<never> {
+      throw new DaytonaTimeoutError(
+        `Failed to create and start sandbox within ${options?.timeout ?? 60} seconds. Operation timed out.`,
+      );
+    }
+
+    async get(): Promise<{ delete: () => Promise<void> }> {
+      return { delete: async (): Promise<void> => undefined };
+    }
+  }
+  return { Daytona, DaytonaTimeoutError };
+});
+
 afterEach((): void => {
   vi.unstubAllEnvs();
   vi.resetModules();
@@ -69,6 +87,32 @@ describe('the smoke test verdict', (): void => {
     expect(verdictFor('local', run('a\nb\n', 137, true))).toMatchObject({
       ok: false,
       failureReason: 'smoke test did not finish within the sandbox time limit',
+    });
+  });
+});
+
+describe('a Daytona sandbox that does not start', (): void => {
+  it('is reported as nothing checked, in words the card can show, never as the sandbox throwing (the v0.13.0 walk)', async (): Promise<void> => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('DAYTONA_API_KEY', 'dtn_key');
+    vi.resetModules();
+    const { authorAndVerifySkill } = await import('../../../src/lib/skill-sandbox');
+
+    await expect(
+      authorAndVerifySkill({
+        skillName: 'kanban-comment-and-close',
+        skillBody: '#',
+        smokeTest: '',
+      }),
+    ).resolves.toEqual({
+      backend: 'none',
+      sandboxId: '(skipped)',
+      stdout: '',
+      stderr: '',
+      ok: false,
+      skipped: true,
+      skipReason:
+        'Daytona did not start a sandbox within 3 minutes, so nothing was checked; the draft is kept to check again',
     });
   });
 });
