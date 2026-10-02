@@ -83,7 +83,7 @@ const REHEARSAL_CONTRACT: SmokeHarnessContract = {
 
 /** Verify with the authoring module as the surface mode stubbed beforehand loads it. */
 async function verifyAsLoaded(smokeTest: string, contract?: SmokeHarnessContract) {
-  const { verifyAuthoredSkill } = await import('../../convex/skillActions');
+  const { verifyAuthoredSkill } = await import('../../convex/skillSandboxCheck');
   return await verifyAuthoredSkill(
     { skillName: 'kanban-comment-and-close', skillBody: RECORDED_BODY_2026_09_18, smokeTest },
     runInPython,

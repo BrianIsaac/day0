@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { verifyAuthoredSkill } from '../../convex/skillActions';
+import { verifyAuthoredSkill } from '../../convex/skillSandboxCheck';
 import {
   AUTHOR_SYSTEM,
   AUTHOR_SYSTEM_REAL,
