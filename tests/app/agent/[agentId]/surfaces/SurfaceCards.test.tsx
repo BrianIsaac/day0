@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { withListedIdentity } from './fakes/listed-identity';
 
 /**
  * One browser-driven surface and this deployment's component status, so the
@@ -32,7 +33,8 @@ vi.mock('convex/react', () => ({
     if (name === 'surfaces:listForAgent') {
       if (state.surfaceResult === 'loading') return undefined;
       if (state.surfaceResult === 'empty') return [];
-      if (state.surfaces) return state.surfaces;
+      // The listing answers whom each card acts as (`listedCardIdentity`), as the backend does.
+      if (state.surfaces) return state.surfaces.map((row) => withListedIdentity(row as object));
       return [
         {
           _id: 'surface-tile',
@@ -48,7 +50,7 @@ vi.mock('convex/react', () => ({
           reason: state.reason,
           lastDecisionError: state.lastDecisionError,
         },
-      ];
+      ].map((row) => withListedIdentity(row));
     }
     return [];
   },

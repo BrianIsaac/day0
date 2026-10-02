@@ -29,7 +29,6 @@ import { clockTime, useAgentZone } from '../../../components/time';
 import {
   accessStanding,
   actsAsWords,
-  cardIdentity,
   connectedForOrganisationWords,
   disconnectLines,
   documentedKeyUnusedWords,
@@ -41,7 +40,6 @@ import {
   identityChip,
   reachedWords,
   stateChip,
-  type KeyOrigin,
   type OrganisationSystem,
 } from './card-words';
 import { CredentialField } from './CredentialField';
@@ -293,21 +291,8 @@ export function SurfaceCard({
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
   });
-  const heldKeyFrom: KeyOrigin | undefined =
-    summary === undefined
-      ? undefined
-      : typeof summary.source === 'object'
-        ? 'documentation'
-        : summary.source === 'entered'
-          ? 'paste'
-          : undefined;
-  const identity = cardIdentity(surface, connection, {
-    selfProvisions:
-      slack &&
-      provisioningPresentation.stage !== 'not-applicable' &&
-      provisioningPresentation.stage !== 'unavailable',
-    heldKeyFrom,
-  });
+  // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
+  const identity = surface.identity;
   const identityNames = { employee: context.employeeName, system: surface.displayName };
   const showsIdentity = !NO_IDENTITY.has(surface.verdict);
   const chipForIdentity = identityChip(identity);
@@ -323,8 +308,10 @@ export function SurfaceCard({
   // A27: a card still on a pasted key whose system IT has since connected is offered the move,
   // through the connection's own issuer: Slack's app, else the card's Connect.
   const onMove = slack ? (): void => actions.provision() : actions.connect;
+  const target = surface.connectionIdentity;
   const move: MoveOffer | undefined =
     covering !== undefined &&
+    target !== undefined &&
     identity.kind === 'shared-key' &&
     !identity.planned &&
     surface.credentialId !== undefined &&
@@ -333,13 +320,7 @@ export function SurfaceCard({
     // then its Connect refuses and asks for the access request (11-AL's `startInstall`).
     !(system === 'linear' && covering.mode === 'per-employee' && surface.provisioning === undefined)
       ? {
-          words: moveOfferWords(
-            cardIdentity({ endpoint: surface.endpoint, path: surface.path }, covering, {
-              selfProvisions: false,
-            }),
-            identityNames,
-            identity.keyFrom,
-          ),
+          words: moveOfferWords(target, identityNames, identity.keyFrom),
           label: moveLabel(identity.keyFrom ?? 'paste'),
           onMove,
         }

@@ -1,7 +1,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfacePath } from '@/surfaces/types';
-import type { ActsAsKind, OrganisationConnectionMode } from '@/surfaces/access-identity';
-import { MCP_SYSTEM_PREFIX, organisationSystemOf } from '@/surfaces/access-request';
+import type { OrganisationConnectionMode } from '@/surfaces/access-identity';
+import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
@@ -197,72 +197,6 @@ export interface OrganisationSystem {
   readonly mode: OrganisationConnectionMode;
   readonly status: 'active' | 'needs-attention';
   readonly connectedAt: number;
-}
-
-/**
- * Whom a card acts as in its system (D2): the identity the connect path wrote, or, before one has
- * landed, the one it will land, so the manager approves knowing which (the access plan, section
- * 4.3). `planned` says which of the two it is; `label` is the identity's name as the system shows
- * it, known only once it has landed.
- */
-export interface CardIdentity {
-  readonly kind: ActsAsKind;
-  readonly label?: string;
-  readonly planned: boolean;
-  /** Where a shared key the card holds came from, so its words never call a documented key pasted. */
-  readonly keyFrom?: KeyOrigin;
-}
-
-/**
- * Where a key a card holds came from: a documentation page the orientation read (B1, decision
- * 1 (a): bound where no organisation connection covers the system), or a paste on the card.
- */
-export type KeyOrigin = 'documentation' | 'paste';
-
-/** What the identity is read from: the card's identity once written, its endpoint and path. */
-export type IdentityCard = Partial<
-  Pick<Doc<'surfaces'>, 'actsAs' | 'endpoint' | 'path' | 'credentialId'>
->;
-
-/**
- * Whom a card acts as, or will once connected. An identity a connect path wrote is read as it is.
- * Before one has, the card's system and the organisation's active connection for it decide, by the
- * issuers' own rules: an MCP server's authorisation is the manager's delegated consent (AM6); a
- * shared connection is the organisation's one app (11-AL's shared app actor); a per-employee one
- * is the employee's own app (11-AS, 11-AL). With no active connection, a Slack card that registers
- * its own app acts as it, and any other card as the key someone pastes, which is what
- * `landCredential` writes (`actsAsAtUpgrade`). A connection that needs IT's attention covers
- * nothing: `landCredential` refuses only while one is active.
- *
- * @param card - The card's identity, endpoint and path.
- * @param connection - The organisation's connection for the card's system, when it has one.
- * @param options - Whether, with no connection, the card registers the employee's own app itself,
- *   and where the key it holds came from, when it holds one.
- */
-export function cardIdentity(
-  card: IdentityCard,
-  connection: OrganisationSystem | undefined,
-  options: { readonly selfProvisions: boolean; readonly heldKeyFrom?: KeyOrigin },
-): CardIdentity {
-  // A Disconnect leaves a pasted key's identity on the card with no key held: it acts as nothing
-  // pasted any more, so the card says whom it will act as instead.
-  const keyGone = card.actsAs?.kind === 'shared-key' && card.credentialId === undefined;
-  if (card.actsAs !== undefined && !keyGone) {
-    const landed = { kind: card.actsAs.kind, label: card.actsAs.label, planned: false };
-    return card.actsAs.kind === 'shared-key' && options.heldKeyFrom !== undefined
-      ? { ...landed, keyFrom: options.heldKeyFrom }
-      : landed;
-  }
-  const system = organisationSystemOf(card);
-  const covering =
-    connection !== undefined && connection.status === 'active' && connection.system === system
-      ? connection
-      : undefined;
-  if (covering === undefined) {
-    return { kind: options.selfProvisions ? 'own-app' : 'shared-key', planned: true };
-  }
-  if (covering.system.startsWith(MCP_SYSTEM_PREFIX)) return { kind: 'delegated', planned: true };
-  return { kind: covering.mode === 'shared' ? 'shared-app' : 'own-app', planned: true };
 }
 
 /** Who and where an identity's words name: the employee, and the system as the card names it. */

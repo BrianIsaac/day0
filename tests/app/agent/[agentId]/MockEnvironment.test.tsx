@@ -8,6 +8,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { withListedIdentity } from './surfaces/fakes/listed-identity';
 
 const queries = vi.hoisted(() => ({
   surfacesLoaded: true,
@@ -31,7 +32,7 @@ vi.mock('convex/react', () => ({
           whereFound: [],
           credentialLanded: false,
         },
-      ];
+      ].map((row) => withListedIdentity(row));
     }
     if (name === 'charters:latest') return null;
     if (name === 'mock:listDocs') {

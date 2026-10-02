@@ -10,6 +10,7 @@ import {
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import type { OrganisationSystem } from '../../../../../app/agent/[agentId]/surfaces/card-words';
+import { withListedIdentity } from './fakes/listed-identity';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** 29 Sep 2026, 12:00 UTC. */
@@ -64,11 +65,12 @@ function render(
   overrides: Partial<SurfaceCardContext> = {},
   extra: { accessRequest?: AccessRequestView | null; connect?: () => void } = {},
 ): string {
+  const cardContext = { ...context, ...overrides };
   return renderToStaticMarkup(
     <AgentZoneContext value="UTC">
       <SurfaceCard
-        surface={surface}
-        context={{ ...context, ...overrides }}
+        surface={withListedIdentity(surface, cardContext)}
+        context={cardContext}
         operation={undefined}
         actions={{ ...actions, ...(extra.connect ? { connect: extra.connect } : {}) }}
         accessRequest={extra.accessRequest}

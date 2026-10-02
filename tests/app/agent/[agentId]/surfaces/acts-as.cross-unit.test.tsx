@@ -8,6 +8,7 @@ import {
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
+import { withListedIdentity } from './fakes/listed-identity';
 import { AgentZoneContext } from '../../../../../app/components/time';
 
 /**
@@ -51,7 +52,7 @@ function actsAsRow(card: { displayName: string; endpoint: string; path: string }
   const markup = renderToStaticMarkup(
     <AgentZoneContext value="UTC">
       <SurfaceCard
-        surface={
+        surface={withListedIdentity(
           {
             _id: `surface-${card.displayName}`,
             _creationTime: 1,
@@ -67,8 +68,9 @@ function actsAsRow(card: { displayName: string; endpoint: string; path: string }
             createdAt: 1,
             actsAs,
             ...card,
-          } as unknown as ListedSurface
-        }
+          } as unknown as ListedSurface,
+          context,
+        )}
         context={context}
         operation={undefined}
         actions={actions}

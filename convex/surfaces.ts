@@ -56,6 +56,11 @@ import {
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { organisationSystemOf } from '../src/surfaces/access-request';
 import { activeConnectionFor } from './organisationConnectionReads';
+import {
+  listedCardIdentity,
+  type CardIdentity,
+  type ListedIdentity,
+} from '../src/surfaces/card-identity';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
@@ -239,6 +244,10 @@ export async function backfillCharterProvenance(
  * changed on the pages its approved scope quotes.
  */
 export interface ListedSurface extends Doc<'surfaces'> {
+  /** Whom the card acts as, or will once connected (cockpit item 1; `listedCardIdentity`). */
+  readonly identity: CardIdentity;
+  /** Whom the organisation's active connection for its system would make it act as, if one covers it. */
+  readonly connectionIdentity?: CardIdentity;
   /**
    * Why `approve` would refuse this card now (a documented intake queue changed, or its browser
    * component is absent), so the card disables Approve with the reason (E-63). Only on a
@@ -333,13 +342,49 @@ function intakeQueueRefusal(drift: readonly ScopeValue[]): string | undefined {
 }
 
 /**
+ * Whom each card acts as, by the one rule (`listedCardIdentity`; 11-AC's cockpit item 1): the
+ * organisation's active connection for each card's system read once per system, and the source of
+ * the credential each card holds.
+ *
+ * @param ctx - The query's reader.
+ * @param surfaces - The employee's cards.
+ */
+async function identitiesOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<Map<Id<'surfaces'>, ListedIdentity>> {
+  const connections = new Map<string, Doc<'organisationConnections'> | null>();
+  const hasPublicUrl = (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '';
+  const identities = new Map<Id<'surfaces'>, ListedIdentity>();
+  for (const surface of surfaces) {
+    const system = organisationSystemOf(surface);
+    if (system !== undefined && !connections.has(system)) {
+      connections.set(system, await activeConnectionFor(ctx, system));
+    }
+    const connection = system === undefined ? null : (connections.get(system) ?? null);
+    const held = surface.credentialId === undefined ? null : await ctx.db.get(surface.credentialId);
+    identities.set(
+      surface._id,
+      listedCardIdentity({
+        card: surface,
+        ...(connection !== null ? { connection } : {}),
+        ...(held !== null ? { heldCredentialSource: held.source } : {}),
+        hasPublicUrl,
+      }),
+    );
+  }
+  return identities;
+}
+
+/**
  * List one owned agent's surfaces as their cards read them.
  *
  * Public, owner-guarded; reads, writes nothing. The rows come in the documented order (the
  * systems table on the pages the cards cite, then class), each with its browser component's
- * state, the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what
- * changed on its approved scope's pages (`scopeChange`). The pages are read here, once, and both
- * the refusal and the change are judged from them; the browser is never sent them.
+ * state, whom it acts as (`identity`, and `connectionIdentity` where IT's connection covers it),
+ * the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what changed on
+ * its approved scope's pages (`scopeChange`). The pages are read here, once, and both the refusal
+ * and the change are judged from them; the browser is never sent them.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -349,6 +394,7 @@ export const listForAgent = query({
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .take(CARD_SURFACE_LIMIT);
+    const identities = await identitiesOf(ctx, surfaces);
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
@@ -367,8 +413,11 @@ export const listForAgent = query({
         listed.verdict === 'proposed'
           ? (intakeQueueRefusal(drift) ?? browserRefusal(listed))
           : undefined;
+      const identity = identities.get(surface._id);
+      if (identity === undefined) throw new Error('A listed card has no identity read.');
       return {
         ...listed,
+        ...identity,
         ...(refused === undefined ? {} : { approvalRefusal: refused }),
         ...(scopeChange === undefined ? {} : { scopeChange }),
       };

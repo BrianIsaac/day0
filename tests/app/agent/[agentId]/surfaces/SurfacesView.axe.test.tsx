@@ -17,13 +17,35 @@ vi.mock('convex/react', () => ({
     if (args === 'skip') return undefined;
     const name = getFunctionName(reference as never);
     const answer = backend.queries[name];
-    return typeof answer === 'function' ? (answer as (args: unknown) => unknown)(args) : answer;
+    const value =
+      typeof answer === 'function' ? (answer as (args: unknown) => unknown)(args) : answer;
+    // The listing answers whom each card acts as (`listedCardIdentity`), as the backend does.
+    return name === 'surfaces:listForAgent' && Array.isArray(value)
+      ? value.map((row) => withListedIdentity(row, listingContext(backend.queries)))
+      : value;
   },
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));
 
 import { SurfacesView } from '../../../../../app/agent/[agentId]/surfaces/SurfacesView';
+import { withListedIdentity, type ListingContext } from './fakes/listed-identity';
+
+/** What the listing reads beside each row, from the same fixtures the tab's queries answer. */
+function listingContext(queries: Record<string, unknown>): ListingContext {
+  const summary = queries['organisationConnections:summaryForManager'] as
+    | { systems: { system: string; mode: 'shared' | 'per-employee'; status: 'active' }[] }
+    | undefined;
+  const credentials = (queries['credentials:summaryForOwner'] ?? []) as {
+    _id: string;
+    source: 'entered' | 'oauth' | { sourceId: string; ref: string };
+  }[];
+  return {
+    organisation: new Map((summary?.systems ?? []).map((system) => [system.system, system])),
+    credentials: new Map(credentials.map((credential) => [credential._id, credential])),
+    installRedirectConfigured: queries['surfaces:installRedirectConfigured'] === true,
+  };
+}
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, settle } from '../../../../fixtures/dom/press';

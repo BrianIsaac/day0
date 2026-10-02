@@ -1,10 +1,10 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, it } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { fixtureAddressOf } from './fakes/manager-identity';
+import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 
 /*
  * The wave 11 review's B1, by decision 1 (a): a key the orientation finds in the documentation is
@@ -137,5 +137,58 @@ describe('surfaces.propose: a key found in the documentation (B1, decision 1 (a)
     const card = await readCard(seeded);
     expect(card.credentialId).toBe(seeded.wikiKey);
     expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+});
+
+describe("whom a card acts as, answered by the listing (11-AC's cockpit item 1; the review's M8)", (): void => {
+  it('says a documented key bound with no connection is the documented key, and IT’s identity where a connection covers it', async (): Promise<void> => {
+    const seeded = await seed('none');
+    await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded));
+    const owner = seeded.harness.withIdentity(managerIdentity());
+    const agentId = (await readCard(seeded)).agentId;
+
+    const [bound] = await owner.query(api.surfaces.listForAgent, { agentId });
+    expect(bound?.identity).toEqual({
+      kind: 'shared-key',
+      label: 'Linear API key',
+      planned: false,
+      keyFrom: 'documentation',
+    });
+    expect(bound?.connectionIdentity).toBeUndefined();
+
+    await seeded.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
+    const [covered] = await owner.query(api.surfaces.listForAgent, { agentId });
+    expect(covered?.connectionIdentity).toEqual({ kind: 'shared-app', planned: true });
+  });
+
+  it('names no landed identity on a card that no longer holds its credential', async (): Promise<void> => {
+    const seeded = await seed('none');
+    await seeded.harness.run(async (ctx) => {
+      await ctx.db.patch(seeded.surfaceId, {
+        verdict: 'approved',
+        path: 'mcp',
+        endpoint: LINEAR_ENDPOINT,
+        managerApprovedAt: 1,
+        actsAs: { kind: 'own-app', label: 'Day0 Leo' },
+      });
+    });
+    const agentId = (await readCard(seeded)).agentId;
+
+    const [card] = await seeded.harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(card?.identity).toEqual({ kind: 'shared-key', planned: true });
   });
 });

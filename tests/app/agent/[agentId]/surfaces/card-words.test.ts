@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
+import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   accessStanding,
   actsAsWords,
-  cardIdentity,
   connectedForOrganisationWords,
   disconnectLines,
   documentedKeyUnusedWords,
@@ -155,8 +155,13 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
   const names = { employee: 'Maya', system: 'Slack' };
 
   it('reads the identity the connect path wrote, as it is, and names the app as the system shows it', (): void => {
+    // A connect path writes the identity with the credential it lands; the card holds both (M8).
     const identity = cardIdentity(
-      { ...SLACK, actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' } },
+      {
+        ...SLACK,
+        actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' },
+        credentialId: 'cred-1',
+      },
       undefined,
       { selfProvisions: false },
     );
