@@ -52,6 +52,23 @@ describe('.env.example', (): void => {
     expect(EXAMPLE.indexOf('DAY0_ADMINISTRATORS=')).toBeLessThan(EXAMPLE.indexOf('# --- Clerk'));
   });
 
+  it("declares the token store's Nango lines after the administrators, the address empty by default (11-AT)", (): void => {
+    for (const name of [
+      'DAY0_NANGO_URL',
+      'DAY0_NANGO_SECRET_KEY',
+      'DAY0_NANGO_ENCRYPTION_KEY',
+      'DAY0_NANGO_DB_PASSWORD',
+    ]) {
+      expect(EXAMPLE, name).toMatch(new RegExp(`^${name}=$`, 'm'));
+      expect(EXAMPLE.indexOf(`\n${name}=`)).toBeGreaterThan(
+        EXAMPLE.indexOf('\nDAY0_ADMINISTRATORS='),
+      );
+      expect(EXAMPLE.indexOf(`\n${name}=`)).toBeLessThan(EXAMPLE.indexOf('# --- Clerk'));
+      expect(COMPOSE.includes(name) || name === 'DAY0_NANGO_URL', name).toBe(true);
+    }
+    expect(EXAMPLE).toContain('DAY0_NANGO_URL=http://nango-server:3003');
+  });
+
   it('declares the shared-skills switch, on by default (K4)', (): void => {
     expect(DECLARED).toContain('DAY0_SHARED_SKILLS');
     expect(EXAMPLE).toMatch(/^DAY0_SHARED_SKILLS=$/m);

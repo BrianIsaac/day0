@@ -58,6 +58,7 @@ nothing else on your machine can dial them.
 | `looker-tile` | `demo` | none | `http://looker-tile:8080` |
 | `redactor` | `redactor` | none | `http://redactor:8000` |
 | `sandbox` | `sandbox` | none | a unix socket on the `sandbox_socket` volume |
+| `nango-server` | `token-store` | none | `http://nango-server:3003`, on the `nango` network only the backend shares |
 
 `pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
 `--app-port`), outside Docker.
@@ -351,6 +352,49 @@ fails documentation sync closed and marks provider evidence as limited redaction
 The dashboard displays that limitation. Exact matching covers the credential
 supplied by the transport and every active credential stored for the owner;
 it does not cover a secret day0 never stored.
+
+---
+
+## `nango-server` - the token store's Nango
+
+**What it is.** Nango's free self-hosted edition (`nangohq/nango-server`,
+version 0.71.11 pinned by digest, Elastic License 2.0), with its PostgreSQL
+(`nango-db`) and Redis (`nango-redis`). The free edition is "API Auth" and
+"Proxy"; day0 uses the first. Measured on 2 October 2026: about 480 MiB at rest
+for the three services, 44 seconds to healthy on its first start (it migrates
+its database) and 13 seconds after, about 1.2 GB of images.
+
+**What day0 uses it for.** Keeping and refreshing the OAuth tokens of a
+documented-API system day0 has no issuer of its own for. Such a credential row
+holds only the Nango connection the token lives in, never the token; every time
+a rung, the probe or intake needs the token, the backend asks Nango, which
+refreshes it first when it is due (a client-credentials grant included), and
+day0 never caches the answer or asks for a refresh token. Slack, Linear and an
+MCP server's authorisation keep their tokens in day0's own store and never come
+here.
+
+**When you need it.** When a system on your list is reached through its API
+with OAuth tokens and day0 has no issuer for it: `pnpm convex:up --profile
+token-store`, with `DAY0_NANGO_URL=http://nango-server:3003` in `.env.local`
+(`pnpm sync:env` pushes it). The three keys it needs are minted once by
+`pnpm dev:no-auth-key`, which every setup runs: `DAY0_NANGO_SECRET_KEY` (the key
+the backend presents), `DAY0_NANGO_ENCRYPTION_KEY` (seals the tokens in its
+database and cannot be rotated, so keep it with the `nango_db` volume's backup)
+and `DAY0_NANGO_DB_PASSWORD`. The server refuses to start without the first two
+rather than store tokens unencrypted.
+
+**When you do not.** When every system is reached through an MCP server, Slack,
+Linear, a pasted key or a web UI. Nothing reads it until a credential names it.
+
+**What it never sees.** Anything the backend does not send it, and no browser:
+it publishes no host port; the backend reaches the server on `nango`, an
+internal network with no route out that only the two of them join; the
+server's database and cache sit on `nango-store`, which only the server joins;
+and the server alone also joins `nango-egress` to reach the providers' token
+endpoints. It is never
+on the default network, where the browser component a model drives lives,
+because its own dashboard runs without a sign-in. The self-hosted edition sends
+nothing to Nango.
 
 ---
 

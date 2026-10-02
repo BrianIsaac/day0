@@ -268,6 +268,31 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(calls).toContain('convex env set DAY0_SURFACE_MODE -- mock');
   });
 
+  it("puts the token store's Nango address and key on the deployment, never the keys only Nango holds, and clears both once the file drops them (11-AT)", (): void => {
+    const configured = runSync(
+      [],
+      [
+        'DAY0_NANGO_URL=http://nango-server:3003',
+        'DAY0_NANGO_SECRET_KEY=3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+        'DAY0_NANGO_ENCRYPTION_KEY=nango-encryption-only',
+        'DAY0_NANGO_DB_PASSWORD=nango-database-only',
+        '',
+      ].join('\n'),
+    );
+    expect(configured.status).toBe(0);
+    expect(configured.calls).toContain('convex env set DAY0_NANGO_URL -- http://nango-server:3003');
+    expect(configured.calls).toContain(
+      'convex env set DAY0_NANGO_SECRET_KEY -- 3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+    );
+    expect(configured.calls.some((call) => call.includes('-only'))).toBe(false);
+    const dropped = runSync(
+      ['DAY0_NANGO_URL=http://nango-server:3003', 'DAY0_NANGO_SECRET_KEY=old'],
+      'DAY0_SURFACE_MODE=mock\n',
+    );
+    expect(dropped.calls).toContain('convex env remove DAY0_NANGO_URL');
+    expect(dropped.calls).toContain('convex env remove DAY0_NANGO_SECRET_KEY');
+  });
+
   it('never pushes a credential name and clears the key when .env.local drops it', (): void => {
     const { status, calls } = runSync(
       ['DAY0_CREDENTIAL_KEY=old', 'DAY0_NOTION_MCP_AUTH_TOKEN=old'],

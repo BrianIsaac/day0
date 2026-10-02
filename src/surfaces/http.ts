@@ -1,7 +1,7 @@
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
-import { decryptCredential, type DecryptCredential } from './credentials';
+import type { DecryptCredential } from './credentials';
 import { transientFromResponse } from '../lib/transport-error';
 import { checkMcpAddress, McpAddressRefusal, pinnedFetch } from './mcp-address';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
@@ -48,8 +48,15 @@ const RESPONSE_READ_LIMIT = 64 * 1024;
 /** The transport the adapter sends through, so a test can hand it a double. */
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
-/** What the documented-API adapter depends on: the decrypt and the two transports. */
+/** What the documented-API adapter depends on: the token store's read and the two transports. */
 export interface HttpAdapterDeps {
+  /**
+   * The card's live access token from the token store (`accessTokenFor` in
+   * `token-store.ts`, refreshed first when due), the one value the rung puts in
+   * the documented header. The rung never reads a refresh token, so there is no
+   * default: a plain decrypt would send a Nango-held row's pointer, or a token
+   * past its expiry.
+   */
   decrypt: DecryptCredential;
   /** The transport to Slack's fixed Web API base, which the code names and no page can move. */
   fetch: FetchLike;
@@ -346,7 +353,8 @@ export function documentedProbeRead(
 }
 
 /**
- * Read the header a documented API takes its credential in.
+ * Read the header a documented API takes its credential in. What it carries is
+ * the token store's live access token for the card, never a refresh token.
  *
  * @param documentation - The surface's own documentation.
  * @returns The first header the page shows carrying `{{secret}}`, or an
@@ -492,15 +500,11 @@ export class HttpAdapter implements SurfaceAdapter {
   /**
    * Args:
    *   surfaces: The agent's surfaces.
-   *   deps: Credential decryption, the fetch implementation and a clock.
+   *   deps: The token store's read, the fetch implementation and a clock.
    */
   constructor(
     private readonly surfaces: readonly SurfaceRecord[],
-    private readonly deps: HttpAdapterDeps = {
-      decrypt: decryptCredential,
-      fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
-      now: (): number => Date.now(),
-    },
+    private readonly deps: HttpAdapterDeps,
   ) {}
 
   /**
