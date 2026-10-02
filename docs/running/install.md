@@ -87,7 +87,11 @@ It runs, in order, and **stops at the first step that fails, naming it**:
 6. **`pnpm build`**: the browser reads the company sign-in's profile at build.
    Then start the app behind the proxy (`pnpm start`, in another terminal or
    under the customer's service manager); the install waits up to 10 minutes
-   for it to answer at `DAY0_PUBLIC_URL`.
+   for it to answer at `DAY0_PUBLIC_URL`, and says the last error if it never
+   does. Where the proxy's certificate comes from the customer's own
+   certificate authority, this machine's Node must trust it: run the install
+   with `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, or the
+   wait never succeeds.
 7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
