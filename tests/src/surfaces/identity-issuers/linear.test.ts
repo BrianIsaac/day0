@@ -203,6 +203,23 @@ describe('the per-employee grants', (): void => {
     expect(refusal.message).toContain('fetch failed');
   });
 
+  it("says Linear's description only when it is one short printable line, else its error code (the review's m13)", (): void => {
+    const words = (description: string): string => {
+      try {
+        readTokenResponse(400, { error: 'invalid_grant', error_description: description }, NOW);
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      throw new Error('expected a refusal');
+    };
+    expect(words('Refresh token is invalid or expired')).toContain(
+      'Refresh token is invalid or expired',
+    );
+    expect(words('line one\nline two')).not.toContain('line two');
+    expect(words('x'.repeat(400))).not.toContain('x'.repeat(201));
+    expect(words('x'.repeat(400))).toContain('invalid_grant');
+  });
+
   it('refuses a success that carries no token rather than landing nothing', (): void => {
     expect(() => readTokenResponse(200, { token_type: 'Bearer' }, NOW)).toThrow(
       expect.objectContaining({ reason: 'malformed' }) as Error,

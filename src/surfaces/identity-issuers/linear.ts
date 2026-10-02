@@ -310,8 +310,28 @@ export function readTokenResponse(status: number, body: unknown, now: number): L
   const description = record === undefined ? undefined : stringField(record, 'error_description');
   const reason =
     status >= 200 && status < 300 ? ('malformed' as const) : refusalOf(status, error, description);
-  const detail = description ?? error ?? `HTTP ${status}`;
+  const detail = shownDescription(description) ?? error ?? `HTTP ${status}`;
   throw new LinearIssuerRefusal(reason, `${REFUSAL_LEADS[reason]}: ${detail}.`, error);
+}
+
+/** The longest description of Linear's that a refusal repeats. */
+const DESCRIPTION_MAX = 200;
+
+/**
+ * Linear's `error_description` as a refusal may repeat it: one short line of printable text, or
+ * nothing, so the manager reads Linear's own words where they are words and the error code where
+ * they are not (the wave 11 review's m13).
+ *
+ * @param description - The description Linear answered, when it answered one.
+ */
+function shownDescription(description: string | undefined): string | undefined {
+  if (description === undefined) return undefined;
+  const trimmed = description.trim();
+  return trimmed !== '' &&
+    trimmed.length <= DESCRIPTION_MAX &&
+    !/[\u0000-\u001f\u007f]/.test(trimmed)
+    ? trimmed
+    : undefined;
 }
 
 /** The text of a failed transport, for the refusal's words. */

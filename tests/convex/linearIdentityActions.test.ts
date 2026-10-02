@@ -901,6 +901,29 @@ describe("per-employee mode: the employee's own app", (): void => {
     });
   });
 
+  it("never writes the app's client secret into a refused exchange's words, even when Linear echoes it (the review's m13)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({
+      fetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        url.pathname === '/oauth/token'
+          ? Response.json(
+              { error: 'invalid_client', error_description: `client ${LEO_SECRET} refused` },
+              { status: 401 },
+            )
+          : await linear.fetch(url, init),
+      now: () => clock,
+    });
+
+    const outcome = await installLeo(harness, surfaceIds[0]!);
+
+    expect(outcome.ok).toBe(false);
+    const { events } = await read(harness, surfaceIds[0]!);
+    expect(JSON.stringify(events)).not.toContain(LEO_SECRET);
+    expect(JSON.stringify(outcome)).not.toContain(LEO_SECRET);
+  });
+
   it('lets only an administrator record the app, and answers the access request before one is recorded', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
