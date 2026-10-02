@@ -119,6 +119,10 @@ services:
     image: ghcr.io/get-convex/convex-backend:latest@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
     stop_grace_period: 10s
     stop_signal: SIGINT
+    # `nango` is the token store's private network (see `nango-server`): the
+    # backend is the one service that asks Nango for a token. It is created
+    # whether or not that component runs, and carries nothing until it does.
+    networks: ['default', 'nango']
     ports:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_PORT:-3210}:3210'
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
@@ -569,6 +573,115 @@ services:
       timeout: 5s
       start_period: 20s
 
+  # The token store's Nango (wave 11, 11-AT; B15, V-A4): Nango's free
+  # self-hosted edition (Elastic License 2.0, "API Auth" and "Proxy" only),
+  # which keeps and refreshes the OAuth tokens of the API-rung systems Day0
+  # has no issuer of its own for. A credential row then seals only the Nango
+  # connection the token lives in, and every read asks Nango, which refreshes
+  # first when the token is due. Slack, Linear and the MCP rung keep their
+  # tokens in Day0's own store and never come here. Opt-in with
+  # `--profile token-store`; nothing reads it until a credential names it.
+  #
+  # Measured on the spike (2 October 2026, this digest): about 480 MiB at rest
+  # for the three services (server 405 MiB, PostgreSQL 65 to 73 MiB, Redis
+  # 4 MiB), 44 s to healthy on an empty volume (the first boot migrates) and
+  # 13 s after. Nothing leaves the machine but the token requests to the
+  # providers themselves: the self-hosted edition sends no telemetry, and the
+  # spike ran it on a network with no route out.
+  #
+  # Only the backend can reach it. The database and the cache sit on `nango`,
+  # an internal network with no route out that the backend joins; the server
+  # alone also joins `nango-egress` for the providers' token endpoints. It is
+  # never on `default`, where the browser component a model drives lives,
+  # because its dashboard runs without a sign-in (FLAG_AUTH_ENABLED=false is
+  # how the spike's API key resolved to an environment with no account
+  # created). Nothing is published on the host.
+  #
+  # The three keys are minted once by `pnpm dev:no-auth-key` (every setup and
+  # `pnpm dev` run it): DAY0_NANGO_SECRET_KEY is the environment key the
+  # backend presents (a version 4 UUID, the only shape Nango accepts),
+  # DAY0_NANGO_ENCRYPTION_KEY seals the tokens in Nango's database and cannot
+  # be rotated (keep it with the volume's backup), DAY0_NANGO_DB_PASSWORD is
+  # the database's. The server refuses to start without the first two rather
+  # than store tokens unencrypted.
+  nango-server:
+    profiles: ['token-store']
+    image: nangohq/nango-server:hosted-0.71.11@sha256:c41e96bcbaceb2cd6b6643d9cfcead759c46678ad443f88dc34bdab2653d9984
+    # The image is built for amd64 only; another host runs it emulated.
+    platform: linux/amd64
+    networks: ['nango', 'nango-egress']
+    entrypoint:
+      [
+        'sh',
+        '-c',
+        'test -n "$$NANGO_ENCRYPTION_KEY" && test -n "$$NANGO_SECRET_KEY_PROD" || { echo "DAY0_NANGO_ENCRYPTION_KEY and DAY0_NANGO_SECRET_KEY are required by --profile token-store; run pnpm dev:no-auth-key once to mint them" >&2; exit 1; }; exec docker-entrypoint.sh packages/server/entrypoint.sh',
+      ]
+    environment:
+      - NANGO_ENCRYPTION_KEY=${DAY0_NANGO_ENCRYPTION_KEY:-}
+      - NANGO_SECRET_KEY_PROD=${DAY0_NANGO_SECRET_KEY:-}
+      - NANGO_DB_HOST=nango-db
+      - NANGO_DB_NAME=nango
+      - NANGO_DB_USER=nango
+      - NANGO_DB_PASSWORD=${DAY0_NANGO_DB_PASSWORD:-}
+      - NANGO_DB_SSL=false
+      - RECORDS_DATABASE_URL=postgresql://nango:${DAY0_NANGO_DB_PASSWORD:-}@nango-db:5432/nango
+      - NANGO_REDIS_URL=redis://nango-redis:6379
+      - SERVER_PORT=3003
+      - NANGO_SERVER_URL=http://nango-server:3003
+      - NANGO_PUBLIC_SERVER_URL=http://nango-server:3003
+      - FLAG_AUTH_ENABLED=false
+      - AUTH_ALLOW_SIGNUP=false
+      - FLAG_SERVE_CONNECT_UI=false
+      - NANGO_LOGS_ENABLED=false
+      - LOG_LEVEL=info
+    expose: ['3003']
+    depends_on:
+      nango-db:
+        condition: service_healthy
+      nango-redis:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3003/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+
+  # Nango's database (the upstream compose file's PostgreSQL), on the internal
+  # network alone. Its volume holds the tokens, sealed with
+  # DAY0_NANGO_ENCRYPTION_KEY.
+  nango-db:
+    profiles: ['token-store']
+    image: postgres:16.0-alpine@sha256:acf5271bbecd4b8733f4e93959a8d2b536a57aeee6cc4b6a71890aaf646425b8
+    networks: ['nango']
+    environment:
+      - POSTGRES_USER=nango
+      - POSTGRES_DB=nango
+      - POSTGRES_PASSWORD=${DAY0_NANGO_DB_PASSWORD:-}
+    volumes:
+      - nango_db:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nango -d nango']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Nango's cache (token refresh locks and rate limits; the upstream compose
+  # file's Redis), on the internal network alone. It keeps nothing worth a
+  # volume.
+  nango-redis:
+    profiles: ['token-store']
+    image: redis:7.2.4@sha256:5a93f6b2e391b78e8bd3f9e7e1e1e06aeb5295043b4703fb88392835cec924a0
+    networks: ['nango']
+    restart: unless-stopped
+
 volumes:
   convex_data:
   model_data:
@@ -583,3 +696,14 @@ volumes:
   redactor_venv:
   redactor_models:
   redactor_tmp:
+  # The token store's Nango database: the tokens it keeps, sealed with
+  # DAY0_NANGO_ENCRYPTION_KEY. Back it up with that key.
+  nango_db:
+
+networks:
+  # The token store's private network: the backend, Nango and Nango's database
+  # and cache, with no route out. See `nango-server`.
+  nango:
+    internal: true
+  # Nango's own way out, to the providers' token endpoints; nothing else joins it.
+  nango-egress:

@@ -38,6 +38,12 @@ KEYS=(
   DAY0_OIDC_EMAIL_TRUSTED
   DAY0_SHARED_SKILLS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
+  # The token store's Nango (11-AT): where the backend asks for a Nango-held
+  # token and the environment key it presents. Nango's encryption key and its
+  # database password stay with the compose file and never reach the
+  # deployment.
+  DAY0_NANGO_URL
+  DAY0_NANGO_SECRET_KEY
 )
 
 # The pairs `convex/auth.config.ts` reads to decide who may call the
@@ -127,6 +133,10 @@ CLEAR_WHEN_EMPTY=(
   # Unset means shared skills on (K4): a stale `false` would keep every offer
   # off after the operator removed the switch.
   DAY0_SHARED_SKILLS
+  # Unset means no Nango: a Nango-held credential is refused by name rather
+  # than asked of a service the operator took away, with a key it dropped.
+  DAY0_NANGO_URL
+  DAY0_NANGO_SECRET_KEY
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
