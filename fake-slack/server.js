@@ -1,18 +1,77 @@
 import { createServer } from 'node:http';
 
 const port = Number(process.env.FAKE_SLACK_PORT || 8090);
-const botToken = 'xoxb-day0-fake-dedicated-token';
-const clientSecret = 'day0-fake-client-secret';
 const calls = new Map();
 const requestLog = [];
 // chat.postMessage counts per channel, never the text: a handover between two
 // managers shows as one post in each of their DMs.
 const postsByChannel = new Map();
-// Revocation at the vendor (11-AR, for 11-AS): the bot token auth.revoke or apps.uninstall
-// ended, and the apps apps.manifest.delete removed, as /proof lists them.
+
+// IT's app configuration token and its refresh token (S2). A rotation spends the
+// refresh token it is given and issues a new pair; only the newest token is
+// accepted. A reset keeps the pair: it is a credential Day0 holds, not evidence.
+const TWELVE_HOURS_S = 12 * 60 * 60;
+const configuration = {
+  token: 'xoxe-day0-fake-configuration-token',
+  refreshToken: 'xoxe-day0-fake-configuration-refresh',
+  rotations: 0,
+};
+
+/**
+ * One employee's own app, as apps.manifest.create made it. The first is the app
+ * the fake has always answered for: its bot token works before any install, as
+ * the probes and the revocation rung expect. Every later app's bot exists only
+ * once its install has been exchanged.
+ */
+function appNumbered(number) {
+  const suffix = number === 1 ? '' : `-${number}`;
+  return {
+    appId: number === 1 ? 'A_DAY0_FAKE' : `A_DAY0_FAKE_${number}`,
+    clientId: number === 1 ? '111.day0' : `111.day0.${number}`,
+    clientSecret: `day0-fake-client-secret${suffix}`,
+    code: `day0-fake-authorisation-code${suffix}`,
+    botToken: `xoxb-day0-fake-dedicated-token${suffix}`,
+    botUserId: number === 1 ? 'U_DAY0_BOT' : `U_DAY0_BOT_${number}`,
+    created: false,
+    deleted: false,
+    installed: number === 1,
+  };
+}
+
+// Revocation at the vendor (11-AR, for 11-AS): the bot tokens auth.revoke,
+// apps.uninstall or apps.manifest.delete ended; and each bot's channels (S1: a
+// revoked bot token leaves every channel it was in).
+let apps = [appNumbered(1)];
 const revokedTokens = new Set();
-const createdApps = new Set();
-const deletedApps = new Set();
+const memberships = new Map();
+
+function resetApps() {
+  apps = [appNumbered(1)];
+  revokedTokens.clear();
+  memberships.clear();
+}
+
+function appByClientId(clientId) {
+  return apps.find((app) => app.clientId === clientId);
+}
+
+/** The app whose bot token the request bears, while that token is live. */
+function botOf(request) {
+  const bearer = String(request.headers.authorization || '');
+  return apps.find(
+    (app) =>
+      !app.deleted &&
+      app.installed &&
+      bearer === `Bearer ${app.botToken}` &&
+      !revokedTokens.has(app.botToken),
+  );
+}
+
+/** End a bot token: the bot is deactivated and leaves every channel (S1). */
+function revokeBot(app) {
+  revokedTokens.add(app.botToken);
+  memberships.delete(app.botUserId);
+}
 
 // The people besides the one manager, by address (FAKE_SLACK_PEOPLE,
 // comma-separated): each listed address is a Slack user of its own with a DM
@@ -60,6 +119,12 @@ function readArguments(url, request, body) {
   return merged;
 }
 
+// The workspace's public channels, which a bot may list and join.
+const PUBLIC_CHANNELS = [
+  { id: 'C_REVOPS', name: 'revops' },
+  { id: 'C_REVOPS_ASKS', name: 'revops-asks' },
+];
+
 const CHANNELS = [
   'D_DAY0_MANAGER',
   'C_REVOPS',
@@ -84,10 +149,8 @@ function jsonArguments(request, body) {
   }
 }
 
-function authorised(request, expected = botToken) {
-  return (
-    request.headers.authorization === `Bearer ${expected}` && !revokedTokens.has(expected)
-  );
+function authorisedConfiguration(request) {
+  return request.headers.authorization === `Bearer ${configuration.token}`;
 }
 
 const server = createServer(async (request, response) => {
@@ -99,17 +162,22 @@ const server = createServer(async (request, response) => {
       calls: Object.fromEntries(calls),
       requestLog,
       postsByChannel: Object.fromEntries(postsByChannel),
-      apps: [...createdApps].filter((appId) => !deletedApps.has(appId)),
+      apps: apps.filter((app) => app.created && !app.deleted).map((app) => app.appId),
       revokedTokens: revokedTokens.size,
+      configurationRotations: configuration.rotations,
+      // Channel ids each live app's bot is in, by app id.
+      memberships: Object.fromEntries(
+        apps
+          .filter((app) => app.created && !app.deleted)
+          .map((app) => [app.appId, [...(memberships.get(app.botUserId) || [])]]),
+      ),
     });
   }
   if (url.pathname === '/reset' && request.method === 'POST') {
     calls.clear();
     requestLog.length = 0;
     postsByChannel.clear();
-    revokedTokens.clear();
-    createdApps.clear();
-    deletedApps.clear();
+    resetApps();
     return json(response, 200, { ok: true });
   }
   if (url.pathname === '/oauth/v2/authorize' && request.method === 'GET') {
@@ -117,8 +185,11 @@ const server = createServer(async (request, response) => {
     const redirect = url.searchParams.get('redirect_uri');
     const state = url.searchParams.get('state');
     if (!redirect || !state) return json(response, 400, { ok: false, error: 'bad_request' });
+    // The app the link installs, by its client id; the first app when none is named.
+    const app = appByClientId(url.searchParams.get('client_id') || '111.day0');
+    if (!app || app.deleted) return json(response, 400, { ok: false, error: 'invalid_client_id' });
     const destination = new URL(redirect);
-    destination.searchParams.set('code', 'day0-fake-authorisation-code');
+    destination.searchParams.set('code', app.code);
     destination.searchParams.set('state', state);
     response.writeHead(302, { location: destination.toString() });
     return response.end();
@@ -131,51 +202,81 @@ const server = createServer(async (request, response) => {
   count(method);
   const body = await bodyOf(request);
 
+  if (method === 'tooling.tokens.rotate') {
+    // S2: exchanges the refresh token for a new configuration token and a new
+    // refresh token; the one exchanged is spent.
+    const given = readArguments(url, request, body).get('refresh_token');
+    if (!given || given !== configuration.refreshToken) {
+      return json(response, 200, { ok: false, error: 'invalid_refresh_token' });
+    }
+    configuration.rotations += 1;
+    configuration.token = `xoxe-day0-fake-configuration-token-${configuration.rotations}`;
+    configuration.refreshToken = `xoxe-day0-fake-configuration-refresh-${configuration.rotations}`;
+    const iat = Math.floor(Date.now() / 1000);
+    return json(response, 200, {
+      ok: true,
+      token: configuration.token,
+      refresh_token: configuration.refreshToken,
+      team_id: 'T_DAY0',
+      user_id: 'U_DAY0_SERVICE',
+      iat,
+      exp: iat + TWELVE_HOURS_S,
+    });
+  }
   if (method === 'apps.manifest.create') {
-    if (!authorised(request, 'xoxe-day0-fake-configuration-token')) {
+    if (!authorisedConfiguration(request)) {
       return json(response, 200, { ok: false, error: 'invalid_auth' });
     }
     const manifest = new URLSearchParams(body).get('manifest');
     if (!manifest) return json(response, 200, { ok: false, error: 'invalid_manifest' });
-    createdApps.add('A_DAY0_FAKE');
+    // The first create is the app the fake has always answered for; each later one is a new app.
+    let app = apps.find((candidate) => !candidate.created);
+    if (!app) {
+      app = appNumbered(apps.length + 1);
+      app.installed = false;
+      apps.push(app);
+    }
+    app.created = true;
     return json(response, 200, {
       ok: true,
-      app_id: 'A_DAY0_FAKE',
-      credentials: { client_id: '111.day0', client_secret: clientSecret },
+      app_id: app.appId,
+      credentials: { client_id: app.clientId, client_secret: app.clientSecret },
     });
   }
   if (method === 'apps.manifest.delete') {
     // S4: a manager app's configuration token deletes only the apps it created.
-    if (!authorised(request, 'xoxe-day0-fake-configuration-token')) {
+    if (!authorisedConfiguration(request)) {
       return json(response, 200, { ok: false, error: 'invalid_auth' });
     }
     const appId = readArguments(url, request, body).get('app_id');
-    if (!appId || !createdApps.has(appId) || deletedApps.has(appId)) {
+    const app = apps.find((candidate) => candidate.appId === appId);
+    if (!app || !app.created || app.deleted) {
       return json(response, 200, { ok: false, error: 'invalid_app_id' });
     }
-    deletedApps.add(appId);
-    revokedTokens.add(botToken);
+    app.deleted = true;
+    revokeBot(app);
     return json(response, 200, { ok: true });
   }
   if (method === 'apps.uninstall') {
-    // S4: revokes every token of the installation.
-    if (!authorised(request)) return json(response, 200, { ok: false, error: 'invalid_auth' });
+    // S4: revokes every token of the installation the bearer belongs to.
+    const app = botOf(request);
+    if (!app) return json(response, 200, { ok: false, error: 'invalid_auth' });
     const form = readArguments(url, request, body);
-    if (form.get('client_id') !== '111.day0' || form.get('client_secret') !== clientSecret) {
+    if (form.get('client_id') !== app.clientId || form.get('client_secret') !== app.clientSecret) {
       return json(response, 200, { ok: false, error: 'bad_client_secret' });
     }
-    revokedTokens.add(botToken);
+    revokeBot(app);
     return json(response, 200, { ok: true });
   }
-  if (method === 'auth.revoke' && authorised(request)) {
+  if (method === 'auth.revoke' && botOf(request)) {
     // S1: the bot user is deactivated and leaves its channels; the app stays.
-    revokedTokens.add(botToken);
+    revokeBot(botOf(request));
     return json(response, 200, { ok: true, revoked: true });
   }
   // Validates a manifest with the configuration token (`check:access`, 11-AI): the token must be
   // the configuration token and the manifest JSON that names a redirect and bot scopes.
   if (method === 'apps.manifest.validate') {
-    if (!authorised(request, 'xoxe-day0-fake-configuration-token')) {
+    if (!authorisedConfiguration(request)) {
       return json(response, 200, { ok: false, error: 'invalid_auth' });
     }
     let manifest;
@@ -185,31 +286,55 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { ok: false, error: 'invalid_manifest' });
     }
     const oauth = manifest && manifest.oauth_config;
-    if (!oauth || !Array.isArray(oauth.redirect_urls) || !Array.isArray(oauth.scopes && oauth.scopes.bot)) {
+    if (
+      !oauth ||
+      !Array.isArray(oauth.redirect_urls) ||
+      !Array.isArray(oauth.scopes && oauth.scopes.bot)
+    ) {
       return json(response, 200, { ok: false, error: 'invalid_manifest' });
     }
     return json(response, 200, { ok: true });
   }
   if (method === 'oauth.v2.access') {
     const form = new URLSearchParams(body);
+    const app = apps.find((candidate) => candidate.code === form.get('code'));
     if (
-      form.get('client_secret') !== clientSecret ||
-      form.get('code') !== 'day0-fake-authorisation-code'
+      !app ||
+      app.deleted ||
+      form.get('client_secret') !== app.clientSecret ||
+      (form.get('client_id') !== null && form.get('client_id') !== app.clientId)
     ) {
       return json(response, 200, { ok: false, error: 'invalid_code' });
     }
-    // A renewal reinstalls the same app: the install issues the bot token afresh.
-    revokedTokens.delete(botToken);
+    // An install, or a renewal reinstalling the same app, issues its bot token afresh; the bot
+    // is in no channel until it joins or is invited (S1).
+    app.installed = true;
+    revokedTokens.delete(app.botToken);
     return json(response, 200, {
       ok: true,
-      access_token: botToken,
-      bot_user_id: 'U_DAY0_BOT',
+      access_token: app.botToken,
+      bot_user_id: app.botUserId,
       team: { id: 'T_DAY0' },
     });
   }
-  if (!authorised(request)) return json(response, 200, { ok: false, error: 'invalid_auth' });
+  const bot = botOf(request);
+  if (!bot) return json(response, 200, { ok: false, error: 'invalid_auth' });
   if (method === 'auth.test') {
-    return json(response, 200, { ok: true, user_id: 'U_DAY0_BOT', team_id: 'T_DAY0' });
+    return json(response, 200, { ok: true, user_id: bot.botUserId, team_id: 'T_DAY0' });
+  }
+  if (method === 'conversations.join') {
+    // RM4: a bot joins a public channel itself (`channels:join`); a private one needs a person.
+    const channel = PUBLIC_CHANNELS.find(
+      (candidate) => candidate.id === readArguments(url, request, body).get('channel'),
+    );
+    if (!channel) return json(response, 200, { ok: false, error: 'channel_not_found' });
+    const joined = memberships.get(bot.botUserId) || new Set();
+    joined.add(channel.id);
+    memberships.set(bot.botUserId, joined);
+    return json(response, 200, {
+      ok: true,
+      channel: { id: channel.id, name: channel.name, is_member: true },
+    });
   }
   if (method === 'users.lookupByEmail') {
     const email = readArguments(url, request, body).get('email');
@@ -234,12 +359,14 @@ const server = createServer(async (request, response) => {
     });
   }
   if (method === 'conversations.list') {
+    const joined = memberships.get(bot.botUserId) || new Set();
     return json(response, 200, {
       ok: true,
-      channels: [
-        { id: 'C_REVOPS', name: 'revops', is_member: false },
-        { id: 'C_REVOPS_ASKS', name: 'revops-asks', is_member: false },
-      ],
+      channels: PUBLIC_CHANNELS.map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        is_member: joined.has(channel.id),
+      })),
       response_metadata: { next_cursor: '' },
     });
   }
