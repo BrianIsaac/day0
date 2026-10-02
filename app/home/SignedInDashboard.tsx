@@ -51,9 +51,6 @@ function useNeedsYou(): NeedsYouInbox | undefined | Error {
  * @param boss - Whoever the page acts for.
  */
 export function SignedInDashboard({ boss }: { boss: Boss }) {
-  // The roster is the company the page shows; the raw list still decides
-  // whether Reset has anything to wipe, evaluation agents included.
-  const agents = useQuery(api.agents.listForUser);
   const roster = useQuery(api.agents.rosterForUser);
   const inboxRead = useNeedsYou();
   const inbox = inboxRead instanceof Error ? undefined : inboxRead;
@@ -161,10 +158,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           data-cards={arriving ? '' : undefined}
           className="min-w-0 xl:col-start-1 xl:row-start-2"
         >
-          <ResetCard
-            hasEmployees={(agents?.length ?? 0) > 0}
-            hasDocumentation={(docSources?.length ?? 0) > 0}
-          />
+          <ResetCard />
         </div>
       </div>
     </div>

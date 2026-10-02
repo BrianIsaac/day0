@@ -11,6 +11,7 @@ import {
 } from './_generated/server';
 import {
   assertOwnsAgent,
+  getCaller,
   getCallerOrThrow,
   ownedAgentOrNull,
   verifiedAddressOf,
@@ -22,7 +23,12 @@ import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
-import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
+import {
+  RETIREMENT_READ_LIMIT,
+  ownerRetirements,
+  type RetiredClaim,
+  type RetiredRejection,
+} from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { providerReconciliationEntries } from '../src/work/reconciliation';
@@ -904,6 +910,13 @@ const handoverPartyValidator = v.object({
   address: v.optional(v.string()),
 });
 
+/** A handover request still carrying words a deletion scrubs: its note or its decline's reason. */
+function carryingWords(
+  q: FilterBuilder<NamedTableInfo<DataModel, 'managerTransfers'>>,
+): ExpressionOrValue<boolean> {
+  return q.or(q.neq(q.field('note'), undefined), q.neq(q.field('declineReason'), undefined));
+}
+
 /**
  * Scrub the words a person wrote into the handover requests a deletion keeps (decision 7, a
  * product call taken as recommended): the note on each request the owner asked, and both the
@@ -921,10 +934,6 @@ async function scrubHandoverWords(
   ctx: MutationCtx,
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<number> {
-  const carryingWords = (
-    q: FilterBuilder<NamedTableInfo<DataModel, 'managerTransfers'>>,
-  ): ExpressionOrValue<boolean> =>
-    q.or(q.neq(q.field('note'), undefined), q.neq(q.field('declineReason'), undefined));
   const { address } = party;
   const pages = await Promise.all(
     MANAGER_TRANSFER_STATES.flatMap((state) => [
@@ -1011,6 +1020,106 @@ export const deleteMyData = mutation({
       ...(address === undefined ? {} : { address }),
     });
     return { deleted: agents.length, unlinkedSources };
+  },
+});
+
+/** Whether the owner holds each kind of row a deletion of their data removes or changes. */
+const holdingsValidator = v.object({
+  employees: v.boolean(),
+  skillLibrary: v.boolean(),
+  handoverWords: v.boolean(),
+  retiredBoundaries: v.boolean(),
+  documentation: v.boolean(),
+});
+
+/**
+ * What {@link deleteMyData} would take from one owner, each kind as whether any is held: an
+ * employee (evaluation agents included), a version in the owner's skill library, a handover
+ * request carrying words the scrub clears (one the owner asked, or one naming their verified
+ * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
+ * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * match, the handover reads scanning the party's requests of one state until one carries words,
+ * and the retirements read stops at their cap, so the home page can subscribe to it.
+ *
+ * @param db - The query's reader.
+ * @param party - The owner and their verified address, when they have one.
+ */
+async function deletionHoldings(
+  db: DatabaseReader,
+  party: Infer<typeof handoverPartyValidator>,
+): Promise<Infer<typeof holdingsValidator>> {
+  const { ownerKey, address } = party;
+  const [employee, version, source, requests, retirements] = await Promise.all([
+    db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+      .first(),
+    db
+      .query('skillVersions')
+      .withIndex('by_owner_shape', (q) => q.eq('userId', ownerKey))
+      .first(),
+    db
+      .query('docSources')
+      .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+      .first(),
+    Promise.all(
+      MANAGER_TRANSFER_STATES.flatMap((state) => [
+        db
+          .query('managerTransfers')
+          .withIndex('by_from_owner_state', (q) =>
+            q.eq('fromOwnerKey', ownerKey).eq('state', state),
+          )
+          .filter(carryingWords)
+          .first(),
+        address === undefined
+          ? Promise.resolve(null)
+          : db
+              .query('managerTransfers')
+              .withIndex('by_to_address_state', (q) =>
+                q.eq('toAddress', address).eq('state', state),
+              )
+              .filter(carryingWords)
+              .first(),
+      ]),
+    ),
+    // The newest up to the cap, without `ownerRetirements`' refusal past it: a subscribed read
+    // that threw would take the whole home page down. Past the cap the deletion itself refuses.
+    SURFACE_MODE === 'real'
+      ? db
+          .query('retirements')
+          .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+          .order('desc')
+          .take(RETIREMENT_READ_LIMIT)
+      : Promise.resolve([]),
+  ]);
+  return {
+    employees: employee !== null,
+    skillLibrary: version !== null,
+    handoverWords: requests.some((request) => request !== null),
+    retiredBoundaries: retirements.some(
+      (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
+    ),
+    documentation: source !== null,
+  };
+}
+
+/**
+ * Public, any caller; reads only the caller's own: whether each kind of row a deletion of their
+ * data would remove is held ({@link deletionHoldings}), so the deletion's control is live
+ * whenever the deletion has something to take, an employee or not (the v0.13.0 walk). Writes
+ * nothing. An anonymous caller gets `null`.
+ */
+export const holdings = query({
+  args: {},
+  returns: v.union(v.null(), holdingsValidator),
+  handler: async (ctx): Promise<Infer<typeof holdingsValidator> | null> => {
+    const identity = await getCaller(ctx);
+    if (!identity) return null;
+    const address = verifiedAddressOf(identity);
+    return await deletionHoldings(ctx.db, {
+      ownerKey: identity.ownerKey,
+      ...(address === undefined ? {} : { address }),
+    });
   },
 });
 

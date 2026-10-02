@@ -146,6 +146,13 @@ function skipped(reason: string): SkillSandboxRun {
   };
 }
 
+/** A wait in the words a skip says it in: whole minutes when it is, seconds otherwise. */
+export function waitedFor(seconds: number): string {
+  if (seconds % 60 !== 0) return `${seconds} seconds`;
+  const minutes = seconds / 60;
+  return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+}
+
 /**
  * Run the authored skill's smoke test in whichever sandbox this machine has,
  * and report what happened.
@@ -159,11 +166,20 @@ function skipped(reason: string): SkillSandboxRun {
  *
  * Sandbox verification is an optional capability. With neither backend the run
  * is reported as skipped instead of throwing - the skill keeps its body, stays
- * visibly uncallable, and the caller records the skip in the event log.
+ * visibly uncallable, and the caller records the skip in the event log. A
+ * Daytona sandbox that never started is the same: nothing ran, so nothing was
+ * checked, and the skip says so rather than reporting the sandbox as throwing.
  */
 export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
   if (configuredSkillSandboxBackend() === 'daytona') {
-    return verdictFor('daytona', await authorAndVerifySkillOnDaytona(args));
+    const run = await authorAndVerifySkillOnDaytona(args);
+    if (!run.started) {
+      return skipped(
+        `Daytona did not start a sandbox within ${waitedFor(run.waitedSeconds)}, ` +
+          'so nothing was checked; the draft is kept to check again',
+      );
+    }
+    return verdictFor('daytona', run.outcome);
   }
 
   const reachable = await probeLocalSandbox();

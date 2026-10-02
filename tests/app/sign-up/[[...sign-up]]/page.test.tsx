@@ -19,7 +19,7 @@ vi.mock('next/navigation', () => ({
   usePathname: (): string => clerk.pathname,
 }));
 
-import SignUpPage from '../../../../app/sign-up/[[...sign-up]]/page';
+import SignUpPage, { metadata } from '../../../../app/sign-up/[[...sign-up]]/page';
 import { clerkSignInAppearance } from '../../../../app/clerk-appearance';
 
 /**
@@ -43,6 +43,10 @@ describe('the sign-up page', (): void => {
     const later = render('/sign-up/verify-email-address');
     expect(later).not.toMatch(/<h1[\s>]/);
     expect(later).toContain(`<p class="${heading?.[1]}">Create an account</p>`);
+  });
+
+  it("names the tab for the page, as the sign-in page's does, rather than the layout's bare Day0 (the v0.13.0 walk)", (): void => {
+    expect(metadata).toEqual({ title: 'Create a Day0 account' });
   });
 
   it('leaves the one main landmark to the layout', (): void => {

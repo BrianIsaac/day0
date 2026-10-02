@@ -162,6 +162,36 @@ describe('adoptionFit', (): void => {
       mismatch: 'no-charter-evidence',
     });
   });
+
+  it('takes the work item’s own system as the charter’s evidence in mock mode, where the queue is drafted from the charter (the v0.13.0 walk)', (): void => {
+    const sol: Adopter = {
+      agentId: 'sol',
+      mode: 'mock',
+      surfaces: [],
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+      workClass: 'kanban',
+    };
+    expect(adoptionFit(VERSION, sol)).toEqual({ fits: true });
+    expect(adoptionFit(VERSION, { ...sol, workClass: 'chat' })).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'the charter names no kanban system',
+    });
+  });
+
+  it('never takes the work item’s system as charter evidence in real mode (10-A, 4.1)', (): void => {
+    const unchartered: Adopter = {
+      ...MATEO,
+      charterClasses: ['chat'],
+      surfaces: [{ ...LINEAR, charterEvidence: false }, SLACK],
+      workClass: 'kanban',
+    };
+    expect(adoptionFit(VERSION, unchartered)).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'the charter names no kanban system',
+    });
+  });
 });
 
 describe('isOfferedTo and chooseOffer', (): void => {

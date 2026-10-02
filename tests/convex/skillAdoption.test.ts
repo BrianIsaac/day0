@@ -464,6 +464,51 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     recorded.sandbox = PASSED;
   });
 
+  it("offers a sibling's verified skill for work from the ticket queue though the drafted charter names no ticket system (the v0.13.0 walk)", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    // The charter the drafter wrote on the hosted walk: the manager said "the ticket queue",
+    // which names no product, so no system of the kanban class is listed.
+    const sol = await employee(harness, 'Sol', {
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+    });
+    const offered = await version(harness, wren);
+
+    expect(await offerFor(harness, sol)).toBe(offered);
+    const skillId = await propose(harness, sol);
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: sol,
+    });
+    expect(card).toMatchObject({
+      skillId,
+      state: 'offered',
+      versionId: offered,
+      authorName: 'Wren',
+    });
+    expect(card).not.toHaveProperty('refusal');
+  });
+
+  it('asks the charter alone in mock mode for a proposal that kept no shape, so its offer is refused', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    const sol = await employee(harness, 'Sol', {
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+    });
+    await version(harness, wren);
+    const skillId = await propose(harness, sol);
+    // A row from before proposals kept their shape: nothing names the work's system.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { surfaceClass: undefined, operation: undefined });
+    });
+
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: sol,
+    });
+    expect(card).toMatchObject({ skillId, refusal: 'the charter names no kanban system' });
+  });
+
   it('refuses Adopt once a new manager has accepted the employee, in the accepted handover’s words, and grants nothing (the wave 10 review, M1)', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
