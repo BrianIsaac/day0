@@ -7,7 +7,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgentAction } from './ownership';
 import { requireEvaluationAgent } from './revocationEvaluation';
 import { applySurfaceActions } from '../src/surfaces/registry';
-import { decryptCredential } from '../src/surfaces/credentials';
+import { readSurfaceBearer } from './mcpOauthActions';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
@@ -176,7 +176,8 @@ export const runTrialAction = action({
       {
         deps: {
           decrypt: async (actionCtx, credentialId): Promise<string> => {
-            const secret = await decryptCredential(actionCtx, credentialId);
+            // The token store's read (11-AT), as every real adapter's: never a plain decrypt.
+            const secret = await readSurfaceBearer(actionCtx, credentialId);
             if (args.checkpoint !== 'none' && !paused) {
               paused = true;
               await waitForContainment(actionCtx, context.row._id, args.checkpoint, scope);

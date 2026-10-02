@@ -7,6 +7,7 @@ import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { NOTICE_TO_A_GUEST, NOTICE_TO_NOBODY, NOTICE_TO_THE_MANAGER } from './transferNotice';
 import { decryptCredential } from '../src/surfaces/credentials';
+import { readSurfaceBearer } from './mcpOauthActions';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import {
   grantRefusal,
@@ -125,7 +126,8 @@ async function applyManagerAction(
     [action],
     {
       deps: {
-        decrypt: decryptCredential,
+        // The token store's read (11-AT), as every real adapter's: never a plain decrypt.
+        decrypt: readSurfaceBearer,
         createMcpClient: createMastraMcpClient,
         browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
         fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),

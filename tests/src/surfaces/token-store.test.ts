@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
@@ -370,5 +371,31 @@ describe('heldFromRows', (): void => {
     const access = { userId: 'owner-1' } as unknown as Doc<'credentials'>;
     const refresh = { ciphertext: 'sealed', revokedAt: NOW } as unknown as Doc<'credentials'>;
     expect(heldFromRows(CREDENTIAL, { access, refresh, connection: null }).refreshable).toBe(false);
+  });
+});
+
+describe('every rung in the deployment reads its bearer through the token store', (): void => {
+  const convexDirectory = new URL('../../../convex/', import.meta.url);
+
+  /** The text of each `decrypt:` dependency a module hands an adapter, up to the next property. */
+  function decryptDependencies(source: string): string[] {
+    return [
+      ...source.matchAll(/\bdecrypt:\s*([\s\S]*?)(?=\n\s{0,12}[a-zA-Z]+:\s|\n\s*\},?\n)/g),
+    ].map((match) => match[1]);
+  }
+
+  it('hands no adapter a plain decrypt, which would send a Nango pointer or an expired token', (): void => {
+    const offenders: string[] = [];
+    for (const entry of readdirSync(convexDirectory)) {
+      if (!entry.endsWith('.ts')) continue;
+      // Comments removed, so prose that names a decrypt is not a dependency.
+      const source = readFileSync(new URL(entry, convexDirectory), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+      for (const dependency of decryptDependencies(source)) {
+        if (/decryptCredential\b|credentials\.decrypt\b/.test(dependency)) offenders.push(entry);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
