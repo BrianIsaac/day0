@@ -1349,6 +1349,69 @@ describe('a credential Day0 obtained, held for its revocation at the vendor (11-
     ).rejects.toThrow('Credential is not awaiting its revocation at the vendor.');
   });
 
+  it('opens a revoked MCP client connection’s secret only for the end its own revoke made (join 8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const secretId = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Docs MCP client secret',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const tokenId = await harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'mcp:auth.acme.test',
+        displayName: 'Docs MCP',
+        kind: 'mcp-client',
+        mode: 'per-employee',
+        clientId: 'day0-mcp',
+        scopes: [],
+        secretCredentialId: secretId,
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 1_000,
+        createdAt: 1,
+      });
+      await ctx.db.patch(secretId, { revokedAt: 1_000 });
+      return await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Docs access token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        createdAt: 1,
+        issuedBy: {
+          system: 'mcp:auth.acme.test',
+          grant: 'authorisation-code',
+          organisationConnectionId: connectionId,
+        },
+        revokedAt: 1_000,
+        sourceRevocation: { state: 'pending', attempts: 0, end: 'organisation-revoked' },
+      });
+    });
+    await expect(
+      harness.action(internal.credentials.decryptConnectionSecretForRevocation, {
+        credentialId: tokenId,
+      }),
+    ).resolves.toBe(SECRET);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: secretId }),
+    ).rejects.toThrow('Credential is unavailable.');
+    for (const sourceRevocation of [
+      { state: 'pending' as const, attempts: 0, end: 'disconnect' as const },
+      { state: 'done' as const, attempts: 1, end: 'organisation-revoked' as const },
+    ]) {
+      await harness.run(async (ctx) => await ctx.db.patch(tokenId, { sourceRevocation }));
+      await expect(
+        harness.action(internal.credentials.decryptConnectionSecretForRevocation, {
+          credentialId: tokenId,
+        }),
+      ).rejects.toThrow("The connection's client secret is not admitted for this revocation.");
+    }
+  });
+
   it('never opens a pasted key for a vendor call, even one marked pending', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const credentialId = await harness.action(internal.credentials.store, {

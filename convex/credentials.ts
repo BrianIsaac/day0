@@ -948,6 +948,69 @@ export const decryptForRevocation = internalAction({
   },
 });
 
+/**
+ * The client secret of the organisation connection a held credential was issued through, when its
+ * revocation may use it after the connection's own revoke revoked it (join 8 of 11-AJ): the held
+ * credential's revocation for the `organisation-revoked` end is pending, the connection is a
+ * revoked MCP client, and the secret is the organisation's and still holds its value (F19).
+ * Internal, for {@link decryptConnectionSecretForRevocation}; writes nothing.
+ *
+ * @returns The secret's row, or null when it is not admitted.
+ */
+export const connectionSecretForRevocation = internalQuery({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<Doc<'credentials'> | null> => {
+    const held = await ctx.db.get(args.credentialId);
+    const connectionId = held?.issuedBy?.organisationConnectionId;
+    if (
+      !held ||
+      held.sourceRevocation?.state !== 'pending' ||
+      held.sourceRevocation.end !== 'organisation-revoked' ||
+      connectionId === undefined
+    ) {
+      return null;
+    }
+    const connection = await ctx.db.get(connectionId);
+    if (
+      !connection ||
+      connection.status !== 'revoked' ||
+      connection.kind !== 'mcp-client' ||
+      connection.secretCredentialId === undefined
+    ) {
+      return null;
+    }
+    const secret = await ctx.db.get(connection.secretCredentialId);
+    return secret?.holder === ORGANISATION_HOLDER &&
+      secret.ciphertext !== undefined &&
+      secret.iv !== undefined
+      ? secret
+      : null;
+  },
+});
+
+/**
+ * Decrypt the client secret of a revoked MCP client connection for the one RFC 7009 call that
+ * revokes a card's token its own revoke ended (`organisation-revoked`, join 8 of 11-AJ): the revoke
+ * revoked the secret in the same transaction, and a confidential client answers `invalid_client`
+ * without it. Admits only what {@link connectionSecretForRevocation} admits; records no use.
+ * Internal; `sourceRevocationActions` is its only caller.
+ *
+ * @throws Error when the secret is not admitted for this credential's revocation.
+ */
+export const decryptConnectionSecretForRevocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const secret: Doc<'credentials'> | null = await ctx.runQuery(
+      internal.credentials.connectionSecretForRevocation,
+      args,
+    );
+    if (!secret || secret.ciphertext === undefined || secret.iv === undefined) {
+      throw new Error("The connection's client secret is not admitted for this revocation.");
+    }
+    return await openSealed(ctx, secret, secret.ciphertext, secret.iv);
+  },
+});
+
 /** Revoke one owner credential without returning its encrypted fields. */
 export const revoke = mutation({
   args: { credentialId: v.id('credentials') },

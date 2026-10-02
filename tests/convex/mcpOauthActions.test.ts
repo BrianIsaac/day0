@@ -895,6 +895,55 @@ describe('refreshing with rotation', (): void => {
   });
 });
 
+describe('the organisation’s revoke of a confidential client’s connection (join 8)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  it('revokes every card’s token at the server with the client secret it revoked in the same act', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    // The revocation reaches the authorisation server through the deployment's own fetch.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await server.handle(new Request(input, init)),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, connectionId } = await seed(harness, {
+      confidential: { issuer: ISSUER },
+    });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 1, liveRefreshTokens: 1 });
+
+    const { api } = await liveApi();
+    await harness
+      .withIdentity(managerIdentity('ines', { email: 'ines@acme.test' }))
+      .mutation(api.organisationConnections.revoke, {
+        organisationConnectionId: connectionId as Id<'organisationConnections'>,
+        reason: 'the server is retired',
+      });
+
+    await vi.waitFor(async (): Promise<void> => {
+      const lines = await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent_type', (index) =>
+              index.eq('agentId', agentId).eq('type', 'credential.revoked-at-source'),
+            )
+            .collect()
+        ).map((event) => event.payload),
+      );
+      expect(lines).toEqual([
+        expect.objectContaining({ end: 'organisation-revoked', outcome: 'token-revoked' }),
+      ]);
+    });
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 0, liveRefreshTokens: 0 });
+  });
+});
+
 describe('the deployment token store and Nango (11-AT)', (): void => {
   const NANGO_KEY = '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17';
 

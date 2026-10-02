@@ -97,7 +97,8 @@ function plannedCalls(plans: AttemptPlans): RevocationCall[] {
 /**
  * Open the held token and only what the planned calls need: the refresh tokens a call revokes,
  * IT's configuration token for an app deletion, the app's secret for an uninstall, and the
- * connection's client secret for an RFC 7009 revoke.
+ * connection's client secret for an RFC 7009 revoke (through the path that admits it revoked, for
+ * the end the connection's own revoke made).
  *
  * @throws Error when a needed row cannot be opened.
  */
@@ -122,7 +123,11 @@ async function openNeeded(
       Promise.all(refreshIds.map(async (id) => await open(ctx, id))),
       optional(plan.clientSecretCredentialId, needs('slack-uninstall-app')),
       optional(plan.configurationTokenCredentialId, needs('slack-delete-app')),
-      optional(plan.connectionSecretCredentialId, needs('oauth-revoke')),
+      plan.connectionSecretRevoked === true && needs('oauth-revoke')
+        ? ctx.runAction(internal.credentials.decryptConnectionSecretForRevocation, {
+            credentialId: job.credentialId,
+          })
+        : optional(plan.connectionSecretCredentialId, needs('oauth-revoke')),
     ]);
   return {
     token,

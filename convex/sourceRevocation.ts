@@ -464,6 +464,11 @@ const attemptPlanValidator = v.object({
   revocationEndpoint: v.optional(v.string()),
   connectionClientId: v.optional(v.string()),
   connectionSecretCredentialId: v.optional(v.id('credentials')),
+  /**
+   * True where the connection's own revoke revoked that secret in the transaction that ended the
+   * card (`organisation-revoked`): the attempt opens it through the path that admits only that.
+   */
+  connectionSecretRevoked: v.optional(v.boolean()),
   /** The companion rows that are the refresh token of the pair. */
   refreshCredentialIds: v.array(v.id('credentials')),
 });
@@ -481,8 +486,9 @@ function holdsValue(row: Doc<'credentials'> | null): row is Doc<'credentials'> {
  * vendor is called, so an attempt that dies on the way still has its successor: the next attempt
  * at its offset from the end of access, or, after the last, the purge at the 24-hour bound. Reads
  * what the call needs: the organisation connection the credential was issued through (its
- * configuration token for Slack's app deletion; its revocation endpoint and client for RFC 7009)
- * and the app's client secret while Day0 still holds it.
+ * configuration token for Slack's app deletion; its revocation endpoint, client and, while it is
+ * active or for the end its own revoke made, its client secret for RFC 7009) and the app's client
+ * secret while Day0 still holds it.
  *
  * Internal; `sourceRevocationActions.attempt` is its only caller.
  *
@@ -517,6 +523,12 @@ export const beginAttempt = internalMutation({
       );
     }
     const means = await meansOf(ctx.db, credential);
+    const mcpSecretId =
+      means.connection?.kind === 'mcp-client' ? means.connection.secretCredentialId : undefined;
+    // The organisation's own revoke revoked the client secret with the connection, in the same
+    // transaction that ended the card; its own end still revokes the card's token with it, or a
+    // confidential client answers invalid_client (join 8).
+    const revokedWithConnection = !means.active && held.end === 'organisation-revoked';
     const companions = await Promise.all(job.companionIds.map(async (id) => await ctx.db.get(id)));
     return {
       attempt,
@@ -534,10 +546,11 @@ export const beginAttempt = internalMutation({
       ...(means.connection?.clientId !== undefined
         ? { connectionClientId: means.connection.clientId }
         : {}),
-      ...(means.active &&
-      means.connection?.kind === 'mcp-client' &&
-      means.connection.secretCredentialId !== undefined
-        ? { connectionSecretCredentialId: means.connection.secretCredentialId }
+      ...(mcpSecretId !== undefined && (means.active || revokedWithConnection)
+        ? {
+            connectionSecretCredentialId: mcpSecretId,
+            ...(revokedWithConnection ? { connectionSecretRevoked: true } : {}),
+          }
         : {}),
       refreshCredentialIds: companions
         .filter(
