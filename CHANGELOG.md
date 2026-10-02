@@ -2,6 +2,90 @@
 
 Version maintenance record for Day0, from the git history, grouped by release. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026, and the work before it is grouped by date under "Before v0.1.0"; each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
 
+## v0.14.0, 3 October 2026
+
+Wave 11: access. IT connects each system to Day0 once, at install; the manager approves each
+employee's access on its card knowing whom the employee will act as; the employee acts as itself
+in each system; and ending access revokes at the vendor what Day0 obtained, never a key someone
+pasted. Twelve units, one pane each (the schema step first, then the organisation's connections,
+the ends of access, the MCP authorisation, the install kit, Slack, Linear, the token store, the
+card and its screens, the joins, and two fix units beside them), landed on `staging` with CI
+green on every unit branch and the gate on the combined tree, reviewed as one change on three
+beds (the release pushed over a `v0.13.0` volume in real mode, the hosted shape, and a
+customer-local install against fakes of Slack, Linear and an MCP server), plus the fixes that
+review asked for before the tag. 246 commits; 9,002 tests.
+
+- **Whom an employee acts as (11-AC, 11-AK).** Every connection card says, before the manager
+  approves, whom the employee will act as in that system: its own app, the organisation's shared
+  app with Day0 recording who did what, the manager's own delegated grant, or a key someone
+  pasted, with a warning chip beside the last two. After an end, a card that holds no credential
+  names no identity it no longer has.
+- **The organisation's connections (11-AO).** Administrators named at install
+  (`DAY0_ADMINISTRATORS`) land, rotate and revoke the organisation's connection to each system on
+  the organisation page, and approve no employee's access. A revoke ends every card on the
+  connection with the administrator's reason, which the card shows first. A card whose system IT
+  has not connected drafts an access request for IT (Copy, Email it), with how to connect it and a
+  link to the right place on the organisation page.
+- **The install kit (11-AI).** `./setup.sh install` runs the sign-in, the access half and a live
+  sign-in check in one go (about 3 min 50 s measured from a clean clone with three systems);
+  `./setup.sh access` lands each system per employee or shared, secrets by hidden prompt or
+  `--secrets-stdin`, never on a command line; `./setup.sh access --correct <system>` records a
+  redirect or scopes IT fixed at the vendor; `pnpm check:access` checks each connection with its
+  vendor. Recipes for Slack, Linear and an MCP server in `docs/running/`, held to the kit by tests.
+- **Slack (11-AS).** From a configuration token IT generates once, Day0 creates each employee its
+  own Slack app; the configuration token pair is renewed before use. After a
+  renewal the employee re-joins its public intake channels itself; private channels are re-added
+  by hand.
+- **Linear (11-AL).** Shared: one app user for every employee. Per employee: an administrator
+  records each employee's own app from its access request and installs it; the employee's tickets
+  are those delegated to its app user.
+- **An MCP server's authorisation (11-AM).** The manager connects a card through the
+  organisation's registered client with OAuth 2.1 and PKCE; the employee then acts with the
+  manager's own delegated consent, and only that manager, signed in, can finish the authorisation.
+- **Ending access at the vendor (11-AR).** Disconnect, retire, a handover's cut, a rejection and an
+  administrator's revoke each revoke at the vendor what Day0 obtained (a token, a grant, an app),
+  write the result on the record, and retry a vendor that does not answer; a pasted key is left as
+  it is and said so. A revoked or rotated organisation secret is deleted. A handover keeps an
+  employee's own identity for one re-approval by the new manager.
+- **The token store (11-AT).** Nango, under its own opt-in compose profile `token-store`, keeps
+  and refreshes the OAuth tokens of an API-rung system Day0 has no issuer of its own for.
+- **The joins (11-AJ).** The organisation's ledger joins the audit export and the exported trace.
+- **The hosted demo's walk (11-FD).** An adoption is offered in the mock office when a second
+  employee's ticket needs a skill the first has verified; the first approval waits up to 180 s for
+  a cold sandbox; "Delete my data" sits on a "Your data" card whenever anything is stored; a
+  handed-over employee's decisions read "since you took over"; the sign-up tab says "Create a
+  Day0 account".
+- **Recorded items (11-FI).** An intake sweep skips an employee handed over since it read the
+  cards; the adoption fit asks the charter about the system, not its class; a write Linear answers
+  with its exact 502 is resent once; the record says when the named manager could not be told in
+  Slack, and why; a provider that does not answer reads "did not answer"; the employee page's title
+  is right for a link to another account's employee or one that is gone.
+- **From the review.** A key found in the documentation is never bound where IT's connection
+  covers the system ("Key in your docs: Found and not used"), and is stamped a shared key where
+  none does; a handover's cut revokes at the vendor as a Disconnect does; every revocation call
+  meets the address rules; only the card's manager completes an MCP authorisation, and a second
+  person who tries is told nothing was connected; renewal offers the move to IT's connection for
+  a pasted-key card; a shared token's end writes the shared line and revokes nothing the others
+  use; an MCP token refreshes with the connection's current secret; a confidential MCP client needs
+  its issuer; the install says why it stopped waiting for the app; the runbook corrected in six
+  places; Deploy and the documentation link get 44 px targets.
+
+**Upgrading from v0.13.0.** A hosted copy upgrades with `./setup.sh cloud upgrade --target
+<file>` from a checkout of the tag; nothing needs setting on a hosted deployment. The schema
+gains two tables (`organisationConnections`, `connectionEvents`) and optional fields on existing
+ones; two migrations, `surfaces-acts-as` and `credentials-issued-by`, stamp whom each connected
+card acts as and which credentials Day0 obtained, run once and change nothing when run again
+(they change nothing on a deployment with no connected card). Exported traces are format version
+5 (versions 2 to 4 are still read). New environment names, all customer-local:
+`DAY0_ADMINISTRATORS`, and for the opt-in token store `DAY0_NANGO_URL`, `DAY0_NANGO_SECRET_KEY`
+(both pushed to the deployment), `DAY0_NANGO_ENCRYPTION_KEY` and `DAY0_NANGO_DB_PASSWORD` (which
+stay with the compose file). A private MCP server's host goes in `DAY0_PRIVATE_HOSTS`, as before.
+
+**Not in this release.** No real Linear or Slack workspace has yet seen an app actor, a revoke or
+a rotation: every vendor leg ran against fakes. Per-employee Linear's last step opens linear.app
+and was not pressed. The company sign-in is still unchecked against a real Entra, Okta or Google
+tenant. The first approved ticket run in the mock office still stops, as in v0.13.0.
+
 ## v0.13.0, 2 October 2026
 
 Wave 10: skills shared between a manager's employees, and signing people in through the company's own identity provider, with the handover's real-mode hardening and the findings of the signed-in walk of `v0.12.0` beside them. Six units, one pane each, landed on `staging` with CI green on every unit branch before its merge and the gate on the combined tree, reviewed as one change on three beds (the release pushed over a `v0.12.0` volume first, the Skills tab and a handover between two accounts, and a company sign-in in real mode), then walked on a real Linear workspace, plus the fixes that review asked for before the tag. 196 commits; 8,077 tests.
