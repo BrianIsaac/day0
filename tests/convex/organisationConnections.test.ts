@@ -9,7 +9,12 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as organisationConnections from '../../convex/organisationConnections';
-import { landingRefusal, storeSecrets, type Landing } from '../../convex/organisationConnections';
+import {
+  landingRefusal,
+  recordOrRelease,
+  storeSecrets,
+  type Landing,
+} from '../../convex/organisationConnections';
 import type { ActionCtx } from '../../convex/_generated/server';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -599,5 +604,103 @@ describe('the second pass on landing, rotating and the system key (11-AO review)
     expect(
       await refusalOf(harness.action(internal.organisationConnections.landFromSetup, LINEAR)),
     ).toMatch(/Linear is already connected/);
+  });
+});
+
+describe('the re-review of the release path and the page reads (11-AO)', (): void => {
+  it('revokes the stored secrets when the recording throws, and rethrows its error', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const stored = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Linear client secret',
+      plaintext: 'lin_oauth_thrown_000',
+      source: 'entered',
+    });
+    const fake = {
+      runMutation: async (_reference: unknown, args: unknown): Promise<unknown> =>
+        await harness.mutation(
+          internal.organisationConnections.releaseStoredSecrets,
+          args as never,
+        ),
+    } as unknown as ActionCtx;
+    await expect(
+      recordOrRelease(fake, { secretCredentialId: stored }, async (): Promise<never> => {
+        throw new ConvexError('the recording refused');
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) => error instanceof ConvexError && error.data === 'the recording refused',
+    );
+    const row = await harness.run(async (ctx) => await ctx.db.get(stored));
+    expect(row?.revokedAt).toEqual(expect.any(Number));
+  });
+
+  it('keeps the original error when the release itself fails', async (): Promise<void> => {
+    const fake = {
+      runMutation: async (): Promise<never> => {
+        throw new Error('the release failed too');
+      },
+    } as unknown as ActionCtx;
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    await expect(
+      recordOrRelease(fake, { secretCredentialId: 'c1' as Id<'credentials'> }, async () => {
+        throw new ConvexError('the recording refused');
+      }),
+    ).rejects.toSatisfy((error: unknown) => error instanceof ConvexError);
+  });
+
+  it('never releases a secret a connection already names, as a recording committed before its call failed would', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(internal.organisationConnections.landFromSetup, SLACK);
+    const [connection] = (await organisationRows(harness)).connections;
+    const secret = await harness.run(
+      async (ctx) => await ctx.db.get(connection.secretCredentialId!),
+    );
+    await harness.mutation(internal.organisationConnections.releaseStoredSecrets, {
+      credentialIds: [connection.secretCredentialId!, secret!.refreshCredentialId!],
+    });
+    const { credentials } = await organisationRows(harness);
+    expect(credentials.every((row) => row.revokedAt === undefined)).toBe(true);
+  });
+
+  it('hands the recording mutation no secret: it refuses a landing that carries one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { refreshToken: _refreshToken, ...withSecret } = SLACK;
+    await expect(
+      harness.mutation(internal.organisationConnections.recordLanded, {
+        landing: withSecret as never,
+        secrets: {},
+        registrar: { via: 'setup-cli' },
+      }),
+    ).rejects.toThrow(/secret/);
+  });
+
+  it('lists the newest connections when the history passes the read’s bound', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 201; index += 1) {
+        await ctx.db.insert('organisationConnections', {
+          system: 'linear',
+          displayName: 'Linear',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read'],
+          registeredBy: { via: 'setup-cli', at: index },
+          status: 'revoked',
+          revokedAt: index,
+          createdAt: index,
+        });
+      }
+    });
+    await harness.action(internal.organisationConnections.landFromSetup, SLACK);
+    const listed = await harness
+      .withIdentity(INES)
+      .query(api.organisationConnections.listForAdministrator, {});
+    expect(listed.some((row) => row.system === 'slack')).toBe(true);
+    const summary = await harness
+      .withIdentity(SAM)
+      .query(api.organisationConnections.summaryForManager, {});
+    expect(summary.systems.map((row) => row.system)).toEqual(['slack']);
   });
 });

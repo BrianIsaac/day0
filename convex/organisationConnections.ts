@@ -14,6 +14,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
+import { log } from '../src/lib/logger';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import {
   MCP_CLIENT_REGISTRATIONS,
@@ -212,7 +213,7 @@ function reasonRefusal(reason: string): string | undefined {
   return undefined;
 }
 
-/** The refusal for a second active connection of one system. */
+/** The refusal for a second connection of a system that has one active or needing IT's attention. */
 function alreadyConnected(displayName: string): string {
   return `${displayName} is already connected for the organisation: rotate its secret, or revoke it first.`;
 }
@@ -302,12 +303,8 @@ export async function storeSecrets(
     const landed = [secret, refresh].flatMap((outcome) =>
       outcome.status === 'fulfilled' && outcome.value !== undefined ? [outcome.value] : [],
     );
-    if (landed.length > 0) {
-      await ctx.runMutation(internal.organisationConnections.releaseStoredSecrets, {
-        credentialIds: landed,
-      });
-    }
-    throw failure.reason;
+    await releaseOrLog(ctx, landed);
+    throw asError(failure.reason);
   }
   const secretCredentialId = secret.status === 'fulfilled' ? secret.value : undefined;
   const refreshCredentialId = refresh.status === 'fulfilled' ? refresh.value : undefined;
@@ -317,13 +314,40 @@ export async function storeSecrets(
   };
 }
 
+/** A rejection as an `Error`: a store's or a recording's failure is one, and anything else is wrapped. */
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
+/**
+ * Revoke stored secrets nothing could name, logging (never throwing) when the release itself
+ * fails, so the failure that called for it is the one the caller reads. Values are never logged.
+ */
+async function releaseOrLog(
+  ctx: Pick<ActionCtx, 'runMutation'>,
+  credentialIds: readonly Id<'credentials'>[],
+): Promise<void> {
+  if (credentialIds.length === 0) return;
+  try {
+    await ctx.runMutation(internal.organisationConnections.releaseStoredSecrets, {
+      credentialIds: [...credentialIds],
+    });
+  } catch (error) {
+    log.error('organisation secrets stored for a change that failed could not be revoked', {
+      credentialIds,
+      reason: asError(error).message,
+    });
+  }
+}
+
 /**
  * Record a change's stored secrets, revoking them when the recording fails, so none is left live
- * with nothing naming it.
+ * with nothing naming it. A secret the recording named before its call failed is kept: the
+ * release skips every secret a connection names.
  *
- * @throws The recording's failure, after the secrets are revoked.
+ * @throws The recording's failure, after the secrets are released.
  */
-async function recordOrRelease<Recorded>(
+export async function recordOrRelease<Recorded>(
   ctx: Pick<ActionCtx, 'runMutation'>,
   secrets: StoredSecrets,
   record: () => Promise<Recorded>,
@@ -331,27 +355,39 @@ async function recordOrRelease<Recorded>(
   try {
     return await record();
   } catch (error) {
-    const credentialIds = [secrets.secretCredentialId, secrets.refreshCredentialId].filter(
-      (credentialId): credentialId is Id<'credentials'> => credentialId !== undefined,
+    await releaseOrLog(
+      ctx,
+      [secrets.secretCredentialId, secrets.refreshCredentialId].filter(
+        (credentialId): credentialId is Id<'credentials'> => credentialId !== undefined,
+      ),
     );
-    if (credentialIds.length > 0) {
-      await ctx.runMutation(internal.organisationConnections.releaseStoredSecrets, {
-        credentialIds,
-      });
-    }
-    throw error;
+    throw asError(error);
   }
 }
 
 /**
  * Revoke organisation secrets a landing or a rotation stored and could not record. Internal, for
- * {@link storeSecrets} and the recording's failure; only organisation rows are touched.
+ * {@link storeSecrets} and {@link recordOrRelease}; only organisation rows are touched, and never
+ * one a connection names (its secret, that secret's refresh token, or its shared token), which a
+ * recording committed before its call failed would have done.
  */
 export const releaseStoredSecrets = internalMutation({
   args: { credentialIds: v.array(v.id('credentials')) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    await revokeSecrets(ctx, args.credentialIds, Date.now());
+    const connections = await ctx.db.query('organisationConnections').take(CONNECTION_READ_LIMIT);
+    const named = new Set<Id<'credentials'> | undefined>();
+    for (const connection of connections) {
+      for (const credentialId of await secretAndRefresh(ctx, connection.secretCredentialId)) {
+        named.add(credentialId);
+      }
+      named.add(connection.sharedTokenCredentialId);
+    }
+    await revokeSecrets(
+      ctx,
+      args.credentialIds.filter((credentialId) => !named.has(credentialId)),
+      Date.now(),
+    );
     return null;
   },
 });
