@@ -487,13 +487,18 @@ function listLines(resolved: Resolved): string[] {
 async function alreadyConnected(
   admin: DeploymentAdmin,
   planned: readonly Planned[],
-): Promise<Set<string>> {
-  const occupied = new Set<string>();
+): Promise<Map<string, Landing>> {
+  const occupied = new Map<string, Landing>();
   for (const one of planned) {
     const row = await admin.run<unknown>('query', 'organisationConnections:occupyingFor', {
       system: one.system,
     });
-    if (row !== null) occupied.add(one.system);
+    if (typeof row === 'object' && row !== null) {
+      occupied.set(one.system, {
+        ...(row as Readonly<Record<string, unknown>>),
+        system: one.system,
+      });
+    }
   }
   return occupied;
 }
@@ -522,15 +527,24 @@ function recordedConnection(
 ): RecordedConnection {
   const text = (name: string): string | undefined =>
     typeof landing[name] === 'string' ? (landing[name] as string) : undefined;
+  const list = (name: string): readonly string[] | undefined => {
+    const value = landing[name];
+    return Array.isArray(value) && value.every((one) => typeof one === 'string')
+      ? value
+      : undefined;
+  };
+  const stored = landing.mode;
+  const mode: OrganisationConnectionMode =
+    stored === 'shared' || stored === 'per-employee' ? stored : planned.mode.mode;
+  const clientCredentialsScopes =
+    list('clientCredentialsScopes') ?? planned.mode.clientCredentialsScopes;
   return {
     displayName: text('displayName') ?? planned.recipe.displayName,
     system: landing.system,
-    mode: modeWords(planned.mode.mode),
-    kind: planned.mode.kind,
-    scopes: Array.isArray(landing.scopes) ? (landing.scopes as string[]) : [...planned.mode.scopes],
-    ...(planned.mode.clientCredentialsScopes === undefined
-      ? {}
-      : { clientCredentialsScopes: planned.mode.clientCredentialsScopes }),
+    mode: modeWords(mode),
+    kind: text('kind') ?? planned.mode.kind,
+    scopes: list('scopes') ?? [...planned.mode.scopes],
+    ...(clientCredentialsScopes === undefined ? {} : { clientCredentialsScopes }),
     ...(text('clientId') === undefined ? {} : { clientId: text('clientId') }),
     ...(text('redirectUrl') === undefined ? {} : { redirectUrl: text('redirectUrl') }),
     ...(text('issuer') === undefined ? {} : { issuer: text('issuer') }),
@@ -606,7 +620,7 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
   );
   for (const line of listLines(resolved)) io.log(line);
 
-  let occupied: Set<string>;
+  let occupied: Map<string, Landing>;
   try {
     occupied = await alreadyConnected(admin, resolved.planned);
   } catch (err) {
@@ -664,7 +678,11 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
           'for the organisation: left as it is. ' +
           'An administrator rotates or revokes it on the organisation page.',
       );
-      return recordedConnection({ system: one.system }, one, 'already connected');
+      return recordedConnection(
+        occupied.get(one.system) ?? { system: one.system },
+        one,
+        'already connected',
+      );
     });
   for (const { landing, planned } of landings) {
     try {

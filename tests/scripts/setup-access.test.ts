@@ -64,7 +64,17 @@ function deployment(connected: readonly string[] = []): Deployment {
         const system = String(body.args.system);
         return Response.json({
           status: 'success',
-          value: connected.includes(system) ? { system, status: 'active', mode: 'shared' } : null,
+          value: connected.includes(system)
+            ? {
+                system,
+                displayName: 'Slack',
+                status: 'active',
+                kind: 'slack-configuration',
+                mode: 'per-employee',
+                scopes: ['chat:write', 'im:write'],
+                redirectUrl: 'https://day0.old.acme.test/api/oauth/slack',
+              }
+            : null,
         });
       }
       if (body.path === 'organisationConnections:landFromSetup') {
@@ -268,6 +278,19 @@ describe('setup: the access verb', (): void => {
       .map((call) => call.args.system);
     expect(landed).toEqual(['linear']);
     expect(bed.bed.output.join('\n')).toMatch(/Slack is already connected.*organisation page/);
+  });
+
+  it('records a connection already there as the deployment holds it, on a rerun the same day', async (): Promise<void> => {
+    const bed = accessBed({ connected: ['slack'] });
+    await bed.run([...ACCESS, '--record', bed.record]);
+    const [file] = readdirSync(bed.record);
+    const record = readFileSync(join(bed.record, file), 'utf8');
+    expect(record).toContain('### Slack, per employee');
+    expect(record).toContain('- This run: already connected');
+    expect(record).toContain('- Scopes: chat:write, im:write');
+    expect(record).toContain(
+      '- Redirect URI registered: https://day0.old.acme.test/api/oauth/slack',
+    );
   });
 
   it('takes the systems and their modes from flags, and refuses a mode the kit does not land at install', async (): Promise<void> => {
