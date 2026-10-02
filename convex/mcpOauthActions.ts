@@ -22,6 +22,11 @@ import {
 } from '../src/lib/oauth-state';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { CredentialGrant } from '../src/surfaces/access-identity';
+import {
+  linearIdentityDeps,
+  linearTokenRefresher,
+  readLinearBearer,
+} from './linearIdentityActions';
 import { MCP_SYSTEM_PREFIX, mcpSystemKey } from '../src/surfaces/access-request';
 import { decryptCredential, type DecryptCredential } from '../src/surfaces/credentials';
 import { McpAddressRefusal } from '../src/surfaces/mcp-address';
@@ -726,12 +731,12 @@ const nangoBackend = nangoTokenBackend({
 
 /**
  * The token store as this deployment composes it: the native keeper with the MCP client's
- * refresher, and Nango.
+ * refresher and Linear's (an employee's own app's tokens, 11-AL), and Nango.
  */
 function tokenStoreDeps(deps: McpOauthDeps): TokenStoreDeps {
   return {
     keeper: deps.store,
-    refreshers: [mcpTokenRefresher(deps)],
+    refreshers: [mcpTokenRefresher(deps), linearTokenRefresher(linearIdentityDeps())],
     now: deps.now,
     backends: [nangoBackend],
   };
@@ -756,20 +761,24 @@ export async function readMcpBearer(
 }
 
 /**
- * {@link readMcpBearer} in the shape the surface adapters and the re-read take a decrypt: the
- * runtime's one read of a surface's bearer.
+ * The runtime's one read of a surface's bearer, in the shape the surface adapters and the re-read
+ * take a decrypt (every rung, the probe and intake): the organisation's shared Linear app-actor
+ * token from its issuer, which requests it again in its last day (`readLinearBearer`, AL6), and
+ * every other credential from the token store ({@link readMcpBearer}), which refreshes an MCP
+ * authorisation's and an employee's own Linear app's tokens when due.
  */
 export const readSurfaceBearer: DecryptCredential = async (ctx, credentialId) =>
-  await readMcpBearer(ctx, credentialId as Id<'credentials'>);
+  (await readLinearBearer(ctx, credentialId)) ??
+  (await readMcpBearer(ctx, credentialId as Id<'credentials'>));
 
 /**
- * The bearer to send for a credential, refreshed first when due (see {@link readMcpBearer}).
+ * The bearer to send for a credential, renewed first when due ({@link readSurfaceBearer}).
  * Internal, for an action in another module that holds a credential id (the probe); records the
  * credential's use, as `credentials.decrypt` does.
  */
 export const currentBearer = internalAction({
   args: { credentialId: v.id('credentials') },
-  handler: async (ctx, args): Promise<string> => await readMcpBearer(ctx, args.credentialId),
+  handler: async (ctx, args): Promise<string> => await readSurfaceBearer(ctx, args.credentialId),
 });
 
 /**

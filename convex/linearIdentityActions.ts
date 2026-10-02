@@ -7,13 +7,16 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { credentialKeyring, requireCredentialKey } from './credentialCryptoActions';
 import type {
   ClaimedLinearAuthorisation,
-  HeldLinearToken,
   LinearClaimFailure,
   LinearIssuerContext,
   LinearRotationOutcome,
 } from './linearIdentity';
 import { assertAdministrator, assertOwnsAgentAction, callerIsAdministrator } from './ownership';
-import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
+import {
+  openOwnedCredential,
+  sealForOwner,
+  type SealedCredential,
+} from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
 import {
   newOauthNonce,
@@ -48,7 +51,21 @@ import {
   type LinearIssuedTokens,
   type LinearViewer,
 } from '../src/surfaces/identity-issuers/linear';
+import type { IssuedTokens } from '../src/surfaces/mcp-oauth';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import {
+  accessTokenFor,
+  nativeTokenKeeper,
+  refresherFor,
+  refreshHeld,
+  runScheduledRefresh,
+  TokenRefreshRefused,
+  type RefreshPreparation,
+  type RefreshWords,
+  type RotationOutcome,
+  type TokenRefresher,
+  type TokenStoreDeps,
+} from '../src/surfaces/token-store';
 import { isAppIdentity } from '../src/work/ticket-ownership';
 
 /*
@@ -91,7 +108,7 @@ export function __setLinearIdentityDepsForTest(
 }
 
 /** The issuer's dependencies: the platform's `fetch` and clock unless a test replaced them. */
-function linearIdentityDeps(): LinearIdentityDeps {
+export function linearIdentityDeps(): LinearIdentityDeps {
   return {
     fetch: depsForTest?.fetch ?? (async (url, init) => await fetch(url, init)),
     now: depsForTest?.now ?? Date.now,
@@ -569,7 +586,10 @@ const CLAIM_FAILURES: { readonly [Failure in LinearClaimFailure]: string } = {
 };
 
 /** Revoke tokens Linear issued that Day0 will not keep, so no grant is left live behind it. */
-async function revokeUnkept(deps: LinearIdentityDeps, tokens: LinearIssuedTokens): Promise<void> {
+async function revokeUnkept(
+  deps: LinearIdentityDeps,
+  tokens: Pick<LinearIssuedTokens, 'accessToken' | 'refreshToken'>,
+): Promise<void> {
   const settled = await Promise.allSettled([
     revokeLinearToken(deps.fetch, tokens.accessToken, 'access_token'),
     ...(tokens.refreshToken === undefined
@@ -679,84 +699,99 @@ export const completeAuthorisation = action({
   },
 });
 
-/** What a per-employee refresh answered: the bearer to use, or why Linear refused. */
-type RefreshOutcome =
-  | { readonly ok: true; readonly bearer: string }
-  | { readonly ok: false; readonly refusal: string };
-
-/** Whether the pair moved on since `held` was read: a concurrent refresh rotated it. */
-async function rotatedSince(ctx: ActionCtx, held: HeldLinearToken): Promise<boolean> {
-  const now = await ctx.runQuery(internal.linearIdentity.heldToken, {
-    credentialId: held.access._id,
-  });
-  return (now?.access.generation ?? 0) !== (held.access.generation ?? 0);
-}
+/** How Linear's issuer words a refresh's failures, which the card and its record carry (11-AL). */
+const LINEAR_REFRESH_WORDS: RefreshWords = {
+  reason: (error: unknown): string => clipped(error, 'Linear could not be reached.'),
+  refused: (message: string): string => `Linear refused to renew the token: ${message}`,
+  revokedMeanwhile: 'The Linear token was revoked while it was being renewed.',
+  unreachableWhenExpired: (reason: string): Error =>
+    new Error(`Linear could not be reached to renew the token: ${reason}`),
+  refusedWhenExpired: (refusal: string): Error =>
+    new LinearIssuerRefusal('token-refused', reinstallWords(refusal)),
+  unreachableAfter: (attempts: number, reason: string): string =>
+    `Linear could not be reached to renew the token after ${attempts} attempts: ${reason}`,
+  failed: (reason: string): string => `Renewing the Linear token failed: ${reason}`,
+};
 
 /**
- * Refresh an employee's own token with rotation (L3): exchange the refresh token of the generation
- * read and write the new pair only while the pair is still at that generation. A refresh that loses
- * to a concurrent one takes the winner's token; Linear's 30-minute grace answers the loser's replay
- * with the same pair. One whose credential was revoked meanwhile revokes what it was issued.
+ * Linear's half of a native refresh (the token store owns when, the generation, and the loser
+ * taking the winner's token; L3): an employee's own access token, refreshed at a read within
+ * {@link TOKEN_READ_MARGIN_MS} of its expiry by exchanging its rotating refresh token with the
+ * employee's app's client id and secret, and written through Linear's own rotation-safe write,
+ * which queues Linear's next scheduled refresh. The shared app-actor token is not one: it has no
+ * refresh token and is requested again by its issuer (AL6, AL7).
  *
- * @throws LinearIssuerRefusal or Error when Linear cannot be reached or answers unusably; Linear's
- *   refusal of the refresh is the typed outcome instead.
+ * @param deps - Linear's transport and the clock.
  */
-async function refreshEmployee(
-  ctx: ActionCtx,
-  held: HeldLinearToken,
-  deps: LinearIdentityDeps,
-): Promise<RefreshOutcome> {
-  const { access, refresh } = held;
-  const clientId = access.issuedBy?.clientId;
-  const secretId = access.issuedBy?.clientSecretCredentialId;
-  if (!clientId || !secretId || refresh === null) {
-    return { ok: false, refusal: 'Day0 no longer holds what refreshing this Linear token needs.' };
-  }
-  const clientSecret = await valueOf(ctx, secretId);
-  if (await rotatedSince(ctx, held)) return { ok: true, bearer: await valueOf(ctx, access._id) };
-  // The refresh token of the generation `held` was read at, opened from that same read: a rotation
-  // landing since cannot hand this refresh a newer token than the generation its write expects.
-  if (refresh.revokedAt !== undefined || !refresh.ciphertext || !refresh.iv) {
-    return { ok: false, refusal: 'The Linear refresh token is no longer held.' };
-  }
-  const presented = openOwnedCredential(
-    {
-      ciphertext: refresh.ciphertext,
-      iv: refresh.iv,
-      userId: refresh.userId,
-      ...(refresh.keyId === undefined ? {} : { keyId: refresh.keyId }),
+export function linearTokenRefresher(deps: LinearIdentityDeps): TokenRefresher {
+  return {
+    name: 'linear',
+    owns: (issuedBy): boolean =>
+      issuedBy.system === LINEAR_SYSTEM &&
+      (issuedBy.grant === 'authorisation-code' || issuedBy.grant === 'token-rotation'),
+    readRefreshMarginMs: TOKEN_READ_MARGIN_MS,
+    retryable: unreachable,
+    words: LINEAR_REFRESH_WORDS,
+    prepare: async (ctx, held): Promise<RefreshPreparation> => {
+      const clientId = held.issuedBy?.clientId;
+      const secretId = held.issuedBy?.clientSecretCredentialId;
+      if (!clientId || !secretId) {
+        return {
+          ok: false,
+          refusal: 'Day0 no longer holds what refreshing this Linear token needs.',
+        };
+      }
+      const clientSecret = await valueOf(ctx, secretId);
+      return {
+        ok: true,
+        refresh: {
+          exchange: async (presented: string): Promise<IssuedTokens> => {
+            try {
+              return await requestLinearTokens(
+                deps.fetch,
+                { clientId, clientSecret },
+                { grant: 'refresh_token', refreshToken: presented },
+                deps.now(),
+              );
+            } catch (error) {
+              if (error instanceof LinearIssuerRefusal && error.reason === 'token-refused') {
+                throw new TokenRefreshRefused(error.message);
+              }
+              throw error;
+            }
+          },
+          discard: async (_presented: string, issued: IssuedTokens): Promise<void> =>
+            await revokeUnkept(deps, issued),
+        },
+      };
     },
-    credentialKeyring(),
-    { allowUnbound: false },
-  );
-  let issued: LinearIssuedTokens;
-  try {
-    issued = await requestLinearTokens(
-      deps.fetch,
-      { clientId, clientSecret },
-      { grant: 'refresh_token', refreshToken: presented },
-      deps.now(),
-    );
-  } catch (error) {
-    if (!(error instanceof LinearIssuerRefusal) || error.reason !== 'token-refused') throw error;
-    if (await rotatedSince(ctx, held)) return { ok: true, bearer: await valueOf(ctx, access._id) };
-    return { ok: false, refusal: `Linear refused to renew the token: ${error.message}` };
-  }
-  const rotation: LinearRotationOutcome = await ctx.runMutation(
-    internal.linearIdentity.rotateEmployeeTokens,
-    {
-      credentialId: access._id,
-      expectedGeneration: access.generation ?? 0,
-      access: sealed(issued.accessToken),
-      ...(issued.refreshToken === undefined ? {} : { refresh: sealed(issued.refreshToken) }),
-      ...(issued.expiresAt === undefined ? {} : { expiresAt: issued.expiresAt }),
-      now: deps.now(),
+    rotate: async (ctx, rotation): Promise<RotationOutcome> => {
+      const seal = (value: string): SealedCredential =>
+        sealForOwner(value, credentialKeyring(), rotation.ownerKey);
+      return await ctx.runMutation(internal.linearIdentity.rotateEmployeeTokens, {
+        credentialId: rotation.credentialId,
+        expectedGeneration: rotation.expectedGeneration,
+        access: seal(rotation.tokens.accessToken),
+        ...(rotation.tokens.refreshToken === undefined
+          ? {}
+          : { refresh: seal(rotation.tokens.refreshToken) }),
+        ...(rotation.tokens.expiresAt === undefined
+          ? {}
+          : { expiresAt: rotation.tokens.expiresAt }),
+        now: rotation.now,
+      });
     },
-  );
-  if (rotation.ok) return { ok: true, bearer: issued.accessToken };
-  if (rotation.reason === 'stale') return { ok: true, bearer: await valueOf(ctx, access._id) };
-  await revokeUnkept(deps, issued);
-  return { ok: false, refusal: 'The Linear token was revoked while it was being renewed.' };
+  };
+}
+
+/** The native token store as Linear's issuer reads its own tokens through it. */
+function linearTokenStore(deps: LinearIdentityDeps): TokenStoreDeps {
+  return {
+    keeper: nativeTokenKeeper(credentialKeyring),
+    refreshers: [linearTokenRefresher(deps)],
+    now: deps.now,
+    backends: [],
+  };
 }
 
 /** The words a card ends with when its own app's token can no longer be renewed. */
@@ -766,10 +801,11 @@ function reinstallWords(refusal: string): string {
 
 /**
  * The bearer to send for a Linear token a card holds, renewed first when it is due: the shared
- * app-actor token in its last day is requested again; an employee's own access token within
- * {@link TOKEN_READ_MARGIN_MS} of its expiry is refreshed, and while it still lives a failed
- * refresh hands it back. Null for any credential Linear's issuer did not obtain, which the caller
- * reads the plain way.
+ * app-actor token in its last day is requested again by its issuer; an employee's own access token
+ * is the native token store's (`accessTokenFor` through {@link linearTokenRefresher}), refreshed
+ * within {@link TOKEN_READ_MARGIN_MS} of its expiry, and while it still lives a failed refresh
+ * hands it back. Null for any credential Linear's issuer did not obtain, which the caller reads
+ * through the token store.
  *
  * @throws Error when the token cannot be renewed and no longer works (the card then ends with the
  *   reason), or the credential is unavailable.
@@ -788,34 +824,8 @@ export async function readLinearBearer(
       return (await sharedToken(ctx, issuedBy.organisationConnectionId, deps)).bearer;
     }
     case 'authorisation-code':
-    case 'token-rotation': {
-      const expiresAt = held.access.expiresAt;
-      if (!tokenDue(expiresAt, deps.now(), TOKEN_READ_MARGIN_MS)) {
-        return await valueOf(ctx, held.access._id);
-      }
-      const alive = expiresAt !== undefined && expiresAt > deps.now();
-      let outcome: RefreshOutcome;
-      try {
-        outcome = await refreshEmployee(ctx, held, deps);
-      } catch (error) {
-        const reason = clipped(error, 'Linear could not be reached.');
-        if (!alive) throw new Error(`Linear could not be reached to renew the token: ${reason}`);
-        log.warn('linear read-time refresh failed; the stored token still lives', {
-          credentialId,
-          reason,
-        });
-        return await valueOf(ctx, held.access._id);
-      }
-      if (outcome.ok) return outcome.bearer;
-      if (alive) {
-        log.warn('linear read-time refresh refused; the stored token still lives', {
-          credentialId,
-          reason: outcome.refusal,
-        });
-        return await valueOf(ctx, held.access._id);
-      }
-      throw new LinearIssuerRefusal('token-refused', reinstallWords(outcome.refusal));
-    }
+    case 'token-rotation':
+      return await accessTokenFor(ctx, held.access._id, linearTokenStore(deps));
     case 'oauth-install':
     case 'app-created':
       return null;
@@ -863,8 +873,17 @@ export async function renewLinearTokenAfterRefusal(
     return (await sharedToken(ctx, issuedBy.organisationConnectionId, deps, generation)).bearer;
   }
   if ((held.access.generation ?? 0) !== generation) return await valueOf(ctx, held.access._id);
-  const outcome = await refreshEmployee(ctx, held, deps);
-  if (outcome.ok) return outcome.bearer;
+  const store = linearTokenStore(deps);
+  const tokens = await store.keeper.read(ctx, held.access._id);
+  const refresher = tokens ? refresherFor(tokens, store.refreshers) : undefined;
+  if (!tokens || !refresher) {
+    throw new LinearIssuerRefusal(
+      'token-refused',
+      reinstallWords('The Linear refresh token is no longer held.'),
+    );
+  }
+  const outcome = await refreshHeld(ctx, tokens, refresher, store);
+  if (outcome.ok) return outcome.accessToken;
   throw new LinearIssuerRefusal('token-refused', reinstallWords(outcome.refusal));
 }
 
@@ -1015,7 +1034,8 @@ function unreachable(error: unknown): boolean {
 }
 
 /**
- * Refresh an employee's own token ahead of its expiry, so every reader finds a live one. Does
+ * Refresh an employee's own token ahead of its expiry, so every reader finds a live one: the token
+ * store's scheduled refresh (`runScheduledRefresh`) through {@link linearTokenRefresher}. Does
  * nothing when another refresh has moved the pair on. Linear unreachable is tried again with a
  * growing wait; a refusal, or the retries running out, goes on the record of every card holding the
  * token, and each card ends with the reason when the token stops working. Internal; scheduled by
@@ -1029,45 +1049,24 @@ export const refreshScheduled = internalAction({
   },
   handler: async (ctx, args): Promise<void> => {
     const deps = linearIdentityDeps();
-    const held = await ctx.runQuery(internal.linearIdentity.heldToken, {
-      credentialId: args.credentialId,
-    });
-    if (
-      !held ||
-      held.access.revokedAt !== undefined ||
-      (held.access.generation ?? 0) !== args.generation ||
-      held.refresh === null
-    ) {
-      return;
-    }
-    const attempt = args.attempt ?? 0;
-    let refusal: string;
-    try {
-      const outcome = await refreshEmployee(ctx, held, deps);
-      if (outcome.ok) return;
-      refusal = outcome.refusal;
-    } catch (error) {
-      const reason = clipped(error, 'Linear could not be reached.');
-      if (unreachable(error) && attempt < SCHEDULED_RENEWAL_RETRIES) {
-        await ctx.scheduler.runAfter(
-          60_000 * 2 ** attempt,
-          internal.linearIdentityActions.refreshScheduled,
-          {
-            ...args,
-            attempt: attempt + 1,
-          },
-        );
-        return;
-      }
-      refusal = unreachable(error)
-        ? `Linear could not be reached to renew the token after ${attempt + 1} attempts: ${reason}`
-        : `Renewing the Linear token failed: ${reason}`;
-    }
-    await ctx.runMutation(internal.linearIdentity.recordRefusal, {
-      credentialId: args.credentialId,
-      reason: reinstallWords(refusal).slice(0, REASON_MAX),
-      ...(held.access.expiresAt === undefined ? {} : { endsAt: held.access.expiresAt }),
-      now: deps.now(),
+    const store = linearTokenStore(deps);
+    await runScheduledRefresh(ctx, args, {
+      ...store,
+      retryAfter: async (delayMs: number, attempt: number): Promise<void> => {
+        await ctx.scheduler.runAfter(delayMs, internal.linearIdentityActions.refreshScheduled, {
+          ...args,
+          attempt,
+        });
+      },
+      recordRefusal: async (reason: string): Promise<void> => {
+        const held = await store.keeper.read(ctx, args.credentialId);
+        await ctx.runMutation(internal.linearIdentity.recordRefusal, {
+          credentialId: args.credentialId,
+          reason: reinstallWords(reason).slice(0, REASON_MAX),
+          ...(held?.expiresAt === undefined ? {} : { endsAt: held.expiresAt }),
+          now: deps.now(),
+        });
+      },
     });
   },
 });
