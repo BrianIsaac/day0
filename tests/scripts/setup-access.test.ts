@@ -316,6 +316,28 @@ describe('setup: the access verb', (): void => {
     );
   });
 
+  it('reads each MCP server’s answers under its own host’s names when stdin answers for several', async (): Promise<void> => {
+    const bed = accessBed();
+    const stdin = [
+      'MCP_MCP_ACME_COM_CLIENT_ID=acme-client',
+      'MCP_MCP_ACME_COM_CLIENT_SECRET=acme-test-secret',
+      'MCP_CRM_ACME_COM_CLIENT_ID=crm-client',
+      '',
+    ].join('\n');
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://mcp.acme.com/mcp,https://crm.acme.com/mcp'],
+      stdin,
+    );
+    expect(status).toBe(0);
+    const landed = bed.deployment.calls
+      .filter((call) => call.path === 'organisationConnections:landFromSetup')
+      .map((call) => [call.args.system, call.args.clientId, call.args.secret ?? null]);
+    expect(landed).toEqual([
+      ['mcp:mcp.acme.com', 'acme-client', 'acme-test-secret'],
+      ['mcp:crm.acme.com', 'crm-client', null],
+    ]);
+  });
+
   it('prints the plan on a dry run, asks no secret, writes and lands nothing', async (): Promise<void> => {
     const bed = accessBed();
     const status = await bed.run([...ACCESS, '--dry-run'], '');

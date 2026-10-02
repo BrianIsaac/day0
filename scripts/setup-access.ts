@@ -193,6 +193,19 @@ interface Planned {
   readonly mode: RecipeMode;
   /** An MCP server's address, from the flag or the documentation. */
   readonly address?: string;
+  /**
+   * Where several MCP servers are connected in one run, the host part of this one's stdin names
+   * (`MCP_<HOST>_CLIENT_ID`), so one server's answers never stand for another's.
+   */
+  readonly stdinHost?: string;
+}
+
+/** An MCP server's host as its stdin names carry it: `mcp:mcp.acme.com` is `MCP_ACME_COM`. */
+function stdinHostOf(system: string): string {
+  return system
+    .replace(/^mcp:/, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_');
 }
 
 /** The mode words a person reads. */
@@ -291,7 +304,10 @@ async function answersFor(
 /** One recipe question, with the documented address standing for an MCP server's. */
 function questionOf(ask: RecipeAsk, planned: Planned): Question {
   return {
-    name: ask.stdinName,
+    name:
+      planned.stdinHost === undefined
+        ? ask.stdinName
+        : ask.stdinName.replace(/^MCP_/, `MCP_${planned.stdinHost}_`),
     text: ask.label,
     hidden: ask.secret,
     optional: ask.optional,
@@ -467,7 +483,18 @@ async function resolvePlan(
       ...(one.address === undefined || recipe.system !== 'mcp' ? {} : { address: one.address }),
     });
   }
-  return { administrators, named, planned, skipped };
+  const servers = planned.filter((one) => one.recipe.system === 'mcp').length;
+  return {
+    administrators,
+    named,
+    planned:
+      servers > 1
+        ? planned.map((one) =>
+            one.recipe.system === 'mcp' ? { ...one, stdinHost: stdinHostOf(one.system) } : one,
+          )
+        : planned,
+    skipped,
+  };
 }
 
 /** A skipped system as the list names it: a kit system by its display name, any other by its key. */

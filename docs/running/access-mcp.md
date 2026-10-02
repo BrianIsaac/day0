@@ -82,6 +82,11 @@ rm answers.env
 ```
 
 The connection's system key is `mcp:` and the server's host (`mcp:mcp.acme.com`).
+When one run connects several MCP servers from stdin, each server's lines carry
+its host, so one server's answers never stand for another's:
+`MCP_MCP_ACME_COM_CLIENT_ID=`, `MCP_CRM_ACME_COM_CLIENT_ID=`, and so on for
+each name above. A documented MCP address you do not want connected is left out
+by naming the systems with `--systems`.
 
 ## 7. What check:access must show
 
