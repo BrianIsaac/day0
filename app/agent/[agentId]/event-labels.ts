@@ -136,6 +136,14 @@ function planHeldWords(reason: unknown): string {
     : 'it waits for your decision';
 }
 
+/** What a correction of an organisation connection changed: its redirect, its scopes, or both. */
+function correctedWhat(payload: Read<'organisation.connection-corrected'>): string {
+  const redirect = text(payload.redirectUrl) !== undefined;
+  const scopes = Array.isArray(payload.scopes);
+  if (redirect && scopes) return 'redirect and scopes';
+  return redirect ? 'redirect' : 'scopes';
+}
+
 /** One call Day0 made with the organisation's Slack configuration token or its refresh token (11-AS). */
 function configurationUsedLabel(payload: Read<'organisation.configuration-used'>): string {
   const name = text(payload.displayName) ?? 'Slack';
@@ -445,6 +453,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${text(payload.displayName) ?? 'a system'} connected for the organisation`,
   'organisation.connection-rotated': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection's secret rotated`,
+  'organisation.connection-corrected': (payload) =>
+    `${text(payload.displayName) ?? 'a system'}: the organisation connection's recorded ${correctedWhat(payload)} corrected`,
   'organisation.connection-revoked': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
   'surface.authorised': 'authorised at its authorisation server',

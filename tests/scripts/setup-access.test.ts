@@ -80,6 +80,9 @@ function deployment(connected: readonly string[] = []): Deployment {
       if (body.path === 'organisationConnections:landFromSetup') {
         return Response.json({ status: 'success', value: `conn-${String(body.args.system)}` });
       }
+      if (body.path === 'organisationCorrections:correctFromSetup') {
+        return Response.json({ status: 'success', value: null });
+      }
       return Response.json({ status: 'error', errorMessage: `no such function ${body.path}` });
     },
   };
@@ -382,6 +385,41 @@ describe('setup: the access verb', (): void => {
     const printed = bed.bed.output.join('\n');
     expect(printed).toContain('"client_credentials"');
     expect(printed).toContain('https://linear.app/settings/api/applications/new?manifest=');
+  });
+
+  it("corrects a connection's recorded redirect and scopes to what Day0 returns to and the kit's list, revoking nothing (M12 e)", async (): Promise<void> => {
+    const bed = accessBed({ connected: ['slack'] });
+    expect(await bed.run(['access', '--correct', 'slack'])).toBe(0);
+    expect(
+      bed.deployment.calls
+        .filter((call) => call.kind === 'mutation' || call.kind === 'action')
+        .map((call) => [call.path, call.args]),
+    ).toEqual([
+      [
+        'organisationCorrections:correctFromSetup',
+        {
+          system: 'slack',
+          redirectUrl: 'https://day0.acme.test/api/oauth/slack',
+          scopes: [...SLACK_KIT_BOT_SCOPES],
+        },
+      ],
+    ]);
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      'Slack: the recorded redirect is now https://day0.acme.test/api/oauth/slack (it was https://day0.old.acme.test/api/oauth/slack)',
+    );
+    expect(said).toContain('No secret changed and no card ended.');
+  });
+
+  it('refuses to correct a system with no connection, writing nothing', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--correct', 'slack'])).toBe(1);
+    expect(bed.deployment.calls.map((call) => call.path)).not.toContain(
+      'organisationCorrections:correctFromSetup',
+    );
+    expect(bed.bed.output.join('\n')).toContain(
+      'Slack is not connected for the organisation: land it with ./setup.sh access first.',
+    );
   });
 
   it('refuses an installation another checkout set up, as the lifecycle verbs do', async (): Promise<void> => {

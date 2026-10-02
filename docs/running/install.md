@@ -8,9 +8,14 @@ employee Day0 deploys then acts through that connection under its own
 identity). One command runs both: `./setup.sh install`. Each half stays
 runnable on its own (`./setup.sh sign-in`, `./setup.sh access`).
 
-The install never sends a customer's secret anywhere but the customer's own
-deployment on this machine: secrets are typed into hidden prompts or read from
-a file on stdin, never put on a command line, and never printed.
+Secrets are typed into hidden prompts or read from a file on stdin, never put
+on a command line, and never printed. The install sends each one to the
+customer's own deployment on this machine and, from this machine, to the vendor
+that issued it and nowhere else: `pnpm check:access` asks Slack whether it
+accepts the configuration token and Linear whether it accepts the client
+secret, and the company sign-in's client secret may be given in the
+environment (`DAY0_OIDC_CLIENT_SECRET`) instead of the prompt. A check from this
+machine says nothing about the backend container's own way out to the vendor.
 
 ## Before the day
 
@@ -73,8 +78,9 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    administrators, lists the systems the documentation names, and for each one
    the kit connects shows its recipe and records its mode (Slack and an MCP
    server per employee; Linear shared, or per employee with
-   `--connect-mode linear=per-employee`, which lands nothing now and leaves each
-   employee's app to its access request), asks for what the recipe produced
+   `--connect-mode linear=per-employee`, which lands the connection with no
+   secret and leaves each employee's own app to its access request), asks for
+   what the recipe produced
    (secrets hidden), lands it, runs `pnpm check:access` and writes the install
    record.
 5. **`pnpm check:setup`**, now with the access block.
@@ -133,6 +139,7 @@ expires. It holds no secret. Hand it to the customer's IT.
 | `./setup.sh access` | the organisation's systems only, ending on `pnpm check:access` |
 | `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form) |
 | `./setup.sh access --dry-run` | lists the systems and what would be landed; writes nothing |
+| `./setup.sh access --correct <system>` | records the redirect Day0 returns to and the kit's scopes on a connection, after IT fixed them at the vendor; no secret changes and no card ends |
 | `pnpm check:setup` | every setting, the sign-in block and the access block, without calling a vendor |
 | `pnpm check:access` | each connection: its status, redirect, scopes, whether its secret opens, and whether its vendor answers with it |
 | `pnpm check:sign-in` | one test sign-in, each claim's verdict |
@@ -142,8 +149,8 @@ expires. It holds no secret. Hand it to the customer's IT.
 | `pnpm check:access` says | Do |
 |---|---|
 | `administrators` GAP | `./setup.sh access --administrators <addresses>` |
-| `redirect` GAP | register exactly `${DAY0_PUBLIC_URL}/api/oauth/<system>` at the vendor, or set `DAY0_PUBLIC_URL` back to the origin it was registered with |
-| `scopes` GAP | grant the missing scopes at the vendor (the recipe lists them), then rotate the connection on the organisation page |
+| `redirect` GAP | register exactly `${DAY0_PUBLIC_URL}/api/oauth/<system>` at the vendor, then `./setup.sh access --correct <system>` records it; or set `DAY0_PUBLIC_URL` back to the origin it was registered with |
+| `scopes` GAP | grant the missing scopes at the vendor (the recipe lists them), then `./setup.sh access --correct <system>` records them |
 | `secret` GAP | the deployment's credential key changed since the secret was landed: rotate the connection with a fresh secret |
 | `identity` GAP | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
 | `status` GAP | the connection needs IT's attention, for the reason it gives |

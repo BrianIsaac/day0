@@ -190,8 +190,8 @@ function redirectCheck(row: ConnectionRow, values: Values, redirectPath: string)
       'redirect',
       'gap',
       `${row.displayName} has ${row.redirectUrl} registered, and Day0 returns to ${expected}: ` +
-        `change the registration at ${row.displayName} (or ${PUBLIC_URL_VAR}) so they are the same, ` +
-        'byte for byte.',
+        `register ${expected} at ${row.displayName}, byte for byte, then record it with ` +
+        `\`./setup.sh access --correct ${row.system}\` (or set ${PUBLIC_URL_VAR} back).`,
     );
   }
   return check(row.system, 'redirect', 'ok', `Registered ${expected}, where Day0 returns.`);
@@ -215,7 +215,7 @@ function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
       'gap',
       `Missing scope ${[...new Set(lacking)].join(', ')}: the registration holds ` +
         `${row.scopes.join(', ') || 'none'}, and Day0 needs ${mode.scopes.join(', ')}. Grant ` +
-        'them at the vendor, then rotate the connection with them on the organisation page.',
+        `them at the vendor, then record them with \`./setup.sh access --correct ${row.system}\`.`,
     );
   }
   if (mode.scopes.length === 0 && row.scopes.length === 0) {

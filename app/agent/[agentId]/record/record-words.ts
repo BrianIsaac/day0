@@ -203,6 +203,17 @@ function inWords(value: unknown): string | undefined {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
+/** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
+function correctedParts(p: Read<'organisation.connection-corrected'>): string {
+  const redirect = text(p.redirectUrl);
+  const scopes = listed(p.scopes);
+  const parts = [
+    ...(redirect !== undefined ? [`redirect (now ${redirect})`] : []),
+    ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
+  ];
+  return parts.length === 0 ? 'registration' : parts.join(' and ');
+}
+
 /**
  * One call Day0 made with the organisation's Slack configuration token or its refresh token, on
  * the connection's ledger (11-AS): it names the app a creation made, never an employee (AC11).
@@ -763,6 +774,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${organisationSystem(p.displayName)} was connected for the organisation${registeredVia(p.via)}`,
   'organisation.connection-rotated': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
+  'organisation.connection-corrected': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection had its recorded ${correctedParts(p)} corrected${registeredVia(p.via)}`,
   'organisation.connection-revoked': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
   'surface.authorised': (p, subject) =>

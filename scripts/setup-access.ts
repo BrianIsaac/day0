@@ -73,6 +73,12 @@ export interface AccessFlags {
   readonly record?: string;
   /** Print one system's manifest and stop. */
   readonly printManifest?: string;
+  /**
+   * Correct the redirect and the scopes one system's connection records to what Day0 returns to
+   * and the kit's list, and stop (the wave 11 review's M12 e): a kit system's key or an MCP
+   * server's https address.
+   */
+  readonly correct?: string;
 }
 
 /** What the verb is told: its flags, the plan-only switch, and answers a composing verb already read. */
@@ -415,6 +421,78 @@ function printManifest(
   return 1;
 }
 
+/** What a connection records that a correction compares, as `occupyingFor` answers it. */
+interface RecordedRegistration {
+  readonly displayName?: string;
+  readonly mode?: OrganisationConnectionMode;
+  readonly redirectUrl?: string;
+  readonly scopes?: readonly string[];
+}
+
+/**
+ * Correct what one system's connection records of IT's registration (the wave 11 review's M12 e):
+ * the redirect Day0 returns to now (`${DAY0_PUBLIC_URL}` and the recipe's path), and the kit's
+ * scopes for the connection's mode where the kit names any. `check:access` compares exactly these,
+ * so a redirect IT registered again at the vendor, or scopes it granted there, pass once recorded.
+ * No secret changes and no card ends.
+ *
+ * @param raw - The system: `slack`, `linear`, `mcp:<host>` or an MCP server's https address.
+ * @param values - The installation's env file.
+ * @param io - The setup's io.
+ * @returns The exit status.
+ */
+async function correctConnection(
+  raw: string,
+  values: Readonly<Record<string, string>>,
+  io: AccessIo,
+): Promise<number> {
+  const target = adminTarget(values);
+  if ('gap' in target) {
+    io.log(target.gap);
+    return 1;
+  }
+  const admin = deploymentAdmin({
+    ...target,
+    ...(io.fetch === undefined ? {} : { fetch: io.fetch }),
+  });
+  try {
+    const [named] = namedByFlag(raw);
+    const recipe = named === undefined ? undefined : recipeForSystem(named.system);
+    if (named === undefined || recipe === undefined) {
+      throw new AccessRefused(`The kit corrects slack, linear or an MCP server, not "${raw}".`);
+    }
+    const name = recipe.system === 'mcp' ? named.system : recipe.displayName;
+    const row = await admin.run<RecordedRegistration | null>(
+      'query',
+      'organisationConnections:occupyingFor',
+      { system: named.system },
+    );
+    if (row === null) {
+      throw new AccessRefused(
+        `${name} is not connected for the organisation: land it with ./setup.sh access first.`,
+      );
+    }
+    const redirectUrl = `${originOf(values)}${recipe.redirectPath}`;
+    const mode = recipe.modes.find((candidate) => candidate.mode === row.mode);
+    const scopes = mode !== undefined && mode.scopes.length > 0 ? [...mode.scopes] : undefined;
+    await admin.run('mutation', 'organisationCorrections:correctFromSetup', {
+      system: named.system,
+      redirectUrl,
+      ...(scopes !== undefined ? { scopes } : {}),
+    });
+    const was = row.redirectUrl === undefined ? 'none was recorded' : `it was ${row.redirectUrl}`;
+    io.log(`${name}: the recorded redirect is now ${redirectUrl} (${was}).`);
+    if (scopes !== undefined) {
+      io.log(`${name}: the recorded scopes are now ${scopes.join(', ')}.`);
+    }
+    io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+    return 0;
+  } catch (err) {
+    io.log(`Nothing was corrected: ${errorMessage(err)}`);
+    return 1;
+  }
+}
+
 /** Everything the run resolved before it changes anything. */
 interface Resolved {
   readonly administrators: readonly string[];
@@ -612,6 +690,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
   const values = readEnvValues(envPath);
   if (options.access.printManifest !== undefined) {
     return printManifest(options.access.printManifest, values, io);
+  }
+  if (options.access.correct !== undefined) {
+    return await correctConnection(options.access.correct, values, io);
   }
   if (!existsSync(envPath)) {
     io.log(

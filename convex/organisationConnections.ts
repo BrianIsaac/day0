@@ -142,12 +142,12 @@ const SECRET_NOUNS: { readonly [Kind in OrganisationConnectionKind]: string } = 
 };
 
 /** Trimmed, without blanks or repeats, in order. */
-function cleanScopes(scopes: readonly string[]): readonly string[] {
+export function cleanScopes(scopes: readonly string[]): readonly string[] {
   return [...new Set(scopes.map((scope: string): string => scope.trim()))];
 }
 
 /** Why a scope list is not one, or undefined when it is. */
-function scopesRefusal(scopes: readonly string[], name: string): string | undefined {
+export function scopesRefusal(scopes: readonly string[], name: string): string | undefined {
   if (scopes.length > SCOPE_COUNT_MAX) return `${name} lists more than ${SCOPE_COUNT_MAX} scopes.`;
   if (scopes.some((scope: string): boolean => scope.trim() === '' || scope.length > SCOPE_MAX)) {
     return `${name} holds an empty scope, or one longer than ${SCOPE_MAX} characters.`;

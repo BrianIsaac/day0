@@ -872,6 +872,18 @@ export interface OrganisationConnectionRotatedPayload extends OrganisationConnec
   readonly previousScopes?: readonly string[];
 }
 
+/**
+ * The payload of `organisation.connection-corrected` (the wave 11 review's M12 e): the redirect or
+ * the scopes a connection records, corrected in place to what IT registered at the vendor, each
+ * with what it was; no secret changes and no card ends.
+ */
+export interface OrganisationConnectionCorrectedPayload extends OrganisationConnectionNamed {
+  readonly redirectUrl?: string;
+  readonly previousRedirectUrl?: string;
+  readonly scopes?: readonly string[];
+  readonly previousScopes?: readonly string[];
+}
+
 /** The payload of `organisation.connection-revoked`. */
 export interface OrganisationConnectionRevokedPayload extends OrganisationConnectionNamed {
   readonly reason: string;
@@ -1552,6 +1564,7 @@ export interface EventPayloads {
   'surface.access-requested': SurfaceAccessRequestedPayload;
   'organisation.connection-landed': OrganisationConnectionLandedPayload;
   'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
+  'organisation.connection-corrected': OrganisationConnectionCorrectedPayload;
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
   'surface.authorised': SurfaceAuthorisedPayload;
   'surface.authorisation-failed': SurfaceAuthorisationFailedPayload;
@@ -1727,6 +1740,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.access-requested',
   'organisation.connection-landed',
   'organisation.connection-rotated',
+  'organisation.connection-corrected',
   'organisation.connection-revoked',
   'surface.authorised',
   'surface.authorisation-failed',
@@ -1820,6 +1834,7 @@ export function isEventType(value: unknown): value is EventType {
 export const CONNECTION_EVENT_TYPES = [
   'organisation.connection-landed',
   'organisation.connection-rotated',
+  'organisation.connection-corrected',
   'organisation.connection-revoked',
   'organisation.revoked-at-source',
   'organisation.configuration-used',

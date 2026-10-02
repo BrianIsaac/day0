@@ -115,6 +115,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'surface.access-requested': DECISIONS,
   'organisation.connection-landed': NONE,
   'organisation.connection-rotated': NONE,
+  'organisation.connection-corrected': NONE,
   'organisation.connection-revoked': NONE,
   'surface.authorised': NONE,
   'surface.authorisation-failed': NONE,
