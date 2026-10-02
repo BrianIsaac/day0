@@ -432,6 +432,9 @@ async function recordingModelCalls<T>(
   }, fn);
 }
 
+/** The evaluation's answer when a `needs-skill` verdict's proposal threw and the item stopped. */
+const PROPOSAL_FAILED = 'proposal-failed';
+
 /**
  * Evaluate one discovered work item and store the verdict.
  *
@@ -455,8 +458,9 @@ async function recordingModelCalls<T>(
  *
  * Returns:
  *   The stored decision, `scope-judgement-unavailable` when the row was left
- *   parked, or a `noop-` reason when the step was not this run's or the row
- *   is gone.
+ *   parked, `proposal-failed` when a `needs-skill` verdict's proposal threw and
+ *   the item was stopped for Retry, or a `noop-` reason when the step was not
+ *   this run's or the row is gone.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -615,21 +619,41 @@ async function evaluateWorkItemHandler(
       surfaceClass: shape.surfaceClass,
       operation: shape.operation,
     });
-    const skillId = await ctx.runMutation(internal.skills.propose, {
-      agentId,
-      workItemId: args.workItemId,
-      name: verdict.suggestedSkillName,
-      description: skillDescriptionFor(shape),
-      rationale: verdict.suggestedSkillRationale,
-      requiredScopes,
-      surfaceClass: shape.surfaceClass,
-      operation: shape.operation,
-      ...(agent?.userId === undefined ? {} : { startedUnder: agent.userId }),
-      ...(offeredVersionId !== null ? { offeredVersionId } : {}),
-    });
+    const proposed = await ctx
+      .runMutation(internal.skills.propose, {
+        agentId,
+        workItemId: args.workItemId,
+        name: verdict.suggestedSkillName,
+        description: skillDescriptionFor(shape),
+        rationale: verdict.suggestedSkillRationale,
+        requiredScopes,
+        surfaceClass: shape.surfaceClass,
+        operation: shape.operation,
+        ...(agent?.userId === undefined ? {} : { startedUnder: agent.userId }),
+        ...(offeredVersionId !== null ? { offeredVersionId } : {}),
+      })
+      .then(
+        (skillId) => ({ ok: true as const, skillId }),
+        (error: unknown) => ({
+          ok: false as const,
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    if (!proposed.ok) {
+      // The verdict has committed `needs-skill`: a proposal that throws (a handover since the
+      // read, two cards with one slug) would leave the card with nothing to press until the
+      // lease recovery, and for ever in mock mode. It stops now, with Retry (m7).
+      log.warn('skill proposal refused after its verdict; the item is stopped', {
+        workItemId: args.workItemId,
+        skill: verdict.suggestedSkillName,
+        reason: proposed.reason,
+      });
+      await ctx.runMutation(internal.work.stopUnproposedSkill, { workItemId: args.workItemId });
+      return { decision: PROPOSAL_FAILED };
+    }
     await ctx.runMutation(internal.work.setProposedSkill, {
       workItemId: args.workItemId,
-      skillId,
+      skillId: proposed.skillId,
     });
   }
 

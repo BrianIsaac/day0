@@ -402,9 +402,11 @@ const ENDED_PROPOSAL_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
  * `startedUnder`, the owner the evaluation read the employee under, the proposal is refused once
  * the employee is gone or another owner's (the wave 9 review's U3-m2): it would land, out of the
  * old owner's evaluation, as the new manager's to approve. The refused evaluation's verdict has
- * already committed `needs-skill`, so nothing resumes it: `work.recoverUnproposedSkill` stops the
- * item a step lease later with the skill it needed named, and the new manager's Retry evaluates
- * it again under the owner the employee has now (the wave 10 review, FR-m3).
+ * already committed `needs-skill`, so the evaluating action stops the item at once
+ * (`work.stopUnproposedSkill`, the real-Linear walk's m7), with `work.recoverUnproposedSkill` a
+ * step lease later behind it should the action itself die, each naming the skill it needed; the
+ * new manager's Retry evaluates it again under the owner the employee has now (the wave 10
+ * review, FR-m3).
  *
  * @throws Error with {@link PROPOSAL_AFTER_HANDOVER}.
  */

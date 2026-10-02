@@ -4911,6 +4911,57 @@ describe('a registered skill serves every later work item of its shape', (): voi
     expect(proposed?.offeredVersionId).toBeUndefined();
   });
 
+  it('stops the item at once, with Retry, when the proposal its verdict promised throws (the real-Linear walk, m7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    // Two cards with one slug, as a staged card beside a declared one made on the walk: the
+    // proposal cannot say which surface the skill targets and throws.
+    await harness.run(async (ctx): Promise<void> => {
+      for (const credentialId of ['cred-sheet', 'cred-sheet-2']) {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'close-tracker',
+          displayName: 'Close tracker',
+          class: 'spreadsheet',
+          verdict: 'connected',
+          endpoint: 'https://sheets.example.test/close-tracker',
+          path: 'documented-api',
+          toolAllowlist: [],
+          credentialId,
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          whereFound: [],
+          createdAt: 1,
+        } as never);
+      }
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'proposal-failed' });
+    // Nothing waits a lease: the card offers Retry now, and no proposal was written.
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.proposedSkillId).toBeUndefined();
+    expect(row.skipReason).toBe(
+      'stopped: evaluation found this item needs the skill "spreadsheet-append-row", but its proposal was never recorded; Retry evaluates the item again',
+    );
+    expect(await proposedSkills(harness)).toEqual([]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+  });
+
   it('needs-skill proposes with the offer when one passes (10-A)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
