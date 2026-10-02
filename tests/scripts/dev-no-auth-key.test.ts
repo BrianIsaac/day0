@@ -249,6 +249,17 @@ describe("the token store's Nango keys (11-AT)", (): void => {
     expect(valueOf(envFile, 'DAY0_NANGO_SECRET_KEY')).toMatch(UUID_V4);
   });
 
+  it('leaves the file ending in a newline, so a line appended by hand cannot join the last key', (): void => {
+    const { cwd, envFile } = envDirectory('NEXT_PUBLIC_DEV_NO_AUTH=false\n');
+    expect(runScript(cwd, ['url']).status).toBe(0);
+    const written = readFileSync(envFile, 'utf8');
+    expect(written.endsWith('\n')).toBe(true);
+    expect(written).not.toContain('\n\n');
+    const password = valueOf(envFile, 'DAY0_NANGO_DB_PASSWORD');
+    writeFileSync(envFile, `${written}DAY0_NANGO_URL=http://nango-server:3003\n`, 'utf8');
+    expect(valueOf(envFile, 'DAY0_NANGO_DB_PASSWORD')).toBe(password);
+  });
+
   it('writes the Nango keys in init as well', (): void => {
     const { cwd, envFile } = envDirectory('NEXT_PUBLIC_DEV_NO_AUTH=true\n');
     expect(runScript(cwd, ['init']).status).toBe(0);

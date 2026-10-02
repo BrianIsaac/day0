@@ -187,6 +187,9 @@ function upsertEnvFile(updates: Record<string, string>): void {
     fail(`${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} first.`);
   }
   const lines = readFileSync(ENV_FILE, 'utf8').split('\n');
+  // A file ending in a newline splits into a last empty line. Appended keys go before it and the
+  // file is written ending in one, or a line later added by hand would join the last key.
+  if (lines.at(-1) === '') lines.pop();
   for (const [key, value] of Object.entries(updates)) {
     const index = lines.findIndex((line: string): boolean =>
       new RegExp(`^\\s*${key}\\s*=`).test(line),
@@ -194,7 +197,7 @@ function upsertEnvFile(updates: Record<string, string>): void {
     if (index >= 0) lines[index] = `${key}=${value}`;
     else lines.push(`${key}=${value}`);
   }
-  writePrivateEnv(ENV_FILE, lines.join('\n'));
+  writePrivateEnv(ENV_FILE, `${lines.join('\n')}\n`);
 }
 
 /**
