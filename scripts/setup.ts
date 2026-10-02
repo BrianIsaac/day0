@@ -5218,12 +5218,6 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
       return 1;
     }
   }
-  if (backend !== undefined && !options.dryRun) {
-    writeEnvValues(join(io.cwd, ENV_FILE), { NEXT_PUBLIC_CONVEX_URL: backend.url });
-    io.log(
-      `Wrote NEXT_PUBLIC_CONVEX_URL=${backend.url}: people's browsers reach the backend there.`,
-    );
-  }
   const stopped = (step: string, status: number): number => {
     io.log('');
     io.log(
@@ -5252,6 +5246,14 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     signInIo,
   );
   if (signedIn !== 0) return stopped('the sign-in', signedIn);
+  // Written once the sign-in has made this a customer-local install, which is what keeps the
+  // address through every later push and setup run (`customerBackendUrl`).
+  if (backend !== undefined && !options.dryRun) {
+    writeEnvValues(join(io.cwd, ENV_FILE), { NEXT_PUBLIC_CONVEX_URL: backend.url });
+    io.log(
+      `Wrote NEXT_PUBLIC_CONVEX_URL=${backend.url}: people's browsers reach the backend there.`,
+    );
+  }
 
   io.log('\n== 2. The organisation’s systems ==');
   const connected = await runAccess(

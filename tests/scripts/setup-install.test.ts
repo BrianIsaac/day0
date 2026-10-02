@@ -177,6 +177,14 @@ describe('setup: the install verb', (): void => {
       'https://convex.acme.test',
     );
 
+    const stopped = installBed({
+      failing: [{ match: 'run check:setup', status: 1, stderr: 'gap' }],
+    });
+    expect(await stopped.run([...INSTALL, '--backend-url', 'https://convex.acme.test'])).toBe(1);
+    expect(readEnvValues(join(stopped.bed.directory, '.env.local')).NEXT_PUBLIC_CONVEX_URL).toBe(
+      'http://127.0.0.1:3740',
+    );
+
     const refused = installBed();
     expect(await refused.run([...INSTALL, '--backend-url', 'http://convex.acme.test'])).toBe(1);
     expect(refused.bed.output.join('\n')).toContain('--backend-url must be https');
