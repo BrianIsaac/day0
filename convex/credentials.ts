@@ -12,6 +12,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
+import { isOrganisationOwnerKey, ORGANISATION_HOLDER } from '../src/lib/organisation-key';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/credential-ref';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
@@ -25,6 +26,39 @@ const credentialSource = v.union(
 );
 
 type CredentialKind = 'value' | 'location' | 'oauth';
+
+/** Who holds a row other than its owner: only the organisation, under the reserved key (AC12). */
+const credentialHolder = v.literal(ORGANISATION_HOLDER);
+
+/** Why a write is refused whose holder and owner key disagree. */
+const ORGANISATION_HOLDER_MISMATCH =
+  'An organisation credential is stored under the reserved organisation key and only there.';
+
+/** Why an organisation credential from a documentation page is refused. */
+const ORGANISATION_PAGE_SOURCE =
+  "An organisation credential is entered by IT or issued to Day0, never read off an owner's page.";
+
+/**
+ * Refuse a credential write whose holder and owner key disagree (AC12): a row the organisation
+ * holds carries `holder: 'organisation'` and the reserved key together, so an owner-keyed read
+ * never reaches it by index and its seal binds the organisation; and it is never page-derived,
+ * since every documentation source is an owner's.
+ *
+ * @throws Error naming the organisation when the holder, the key or the source disagree.
+ */
+function assertHolderOfKey(
+  userId: string,
+  holder: typeof ORGANISATION_HOLDER | undefined,
+  source: CredentialSource,
+): void {
+  const organisationKey = isOrganisationOwnerKey(userId);
+  if (organisationKey !== (holder === ORGANISATION_HOLDER)) {
+    throw new Error(ORGANISATION_HOLDER_MISMATCH);
+  }
+  if (organisationKey && pageSource(source) !== undefined) {
+    throw new Error(ORGANISATION_PAGE_SOURCE);
+  }
+}
 
 type CredentialSource = { ref: string; sourceId: Id<'docSources'> } | 'entered' | 'oauth';
 
@@ -124,7 +158,8 @@ export const REVOKE_STANDS_REASON =
 
 /**
  * Store encrypted credential bytes, upserting page-derived rows by source.
- * Internal; written by `store`.
+ * Internal; written by `store`. A row the organisation holds carries its
+ * holder and the reserved key together, or nothing is written.
  *
  * A changed source value is a rotation: the stable row takes the new value
  * and its usage restarts. Only a person sets `revokedAt`, so neither a
@@ -146,8 +181,11 @@ export const persistEncrypted = internalMutation({
     appId: v.optional(v.string()),
     rotated: v.boolean(),
     syncRunId: v.optional(v.id('docSyncRuns')),
+    /** `organisation` for a row the organisation holds, under the reserved key; absent for an owner's. */
+    holder: v.optional(credentialHolder),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
+    assertHolderOfKey(args.userId, args.holder, args.source);
     const sourced = pageSource(args.source);
     await fenceSyncWrite(ctx, sourced?.sourceId, args.syncRunId);
     if (sourced) {
@@ -172,6 +210,7 @@ export const persistEncrypted = internalMutation({
     if (!existing) {
       return await ctx.db.insert('credentials', {
         userId: args.userId,
+        ...(args.holder === undefined ? {} : { holder: args.holder }),
         kind: args.kind,
         label: args.label,
         ciphertext: args.ciphertext,
@@ -585,7 +624,9 @@ async function storedValue(
  * row stored under a ref from before value-keyed refs, or under a fingerprint
  * taken with a key since rotated, is moved to the new ref rather than stored
  * again, so no known value mints a second row. The value is sealed bound to its
- * owner, so it opens only on that owner's row. The Node-only AES operation is
+ * owner, so it opens only on that owner's row; a value the organisation holds
+ * (`holder: 'organisation'` under the reserved key) is sealed bound to the
+ * organisation (F18). The Node-only AES operation is
  * isolated in `credentialCryptoActions` because Convex forbids a Node module
  * from also exporting this module's public query and mutation.
  */
@@ -601,8 +642,14 @@ export const store = internalAction({
     appId: v.optional(v.string()),
     /** The sync generation that found the value; every write it makes is fenced by it. */
     syncRunId: v.optional(v.id('docSyncRuns')),
+    /**
+     * `organisation` for a value the organisation holds (an organisation connection's secret),
+     * with `userId` the reserved organisation key; absent for an owner's.
+     */
+    holder: v.optional(credentialHolder),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
+    assertHolderOfKey(args.userId, args.holder, args.source);
     const plaintext = credentialPlaintext(args.kind, args.plaintext);
     const sourced = pageSource(args.source);
     if (sourced) {
@@ -663,6 +710,7 @@ export const store = internalAction({
     });
     return await ctx.runMutation(internal.credentials.persistEncrypted, {
       userId: args.userId,
+      ...(args.holder === undefined ? {} : { holder: args.holder }),
       source: args.source,
       ...metadata,
       ...encrypted,
@@ -739,9 +787,10 @@ export const summaryForOwner = query({
 });
 
 /**
- * Count active stored credentials for local setup diagnostics: neither
- * revoked by a person nor superseded by a sync that no longer found them.
- * Internal.
+ * Count active stored credentials for local setup diagnostics: the owners'
+ * rows neither revoked by a person nor superseded by a sync that no longer
+ * found them. The organisation's rows (an organisation connection's secret)
+ * are IT's, reported by the access check, and not counted here. Internal.
  */
 export const countStored = internalQuery({
   args: {},
@@ -749,7 +798,10 @@ export const countStored = internalQuery({
     const credentials = await ctx.db.query('credentials').take(1_001);
     if (credentials.length > 1_000) throw new Error('Credential count exceeds the setup limit.');
     return credentials.filter(
-      (credential) => !credential.revokedAt && credential.status !== 'superseded',
+      (credential) =>
+        credential.holder === undefined &&
+        !credential.revokedAt &&
+        credential.status !== 'superseded',
     ).length;
   },
 });

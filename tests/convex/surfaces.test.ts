@@ -1901,6 +1901,27 @@ describe('surface connection lifecycle metadata', (): void => {
     expect((await readSurface(harness, surfaceId)).reason).toBeUndefined();
   });
 
+  it('writes whom the card acts as when a credential is attached: the pasted key, by its label (11-AO)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { managerApprovedAt: 10, providerIdentityId: 'U0BOT' });
+    });
+    const credentialId = await seedOwnersCredential(harness);
+    await harness.mutation(internal.surfaces.attachCredential, {
+      surfaceId,
+      credentialId,
+      credentialKind: 'value',
+    });
+    expect((await readSurface(harness, surfaceId)).actsAs).toEqual({
+      kind: 'shared-key',
+      label: 'Linear token',
+      providerIdentityId: 'U0BOT',
+    });
+  });
+
   it('demotes an expired connection and records a safe lifecycle event', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

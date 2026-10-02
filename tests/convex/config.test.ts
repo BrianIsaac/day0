@@ -185,7 +185,21 @@ describe('config.whoAmI, the live sign-in check', (): void => {
     await expect(eve.query(api.config.whoAmI, {})).resolves.toBeNull();
   });
 
-  it('says when the address is not verified', async (): Promise<void> => {
+  it('says when the address is not verified, under an issuer that controls its addresses', async (): Promise<void> => {
+    const okta = 'https://acme.okta.com';
+    vi.stubEnv('DAY0_OIDC_ISSUER', okta);
+    vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const harness = convexTest(schema, allConvexModules());
+    const nora = harness.withIdentity(
+      managerIdentity('nora', { issuer: okta, email: 'nora@acme.test', emailVerified: undefined }),
+    );
+    await expect(nora.query(api.config.whoAmI, {})).resolves.toMatchObject({
+      verifiedAddress: null,
+    });
+  });
+
+  it('answers a generic issuer’s unverified caller with null, refused as every guarded function refuses it (decision 7 (b))', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
     vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
     vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
@@ -197,8 +211,6 @@ describe('config.whoAmI, the live sign-in check', (): void => {
         emailVerified: undefined,
       }),
     );
-    await expect(nora.query(api.config.whoAmI, {})).resolves.toMatchObject({
-      verifiedAddress: null,
-    });
+    await expect(nora.query(api.config.whoAmI, {})).resolves.toBeNull();
   });
 });

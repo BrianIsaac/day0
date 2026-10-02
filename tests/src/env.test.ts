@@ -92,6 +92,7 @@ describe('the customer-local block of the environment contract', (): void => {
     vi.stubEnv('DAY0_OIDC_CLIENT_SECRET', 'day0-test-client-secret');
     vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
     vi.stubEnv('DAY0_SESSION_SECRET', '');
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
     const env = await loadEnv();
     expect(env).toMatchObject({
       DAY0_PROFILE: 'customer-local',
@@ -100,9 +101,17 @@ describe('the customer-local block of the environment contract', (): void => {
       DAY0_OIDC_AUDIENCE: 'day0-app',
       DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret',
       DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
+      DAY0_ADMINISTRATORS: 'ines@acme.test',
     });
     expect(env.DAY0_SESSION_SECRET).toBeUndefined();
     expect(process.env.DAY0_SESSION_SECRET).toBeUndefined();
+  });
+
+  it('reads an empty administrators list as absent', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', '');
+    const env = await loadEnv();
+    expect(env.DAY0_ADMINISTRATORS).toBeUndefined();
+    expect(process.env.DAY0_ADMINISTRATORS).toBeUndefined();
   });
 
   it('refuses a profile, or a browser copy of one, that names none', async (): Promise<void> => {

@@ -51,6 +51,7 @@ import { approvedChannelNames } from '../src/surfaces/intake-scope';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { organisationConnectedRefusal, organisationSystemOf } from '../src/surfaces/access-request';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
 import {
@@ -1640,9 +1641,12 @@ export function credentialLandingRefusal(
  * and probe it at once.
  *
  * Public, owner-guarded (`assertOwnsAgentAction`), real mode only. Writes one
- * `credentials` row (encrypted) and the surface's credential fields; refuses
- * with a `ConvexError`, storing nothing, before the card is approved or when
- * Slack is given anything but a bot token (`credentialLandingRefusal`).
+ * `credentials` row (encrypted) and the surface's credential fields, whom the
+ * card acts as among them; refuses with a `ConvexError`, storing nothing,
+ * before the card is approved, when Slack is given anything but a bot token
+ * (`credentialLandingRefusal`), and when the card's system has an active
+ * organisation connection, whose credential the card uses instead
+ * (`organisationConnectedRefusal`).
  */
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
@@ -1658,6 +1662,13 @@ export const landCredential = action({
     if (!plaintext) throw new Error('Credential value is required.');
     const refusal = credentialLandingRefusal(context.surface, plaintext);
     if (refusal) throw new ConvexError(refusal);
+    const system = organisationSystemOf(context.surface);
+    const connection =
+      system === undefined
+        ? null
+        : await ctx.runQuery(internal.organisationConnections.activeFor, { system });
+    if (connection !== null)
+      throw new ConvexError(organisationConnectedRefusal(connection.displayName));
     // A value typed into the card is never the product of an OAuth install:
     // on an `oauth` surface it is the shared bot token landed as the fallback,
     // a shared credential like any other, so writes through it carry

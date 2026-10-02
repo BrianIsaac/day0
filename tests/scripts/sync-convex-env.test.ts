@@ -171,6 +171,34 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.deployment).not.toContain('DAY0_OIDC_ALLOWED_DOMAINS=acme.test');
   });
 
+  it('puts the administrators on the deployment before the issuer and clears a list dropped from the file (B8)', (): void => {
+    const local = [
+      'DAY0_PROFILE=customer-local',
+      'DAY0_OIDC_AUDIENCE=day0',
+      'DAY0_OIDC_ISSUER=https://sso.example.com/realms/ops',
+      'DAY0_OIDC_ALLOWED_DOMAINS=acme.test',
+      'DAY0_ADMINISTRATORS=ines@acme.test,ops@acme.test',
+      '',
+    ].join('\n');
+    const pushed = runSync([], local);
+    expect(pushed.status).toBe(0);
+    expect(pushed.calls).toContain(
+      'convex env set DAY0_ADMINISTRATORS -- ines@acme.test,ops@acme.test',
+    );
+    expect(
+      pushed.calls.findIndex((call) => call.startsWith('convex env set DAY0_ADMINISTRATORS ')),
+    ).toBeLessThan(
+      pushed.calls.findIndex((call) => call.startsWith('convex env set DAY0_OIDC_ISSUER ')),
+    );
+
+    const localDev = runSync([], 'DAY0_ADMINISTRATORS=boss@day0.local\n');
+    expect(localDev.calls).toContain('convex env set DAY0_ADMINISTRATORS -- boss@day0.local');
+
+    const dropped = runSync(['DAY0_ADMINISTRATORS=ines@acme.test'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_ADMINISTRATORS');
+    expect(dropped.deployment).not.toContain('DAY0_ADMINISTRATORS=ines@acme.test');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [

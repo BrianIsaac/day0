@@ -604,3 +604,45 @@ export const sendTransferNotice = internalAction({
     return { sent: false, reason: outcome.reason };
   },
 });
+
+/** What the access request's DM action answers: sent, or why not. */
+const accessRequestOutcomeValidator = v.object({
+  sent: v.boolean(),
+  reason: v.optional(v.string()),
+});
+
+/**
+ * Internal, scheduled by a real-mode `accessRequests.draft`: the access request as a message in
+ * the manager's own DM (the access plan, section 4.5; A24), through the employee's Slack card, so
+ * the manager can forward it however their IT works. Claimed by `accessRequests.claimMessage`
+ * for the draft it was scheduled for, posted with `chat.postMessage` (the card's allowlist names
+ * it), and recorded with Slack's timestamp once Slack has it. The words are the card's and the
+ * export's. A failed post is logged and not tried again: the card still offers Copy and Email.
+ */
+export const sendAccessRequest = internalAction({
+  args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
+  returns: accessRequestOutcomeValidator,
+  handler: async (ctx, args): Promise<Infer<typeof accessRequestOutcomeValidator>> => {
+    const claimed = await ctx.runMutation(internal.accessRequests.claimMessage, args);
+    if (!claimed.claimed) return { sent: false, reason: claimed.reason };
+    let credential = '';
+    let providerTs: string;
+    try {
+      credential = await decryptCredential(ctx, claimed.credentialId);
+      const posted = await callSlackForNotice(credential, 'chat.postMessage', {
+        body: { channel: claimed.channel, text: claimed.text },
+      });
+      if (typeof posted.ts !== 'string') throw new Error('Slack chat.postMessage returned no ts.');
+      providerTs = posted.ts;
+    } catch (error) {
+      const reason = safeFailureMessage(error, credential, 'Access request DM failed.');
+      log.warn('the access request was not sent to the manager; it is not tried again', {
+        surfaceId: args.surfaceId,
+        reason,
+      });
+      return { sent: false, reason };
+    }
+    await ctx.runMutation(internal.accessRequests.recordMessage, { ...args, providerTs });
+    return { sent: true };
+  },
+});

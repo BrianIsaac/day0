@@ -966,6 +966,9 @@ describe('one code for every open action decision', (): void => {
   }
 
   it('is offered from the second open request on, names every member, and decides them all from one reply', async (): Promise<void> => {
+    // The approval schedules each apply, which this test does not exercise: on fake timers it never
+    // runs, and the file's afterEach discards it, so no apply posts through a later test's fetch.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
@@ -1618,5 +1621,186 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     // The ask and the notice's own record; no reply answered the request.
     expect(handover).toEqual(['manager.transfer-asked', 'manager.transfer-notice']);
     expect(noticesIn(calls)).toHaveLength(1);
+  });
+});
+
+describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
+  const POSTED_TS = '1790000300.000100';
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** Every Slack call, answering the post as `postFails` says. */
+  function slackDm(options: { readonly postFails?: boolean } = {}): Array<{
+    method: string;
+    channel?: string;
+    text?: string;
+  }> {
+    const calls: Array<{ method: string; channel?: string; text?: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}): Promise<Response> => {
+        const method = input.pathname.split('/').pop() ?? '';
+        const body =
+          typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, string>) : {};
+        calls.push({ method, channel: body.channel, text: body.text });
+        const payload =
+          method === 'chat.postMessage' && options.postFails
+            ? { ok: false, error: 'channel_not_found' }
+            : { ok: true, ts: POSTED_TS };
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    return calls;
+  }
+
+  /** Maya with a connected Slack card that DMs her manager and an approved Linear card that asks IT. */
+  async function seedMaya(
+    harness: TestConvex<typeof schema>,
+    grants: readonly string[] = ['boss:message'],
+  ): Promise<{ agentId: Id<'agents'>; linearId: Id<'surfaces'> }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (const scope of grants) {
+        await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
+      }
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'team-chat',
+        displayName: 'Team chat',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        toolAllowlist: ['auth.test', 'chat.postMessage'],
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialId,
+        credentialKind: 'value',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+      const linearId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://api.linear.app/graphql',
+        managerApprovedAt: 2,
+        request: { scopeRequested: ['linear:read'] },
+        credentialLanded: false,
+        createdAt: 1,
+      });
+      return { agentId, linearId };
+    });
+  }
+
+  /** Slack's escaping undone: what the manager reads in the DM. */
+  function asRead(text: string | undefined): string | undefined {
+    return text?.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+
+  it('posts the card’s words to the manager’s DM once, and records Slack’s timestamp', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId: linearId });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts).toHaveLength(1);
+    expect(posts[0].channel).toBe('D0MANAGER');
+    expect(asRead(posts[0].text)).toBe(drafted.text);
+    const exported = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((event) => event.type === 'surface.access-requested')
+        .map((event) => (event.payload as { text: string }).text),
+    );
+    expect(exported).toEqual([drafted.text]);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(linearId));
+    expect(surface?.accessRequest).toMatchObject({
+      messagedAt: expect.any(Number),
+      messageProviderTs: POSTED_TS,
+    });
+    await expect(
+      harness.action(internal.managerChannelActions.sendAccessRequest, {
+        surfaceId: linearId,
+        draftedAt: drafted.draftedAt ?? 0,
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'the request was already sent to the manager' });
+    expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
+  it('sends the words the draft recorded, even when the card changed before the DM went out', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const drafted = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.accessRequests.draft, { surfaceId: linearId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linearId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
+    });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts.map((post) => asRead(post.text))).toEqual([drafted.text]);
+  });
+
+  it('records no DM Slack refused, and sends none without the manager DM’s grant', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    slackDm({ postFails: true });
+    const refused = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(refused);
+    await refused.withIdentity(managerIdentity()).mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+    });
+    await refused.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const kept = await refused.run(async (ctx) => await ctx.db.get(linearId));
+    expect(kept?.accessRequest?.messagedAt).toBeUndefined();
+
+    const calls = slackDm();
+    const ungranted = convexTest(schema, allConvexModules());
+    const seeded = await seedMaya(ungranted, []);
+    await ungranted.withIdentity(managerIdentity()).mutation(api.accessRequests.draft, {
+      surfaceId: seeded.linearId,
+    });
+    await ungranted.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(calls).toEqual([]);
   });
 });

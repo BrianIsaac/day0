@@ -481,6 +481,60 @@ describe('recordWords', (): void => {
   });
 });
 
+describe('the access request and the organisation connection ledger in the record (11-AO)', (): void => {
+  it('says the manager asked IT for access, naming the scopes', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.access-requested',
+          payload: {
+            surfaceId: 's1',
+            system: 'linear',
+            reason: 'no-connection',
+            scopes: ['linear:read', 'linear:write'],
+            text: 'request',
+          },
+        },
+        { ...subject, connection: 'Linear' },
+      ),
+    ).toBe('You asked IT for access to the Linear connection (linear:read, linear:write).');
+  });
+
+  it('says what happened to an organisation connection and who did it, with a revoke’s reason', (): void => {
+    const named = {
+      organisationConnectionId: 'c1',
+      system: 'slack',
+      displayName: 'Slack',
+    };
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-landed',
+          payload: { ...named, via: 'organisation-page', kind: 'slack-configuration' },
+        },
+        subject,
+      ),
+    ).toBe('Slack was connected for the organisation by an administrator.');
+    expect(
+      recordWords(
+        { type: 'organisation.connection-rotated', payload: { ...named, via: 'setup-cli' } },
+        subject,
+      ),
+    ).toBe("The organisation's Slack connection was given a new secret by the setup verb.");
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-revoked',
+          payload: { ...named, via: 'organisation-page', reason: 'the workspace moved.' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "The organisation's Slack connection was revoked by an administrator: the workspace moved.",
+    );
+  });
+});
+
 describe('what an evaluation and a plan approval say in the record (walk m15)', (): void => {
   const subject = { name: 'Ada', item: 'Priya asks for tracker update' };
 

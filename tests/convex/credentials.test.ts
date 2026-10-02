@@ -1185,3 +1185,93 @@ describe("the organisation's rows and the owner-keyed reads (11-AK, AC12)", (): 
     ).resolves.toEqual([]);
   });
 });
+
+describe('the organisation holder through the store (11-AO, AC12)', (): void => {
+  const ORGANISATION_SECRET = 'xoxe-1234567890-abcdefghij';
+
+  it('stores a value the organisation holds under the reserved key, sealed for it, and opens it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Slack configuration refresh token',
+      plaintext: ORGANISATION_SECRET,
+      source: 'entered',
+    });
+    const [row] = await rows(harness);
+    expect(row).toMatchObject({
+      _id: credentialId,
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      keyId: credentialKeyId(process.env.DAY0_CREDENTIAL_KEY ?? ''),
+    });
+    expect(JSON.stringify(row)).not.toContain(ORGANISATION_SECRET);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      ORGANISATION_SECRET,
+    );
+  });
+
+  it('refuses a holder and a key that disagree, and a page-derived organisation value, storing nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, ORGANISATION_OWNER_KEY);
+    const base = { kind: 'value' as const, label: 'secret', plaintext: ORGANISATION_SECRET };
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: 'owner',
+        holder: ORGANISATION_HOLDER,
+        source: 'entered',
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: ORGANISATION_OWNER_KEY,
+        source: 'entered',
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        source: { sourceId, ref: 'slack-config' },
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.mutation(internal.credentials.persistEncrypted, {
+        userId: ORGANISATION_OWNER_KEY,
+        kind: 'value',
+        label: 'secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        keyId: 'key',
+        source: 'entered',
+        rotated: false,
+      }),
+    ).rejects.toThrow(/organisation/);
+    expect(await rows(harness)).toEqual([]);
+  });
+
+  it('counts only the owners’ credentials for the setup diagnostic, never the organisation’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Linear client secret',
+      plaintext: ORGANISATION_SECRET,
+      source: 'entered',
+    });
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear access',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+  });
+});

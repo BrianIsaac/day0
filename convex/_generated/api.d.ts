@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as accessRequests from '../accessRequests.js';
 import type * as agents from '../agents.js';
 import type * as baselineActions from '../baselineActions.js';
 import type * as charters from '../charters.js';
 import type * as config from '../config.js';
+import type * as connectionEvents from '../connectionEvents.js';
 import type * as corrections from '../corrections.js';
 import type * as coworker from '../coworker.js';
 import type * as credentialCryptoActions from '../credentialCryptoActions.js';
@@ -41,6 +43,7 @@ import type * as mock from '../mock.js';
 import type * as mockSeed from '../mockSeed.js';
 import type * as onboarding from '../onboarding.js';
 import type * as oneToOne from '../oneToOne.js';
+import type * as organisationConnections from '../organisationConnections.js';
 import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
 import type * as ownership from '../ownership.js';
@@ -77,10 +80,12 @@ import type * as workspace from '../workspace.js';
 import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
 
 declare const fullApi: ApiFromModules<{
+  accessRequests: typeof accessRequests;
   agents: typeof agents;
   baselineActions: typeof baselineActions;
   charters: typeof charters;
   config: typeof config;
+  connectionEvents: typeof connectionEvents;
   corrections: typeof corrections;
   coworker: typeof coworker;
   credentialCryptoActions: typeof credentialCryptoActions;
@@ -110,6 +115,7 @@ declare const fullApi: ApiFromModules<{
   mockSeed: typeof mockSeed;
   onboarding: typeof onboarding;
   oneToOne: typeof oneToOne;
+  organisationConnections: typeof organisationConnections;
   orientationActions: typeof orientationActions;
   orientationData: typeof orientationData;
   ownership: typeof ownership;

@@ -1477,6 +1477,68 @@ describe('credential landing from the card', (): void => {
     ]);
   });
 
+  it('writes whom the card acts as: the pasted key, named as the documentation labels it (11-AO)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    await harness.withIdentity(managerIdentity()).action(liveApi.surfaceActions.landCredential, {
+      surfaceId,
+      label: '',
+      plaintext: 'lin_api_test_value',
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
+  it("refuses a pasted credential while the card's system has an active organisation connection, and takes one again once it is revoked (11-AO)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const organisationConnectionId = await harness.action(
+      liveInternal.organisationConnections.landFromSetup,
+      {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        clientId: 'lin-client-1',
+        secret: 'lin_oauth_secret_0123456789',
+      },
+    );
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    const owner = harness.withIdentity(managerIdentity());
+    const land = (): Promise<unknown> =>
+      owner.action(liveApi.surfaceActions.landCredential, {
+        surfaceId,
+        label: '',
+        plaintext: 'lin_api_pasted_value',
+      });
+    await expect(land()).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ConvexError &&
+        error.data ===
+          'Linear is connected for your organisation by IT, so this card connects through that connection, never a pasted key. Nothing was stored.',
+    );
+    const refused = await harness.run(async (ctx) => ({
+      surface: await ctx.db.get(surfaceId),
+      owners: (await ctx.db.query('credentials').collect()).filter(
+        (row) => row.holder === undefined,
+      ),
+    }));
+    expect(refused.owners).toEqual([]);
+    expect(refused.surface?.credentialId).toBeUndefined();
+
+    await harness.mutation(liveInternal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId,
+      reason: 'the app was removed',
+    });
+    await expect(land()).resolves.toEqual({ landed: true, probeScheduled: true });
+  });
+
   it('stores a documented-location landing as kind location', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
