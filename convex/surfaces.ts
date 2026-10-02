@@ -54,6 +54,7 @@ import {
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { organisationSystemOf } from '../src/surfaces/access-request';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
@@ -697,6 +698,50 @@ async function proposalOwnerRefusal(
   return null;
 }
 
+/** The credential a proposal leaves on its card, and whom the card acts as through it. */
+interface DocumentedKeyBinding {
+  readonly credentialId: Id<'credentials'> | undefined;
+  readonly credentialKind: Doc<'surfaces'>['credentialKind'];
+  readonly actsAs: Doc<'surfaces'>['actsAs'];
+}
+
+/**
+ * What a proposal binds of the key the orientation found in the documentation (the wave 11
+ * review's B1, decision 1 (a), a product call, flagged): nothing where IT's active organisation
+ * connection covers the card's system, since the card connects through that connection and never
+ * a key IT did not choose (the same rule `landCredential` keeps for a paste); otherwise the key,
+ * with the card stamped a shared key named by the key's label, so the manager approves knowing
+ * whom the employee acts as. A proposal that found no key binds none and names no identity.
+ *
+ * @param db - The proposal's reader.
+ * @param proposal - The card's name, the proposal's rung and endpoint, and the documented key it
+ *   would bind.
+ */
+async function documentedKeyBinding(
+  db: QueryCtx['db'],
+  proposal: {
+    readonly displayName: string;
+    readonly path: string;
+    readonly endpoint?: string;
+    readonly credentialId?: Id<'credentials'>;
+    readonly credentialKind?: Doc<'surfaces'>['credentialKind'];
+  },
+): Promise<DocumentedKeyBinding> {
+  const unbound = { credentialId: undefined, credentialKind: undefined, actsAs: undefined };
+  if (proposal.credentialId === undefined || proposal.credentialKind === undefined) return unbound;
+  const system = organisationSystemOf({ endpoint: proposal.endpoint, path: proposal.path });
+  if (system !== undefined && (await activeConnectionFor({ db }, system)) !== null) return unbound;
+  const credential = await db.get(proposal.credentialId);
+  return {
+    credentialId: proposal.credentialId,
+    credentialKind: proposal.credentialKind,
+    actsAs: actsAsAtUpgrade(
+      { displayName: proposal.displayName },
+      { kind: proposal.credentialKind, label: credential?.label ?? '' },
+    ),
+  };
+}
+
 /**
  * Store an evidence-backed connect request.
  *
@@ -709,7 +754,9 @@ async function proposalOwnerRefusal(
  * `declared`, and for a proposal that binds a credential not the employee's current owner's or
  * quotes documentation that owner does not hold ({@link proposalOwnerRefusal}): an orientation
  * still running when a handover moved the employee read the old owner's pages and credentials.
- * The card stays declared for the new manager's own proposal.
+ * The card stays declared for the new manager's own proposal. A documented key is bound only
+ * where no active organisation connection covers the system, and the card is then stamped a
+ * shared key ({@link documentedKeyBinding}; B1).
  */
 export const propose = internalMutation({
   args: {
@@ -737,6 +784,10 @@ export const propose = internalMutation({
       });
       return false;
     }
+    const binding = await documentedKeyBinding(ctx.db, {
+      ...args,
+      displayName: surface.displayName,
+    });
     const now = Date.now();
     await ctx.db.patch(args.surfaceId, {
       verdict: 'proposed',
@@ -752,8 +803,7 @@ export const propose = internalMutation({
             : undefined,
       endpoint: args.endpoint,
       probeAttempts: undefined,
-      credentialId: args.credentialId,
-      credentialKind: args.credentialId ? args.credentialKind : undefined,
+      ...binding,
       credentialLocation: args.credentialLocation,
       expiresAt: undefined,
       accessSetBy: undefined,

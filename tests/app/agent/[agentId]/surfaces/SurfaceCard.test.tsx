@@ -667,3 +667,64 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
   });
 });
+
+describe('a key found in the documentation (B1, decision 1 (a))', (): void => {
+  const documented = {
+    request: { credential: { found: 'value', label: 'Linear API key' } },
+  } as Partial<ListedSurface>;
+  const wikiKey = new Map([
+    [
+      'cred-wiki',
+      { _id: 'cred-wiki', label: 'Linear API key', source: { sourceId: 'wiki', ref: 'linear.md' } },
+    ],
+  ]);
+
+  it("names IT's connection where it covers the system, and says the documented key was found and is not used", (): void => {
+    const markup = render(listed(documented), {
+      organisation: organisation({ system: 'linear', mode: 'shared' }),
+    });
+    expect(fact(markup, 'Acts as')).toBe(
+      'the Day0 app shared by your employees; Day0 records which employee did what',
+    );
+    expect(fact(markup, 'Documented key')).toBe(
+      'Found in your documentation and not used: IT connected Linear for your organisation, so Maya acts through that connection.',
+    );
+  });
+
+  it('stamps a documented key bound with no connection a shared key, never one someone pasted', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        credentialId: 'cred-wiki' as ListedSurface['credentialId'],
+        credentialKind: 'value',
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { credentials: wikiKey },
+    );
+    const actsAs = fact(markup, 'Acts as') ?? '';
+    expect(actsAs).toContain(
+      "a key found in your documentation; its writes show that key's owner, and Day0 adds Maya's name to each",
+    );
+    expect(actsAs).toContain('>Documented key</span>');
+    expect(actsAs).not.toMatch(/past/i);
+    expect(fact(markup, 'Documented key')).toBeUndefined();
+  });
+
+  it('offers the move off a documented key in its own words once IT connected the system', (): void => {
+    const markup = render(
+      listed({
+        ...documented,
+        verdict: 'connected',
+        credentialLanded: true,
+        credentialId: 'cred-wiki' as ListedSurface['credentialId'],
+        managerApprovedAt: NOW - 85 * DAY,
+        expiresAt: NOW + 3 * DAY,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      { credentials: wikiKey, organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).toContain('instead of the key found in your documentation');
+    expect(markup).toMatch(/<button[^>]*>Move off the documented key<\/button>/);
+  });
+});

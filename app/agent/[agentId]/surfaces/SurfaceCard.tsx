@@ -32,13 +32,16 @@ import {
   cardIdentity,
   connectedForOrganisationWords,
   disconnectLines,
+  documentedKeyUnusedWords,
   expectedCredential,
+  moveLabel,
   moveOfferWords,
   noWayOnWords,
   slackChannelsGoWords,
   identityChip,
   reachedWords,
   stateChip,
+  type KeyOrigin,
   type OrganisationSystem,
 } from './card-words';
 import { CredentialField } from './CredentialField';
@@ -290,15 +293,30 @@ export function SurfaceCard({
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
   });
+  const heldKeyFrom: KeyOrigin | undefined =
+    summary === undefined
+      ? undefined
+      : typeof summary.source === 'object'
+        ? 'documentation'
+        : summary.source === 'entered'
+          ? 'paste'
+          : undefined;
   const identity = cardIdentity(surface, connection, {
     selfProvisions:
       slack &&
       provisioningPresentation.stage !== 'not-applicable' &&
       provisioningPresentation.stage !== 'unavailable',
+    heldKeyFrom,
   });
   const identityNames = { employee: context.employeeName, system: surface.displayName };
   const showsIdentity = !NO_IDENTITY.has(surface.verdict);
-  const chipForIdentity = identityChip(identity.kind);
+  const chipForIdentity = identityChip(identity);
+  // B1, decision 1 (a): a key the documentation gives is never bound where IT's connection covers
+  // the system, and the card says it was found and is not used.
+  const documentedKeyUnused =
+    covering !== undefined &&
+    request?.credential?.found === 'value' &&
+    identity.keyFrom !== 'documentation';
   const approvedAccess =
     ACCESS_VERDICTS.has(surface.verdict) && surface.managerApprovedAt !== undefined;
   const ended = accessStanding(surface, context.now, zone).kind === 'ended';
@@ -320,7 +338,9 @@ export function SurfaceCard({
               selfProvisions: false,
             }),
             identityNames,
+            identity.keyFrom,
           ),
+          label: moveLabel(identity.keyFrom ?? 'paste'),
           onMove,
         }
       : undefined;
@@ -415,6 +435,11 @@ export function SurfaceCard({
             {covering !== undefined && showsIdentity ? (
               <Fact label="Connection">
                 {connectedForOrganisationWords(covering, zone ?? deploymentZone())}
+              </Fact>
+            ) : null}
+            {documentedKeyUnused && showsIdentity ? (
+              <Fact label="Documented key">
+                {documentedKeyUnusedWords(surface.displayName, context.employeeName)}
               </Fact>
             ) : null}
             {approvedAt !== undefined ? (

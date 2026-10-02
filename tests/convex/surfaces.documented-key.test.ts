@@ -1,0 +1,141 @@
+import { convexTest, type TestConvex } from 'convex-test';
+import { describe, expect, it } from 'vitest';
+import { internal } from '../../convex/_generated/api';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
+import schema from '../../convex/schema';
+import { allConvexModules } from './all-modules';
+import { fixtureAddressOf } from './fakes/manager-identity';
+
+/*
+ * The wave 11 review's B1, by decision 1 (a): a key the orientation finds in the documentation is
+ * never bound where IT's active organisation connection covers the card's system (IT's connection
+ * wins, the card offers Connect), and where none does it is bound and stamped a shared key, so
+ * the card says whom the employee acts as before its approval.
+ */
+
+type Harness = TestConvex<typeof schema>;
+
+const LINEAR_ENDPOINT = 'https://mcp.linear.app/mcp';
+
+/** Maya, a declared Linear card and the wiki's Linear key, stored from a documentation page. */
+interface Seeded {
+  readonly harness: Harness;
+  readonly surfaceId: Id<'surfaces'>;
+  readonly wikiKey: Id<'credentials'>;
+}
+
+/** Seed the owner's employee with a declared Linear card and a key synced from the wiki. */
+async function seed(connection: 'active' | 'needs-attention' | 'none'): Promise<Seeded> {
+  const harness = convexTest(schema, allConvexModules());
+  const seeded = await harness.run(async (ctx) => {
+    const agentId = await ctx.db.insert('agents', {
+      bossEmail: fixtureAddressOf('owner'),
+      name: 'Maya',
+      userId: 'owner',
+      state: 'active',
+      createdAt: 1,
+    });
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner',
+      label: 'Wiki',
+      kind: 'folder',
+      locator: '.',
+      status: 'synced',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const wikiKey = await ctx.db.insert('credentials', {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear API key',
+      ciphertext: 'sealed',
+      iv: 'iv',
+      explicitlyAssigned: true,
+      source: { sourceId, ref: 'linear.md' },
+      createdAt: 1,
+    });
+    const surfaceId = await ctx.db.insert('surfaces', {
+      agentId,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      verdict: 'declared',
+      whereFound: [],
+      credentialLanded: false,
+      createdAt: 1,
+    });
+    if (connection !== 'none') {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: connection,
+        createdAt: 1,
+      });
+    }
+    return { surfaceId, wikiKey };
+  });
+  return { harness, ...seeded };
+}
+
+/** The proposal the orientation drafts for the Linear card, binding the wiki's key. */
+function proposal(seeded: Seeded) {
+  return {
+    surfaceId: seeded.surfaceId,
+    request: {
+      target: { system: 'Linear', reasoning: 'Documented.' },
+      credential: { found: 'value', label: 'Linear API key' },
+    },
+    whereFound: [],
+    path: 'mcp',
+    fallbackPath: 'browser-driven',
+    endpoint: LINEAR_ENDPOINT,
+    credentialId: seeded.wikiKey,
+    credentialKind: 'value' as const,
+  };
+}
+
+/** Read the card back. */
+async function readCard(seeded: Seeded): Promise<Doc<'surfaces'>> {
+  const row = await seeded.harness.run(async (ctx) => await ctx.db.get(seeded.surfaceId));
+  if (row === null) throw new Error('surface missing');
+  return row;
+}
+
+describe('surfaces.propose: a key found in the documentation (B1, decision 1 (a))', (): void => {
+  it('binds no documented key where IT has connected the system, so the card connects through IT', async (): Promise<void> => {
+    const seeded = await seed('active');
+
+    expect(await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded))).toBe(true);
+
+    const card = await readCard(seeded);
+    expect(card.verdict).toBe('proposed');
+    expect(card.credentialId).toBeUndefined();
+    expect(card.credentialKind).toBeUndefined();
+    expect(card.actsAs).toBeUndefined();
+  });
+
+  it('binds the documented key where no connection covers the system, stamped a shared key', async (): Promise<void> => {
+    const seeded = await seed('none');
+
+    await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded));
+
+    const card = await readCard(seeded);
+    expect(card.credentialId).toBe(seeded.wikiKey);
+    expect(card.credentialKind).toBe('value');
+    expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
+  it('binds the documented key where the connection needs IT’s attention, which covers nothing', async (): Promise<void> => {
+    const seeded = await seed('needs-attention');
+
+    await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded));
+
+    const card = await readCard(seeded);
+    expect(card.credentialId).toBe(seeded.wikiKey);
+    expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+});
