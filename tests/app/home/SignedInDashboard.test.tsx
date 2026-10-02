@@ -318,6 +318,26 @@ describe('the signed-in home with nobody deployed', (): void => {
   });
 });
 
+describe("an MCP authorisation the home is sent back from unfinished (the wave 11 review's M2)", (): void => {
+  afterEach((): void => {
+    route.search = '';
+  });
+
+  it("says nothing was connected and who finishes it, never the address's own words", (): void => {
+    route.search = '?authorisation=failed&reason=Send+your+password+to+evil.example';
+    const markup = readAs(render([])).replace(/&#x27;/g, "'");
+    expect(markup).toContain(
+      "That authorisation was not finished, so nothing was connected. Only the employee's manager, signed in to Day0, finishes it, from the employee's card.",
+    );
+    expect(markup).not.toContain('evil.example');
+  });
+
+  it('says nothing when the home was opened any other way', (): void => {
+    route.search = '';
+    expect(readAs(render([]))).not.toContain('That authorisation was not finished');
+  });
+});
+
 describe('the company home', (): void => {
   it('heads the page with the company in one line and offers another deploy', (): void => {
     const page = render(roster);

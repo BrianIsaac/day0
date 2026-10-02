@@ -10,6 +10,7 @@ import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
 import { AcceptTransfer } from './AcceptTransfer';
+import { AuthorisationUnfinished } from './AuthorisationUnfinished';
 import { DeployForm } from './DeployForm';
 import { HandedOver } from './HandedOver';
 import { EmployeeRoster } from './EmployeeRoster';
@@ -84,6 +85,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               ? companyLine(roster, inbox)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
+          <AuthorisationUnfinished />
           {reportingElsewhere ? <ReportingElsewhere employees={reportingElsewhere} /> : null}
         </div>
         {staffed ? (
