@@ -567,5 +567,5 @@ export function adoptionHelp(adopterName: string, holds: ProposalsCardHolds): st
   }
   return holds.proposals
     ? `Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. ${charter}`
-    : `Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs. Writing a new one instead writes the skill and checks it there. Either way the item that needs it is evaluated again. ${charter}`;
+    : `Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs, then the item that needs it is evaluated again. ${charter}`;
 }

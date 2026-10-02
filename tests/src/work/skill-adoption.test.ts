@@ -473,7 +473,7 @@ describe('adoptionHelp', (): void => {
 
   it('never says approving writes the skill on a card holding an adoption past its offer, which writes nothing', (): void => {
     expect(adoptionHelp('Mateo', { ...proposalsOnly, proposals: false, adoptions: true })).toBe(
-      "Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs. Writing a new one instead writes the skill and checks it there. Either way the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
+      "Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs, then the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
     );
     expect(adoptionHelp('Mateo', { ...proposalsOnly, adoptions: true })).toBe(
       "Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
