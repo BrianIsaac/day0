@@ -14,8 +14,8 @@ import {
   actsAsAtUpgrade,
 } from '../../../src/surfaces/access-identity';
 
-describe('the access literals the schema declares (11-AK)', (): void => {
-  it('names every identity a card can act as, the connection kinds, modes and states, as the access plan does', (): void => {
+describe('the stored values of the access literals (11-AK), which rows keep once written', (): void => {
+  it('keep the access plan’s words for whom a card acts as and for a connection’s kind, mode and state', (): void => {
     expect([...ACTS_AS_KINDS]).toEqual([
       'own-app',
       'shared-app',
@@ -36,7 +36,7 @@ describe('the access literals the schema declares (11-AK)', (): void => {
     expect([...MCP_CLIENT_REGISTRATIONS]).toEqual(['pre-registered', 'dynamic']);
   });
 
-  it('names how Day0 obtained a credential, where it is kept, and how its revocation at source stands', (): void => {
+  it('keep the words for how Day0 obtained a credential, where it lives, and how its revocation stands', (): void => {
     expect([...CREDENTIAL_GRANTS]).toEqual([
       'oauth-install',
       'authorisation-code',

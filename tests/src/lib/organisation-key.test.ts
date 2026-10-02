@@ -49,11 +49,7 @@ describe('the reserved organisation key', (): void => {
   });
 
   // A bare subject is the issuer's to choose, so only a refusal inside ownerKeyOf proves this.
-  it.fails(
-    // .fails: red until 11-AO's refusal of the reserved key in ownerKeyOf (wave 11).
-    'refuses a token whose bare subject is the reserved key (11-AO turns this green)',
-    (): void => {
-      expect(() => ownerKeyOf(identity(CLERK_ISSUER, ORGANISATION_OWNER_KEY))).toThrow();
-    },
-  );
+  it.fails('refuses a reserved-key subject (.fails: red until 11-AO)', (): void => {
+    expect(() => ownerKeyOf(identity(CLERK_ISSUER, ORGANISATION_OWNER_KEY))).toThrow();
+  });
 });

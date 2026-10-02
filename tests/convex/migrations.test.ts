@@ -2139,10 +2139,11 @@ describe('the acts-as backfill (11-AK, the access plan section 4.2)', (): void =
     );
   }
 
-  it('ships at 0.14.0, the newest release a migration names, and runs last', (): void => {
-    expect(MIGRATION_NAMES.at(-1)).toBe('surfaces-acts-as');
+  it('is registered at 0.14.0, after the skill library backfills it follows', (): void => {
     expect(MIGRATIONS['surfaces-acts-as'].release).toBe('0.14.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.14.0');
+    expect(MIGRATION_NAMES.indexOf('surfaces-acts-as')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('skills-use-count'),
+    );
   });
 
   it('names an installed app’s card as its own app and every pasted key’s as a shared key, leaves the rest, and is safe to run twice', async (): Promise<void> => {
