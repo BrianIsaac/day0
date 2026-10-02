@@ -51,9 +51,22 @@ export interface ProvisioningPresentation {
   /** The install link, once an app exists and the link has not been spent. */
   installUrl?: string;
   note: string;
-  /** Whether the card offers the configuration-token form. */
+  /** Whether the card offers the control that registers the app or issues its link again. */
   offerProvisioning: boolean;
-  stage: 'not-applicable' | 'unavailable' | 'offer' | 'awaiting-install' | 'installed' | 'failed';
+  /**
+   * Whether that control asks for an app configuration token: only to create a new app where the
+   * organisation has no Slack connection (Q8 (b)). With the connection (B9), or for an app that
+   * already exists, the card pastes nothing.
+   */
+  asksForConfigurationToken: boolean;
+  stage:
+    | 'not-applicable'
+    | 'unavailable'
+    | 'offer'
+    | 'awaiting-install'
+    | 'installed'
+    | 'reinstall'
+    | 'failed';
   title: string;
 }
 
@@ -80,6 +93,15 @@ export const PROVISION_NOTE =
   "afterwards Day0 asks Slack to revoke it and records Slack's answer, rather than keeping it for " +
   'the twelve hours it would otherwise live.';
 
+/** What the administrator is told where the organisation's Slack connection creates the app (B9). */
+export const ORGANISATION_PROVISION_NOTE =
+  "The organisation's Slack connection creates this employee its own app from the manifest, with " +
+  'nothing to paste. Day0 then shows the install link for an administrator to approve; the bot ' +
+  'token arrives through the redirect and is never shown to anyone.';
+
+/** Title of the renewal of an installed app whose access ended (A26). */
+export const REINSTALL_LABEL = "Install the employee's own app again";
+
 /** What the presentation is built from: the verdict, the finding, the stored credentials and the provisioning. */
 export interface CredentialPresentationInput {
   verdict?: string;
@@ -98,14 +120,19 @@ export interface CredentialPresentationInput {
  *
  * The procedure has three human steps and the card has to say which one is
  * next, because two of them are the administrator's and neither is something
- * Day0 can do on their behalf: issue a configuration token, then click the
- * install link, then invite the new app to the channels it should read.
+ * Day0 can do on their behalf: issue a configuration token (unless the
+ * organisation's Slack connection creates the app, B9), then click the install
+ * link, then invite the new app to the channels it should read. An installed
+ * app whose access ended is offered again (A26), with what the renewal restores
+ * of its channels (RM4).
  *
  * Args:
  *   input.credential: The credential finding orientation extracted.
  *   input.provisioning: The dedicated app, once one has been registered.
  *   input.hasPublicUrl: Whether this deployment has an address an install can
  *     redirect back to.
+ *   input.organisationConnected: Whether the organisation's Slack connection is active.
+ *   input.credentialHeld: Whether the card holds its credential now.
  *
  * Returns:
  *   The stage, its copy and the install link when there is one to show.
@@ -114,22 +141,45 @@ export function presentProvisioning(input: {
   credential?: SurfaceCredentialFinding;
   hasPublicUrl: boolean;
   provisioning?: SurfaceProvisioning;
+  /** Whether the organisation has an active Slack configuration connection (B9). */
+  organisationConnected?: boolean;
+  /**
+   * Whether the card holds its credential now. False for an installed app whose access ended (an
+   * expiry or a Disconnect revoked its bot token, A26); absent reads as held, as before 11-AS.
+   */
+  credentialHeld?: boolean;
 }): ProvisioningPresentation {
   if (input.credential?.method !== 'oauth') {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
       offerProvisioning: false,
+      asksForConfigurationToken: false,
       stage: 'not-applicable',
       title: 'Dedicated app',
     };
   }
   const provisioning = input.provisioning;
+  if (provisioning?.installedAt && input.credentialHeld === false) {
+    return {
+      ...(provisioning.stateExpiresAt !== undefined ? { installUrl: provisioning.installUrl } : {}),
+      note:
+        `${provisioning.appName} stays in the workspace, but its access ended and Slack took its ` +
+        'bot out of every channel. Issue its install link again and have an administrator ' +
+        'approve it: after the install the employee re-joins the public channels its approved ' +
+        'intake scope names itself, and someone in each private channel adds it again.',
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+      stage: 'reinstall',
+      title: REINSTALL_LABEL,
+    };
+  }
   if (provisioning?.installedAt) {
     return {
       note:
         `Installed. This employee acts as its own app, ${provisioning.appName}, and its writes ` +
         'are attributable to that bot user rather than to a shared token.',
       offerProvisioning: false,
+      asksForConfigurationToken: false,
       stage: 'installed',
       title: 'Dedicated app installed',
     };
@@ -139,6 +189,7 @@ export function presentProvisioning(input: {
       installUrl: provisioning.installUrl,
       note: `${provisioning.lastError} Provision again to issue a fresh install link.`,
       offerProvisioning: true,
+      asksForConfigurationToken: false,
       stage: 'failed',
       title: 'Install did not complete',
     };
@@ -151,6 +202,7 @@ export function presentProvisioning(input: {
         'workspace; the bot token arrives through the redirect and is never shown to anyone. ' +
         'The link is single-use and expires fifteen minutes after it was issued.',
       offerProvisioning: false,
+      asksForConfigurationToken: false,
       stage: 'awaiting-install',
       title: 'Awaiting the install click',
     };
@@ -161,13 +213,16 @@ export function presentProvisioning(input: {
         'This deployment has no public address for the install to return to, so an app cannot ' +
         'be registered yet. Set DAY0_PUBLIC_URL to a tunnel pointing at this machine.',
       offerProvisioning: false,
+      asksForConfigurationToken: false,
       stage: 'unavailable',
       title: 'Dedicated app',
     };
   }
+  const connected = input.organisationConnected === true;
   return {
-    note: PROVISION_NOTE,
+    note: connected ? ORGANISATION_PROVISION_NOTE : PROVISION_NOTE,
     offerProvisioning: true,
+    asksForConfigurationToken: !connected,
     stage: 'offer',
     title: PROVISION_LABEL,
   };
