@@ -1782,9 +1782,13 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'listed-dead',
 ];
 
-/** What an end of the card's own credential did: the rows held for their vendor call. */
+/**
+ * What an end of the card's own credential did: the rows held for their vendor call, and the rows
+ * Day0 obtained but could only stop using (`EndedAtSource.stopped`).
+ */
 interface OwnCredentialEnded {
   readonly held: readonly Id<'credentials'>[];
+  readonly stopped: readonly Id<'credentials'>[];
 }
 
 /**
@@ -1834,7 +1838,7 @@ async function endOwnCredentialAtSource(
   now: number,
 ): Promise<OwnCredentialEnded> {
   const rows = await ownCredentialRows(ctx.db, surface);
-  if (rows.length === 0) return { held: [] };
+  if (rows.length === 0) return { held: [], stopped: [] };
   const ended = await endAccessAtSource(ctx, {
     agentId: surface.agentId,
     surfaceId: surface._id,
@@ -1843,7 +1847,7 @@ async function endOwnCredentialAtSource(
     end,
     now,
   });
-  return { held: ended.held };
+  return { held: ended.held, stopped: ended.stopped };
 }
 
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
@@ -1886,7 +1890,7 @@ async function endAccessInTransaction(
     // card on an answer taken before the end (wave 2 review M20, m9).
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
-    ...(ended.held.length > 0
+    ...(ended.held.length > 0 || ended.stopped.length > 0
       ? { credentialId: undefined, credentialKind: undefined, credentialLocation: undefined }
       : {}),
   });

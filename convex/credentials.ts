@@ -475,22 +475,60 @@ async function identitiesKeptForAnotherOwner(
   userId: string,
   rows: readonly Doc<'credentials'>[],
 ): Promise<Set<Id<'credentials'>>> {
+  const issuedThroughConnection = rows.filter(
+    (row) => row.issuedBy?.organisationConnectionId !== undefined,
+  );
+  const keptRows = await Promise.all(
+    issuedThroughConnection.map(async (row) =>
+      (await boundForAnotherOwner(ctx, userId, row)) ? row : null,
+    ),
+  );
   const kept = new Set<Id<'credentials'>>();
-  for (const row of rows) {
-    if (row.issuedBy?.organisationConnectionId === undefined) continue;
-    const binders = await ctx.db
-      .query('surfaces')
-      .withIndex('by_credentialId', (index) => index.eq('credentialId', row._id))
-      .take(10);
-    const agents = await Promise.all(binders.map(async (card) => await ctx.db.get(card.agentId)));
-    if (!agents.some((agent) => agent !== null && agent.userId !== userId)) continue;
+  for (const row of keptRows) {
+    if (row === null) continue;
     kept.add(row._id);
     if (row.refreshCredentialId !== undefined) kept.add(row.refreshCredentialId);
-    if (row.issuedBy.clientSecretCredentialId !== undefined) {
+    if (row.issuedBy?.clientSecretCredentialId !== undefined) {
       kept.add(row.issuedBy.clientSecretCredentialId);
     }
   }
   return kept;
+}
+
+/** The most cards one row's binders, or one connection's cards, are read for. */
+const KEPT_IDENTITY_SCAN_LIMIT = 1_000;
+
+/**
+ * Whether a card of an employee another owner now has binds a row issued through an
+ * organisation connection: as its credential, or as its app's client secret (a card Disconnect
+ * left with only its app, then handed over).
+ */
+async function boundForAnotherOwner(
+  ctx: MutationCtx,
+  userId: string,
+  row: Doc<'credentials'>,
+): Promise<boolean> {
+  const connectionId = row.issuedBy?.organisationConnectionId;
+  const [byCredential, byConnection] = await Promise.all([
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_credentialId', (index) => index.eq('credentialId', row._id))
+      .take(KEPT_IDENTITY_SCAN_LIMIT),
+    connectionId === undefined || row.issuedBy?.grant !== 'app-created'
+      ? Promise.resolve([])
+      : ctx.db
+          .query('surfaces')
+          .withIndex('by_organisation_connection', (index) =>
+            index.eq('organisationConnectionId', connectionId),
+          )
+          .take(KEPT_IDENTITY_SCAN_LIMIT),
+  ]);
+  const binders = [
+    ...byCredential,
+    ...byConnection.filter((card) => card.provisioning?.clientSecretCredentialId === row._id),
+  ];
+  const agents = await Promise.all(binders.map(async (card) => await ctx.db.get(card.agentId)));
+  return agents.some((agent) => agent !== null && agent.userId !== userId);
 }
 
 /** Record credential use without exposing the decrypted value. */

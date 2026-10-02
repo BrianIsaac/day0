@@ -385,18 +385,21 @@ describe("Slack's two calls with their two meanings (S1, S4)", (): void => {
     ).toEqual([]);
   });
 
-  it('never follows a redirect with a token in the body', async (): Promise<void> => {
+  it('never follows a redirect with a token in the body, and fails at once on one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const leo = await leoWithOwnApp(harness, { connection: false });
-    const seen: RequestInit[] = [];
-    vi.stubGlobal('fetch', async (_input: string | URL, init?: RequestInit): Promise<Response> => {
-      seen.push(init ?? {});
-      return new Response(JSON.stringify(SLACK_AUTH_REVOKE_OK), { status: 200 });
-    });
+    network.answer('/api/auth.revoke', { status: 308, body: '' });
 
     await endAndDrain(harness, leo, [leo.token], 'disconnect');
 
-    expect(seen.map((init) => init.redirect)).toEqual(['error']);
+    expect(network.calls.map((call) => new URL(call.url).pathname)).toEqual(['/api/auth.revoke']);
+    expect(await lines(harness, leo.agentId)).toEqual([
+      expect.objectContaining({
+        outcome: 'failed',
+        attempt: 1,
+        reason: 'Slack auth.revoke returned HTTP 308.',
+      }),
+    ]);
   });
 
   it('reads a bot token Slack no longer knows as already revoked', async (): Promise<void> => {

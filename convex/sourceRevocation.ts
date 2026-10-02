@@ -43,7 +43,7 @@ export const NO_VALUE_WORDS =
 
 /** Why a token the token store holds is not revoked here: the store revokes it (11-AT). */
 export const TOKEN_STORE_WORDS =
-  'Its token is held by the token store, which revokes it; Day0 called no vendor itself.';
+  'Its token is held by the token store; Day0 stopped using it and called no vendor itself.';
 
 /** The most overdue revocations one sweep closes. */
 const OVERDUE_SWEEP_LIMIT = 100;
@@ -89,6 +89,11 @@ export interface EndedAtSource {
   readonly pasted: readonly Id<'credentials'>[];
   /** The rows the organisation holds: never revoked by one employee's end. */
   readonly shared: readonly Id<'credentials'>[];
+  /**
+   * The rows Day0 obtained but cannot revoke at the vendor here (their value is gone, or the
+   * token store holds the token): Day0 stops using them at once, and the card lets them go.
+   */
+  readonly stopped: readonly Id<'credentials'>[];
 }
 
 /** A credential row that says how Day0 obtained it. */
@@ -156,15 +161,89 @@ async function appendLine(
   });
 }
 
+/** How one end of a card's access sorts the card's rows. */
+interface SortedRows {
+  readonly issued: readonly IssuedCredential[];
+  readonly pasted: readonly Doc<'credentials'>[];
+  readonly shared: readonly Doc<'credentials'>[];
+  /** Day0 obtained these and holds their value, so a vendor call can be made for them. */
+  readonly revocable: readonly IssuedCredential[];
+  /** Day0 obtained these but cannot revoke them here: the token store holds them, or no value. */
+  readonly unrevocable: readonly IssuedCredential[];
+}
+
+/**
+ * Sort a card's rows for one end: pasted, shared, and what Day0 obtained, split into the rows a
+ * vendor call can be made for and the rows it cannot. A row an earlier end already holds is in
+ * neither: its own attempts speak for it.
+ */
+function sortRows(credentials: readonly Doc<'credentials'>[]): SortedRows {
+  const issued = credentials.filter(ownIssued);
+  const unheld = issued.filter((row) => row.sourceRevocation === undefined);
+  // A token the token store holds is the store's to revoke (11-AT); Day0 never opens it here.
+  const revocable = unheld.filter((row) => row.tokenStore !== 'nango' && holdsValue(row));
+  return {
+    issued,
+    pasted: credentials.filter((row) => row.issuedBy === undefined && !row.holder),
+    shared: credentials.filter((row) => row.holder !== undefined),
+    revocable,
+    unrevocable: unheld.filter((row) => !revocable.includes(row)),
+  };
+}
+
+/** The line a card's end writes when no vendor call speaks for it, and the row it names. */
+interface CardLine {
+  readonly row: Doc<'credentials'>;
+  readonly system: string;
+  readonly outcome: SourceRevocationOutcome;
+  readonly reason?: string;
+}
+
+/**
+ * The one line a card's end writes itself, if any: none where a vendor call will speak (its
+ * attempts write theirs) or an earlier end's held rows already do; a handover's "nothing at the
+ * vendor"; why Day0 could not revoke what it obtained; else the shared token's; else the pasted
+ * key's, the card's own listed first.
+ */
+function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): CardLine | null {
+  if (sorted.revocable.length > 0 && end !== 'transfer') return null;
+  const [obtained] = [...sorted.revocable, ...sorted.unrevocable];
+  if (obtained !== undefined) {
+    if (end === 'transfer') {
+      return {
+        row: obtained,
+        system: obtained.issuedBy.system,
+        outcome: 'not-at-vendor',
+        reason: HANDOVER_WORDS,
+      };
+    }
+    return {
+      row: obtained,
+      system: obtained.issuedBy.system,
+      ...(obtained.tokenStore === 'nango'
+        ? { outcome: 'not-supported', reason: TOKEN_STORE_WORDS }
+        : { outcome: 'failed', reason: NO_VALUE_WORDS }),
+    };
+  }
+  if (sorted.issued.length > 0) return null;
+  const [shared] = sorted.shared;
+  if (shared !== undefined) {
+    return { row: shared, system: shared.issuedBy?.system ?? surfaceName, outcome: 'shared' };
+  }
+  const [pasted] = sorted.pasted;
+  return pasted === undefined ? null : { row: pasted, system: surfaceName, outcome: 'pasted-key' };
+}
+
 /**
  * End one card's access at the vendor, in the ending transaction (the access plan, section 4.4).
- * The rows Day0 obtained are revoked at once and held, their ciphertext kept, and the first
- * attempt is scheduled for the one the call is made for, the others finished with it; a handover
- * calls no vendor (A25), so it purges them at once with its line. A pasted key is never sent to a
- * vendor: its line says so and the caller's own rule decides whether Day0's copy goes. A row the
- * organisation holds is untouched, with its line. One line is written per card, so per system: the
- * attempts' where Day0 obtained a row, else the shared token's, else the pasted key's. A row
- * already held by an earlier end keeps its scheduled attempts and is not scheduled again.
+ * The rows Day0 obtained and holds a value for are revoked at once and held, their ciphertext
+ * kept, and the first attempt is scheduled for the one the call is made for, the others finished
+ * with it; a handover calls no vendor (A25), so it purges them at once. A row Day0 obtained but
+ * cannot revoke here (its value gone, or the token store holding it) is revoked in Day0 at once.
+ * A pasted key is never sent to a vendor, and the caller's own rule decides whether Day0's copy
+ * goes. A row the organisation holds is untouched. One line is written per card, so per system
+ * ({@link cardLine}), or none where the attempts will write it. A row already held by an earlier
+ * end keeps its scheduled attempts and is not scheduled again.
  *
  * @param ctx - The ending transaction.
  * @param input - The card, its credentials, the end and its time.
@@ -179,74 +258,36 @@ export async function endAccessAtSource(
     surfaceId: input.surfaceId,
     surfaceName: input.surfaceName,
   };
-  const issued = input.credentials.filter(ownIssued);
-  const pasted = input.credentials.filter((row) => row.issuedBy === undefined && !row.holder);
-  const shared = input.credentials.filter((row) => row.holder !== undefined);
-  // A token the token store holds is the store's to revoke (11-AT); Day0 never opens it here.
-  const inStore = issued.filter((row) => row.tokenStore === 'nango');
-  const unheld = issued.filter(
-    (row) => row.tokenStore !== 'nango' && row.sourceRevocation === undefined,
-  );
-  const fresh = unheld.filter(holdsValue);
-  // One line per card, so per system: what Day0 obtained speaks through its attempts; with none
-  // to make, why not; else the shared token; else the pasted key, the card's own listed first.
-  const [unrevocable] = fresh.length > 0 ? [] : [...inStore, ...unheld];
-  if (unrevocable !== undefined) {
+  const sorted = sortRows(input.credentials);
+  const line = cardLine(sorted, input.end, input.surfaceName);
+  if (line !== null) {
     await appendLine(
       ctx,
-      { ...card, credentialId: unrevocable._id },
-      unrevocable.tokenStore === 'nango'
-        ? {
-            system: unrevocable.issuedBy.system,
-            end: input.end,
-            outcome: 'not-supported',
-            now: input.now,
-            reason: TOKEN_STORE_WORDS,
-          }
-        : {
-            system: unrevocable.issuedBy.system,
-            end: input.end,
-            outcome: 'failed',
-            now: input.now,
-            reason: NO_VALUE_WORDS,
-          },
-    );
-  }
-  const [line] = issued.length > 0 ? [] : shared.length > 0 ? shared : pasted;
-  if (line !== undefined) {
-    await appendLine(
-      ctx,
-      { ...card, credentialId: line._id },
+      { ...card, credentialId: line.row._id },
       {
-        system:
-          line.holder !== undefined
-            ? (line.issuedBy?.system ?? input.surfaceName)
-            : input.surfaceName,
+        system: line.system,
         end: input.end,
-        outcome: line.holder !== undefined ? 'shared' : 'pasted-key',
+        outcome: line.outcome,
         now: input.now,
+        ...(line.reason !== undefined ? { reason: line.reason } : {}),
       },
     );
   }
-  if (fresh.length === 0) {
-    return { held: [], purged: [], pasted: ids(pasted), shared: ids(shared) };
+  for (const row of sorted.unrevocable) {
+    if (row.revokedAt === undefined) await ctx.db.patch(row._id, { revokedAt: input.now });
   }
-  const primary = primaryOf(fresh);
+  const answer = {
+    pasted: ids(sorted.pasted),
+    shared: ids(sorted.shared),
+    stopped: ids(sorted.unrevocable),
+  };
+  const fresh = sorted.revocable;
+  if (fresh.length === 0) return { held: [], purged: [], ...answer };
   if (input.end === 'transfer') {
     for (const row of fresh) await purgeCredential(ctx, row, input.now);
-    await appendLine(
-      ctx,
-      { ...card, credentialId: primary._id },
-      {
-        system: primary.issuedBy.system,
-        end: 'transfer',
-        outcome: 'not-at-vendor',
-        now: input.now,
-        reason: HANDOVER_WORDS,
-      },
-    );
-    return { held: [], purged: ids(fresh), pasted: ids(pasted), shared: ids(shared) };
+    return { held: [], purged: ids(fresh), ...answer };
   }
+  const primary = primaryOf(fresh);
   for (const row of fresh) await holdForSourceRevocation(ctx, row, input.end, input.now);
   // A refresh token whose access token an earlier end already held is revoked as one (L3).
   const primaryIsRefresh = input.credentials.some((row) => row.refreshCredentialId === primary._id);
@@ -256,7 +297,7 @@ export async function endAccessAtSource(
     companionIds: fresh.filter((row) => row._id !== primary._id).map((row) => row._id),
     ...(primaryIsRefresh ? { primaryIsRefresh } : {}),
   });
-  return { held: ids(fresh), purged: [], pasted: ids(pasted), shared: ids(shared) };
+  return { held: ids(fresh), purged: [], ...answer };
 }
 
 /** The ids of some rows. */
@@ -317,16 +358,41 @@ export type PlannedOutcome =
   | 'app-deleted'
   | 'app-uninstalled'
   | 'not-supported'
+  | 'failed'
   | 'shared'
   | 'not-at-vendor'
   | 'pasted-key'
   | 'kept';
 
 /**
- * What ending one card's access will do at the vendor, by the rule {@link endAccessAtSource} and
+ * The planned outcome a line the end writes itself stands for: the same words, the attempts'
+ * outcomes aside, which a line written at the end never carries.
+ */
+function plannedOf(outcome: SourceRevocationOutcome): PlannedOutcome {
+  switch (outcome) {
+    case 'token-revoked':
+    case 'app-deleted':
+    case 'app-uninstalled':
+    case 'not-supported':
+    case 'failed':
+    case 'shared':
+    case 'not-at-vendor':
+    case 'pasted-key':
+      return outcome;
+    case 'already-gone':
+      return 'token-revoked';
+    case 'retrying':
+      return 'failed';
+  }
+}
+
+/**
+ * What ending one card's access will do at the vendor, by the rules {@link endAccessAtSource} and
  * the attempt follow: the plan of the credential the call is made for, its preferred call's
- * meaning; a pasted key that only this card binds is Day0's copy deleted and never sent; a row
- * that something else still binds is kept; a row the organisation holds is shared.
+ * meaning; for a row Day0 obtained and cannot revoke here, or a handover, the line the end would
+ * write ({@link cardLine}); a pasted key that only this card binds is Day0's copy deleted and
+ * never sent; a row that something else still binds is kept; a row the organisation holds is
+ * shared.
  *
  * @param db - Any reader.
  * @param card - The card's name, the rows the end takes, the rows something else keeps.
@@ -342,9 +408,9 @@ export async function plannedAtSource(
   },
   end: AccessEnd,
 ): Promise<{ readonly system: string; readonly outcome: PlannedOutcome } | null> {
-  const issued = card.ended.filter(ownIssued);
-  if (issued.length > 0) {
-    const primary = primaryOf(issued);
+  const sorted = sortRows(card.ended);
+  if (sorted.revocable.length > 0 && end !== 'transfer') {
+    const primary = primaryOf(sorted.revocable);
     const means = await meansOf(db, primary);
     const plan = revocationPlanFor({ issuedBy: primary.issuedBy, role: 'access' }, end, {
       configurationToken: means.configuration !== null,
@@ -359,6 +425,10 @@ export async function plannedAtSource(
       outcome:
         plan.kind === 'none' ? plan.outcome : preferred ? callOutcome(preferred) : 'not-supported',
     };
+  }
+  const line = cardLine(sorted, end, card.surfaceName);
+  if (line !== null && line.outcome !== 'shared' && line.outcome !== 'pasted-key') {
+    return { system: line.system, outcome: plannedOf(line.outcome) };
   }
   const organisation = [...card.ended, ...card.kept].find((row) => row.holder !== undefined);
   if (organisation !== undefined) {

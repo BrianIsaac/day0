@@ -1109,6 +1109,7 @@ const previewOutcome = v.object({
     v.literal('app-deleted'),
     v.literal('app-uninstalled'),
     v.literal('not-supported'),
+    v.literal('failed'),
     v.literal('shared'),
     v.literal('not-at-vendor'),
     v.literal('pasted-key'),
@@ -1130,8 +1131,8 @@ const retirePreviewValidator = v.object({
   /**
    * What the retire will do at the vendor, one entry per connection that binds a credential
    * (11-AR): the token revoked or the app deleted or uninstalled there, no call the system offers,
-   * a token the organisation shares, a pasted key deleted from Day0 and never sent, or a key kept
-   * for what still binds it.
+   * a token Day0 can no longer revoke (`failed`: its value is gone), a token the organisation
+   * shares, a pasted key deleted from Day0 and never sent, or a key kept for what still binds it.
    */
   outcomes: v.array(previewOutcome),
   /** The items it may already have written, whose claims its retirement keeps. */

@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   endAccessAtSource,
+  plannedAtSource,
   SOURCE_REVOCATION_ATTEMPT_OFFSETS_MS,
   SOURCE_REVOCATION_KEEP_MS,
 } from '../../convex/sourceRevocation';
@@ -301,7 +302,7 @@ describe('ending access at the vendor (11-AR; the access plan, section 4.4)', ()
   });
 });
 
-describe('the review of 11-AR: what the hold anchors and what it leaves alone', (): void => {
+describe('what the hold anchors, and the rows it cannot hold', (): void => {
   let network: VendorNetwork;
 
   beforeEach((): void => {
@@ -390,26 +391,77 @@ describe('the review of 11-AR: what the hold anchors and what it leaves alone', 
     await end(harness, card, [access, refresh], 'disconnect');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    const [line] = (await lines(harness, card.agentId)) as { reason: string }[];
-    expect(line?.reason).not.toContain(LINEAR_REFRESH);
-    expect(line?.reason.length).toBeLessThanOrEqual(300);
+    const [recorded] = (await lines(harness, card.agentId)) as { reason: string }[];
+    expect(recorded?.reason).not.toContain(LINEAR_REFRESH);
+    expect(recorded?.reason.length).toBeLessThanOrEqual(300);
     expect(JSON.stringify(await rows(harness))).not.toContain(LINEAR_REFRESH);
   });
 
-  it('never opens a token the token store holds, and leaves it to the store', async (): Promise<void> => {
+  it('never opens a token the token store holds, and stops using it at once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const card = await employeeWithCard(harness);
     const { access } = await linearPair(harness);
     await harness.run(async (ctx) => await ctx.db.patch(access, { tokenStore: 'nango' }));
 
-    await end(harness, card, [access], 'disconnect');
+    const ended = await harness.run(async (ctx) =>
+      endAccessAtSource(ctx, {
+        ...card,
+        surfaceName: 'Linear',
+        credentials: [(await ctx.db.get(access))!],
+        end: 'disconnect',
+        now: Date.now(),
+      }),
+    );
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
+    expect(ended.stopped).toEqual([access]);
     expect(network.calls).toEqual([]);
     const row = (await rows(harness)).find((candidate) => candidate._id === access);
     expect(row?.sourceRevocation).toBeUndefined();
+    expect(row?.revokedAt).toEqual(expect.any(Number));
     expect(await lines(harness, card.agentId)).toEqual([
       expect.objectContaining({ outcome: 'not-supported' }),
+    ]);
+  });
+
+  it('says a handover changed nothing at the vendor even for a row it could not have revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access } = await linearPair(harness);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(access, { ciphertext: undefined, iv: undefined }),
+    );
+
+    await end(harness, card, [access], 'transfer');
+
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({ end: 'transfer', outcome: 'not-at-vendor' }),
+    ]);
+  });
+
+  it('plans for the retire dialog exactly what the end will do with such rows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { access } = await linearPair(harness);
+    const planned = await harness.run(async (ctx) => {
+      const live = (await ctx.db.get(access))!;
+      return await Promise.all([
+        plannedAtSource(ctx.db, { surfaceName: 'Linear', ended: [live], kept: [] }, 'retire'),
+        plannedAtSource(
+          ctx.db,
+          { surfaceName: 'Linear', ended: [{ ...live, tokenStore: 'nango' }], kept: [] },
+          'retire',
+        ),
+        plannedAtSource(
+          ctx.db,
+          { surfaceName: 'Linear', ended: [{ ...live, ciphertext: undefined }], kept: [] },
+          'retire',
+        ),
+      ]);
+    });
+    expect(planned).toEqual([
+      { system: 'linear', outcome: 'token-revoked' },
+      { system: 'linear', outcome: 'not-supported' },
+      { system: 'linear', outcome: 'failed' },
     ]);
   });
 });

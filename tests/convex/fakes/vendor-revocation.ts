@@ -46,6 +46,11 @@ export function stubVendorNetwork(): VendorNetwork {
     if (answer === undefined) {
       throw new Error(`No recorded answer for ${url.toString()}: the test reached a vendor.`);
     }
+    // As fetch does: a redirect is followed (here refused, since it would carry the body to
+    // another address) or thrown on, unless the caller asked for it back with `redirect: manual`.
+    if (answer.status >= 300 && answer.status < 400 && init?.redirect !== 'manual') {
+      throw new TypeError(`redirected, with redirect mode ${init?.redirect ?? 'follow'}`);
+    }
     const text = typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body);
     return new Response(text, { status: answer.status });
   });

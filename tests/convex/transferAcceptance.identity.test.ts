@@ -150,6 +150,26 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     expect(network.calls).toEqual([]);
   });
 
+  it("keeps a disconnected identity's app secret when the old manager later deletes their data", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    network.answer('/api/auth.revoke', { status: 200, body: { ok: true, revoked: true } });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.disconnect, { surfaceId: leo.slack.surfaceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await handOverLeo(harness, leo);
+    expect((await read(harness, leo.slack.surfaceId))?.verdict).toBe('proposed');
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+
+    const secret = await read(harness, leo.slack.secret);
+    expect(secret?.revokedAt).toBeUndefined();
+    expect(secret?.ciphertext).toEqual(expect.any(String));
+  });
+
   it('revokes the kept identity at the vendor when the new manager rejects the card', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });

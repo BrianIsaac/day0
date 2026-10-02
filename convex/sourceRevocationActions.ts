@@ -173,8 +173,9 @@ function cleanAnswer(answer: RevocationAnswer, secrets: readonly string[]): Revo
 }
 
 /**
- * Send one revocation request and read its answer. A redirect is refused rather than followed, so
- * a token in the body never reaches another address; a network failure asks for another attempt.
+ * Send one revocation request and read its answer. A redirect is never followed, so a token in the
+ * body never reaches another address: its 3xx answer is a refusal; a network failure asks for
+ * another attempt.
  */
 async function send(
   request: RevocationRequest,
@@ -187,7 +188,9 @@ async function send(
       method: 'POST',
       headers: request.headers,
       body: request.body,
-      redirect: 'error',
+      // A redirect comes back as its own 3xx answer, which the readers refuse: following it would
+      // send the token in the body to another address.
+      redirect: 'manual',
       signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
   } catch (error: unknown) {
