@@ -236,6 +236,51 @@ describe('the redactor in real mode', (): void => {
   });
 });
 
+describe('the token store component (join 9)', (): void => {
+  const nango = {
+    DAY0_NANGO_URL: 'http://nango-server:3003',
+    DAY0_NANGO_SECRET_KEY: '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+  };
+
+  it('lists nango-server with its profile and what it is for', (): void => {
+    const section = componentsSection({}, 'day0-bed', ['backend']);
+    expect(section.lines).toContain(
+      "nango-server (--profile token-store): not running - Nango, which keeps and refreshes the API rung's OAuth tokens.",
+    );
+  });
+
+  it('names a configured token store with nothing running, or running without its key', (): void => {
+    const absent = componentsSection(nango, 'day0-bed', ['backend']);
+    expect(absent.status).toBe('warn');
+    expect(absent.lines.join('\n')).toContain(
+      'DAY0_NANGO_URL names http://nango-server:3003 and nothing is running there.',
+    );
+    const keyless = componentsSection({ DAY0_NANGO_URL: nango.DAY0_NANGO_URL }, 'day0-bed', [
+      'backend',
+      'nango-server',
+    ]);
+    expect(keyless.status).toBe('warn');
+    expect(keyless.lines.join('\n')).toContain('DAY0_NANGO_SECRET_KEY is unset');
+    expect(keyless.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
+  });
+
+  it('names a running token store day0 is not told about, and passes one it is', (): void => {
+    const untold = componentsSection({}, 'day0-bed', ['backend', 'nango-server']);
+    expect(untold.status).toBe('warn');
+    expect(untold.lines.join('\n')).toContain(
+      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+    );
+    const told = componentsSection(nango, 'day0-bed', ['backend', 'nango-server']);
+    expect(told.status).toBe('ok');
+    expect(told.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
+  });
+
+  it('names the token store’s images among the registry pulls', (): void => {
+    const registry = egressHosts({}).find((row) => row.host === 'registry-1.docker.io');
+    expect(registry?.purpose).toContain('nango-server');
+  });
+});
+
 describe('the support report', (): void => {
   const secrets = {
     OPENAI_API_KEY: 'sk-synthetic-openai-value',
