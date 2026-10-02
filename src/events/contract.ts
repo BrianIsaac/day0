@@ -938,6 +938,46 @@ export interface OrganisationRevokedAtSourcePayload {
   readonly reason?: string;
 }
 
+/** The Slack methods Day0 calls with the organisation's configuration token or its refresh token (11-AS). */
+export type SlackConfigurationMethod = 'tooling.tokens.rotate' | 'apps.manifest.create';
+
+/**
+ * The payload of `organisation.configuration-used` (11-AS; B9, AC11): one call Day0 made with the
+ * organisation's Slack configuration token or its refresh token, on that connection's ledger. It
+ * names the app a creation made, never the employee or the card, and never a token.
+ */
+export interface OrganisationConfigurationUsedPayload {
+  readonly organisationConnectionId: Id<'organisationConnections'>;
+  readonly system: string;
+  readonly displayName: string;
+  readonly method: SlackConfigurationMethod;
+  /**
+   * `done`; `failed` (Slack refused, or did not answer); `superseded` (a rotation that lost to a
+   * concurrent one: Slack issued a pair Day0 did not keep, and the winner's is used).
+   */
+  readonly outcome: 'done' | 'failed' | 'superseded';
+  /** Slack's words for a failure, or why a rotation was superseded. */
+  readonly reason?: string;
+  /** The app `apps.manifest.create` made. */
+  readonly appId?: string;
+  /** When the configuration token a rotation issued lapses. */
+  readonly expiresAt?: number;
+}
+
+/**
+ * The payload of `surface.channels-rejoined` (11-AS; RM4, ruled): after a renewal installed the
+ * employee's own Slack app again, which Slack had taken out of every channel (S1), the public
+ * channels of its approved intake scope it joined itself, and the ones a person in them must add
+ * it to (a private channel, one the workspace does not have, or a join Slack refused). Each name
+ * is `#name`; 11-AC's card reads `needsPerson` for its words.
+ */
+export interface SurfaceChannelsRejoinedPayload extends SurfaceNamed {
+  readonly joined: readonly string[];
+  readonly needsPerson: readonly string[];
+  /** Slack's words when it refused a join. */
+  readonly reason?: string;
+}
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1511,6 +1551,8 @@ export interface EventPayloads {
   'surface.disconnected': SurfaceDisconnectedPayload;
   'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
   'organisation.revoked-at-source': OrganisationRevokedAtSourcePayload;
+  'organisation.configuration-used': OrganisationConfigurationUsedPayload;
+  'surface.channels-rejoined': SurfaceChannelsRejoinedPayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1684,6 +1726,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.disconnected',
   'credential.revoked-at-source',
   'organisation.revoked-at-source',
+  'organisation.configuration-used',
+  'surface.channels-rejoined',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
@@ -1771,6 +1815,7 @@ export const CONNECTION_EVENT_TYPES = [
   'organisation.connection-rotated',
   'organisation.connection-revoked',
   'organisation.revoked-at-source',
+  'organisation.configuration-used',
 ] as const satisfies readonly EventType[];
 
 /** One of {@link CONNECTION_EVENT_TYPES}. */

@@ -35,6 +35,16 @@ export const CONFIGURATION_RENEW_BEFORE_MS = 30 * 60 * 1000;
  */
 export const CONFIGURATION_KEEP_CURRENT_BEFORE_MS = 60 * 60 * 1000;
 
+/** Why an app cannot be created: the organisation has no Slack connection, and nothing was pasted. */
+export const NO_CONFIGURATION_TOKEN =
+  "Paste an app configuration token: the organisation has no active Slack connection to create this employee's app with.";
+
+/** Why a kept app is not installed again: IT revoked the connection that created it. */
+export const KEPT_APP_CONNECTION_REVOKED =
+  "IT revoked the organisation's Slack connection this employee's app was created with, so the " +
+  'app is not installed again. Once IT connects Slack again, retire the app with the employee ' +
+  "or delete it in Slack's app settings before a new one is created.";
+
 /** The manifest an employee's app is created from, and which template it was built from. */
 export interface SlackAppManifest extends BuiltSlackManifest {
   /** The documentation's own template, or the access kit's where the pages carry none. */

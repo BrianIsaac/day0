@@ -195,6 +195,60 @@ function capitalised(phrase: string): string {
   return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
 
+/** Names as a sentence lists them: `a`, `a and b`, `a, b and c`; nothing for none. */
+function inWords(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const names = value.filter((name): name is string => typeof name === 'string' && name !== '');
+  if (names.length < 2) return names[0];
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * One call Day0 made with the organisation's Slack configuration token or its refresh token, on
+ * the connection's ledger (11-AS): it names the app a creation made, never an employee (AC11).
+ */
+function configurationUsedWords(p: Read<'organisation.configuration-used'>): string {
+  const token = `the organisation's ${organisationSystem(p.displayName)} configuration token`;
+  if (p.method === 'apps.manifest.create') {
+    const app = text(p.appId) ? ` (${text(p.appId)})` : '';
+    return p.outcome === 'done'
+      ? `Day0 created an employee's own Slack app${app} with ${token}`
+      : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
+  }
+  switch (p.outcome) {
+    case 'done':
+      return `Day0 renewed ${token} with its refresh token`;
+    case 'superseded':
+      return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
+    case 'failed':
+    case undefined:
+      return `Day0 could not renew ${token}${because(p.reason)}`;
+    default: {
+      const unknown: never = p.outcome;
+      return `Day0 used ${token}: ${String(unknown)}`;
+    }
+  }
+}
+
+/**
+ * Which channels a renewed employee re-joined itself and which need a person in them (11-AS,
+ * RM4); the card's own words are 11-AC's.
+ */
+function channelsRejoinedWords(
+  p: Read<'surface.channels-rejoined'>,
+  subject: RecordSubject,
+): string {
+  const joined = inWords(p.joined) ?? 'no channel';
+  const answered = text(p.reason) ? ` (Slack answered ${text(p.reason)})` : '';
+  const needing = inWords(p.needsPerson);
+  const many = Array.isArray(p.needsPerson) && p.needsPerson.length > 1;
+  const rest =
+    needing === undefined
+      ? ''
+      : `; ${needing} ${many ? 'need someone in them' : 'needs someone in it'} to add ${subject.name}`;
+  return `After the renewal ${subject.name} re-joined ${joined} in Slack itself${answered}${rest}`;
+}
+
 /**
  * What one attempt made with an organisation connection's secret did at the vendor, on the
  * connection's ledger (11-AR over 11-AO): it names no employee and no card (AC11).
@@ -712,6 +766,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `${decider(subject)} disconnected ${connectionOf(subject)}`,
   'credential.revoked-at-source': (p, subject) => revokedAtSourceWords(p, subject),
   'organisation.revoked-at-source': (p) => organisationRevokedAtSourceWords(p),
+  'organisation.configuration-used': (p) => configurationUsedWords(p),
+  'surface.channels-rejoined': (p, subject) => channelsRejoinedWords(p, subject),
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

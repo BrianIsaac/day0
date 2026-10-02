@@ -69,6 +69,7 @@ import type * as skillRegistration from '../skillRegistration.js';
 import type * as skillSandboxCheck from '../skillSandboxCheck.js';
 import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
+import type * as slackProvision from '../slackProvision.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
 import type * as sourceRevocation from '../sourceRevocation.js';
 import type * as sourceRevocationActions from '../sourceRevocationActions.js';
@@ -152,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   skillSandboxCheck: typeof skillSandboxCheck;
   skillVersions: typeof skillVersions;
   skills: typeof skills;
+  slackProvision: typeof slackProvision;
   slackProvisionActions: typeof slackProvisionActions;
   sourceRevocation: typeof sourceRevocation;
   sourceRevocationActions: typeof sourceRevocationActions;

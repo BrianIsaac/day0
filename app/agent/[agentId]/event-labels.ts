@@ -136,6 +136,29 @@ function planHeldWords(reason: unknown): string {
     : 'it waits for your decision';
 }
 
+/** One call Day0 made with the organisation's Slack configuration token or its refresh token (11-AS). */
+function configurationUsedLabel(payload: Read<'organisation.configuration-used'>): string {
+  const name = text(payload.displayName) ?? 'Slack';
+  if (payload.method === 'apps.manifest.create') {
+    return payload.outcome === 'done'
+      ? `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''} created with the configuration token`
+      : `an employee's ${name} app not created${because(payload.reason)}`;
+  }
+  switch (payload.outcome) {
+    case 'done':
+      return `${name} configuration token renewed`;
+    case 'superseded':
+      return `${name} configuration token renewed twice at once: the other renewal kept`;
+    case 'failed':
+    case undefined:
+      return `${name} configuration token not renewed${because(payload.reason)}`;
+    default: {
+      const unknown: never = payload.outcome;
+      return `${name} configuration token used: ${String(unknown)}`;
+    }
+  }
+}
+
 /** The label of one end of access at the vendor (11-AR), by its outcome and system. */
 function revokedAtSourceLabel(payload: Read<'credential.revoked-at-source'>): string {
   const system = systemDisplayName(text(payload.system) ?? 'the vendor');
@@ -428,6 +451,14 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'credential.revoked-at-source': (payload) => revokedAtSourceLabel(payload),
   'organisation.revoked-at-source': (payload) =>
     `${systemDisplayName(text(payload.system) ?? 'the vendor')} organisation connection: ${revokedAtSourceLabel(payload)}`,
+  'organisation.configuration-used': (payload) => configurationUsedLabel(payload),
+  'surface.channels-rejoined': (payload) => {
+    const joined = listed(payload.joined);
+    const needing = listed(payload.needsPerson);
+    if (joined === undefined && needing === undefined) return 'no channel to re-join';
+    const needs = needing === undefined ? '' : `${needing} needs a person to add it`;
+    return joined === undefined ? needs : `re-joined ${joined}${needs ? `; ${needs}` : ''}`;
+  },
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>
     `plan obligations not judged${because(payload.reason)}; the planner's stand unchecked`,

@@ -555,6 +555,131 @@ describe('the access request and the organisation connection ledger in the recor
   });
 });
 
+describe("what Day0's uses of the Slack configuration token and the re-join say in the record (11-AS)", (): void => {
+  const subject = { name: 'Leo', connection: 'Slack' };
+  const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+
+  it("says each call on the organisation's ledger without naming an employee", (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'done' },
+        },
+        subject,
+      ),
+    ).toBe("Day0 renewed the organisation's Slack configuration token with its refresh token.");
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: {
+            ...used,
+            method: 'tooling.tokens.rotate',
+            outcome: 'failed',
+            reason: 'invalid_refresh_token',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 could not renew the organisation's Slack configuration token: invalid_refresh_token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'superseded' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 renewed the organisation's Slack configuration token twice at once and kept the other renewal's token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 created an employee's own Slack app (A123) with the organisation's Slack configuration token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: {
+            ...used,
+            method: 'apps.manifest.create',
+            outcome: 'failed',
+            reason: 'invalid_auth',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Creating an employee's own Slack app with the organisation's Slack configuration token failed: invalid_auth.",
+    );
+  });
+
+  it('says which channels the employee re-joined itself and which need a person', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: {
+            surfaceId: 's1',
+            joined: ['#revops', '#revops-asks'],
+            needsPerson: ['#revops-leads'],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined #revops and #revops-asks in Slack itself; #revops-leads needs someone in it to add Leo.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: {
+            surfaceId: 's1',
+            joined: [],
+            needsPerson: ['#revops'],
+            reason: 'missing_scope',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined no channel in Slack itself (Slack answered missing_scope); #revops needs someone in it to add Leo.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: { surfaceId: 's1', joined: ['#revops'], needsPerson: [] },
+        },
+        subject,
+      ),
+    ).toBe('After the renewal Leo re-joined #revops in Slack itself.');
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: { surfaceId: 's1', joined: [], needsPerson: ['#revops-leads', '#finance'] },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined no channel in Slack itself; #revops-leads and #finance need someone in them to add Leo.',
+    );
+  });
+});
+
 describe('what an evaluation and a plan approval say in the record (walk m15)', (): void => {
   const subject = { name: 'Ada', item: 'Priya asks for tracker update' };
 
