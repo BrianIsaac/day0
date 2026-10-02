@@ -80,10 +80,20 @@ const landingFields = {
   clientCredentialsScopes: v.optional(v.array(v.string())),
 };
 
-const landingValidator = v.object(landingFields);
-
 /** A landing as an administrator or the setup verb gives it. */
-export type Landing = Infer<typeof landingValidator>;
+export type Landing = ObjectType<typeof landingFields>;
+
+const {
+  secret: _landingSecret,
+  refreshToken: _landingRefreshToken,
+  ...registrationFields
+} = landingFields;
+
+/** A landing's registration without its secrets: what the recording mutation is handed. */
+const registrationValidator = v.object(registrationFields);
+
+/** A landing's registration without its secrets. */
+export type Registration = Infer<typeof registrationValidator>;
 
 /** What a rotation gives: the new secret, its refresh token, and the scopes when they changed. */
 const rotationFields = {
@@ -165,6 +175,9 @@ export function landingRefusal(landing: Landing): string | undefined {
   if (landing.refreshToken !== undefined && landing.refreshToken.trim() === '') {
     return 'The refresh token is empty.';
   }
+  if (landing.refreshToken !== undefined && landing.secret === undefined) {
+    return 'A refresh token renews a secret: give the secret it renews as well.';
+  }
   if (landing.clientCredentialsScopes !== undefined) {
     if (landing.kind !== 'oauth-app' || landing.mode !== 'shared') {
       return 'Only a shared OAuth app requests tokens with fixed client-credentials scopes.';
@@ -227,6 +240,29 @@ export async function activeConnectionFor(
     .first();
 }
 
+/**
+ * The system's connection that keeps it occupied, if any: an active one, or one that needs IT's
+ * attention, which an administrator rotates rather than lands beside, so a system never has two
+ * connections a rotation could make active together.
+ *
+ * @param ctx - A query's or a mutation's context.
+ * @param system - The system key.
+ */
+export async function occupyingConnectionFor(
+  ctx: Pick<QueryCtx, 'db'>,
+  system: string,
+): Promise<Doc<'organisationConnections'> | null> {
+  return (
+    (await activeConnectionFor(ctx, system)) ??
+    (await ctx.db
+      .query('organisationConnections')
+      .withIndex('by_system_status', (index) =>
+        index.eq('system', system).eq('status', 'needs-attention'),
+      )
+      .first())
+  );
+}
+
 /** The secret rows a landing or a rotation stored, before the connection names them. */
 interface StoredSecrets {
   readonly secretCredentialId?: Id<'credentials'>;
@@ -235,11 +271,14 @@ interface StoredSecrets {
 
 /**
  * Seal a landing's or a rotation's secrets as rows the organisation holds, under the reserved key
- * (AC12). Nothing names them until the mutation that records the change does, which revokes them
- * instead when it refuses.
+ * (AC12). Nothing names them until the mutation that records the change does. When one of the two
+ * stores fails, the one that landed is revoked before the failure is rethrown, so no secret is
+ * left live with nothing naming it.
+ *
+ * @throws The first store's failure, after revoking what was stored.
  */
-async function storeSecrets(
-  ctx: ActionCtx,
+export async function storeSecrets(
+  ctx: Pick<ActionCtx, 'runAction' | 'runMutation'>,
   connection: { readonly displayName: string; readonly kind: OrganisationConnectionKind },
   secrets: { readonly secret?: string; readonly refreshToken?: string },
 ): Promise<StoredSecrets> {
@@ -253,17 +292,70 @@ async function storeSecrets(
       plaintext: plaintext.trim(),
       source: 'entered',
     });
-  const [secretCredentialId, refreshCredentialId] = await Promise.all([
+  const [secret, refresh] = await Promise.allSettled([
     secrets.secret === undefined ? undefined : store(name, secrets.secret),
     secrets.refreshToken === undefined
       ? undefined
       : store(`${connection.displayName.trim()} configuration refresh token`, secrets.refreshToken),
   ]);
+  const failure = [secret, refresh].find((outcome) => outcome.status === 'rejected');
+  if (failure !== undefined) {
+    const landed = [secret, refresh].flatMap((outcome) =>
+      outcome.status === 'fulfilled' && outcome.value !== undefined ? [outcome.value] : [],
+    );
+    if (landed.length > 0) {
+      await ctx.runMutation(internal.organisationConnections.releaseStoredSecrets, {
+        credentialIds: landed,
+      });
+    }
+    throw failure.reason;
+  }
+  const secretCredentialId = secret.status === 'fulfilled' ? secret.value : undefined;
+  const refreshCredentialId = refresh.status === 'fulfilled' ? refresh.value : undefined;
   return {
     ...(secretCredentialId === undefined ? {} : { secretCredentialId }),
     ...(refreshCredentialId === undefined ? {} : { refreshCredentialId }),
   };
 }
+
+/**
+ * Record a change's stored secrets, revoking them when the recording fails, so none is left live
+ * with nothing naming it.
+ *
+ * @throws The recording's failure, after the secrets are revoked.
+ */
+async function recordOrRelease<Recorded>(
+  ctx: Pick<ActionCtx, 'runMutation'>,
+  secrets: StoredSecrets,
+  record: () => Promise<Recorded>,
+): Promise<Recorded> {
+  try {
+    return await record();
+  } catch (error) {
+    const credentialIds = [secrets.secretCredentialId, secrets.refreshCredentialId].filter(
+      (credentialId): credentialId is Id<'credentials'> => credentialId !== undefined,
+    );
+    if (credentialIds.length > 0) {
+      await ctx.runMutation(internal.organisationConnections.releaseStoredSecrets, {
+        credentialIds,
+      });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Revoke organisation secrets a landing or a rotation stored and could not record. Internal, for
+ * {@link storeSecrets} and the recording's failure; only organisation rows are touched.
+ */
+export const releaseStoredSecrets = internalMutation({
+  args: { credentialIds: v.array(v.id('credentials')) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await revokeSecrets(ctx, args.credentialIds, Date.now());
+    return null;
+  },
+});
 
 /** Revoke organisation credential rows, keeping each ciphertext for the vendor call (F19). */
 async function revokeSecrets(
@@ -310,7 +402,7 @@ const storedSecretsFields = {
  */
 export const recordLanded = internalMutation({
   args: {
-    landing: landingValidator,
+    landing: registrationValidator,
     secrets: v.object(storedSecretsFields),
     registrar: registrarValidator,
   },
@@ -319,7 +411,7 @@ export const recordLanded = internalMutation({
     const now = Date.now();
     const { landing, secrets, registrar } = args;
     const displayName = landing.displayName.trim();
-    if ((await activeConnectionFor(ctx, landing.system)) !== null) {
+    if ((await occupyingConnectionFor(ctx, landing.system)) !== null) {
       await revokeSecrets(ctx, [secrets.secretCredentialId, secrets.refreshCredentialId], now);
       return { recorded: false, reason: alreadyConnected(displayName) };
     }
@@ -364,7 +456,7 @@ export const recordLanded = internalMutation({
 
 /** The optional registration fields a landing carries, trimmed, each only when given. */
 function optionalRegistration(
-  landing: Landing,
+  landing: Registration,
 ): Partial<
   Pick<
     Doc<'organisationConnections'>,
@@ -427,16 +519,22 @@ async function landConnection(
 ): Promise<Id<'organisationConnections'>> {
   const refusal = landingRefusal(landing);
   if (refusal !== undefined) throw new ConvexError(refusal);
-  const existing = await ctx.runQuery(internal.organisationConnections.activeFor, {
+  const existing = await ctx.runQuery(internal.organisationConnections.occupyingFor, {
     system: landing.system,
   });
   if (existing !== null) throw new ConvexError(alreadyConnected(landing.displayName.trim()));
-  const secrets = await storeSecrets(ctx, landing, landing);
-  const recorded = await ctx.runMutation(internal.organisationConnections.recordLanded, {
-    landing,
+  const { secret, refreshToken, ...registration } = landing;
+  const secrets = await storeSecrets(ctx, landing, { secret, refreshToken });
+  const recorded = await recordOrRelease(
+    ctx,
     secrets,
-    registrar: { ...registrar },
-  });
+    async () =>
+      await ctx.runMutation(internal.organisationConnections.recordLanded, {
+        landing: registration,
+        secrets,
+        registrar: { ...registrar },
+      }),
+  );
   if (!recorded.recorded) throw new ConvexError(recorded.reason);
   return recorded.organisationConnectionId;
 }
@@ -555,12 +653,17 @@ async function rotateConnection(
   if (connection === null) throw new ConvexError(CONNECTION_NOT_FOUND);
   if (connection.status === 'revoked') throw new ConvexError(CONNECTION_REVOKED);
   const secrets = await storeSecrets(ctx, connection, rotation);
-  const recorded = await ctx.runMutation(internal.organisationConnections.recordRotated, {
-    organisationConnectionId: connection._id,
-    ...(rotation.scopes === undefined ? {} : { scopes: rotation.scopes }),
+  const recorded = await recordOrRelease(
+    ctx,
     secrets,
-    registrar: { ...registrar },
-  });
+    async () =>
+      await ctx.runMutation(internal.organisationConnections.recordRotated, {
+        organisationConnectionId: connection._id,
+        ...(rotation.scopes === undefined ? {} : { scopes: rotation.scopes }),
+        secrets,
+        registrar: { ...registrar },
+      }),
+  );
   if (!recorded.recorded) throw new ConvexError(recorded.reason);
 }
 
@@ -749,7 +852,10 @@ export const listForAdministrator = query({
   returns: v.array(administratorViewValidator),
   handler: async (ctx): Promise<AdministratorView[]> => {
     await assertAdministrator(ctx);
-    const connections = await ctx.db.query('organisationConnections').take(CONNECTION_READ_LIMIT);
+    const connections = await ctx.db
+      .query('organisationConnections')
+      .order('desc')
+      .take(CONNECTION_READ_LIMIT);
     const ordered = [...connections].sort(
       (left, right) => left.system.localeCompare(right.system) || right.createdAt - left.createdAt,
     );
@@ -783,7 +889,10 @@ export const summaryForManager = query({
   returns: managerSummaryValidator,
   handler: async (ctx): Promise<Infer<typeof managerSummaryValidator>> => {
     await getCallerOrThrow(ctx);
-    const connections = await ctx.db.query('organisationConnections').take(CONNECTION_READ_LIMIT);
+    const connections = await ctx.db
+      .query('organisationConnections')
+      .order('desc')
+      .take(CONNECTION_READ_LIMIT);
     const systems = connections
       .filter(
         (
@@ -809,6 +918,13 @@ export const activeFor = internalQuery({
   args: { system: v.string() },
   handler: async (ctx, args): Promise<Doc<'organisationConnections'> | null> =>
     await activeConnectionFor(ctx, args.system),
+});
+
+/** The system's active connection, or the one needing IT's attention, or null. Internal; the landing's check. */
+export const occupyingFor = internalQuery({
+  args: { system: v.string() },
+  handler: async (ctx, args): Promise<Doc<'organisationConnections'> | null> =>
+    await occupyingConnectionFor(ctx, args.system),
 });
 
 /** One organisation connection by id, or null. Internal. */

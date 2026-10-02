@@ -9,7 +9,8 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as organisationConnections from '../../convex/organisationConnections';
-import type { Landing } from '../../convex/organisationConnections';
+import { landingRefusal, storeSecrets, type Landing } from '../../convex/organisationConnections';
+import type { ActionCtx } from '../../convex/_generated/server';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
@@ -488,5 +489,115 @@ describe("a manager's deletion and the organisation's connections", (): void => 
     expect(security).toContain(
       "The deletion never touches the organisation's connections (`organisationConnections`), their ledger (`connectionEvents`) or the secrets stored under the organisation's reserved key: they are the organisation's, which only an administrator revokes.",
     );
+  });
+});
+
+describe('the second pass on landing, rotating and the system key (11-AO review)', (): void => {
+  /** One organisation secret stored as a landing would, before anything names it. */
+  async function storedSecret(
+    harness: TestConvex<typeof schema>,
+    plaintext: string,
+  ): Promise<Id<'credentials'>> {
+    return await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Linear client secret',
+      plaintext,
+      source: 'entered',
+    });
+  }
+
+  it('revokes the secrets of a landing the record refuses, when the system was connected since the check', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(internal.organisationConnections.landFromSetup, LINEAR);
+    const late = await storedSecret(harness, 'lin_oauth_late_000');
+    const { secret: _secret, refreshToken: _refresh, ...registration } = LINEAR;
+    await expect(
+      harness.mutation(internal.organisationConnections.recordLanded, {
+        landing: registration,
+        secrets: { secretCredentialId: late },
+        registrar: { via: 'setup-cli' },
+      }),
+    ).resolves.toMatchObject({ recorded: false });
+    const row = await harness.run(async (ctx) => await ctx.db.get(late));
+    expect(row?.revokedAt).toEqual(expect.any(Number));
+  });
+
+  it('revokes the secrets of a rotation the record refuses, when the connection was revoked since', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      LINEAR,
+    );
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'replaced',
+    });
+    const late = await storedSecret(harness, 'lin_oauth_late_001');
+    await expect(
+      harness.mutation(internal.organisationConnections.recordRotated, {
+        organisationConnectionId: connectionId,
+        secrets: { secretCredentialId: late },
+        registrar: { via: 'setup-cli' },
+      }),
+    ).resolves.toMatchObject({ recorded: false });
+    const row = await harness.run(async (ctx) => await ctx.db.get(late));
+    expect(row?.revokedAt).toEqual(expect.any(Number));
+  });
+
+  it('revokes what it stored when one of a landing’s two stores fails, leaving no secret live', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const stored = await storedSecret(harness, 'lin_oauth_half_000');
+    const revoked: unknown[] = [];
+    const fake = {
+      runAction: async (_reference: unknown, args: { label: string }): Promise<unknown> => {
+        if (args.label.includes('refresh')) throw new Error('the backend went away');
+        return stored;
+      },
+      runMutation: async (_reference: unknown, args: unknown): Promise<unknown> => {
+        revoked.push(args);
+        return await harness.mutation(
+          internal.organisationConnections.releaseStoredSecrets,
+          args as never,
+        );
+      },
+    } as unknown as ActionCtx;
+    await expect(
+      storeSecrets(fake, SLACK, { secret: 'xoxe.xoxp-1-a', refreshToken: 'xoxe-1-a' }),
+    ).rejects.toThrow('the backend went away');
+    expect(revoked).toEqual([{ credentialIds: [stored] }]);
+    const row = await harness.run(async (ctx) => await ctx.db.get(stored));
+    expect(row?.revokedAt).toEqual(expect.any(Number));
+  });
+
+  it('refuses a refresh token without the secret it renews', async (): Promise<void> => {
+    expect(
+      landingRefusal({
+        ...LINEAR,
+        kind: 'mcp-client',
+        system: 'mcp:mcp.acme.test',
+        secret: undefined,
+        clientCredentialsScopes: undefined,
+        refreshToken: 'r-1',
+      }),
+    ).toMatch(/refresh token renews a secret/);
+  });
+
+  it('keeps a system that needs IT’s attention occupied, so no second connection is landed beside it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      LINEAR,
+    );
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(connectionId, {
+        status: 'needs-attention',
+        statusReason: 'secret expired',
+      });
+    });
+    expect(
+      await refusalOf(harness.action(internal.organisationConnections.landFromSetup, LINEAR)),
+    ).toMatch(/Linear is already connected/);
   });
 });
