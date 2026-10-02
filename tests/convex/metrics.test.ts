@@ -1065,6 +1065,83 @@ describe('supervision figures for a company of employees', (): void => {
     });
   });
 
+  it('counts both of the reader’s spans when the employee was handed over and back (D12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, {
+      name: 'Priya',
+      deployedAt: 100_000,
+      charterApprovedAt: 110_000,
+      decisions: [
+        { requestedAt: 200_000, decidedAt: 210_000, via: 'dashboard', outcome: 'approved' },
+      ],
+    });
+    await handOver(harness, priyaId, 300_000);
+    await harness.run(async (ctx): Promise<void> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: priyaId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'PRIYA-SUCCESSOR',
+        title: 'Decided by the successor',
+        contentSummary: 'Synthetic company work.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 400_000,
+        createdAt: 400_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.cancelled',
+        payload: { workItemId, decidedVia: 'dashboard' },
+        createdAt: 410_000,
+      });
+      // The successor hands Priya back.
+      await ctx.db.insert('managerTransfers', {
+        agentId: priyaId,
+        agentName: 'Priya',
+        fromOwnerKey: SUCCESSOR.subject,
+        fromAddress: SUCCESSOR.email ?? '',
+        toAddress: COMPANY_OWNER.email ?? '',
+        state: 'accepted',
+        requestedAt: 440_000,
+        expiresAt: 1_500_000_000,
+        decidedAt: 500_000,
+        toOwnerKey: COMPANY_OWNER.subject,
+      });
+      await ctx.db.patch(priyaId, {
+        userId: COMPANY_OWNER.subject,
+        bossEmail: COMPANY_OWNER.email,
+      });
+    });
+
+    const back = await harness
+      .withIdentity(COMPANY_OWNER)
+      .query(api.metrics.forAgent, { agentId: priyaId });
+    expect(back.decisions).toMatchObject({ approved: 1, rejected: 0 });
+  });
+
+  it('cuts nothing, rather than every decision, when the reader holds no span its handovers name', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, {
+      name: 'Priya',
+      deployedAt: 100_000,
+      decisions: [
+        { requestedAt: 200_000, decidedAt: 210_000, via: 'dashboard', outcome: 'approved' },
+      ],
+    });
+    await handOver(harness, priyaId, 300_000);
+    // A row that disagrees with its handovers: the employee is on a third owner's key.
+    const stranger = managerIdentity('stranger');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(priyaId, { userId: stranger.subject, bossEmail: stranger.email });
+    });
+
+    const figures = await harness.withIdentity(stranger).query(api.metrics.forAgent, {
+      agentId: priyaId,
+    });
+    expect(figures.decisions).toMatchObject({ approved: 1 });
+  });
+
   it('keeps an item the old owner completed in their figures when the new owner retries it (D12)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priyaId = await deployEmployee(harness, { ...THREE_EMPLOYEES[0], completedAt: 130_000 });

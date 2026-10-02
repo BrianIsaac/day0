@@ -1186,6 +1186,15 @@ export function figuresForCurrentManager(
   if (currentOwner === undefined) return whole;
   const windows = tenureWindowsOf(currentOwner, currentOwner, handovers);
   if (isWholeHistory(windows)) return whole;
+  if (windows.length === 0) {
+    // The owner now holds no span of its own handovers: the rows disagree, so nothing is cut
+    // rather than every decision dropped.
+    log.warn('an employee page read by an owner its handovers never name', {
+      agentId: records.agent._id,
+      handovers: handovers.length,
+    });
+    return whole;
+  }
   const held = recordsWithinTenure(records, windows);
   return { ...whole, decisions: summariseDecisions(decisionTotals(held.events, held.workItems)) };
 }
