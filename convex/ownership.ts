@@ -6,10 +6,13 @@ import { internal } from './_generated/api';
 import { EMPLOYEE_GONE, EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
 import {
   CUSTOMER_OIDC_ISSUER_VAR,
+  customerAddressVerified,
   customerOidcAllowedDomains,
   customerOidcEmailTrusted,
+  emailVerifiedClaim,
   issuerKey,
   signInRefusal,
+  type CallerRefusal,
 } from '../src/lib/customer-oidc';
 import { providerOfIssuer } from '../src/lib/customer-oidc-presets';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
@@ -137,7 +140,23 @@ function deploymentEnv(name: string): string | undefined {
  * them; an unreadable list refuses them too.
  */
 function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean {
-  if (callerIssuer(identity, read) !== 'customer') return false;
+  return callerRefusal(identity, read) !== undefined;
+}
+
+/**
+ * Why the deployment refuses a caller the customer's issuer signed, or undefined when it admits
+ * them or another issuer signed them: outside the allowed domains (the domain rule), or, under the
+ * generic preset, an address the issuer did not verify (decision 7 (b)). `config.whoAmI` answers
+ * the live check with it, so the check can say which.
+ *
+ * @param identity - The caller's verified token.
+ * @param read - Reads one name of the deployment's env; its own by default.
+ */
+export function callerRefusal(
+  identity: UserIdentity,
+  read: EnvReader = deploymentEnv,
+): CallerRefusal | undefined {
+  if (callerIssuer(identity, read) !== 'customer') return undefined;
   let allowed: readonly string[];
   try {
     allowed = customerOidcAllowedDomains(read);
@@ -149,9 +168,9 @@ function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean
     signInRefusal({ email: identity.email, hd: identity.hd }, allowed, identity.issuer) !==
     undefined
   ) {
-    return true;
+    return 'outside-domains';
   }
-  return unverifiedUnderGenericPreset(identity, read);
+  return unverifiedUnderGenericPreset(identity, read) ? 'unverified-address' : undefined;
 }
 
 /**
@@ -181,28 +200,6 @@ function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
   const customer = read(CUSTOMER_OIDC_ISSUER_VAR);
   if (customer && issuer === issuerKey(customer)) return 'customer';
   return 'clerk';
-}
-
-/**
- * The token's own word on its address, as the deployment hands it over. An
- * OIDC provider's `email_verified` arrives mapped to `emailVerified`; a custom
- * JWT provider's (the local issuer's) arrives raw as `email_verified`, which a
- * self-hosted backend was seen to do on 1 October. Undefined when the token
- * says nothing; `true` only when every spelling present says `true`, so two
- * spellings that disagree verify nothing whichever comes first (the wave 9
- * review's U1-m1). Any value other than a boolean is not the claim and is
- * kept as said, so it never reads as absent.
- */
-function emailVerifiedClaim(identity: UserIdentity): unknown {
-  const said = [identity.emailVerified, identity.email_verified].filter(
-    (claim: unknown) => claim !== undefined,
-  );
-  if (said.length === 0) return undefined;
-  // Every spelling present must be `true`; anything else (a `false`, a string, a JSON null) is
-  // returned as said, so it neither verifies nor reads as absent.
-  return said.every((claim: unknown) => claim === true)
-    ? true
-    : said.find((claim: unknown) => claim !== true);
 }
 
 /**
@@ -259,12 +256,8 @@ function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
     case 'clerk':
     case 'local':
       return claim === true;
-    case 'customer': {
-      if (claim !== undefined) return claim === true;
-      const domainOwnerVerified: unknown = identity.xms_edov;
-      if (domainOwnerVerified !== undefined) return domainOwnerVerified === true;
-      return customerOidcEmailTrusted(read);
-    }
+    case 'customer':
+      return customerAddressVerified(identity, customerOidcEmailTrusted(read));
     default: {
       const unknown: never = issuer;
       throw new Error(`unhandled issuer ${String(unknown)}`);

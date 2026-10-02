@@ -192,6 +192,73 @@ export interface SignInClaims {
 /** Why the domain rule refuses a person. */
 export type SignInRefusal = 'no-domains' | 'no-email' | 'foreign-domain' | 'foreign-workspace';
 
+/**
+ * Why the address rule refuses a person (the wave 10 review's decision 7 (b)): an issuer the
+ * generic preset serves did not verify their address.
+ */
+export type AddressRefusal = 'unverified-address';
+
+/**
+ * Why the deployment refuses a caller the customer's issuer signed (`getCaller`, answered by
+ * `config.whoAmI` so the live check can say which): outside the allowed domains, or an address
+ * the generic preset requires verified and the issuer did not verify.
+ */
+export const CALLER_REFUSALS = ['outside-domains', 'unverified-address'] as const;
+
+/** One of {@link CALLER_REFUSALS}. */
+export type CallerRefusal = (typeof CALLER_REFUSALS)[number];
+
+/** Every reason the customer sign-in refuses a person the issuer signed in. */
+export type CustomerSignInRefusal = SignInRefusal | AddressRefusal;
+
+/** The claims the address rule reads, as a token or a verified identity carries them. */
+export interface AddressClaims {
+  readonly [claim: string]: unknown;
+  readonly email_verified?: unknown;
+  /** Convex's spelling of `email_verified` on a verified identity. */
+  readonly emailVerified?: unknown;
+  /** Entra's "the address's domain owner is verified" (S4). */
+  readonly xms_edov?: unknown;
+}
+
+/**
+ * What a token says of its address's verification, in either spelling: `true` only when every
+ * spelling present is `true`, the first other value when one is not (a `false`, a string, a JSON
+ * null neither verifies nor reads as absent), undefined when neither is present. An OIDC
+ * provider's `email_verified` reaches a Convex function mapped to `emailVerified`; a custom JWT
+ * provider's (the local issuer's) arrives raw as `email_verified`, which a self-hosted backend was
+ * seen to do on 1 October; two spellings that disagree verify nothing whichever comes first (the
+ * wave 9 review's U1-m1).
+ *
+ * @param claims - The token's claims.
+ */
+export function emailVerifiedClaim(claims: AddressClaims): unknown {
+  const said = [claims.emailVerified, claims.email_verified].filter(
+    (claim: unknown) => claim !== undefined,
+  );
+  if (said.length === 0) return undefined;
+  return said.every((claim: unknown) => claim === true)
+    ? true
+    : said.find((claim: unknown) => claim !== true);
+}
+
+/**
+ * Whether a customer issuer's token asserts its address verified (D3, S4): its `email_verified`
+ * decides when it sends one; else Entra's `xms_edov` when it sends that (a boolean `true`
+ * verifies, anything else is the issuer's word against it); only with neither does the
+ * deployment's declared trust (`DAY0_OIDC_EMAIL_TRUSTED`) decide. The one rule the sign-in's
+ * callback and the deployment's `getCaller` share.
+ *
+ * @param claims - The token's claims.
+ * @param emailTrusted - Whether the deployment declares the issuer authoritative for `email`.
+ */
+export function customerAddressVerified(claims: AddressClaims, emailTrusted: boolean): boolean {
+  const claim = emailVerifiedClaim(claims);
+  if (claim !== undefined) return claim === true;
+  if (claims.xms_edov !== undefined) return claims.xms_edov === true;
+  return emailTrusted;
+}
+
 /** What a refused person reads, by reason. Never repeats the address. */
 export const SIGN_IN_REFUSAL_WORDS: Readonly<Record<SignInRefusal, string>> = {
   'no-domains':
@@ -202,6 +269,13 @@ export const SIGN_IN_REFUSAL_WORDS: Readonly<Record<SignInRefusal, string>> = {
     'Your account is not in a domain this installation admits. Sign in with your work account, or ask whoever installed Day0 to add your domain.',
   'foreign-workspace':
     'Your Google account does not belong to a Google Workspace this installation admits. Sign in with your work account.',
+};
+
+/** What a refused person reads, by every reason the customer sign-in refuses. Never repeats the address. */
+export const CUSTOMER_SIGN_IN_REFUSAL_WORDS: Readonly<Record<CustomerSignInRefusal, string>> = {
+  ...SIGN_IN_REFUSAL_WORDS,
+  'unverified-address':
+    'Your identity provider has not verified your email address, and this installation admits only verified addresses. Ask your administrator to verify it, then sign in again.',
 };
 
 /**

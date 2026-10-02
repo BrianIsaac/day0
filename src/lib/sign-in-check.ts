@@ -1,5 +1,5 @@
 import { signInRefusal, type SignInRefusal } from './customer-oidc';
-import { providerOfIssuer } from './customer-oidc-presets';
+import { CUSTOMER_OIDC_PRESETS, providerOfIssuer } from './customer-oidc-presets';
 import { seal, unseal } from './customer-session';
 
 /**
@@ -138,18 +138,21 @@ function addressVerdict(
 }
 
 /**
- * The line a generic issuer's check carries whatever its token says (decision 7 (a); the wave 10
- * review, S-m2): the domain rule admits an unverified address of an allowed domain to sign in, so
- * an issuer where anyone can register such an address admits anyone to the model. Entra, Okta
- * and Google control their addresses; a generic issuer may not, and Day0 cannot tell.
+ * The line a generic issuer's check carries whatever its token says (decision 7 (a), with 7 (b)
+ * built; the wave 10 review, S-m2): the deployment admits only a verified address under the
+ * generic preset, so what remains the issuer's is whether its verification means anything. Entra,
+ * Okta and Google control their addresses; a generic issuer may let anyone register and verify
+ * one, and Day0 cannot tell.
  */
 function registrationVerdict(input: ClaimCheckInput): ClaimVerdict | undefined {
-  if (providerOfIssuer(input.issuer) !== 'oidc') return undefined;
+  if (!CUSTOMER_OIDC_PRESETS[providerOfIssuer(input.issuer)].requiresVerifiedAddress) {
+    return undefined;
+  }
   return verdict(
     'registration',
     'the issuer’s own',
     'warn',
-    'If anyone can register an address in an allowed domain at this issuer, they can sign in and spend the model: require a verified address there, or turn self-registration off.',
+    'This deployment admits only a verified address from this issuer, and refuses anyone else at sign-in. If anyone can register an address in an allowed domain at this issuer and verify it themselves, turn self-registration off there.',
   );
 }
 

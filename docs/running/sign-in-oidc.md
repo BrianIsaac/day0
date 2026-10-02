@@ -72,15 +72,17 @@ Three things decide it, and the first is the customer's:
 3. **A verified address** (step 3), which deploying and taking on an employee
    need.
 
-**Self-registration.** The allowed domains admit an *unverified* address of an
-allowed domain to sign in; only deploying or taking on an employee asks for a
-verified one. Entra, Okta and Google control the addresses they issue; an
-issuer of this kind may let anyone register one. **Where anyone can register an
-address at this issuer, it must verify every address, or have self-registration
-turned off**: otherwise someone who registers `anyone@acme.com` there signs in
-to Day0 and can spend the model. `pnpm check:sign-in` says so on its
-`registration` line for every issuer of this kind (decision 7 (a); requiring a
-verified address under this preset is recorded for wave 11).
+**Self-registration.** Under this preset Day0 admits only a *verified* address:
+the issuer's `email_verified` must be `true` (or, for an issuer that sends no
+such claim, `DAY0_OIDC_EMAIL_TRUSTED=true` declares its addresses verified).
+A person whose address the issuer did not verify is refused at sign-in, with
+words that say so, and again by the backend. Entra, Okta and Google control
+the addresses they issue; an issuer of this kind may let anyone register one
+and verify it themselves. **Where anyone can register and verify an address at
+this issuer, turn self-registration off**: otherwise someone who registers
+`anyone@acme.com` there signs in to Day0 and can spend the model.
+`pnpm check:sign-in` says so on its `registration` line for every issuer of
+this kind (decision 7 (a), with 7 (b) built in v0.14.0).
 
 ## 5. The secret and its expiry
 
@@ -134,7 +136,7 @@ of this kind:
 | `sub` | present (the person, as Day0 keys them) |
 | `email` | the person's address, in an allowed domain |
 | `email_verified` | `true` (a `note` if you rely on `DAY0_OIDC_EMAIL_TRUSTED` instead) |
-| `registration` | a `note`: confirm with the customer's IT that nobody can register an unverified address in an allowed domain (step 4) |
+| `registration` | a `note`: confirm with the customer's IT that nobody can register and verify an address in an allowed domain themselves (step 4) |
 | `exp` | the token's lifetime |
 | `refresh_token` | granted |
 | `whoAmI` | the owner key the backend derived: the backend fetched the issuer's keys and accepted the token |

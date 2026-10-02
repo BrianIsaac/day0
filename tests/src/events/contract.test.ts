@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_EVENT_TYPES,
   CONNECTION_EVENT_TYPES,
   EVENT_TYPES,
   isConnectionEventType,
@@ -136,6 +137,14 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
       ).toEqual([]);
     }
   }, 120_000);
+
+  it('splits every type between an employee’s ledger and the organisation’s, in the contract’s order', (): void => {
+    expect(AGENT_EVENT_TYPES.filter((type) => isConnectionEventType(type))).toEqual([]);
+    expect(AGENT_EVENT_TYPES).toEqual(
+      EVENT_TYPES.filter((type) => !(CONNECTION_EVENT_TYPES as readonly string[]).includes(type)),
+    );
+    expect(AGENT_EVENT_TYPES.length + CONNECTION_EVENT_TYPES.length).toBe(EVENT_TYPES.length);
+  });
 
   it('leaves the ledger’s writer the only code that inserts into connectionEvents', (): void => {
     const direct = [...sourceFiles('convex'), ...sourceFiles('src')]

@@ -1,6 +1,7 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { query } from './_generated/server';
-import { getCaller, verifiedAddressOf } from './ownership';
+import { callerRefusal, getCaller, verifiedAddressOf } from './ownership';
+import { CALLER_REFUSALS } from '../src/lib/customer-oidc';
 import {
   resolveDeploymentProfile,
   SURFACE_MODE,
@@ -112,6 +113,7 @@ export const components = query({
 /** Who the caller is, as this deployment derived it from the caller's token. */
 const whoAmIValidator = v.union(
   v.null(),
+  v.object({ refused: v.union(...CALLER_REFUSALS.map((refusal) => v.literal(refusal))) }),
   v.object({
     ownerKey: v.string(),
     issuer: v.string(),
@@ -125,16 +127,22 @@ const whoAmIValidator = v.union(
  * keyed on, the issuer and subject it was derived from, and the address their
  * token proves, or null when it proves none. The live sign-in check
  * (`pnpm check:sign-in`) ends on this line: it shows the token reached the
- * deployment, was verified against the issuer's keys and passed the domain rule.
+ * deployment, was verified against the issuer's keys and passed the domain rule
+ * and, under the generic preset, the address rule (decision 7 (b)).
  *
  * Public and guarded to the caller: it answers only about the caller's own
- * token, and null for an anonymous caller or one `getCaller` refuses. Writes
- * nothing.
+ * token: null for an anonymous caller or a token on a reserved key, and for one
+ * the customer's rules refuse only which rule refused it (`callerRefusal`),
+ * never anything of the token. Writes nothing.
  */
 export const whoAmI = query({
   args: {},
   returns: whoAmIValidator,
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Infer<typeof whoAmIValidator>> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const refused = callerRefusal(identity);
+    if (refused !== undefined) return { refused };
     const caller = await getCaller(ctx);
     if (!caller) return null;
     return {

@@ -174,7 +174,7 @@ describe('config.whoAmI, the live sign-in check', (): void => {
     });
   });
 
-  it('answers a caller the domain rule refuses with null, as every guarded function would', async (): Promise<void> => {
+  it('answers a caller the domain rule refuses with the refusal, as every guarded function refuses them', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
     vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
     vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
@@ -182,7 +182,7 @@ describe('config.whoAmI, the live sign-in check', (): void => {
     const eve = harness.withIdentity(
       managerIdentity('fake-oidc|eve', { issuer: CUSTOMER, email: 'eve@rival.test' }),
     );
-    await expect(eve.query(api.config.whoAmI, {})).resolves.toBeNull();
+    await expect(eve.query(api.config.whoAmI, {})).resolves.toEqual({ refused: 'outside-domains' });
   });
 
   it('says when the address is not verified, under an issuer that controls its addresses', async (): Promise<void> => {
@@ -199,7 +199,7 @@ describe('config.whoAmI, the live sign-in check', (): void => {
     });
   });
 
-  it('answers a generic issuer’s unverified caller with null, refused as every guarded function refuses it (decision 7 (b))', async (): Promise<void> => {
+  it('answers a generic issuer’s unverified caller with that refusal, refused as every guarded function refuses it (decision 7 (b))', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
     vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
     vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
@@ -211,6 +211,8 @@ describe('config.whoAmI, the live sign-in check', (): void => {
         emailVerified: undefined,
       }),
     );
-    await expect(nora.query(api.config.whoAmI, {})).resolves.toBeNull();
+    await expect(nora.query(api.config.whoAmI, {})).resolves.toEqual({
+      refused: 'unverified-address',
+    });
   });
 });

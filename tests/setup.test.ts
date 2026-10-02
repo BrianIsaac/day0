@@ -203,6 +203,21 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.stdout).toContain('./setup.sh unpause   lift the pause');
   });
 
+  it('names access and install in its usage and header, and hands them to the typed entry with stdin kept', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.status).toBe(0);
+    expect(outcome.stdout).toContain(
+      './setup.sh access [--administrators <a@x>] [--secrets-stdin]',
+    );
+    expect(outcome.stdout).toContain('./setup.sh install --provider <entra|okta|google>');
+    expect(outcome.stdout).toContain('never as a flag');
+    const header = readFileSync(SCRIPT, 'utf8');
+    expect(header).toContain('#   ./setup.sh access ');
+    expect(header).toContain('#   ./setup.sh install --provider entra|okta|google');
+    const handed = runSetupSh({ installed: true }, ['access', '--secrets-stdin']);
+    expect(handed.pnpm).toEqual(['setup:local --mode real access --secrets-stdin']);
+  });
+
   it('names pause and unpause in its header, beside the other verbs', (): void => {
     expect(readFileSync(SCRIPT, 'utf8')).toContain(
       '#   ./setup.sh pause | unpause         hold the scheduled jobs, or let them run again',
