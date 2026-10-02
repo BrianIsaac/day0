@@ -115,6 +115,7 @@ export const CONNECT_REFUSALS = [
   'no-connection',
   'not-an-app-connection',
   'install-needed',
+  'linear-refused',
 ] as const;
 
 /** One of {@link CONNECT_REFUSALS}. */
@@ -171,6 +172,18 @@ function connectableThrough(
     };
   }
   return { ok: true, connection };
+}
+
+/**
+ * Linear's refusal (or the connection's end) as the card's answer, its words Day0's own and safe
+ * to show: a thrown error's words would not reach the browser in production (the standard, 6.3).
+ * Any other failure is rethrown.
+ *
+ * @throws The error itself when it is not Linear's refusal.
+ */
+function refusedByLinear(error: unknown): Refused {
+  if (!(error instanceof LinearIssuerRefusal)) throw error;
+  return { ok: false, reason: 'linear-refused', message: error.message.slice(0, REASON_MAX) };
 }
 
 /** The card and its connection, or a ConvexError when the card is gone. */
@@ -290,10 +303,6 @@ async function connectShared(
   deps: LinearIdentityDeps,
 ): Promise<void> {
   const organisationConnectionId = context.connection._id;
-  await ctx.runMutation(internal.organisationConnections.linkSurface, {
-    surfaceId: context.surface._id,
-    organisationConnectionId,
-  });
   let token = await sharedToken(ctx, organisationConnectionId, deps);
   let appUser: LinearViewer;
   try {
@@ -303,6 +312,12 @@ async function connectShared(
     token = await sharedToken(ctx, organisationConnectionId, deps, token.generation);
     appUser = await appUserOf(deps, token.bearer);
   }
+  // Linked only once Linear has issued the token and named the app user: a refused connect leaves
+  // the card as it was.
+  await ctx.runMutation(internal.organisationConnections.linkSurface, {
+    surfaceId: context.surface._id,
+    organisationConnectionId,
+  });
   await ctx.runMutation(internal.linearIdentity.connectSharedCard, {
     surfaceId: context.surface._id,
     ownerKey,
@@ -399,7 +414,11 @@ export const connect = action({
     const deps = linearIdentityDeps();
     if (connection.mode === 'shared') {
       if (agent.userId === undefined) throw new ConvexError('The employee has no owner.');
-      await connectShared(ctx, { ...context, connection }, agent.userId, deps);
+      try {
+        await connectShared(ctx, { ...context, connection }, agent.userId, deps);
+      } catch (error) {
+        return refusedByLinear(error);
+      }
       return { ok: true, connected: true };
     }
     return await startInstall(ctx, context, connection, deps);
@@ -885,8 +904,8 @@ export type LinearProbeResult<Discovery> =
 /**
  * Probe a card acting as a Linear app with its identity's own token (the access plan, section 4.10):
  * the bearer read through the issuer (renewed when due), the server's tools discovered with it, a
- * refusal of it (a 401) answered with one new token before the card ends (L2), a second refusal ending it on no other rung, and the app user the
- * token acts as read, for `providerIdentityId` and the ticket rule (D6). Linear withdrawing the
+ * refusal of it (a 401) answered with one new token before the card ends (L2), a second refusal
+ * ending it on no other rung, and the app user the token acts as read, for `providerIdentityId` and the ticket rule (D6). Linear withdrawing the
  * authority answers the refusal for the card; any other failure is the caller's to judge.
  *
  * @param discover - The probe's discovery with a bearer, which also tells the caller the bearer.

@@ -282,13 +282,16 @@ describe('shared mode: the organisation app actor', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared', clientCredentialsScopes: [] });
 
-    await expect(connect(harness, surfaceIds[0]!)).rejects.toThrow(
-      'no client-credentials scope set',
-    );
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toEqual({
+      ok: false,
+      reason: 'linear-refused',
+      message: "The organisation's Linear connection has no client-credentials scope set.",
+    });
 
     expect(tokenRequests()).toEqual([]);
     const { surface } = await read(harness, surfaceIds[0]!);
     expect(surface.credentialId).toBeUndefined();
+    expect(surface.organisationConnectionId).toBeUndefined();
   });
 
   it('keeps the token to its last day: one request for every card, renewed in place after', async (): Promise<void> => {
@@ -349,10 +352,14 @@ describe('shared mode: the organisation app actor', (): void => {
       });
     });
 
-    await expect(connect(harness, surfaceIds[0]!)).rejects.toThrow(
-      'Client does not support the client_credentials grant type',
-    );
-    expect((await read(harness, surfaceIds[0]!)).surface.credentialId).toBeUndefined();
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toMatchObject({
+      ok: false,
+      reason: 'linear-refused',
+      message: expect.stringContaining('Client does not support the client_credentials grant type'),
+    });
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.credentialId).toBeUndefined();
+    expect(surface.organisationConnectionId).toBeUndefined();
   });
 
   it('refuses a caller who does not own the employee, and a card the manager has not approved', async (): Promise<void> => {
