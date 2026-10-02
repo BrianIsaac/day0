@@ -236,12 +236,14 @@ const PERSONAL_KEYS = new Set([
 export const PERSONAL_VALUE_REDACTION = '<redacted: personal>';
 
 /**
- * A personal key as a JSON text quotes it, with its value: a string (escapes kept whole), or an
- * object or array holding no other. The key must stand alone in its quotes, so `"notCreatedBy"`
- * and prose that names a key are left.
+ * A personal key as a JSON text quotes it, with its value: a string (escapes kept whole, and one
+ * the ledger's bound cut short running to the end of the text), or an object or array holding no
+ * other. The key must stand alone in its quotes, so `"notCreatedBy"` and prose that names a key
+ * are left. Out of its reach, and left to the export's other floors: a value nested two objects
+ * deep, and JSON quoted inside a JSON string (`\"createdBy\"`).
  */
 const EMBEDDED_PERSONAL_VALUE = new RegExp(
-  `("(?:${[...PERSONAL_KEYS].join('|')})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*"|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])`,
+  `("(?:${[...PERSONAL_KEYS].join('|')})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*(?:"|$)|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])`,
   'g',
 );
 

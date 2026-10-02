@@ -741,6 +741,13 @@ describe("a provider's answer kept as text (the real-Linear walk's m4)", (): voi
     ).toBe('{"requester":"<redacted: personal>","createdBy":"<redacted: personal>"}');
   });
 
+  it('drops a personal value the effect bound cut short, to the end of the text', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport('get_issue on linear · {"id":"FIN-5","gitBranchName":"aiko/fin-5-clo…'),
+    ).toBe('get_issue on linear · {"id":"FIN-5","gitBranchName":"<redacted: personal>"');
+  });
+
   it('leaves a key that only ends in a personal name, and prose that names one, as they are', async (): Promise<void> => {
     const { redactForExport } = await import('../../convex/events');
     const text = '{"notCreatedBy":"kept"} and the createdBy field was empty';
