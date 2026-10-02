@@ -58,6 +58,7 @@ import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { WAITING_WORK_LIMIT } from '../../convex/workLoop';
+import type { SweepRead } from '../../convex/intakeSeed';
 import { NOTHING_OPEN, type OpenDecisions } from '../../src/work/manager-channel';
 import { extractDocumentedSystemOrder, waterfallEntry } from '../../src/surfaces/waterfall';
 
@@ -243,7 +244,10 @@ function runtimeHarness(
       );
       if (surface) surface.providerBotId = record.providerBotId;
     },
-    listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
+    readSweep: async (): Promise<SweepRead> => ({
+      surfaces,
+      owners: agents.map((agent) => ({ agentId: agent._id, owner: agent.userId ?? null })),
+    }),
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
@@ -1245,7 +1249,7 @@ describe('real surface intake', (): void => {
 
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
-      listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
+      readSweep: vi.fn(async (): Promise<SweepRead> => ({ surfaces: [], owners: [] })),
       listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       intakeDocumentation: vi.fn(),
@@ -1270,7 +1274,7 @@ describe('real surface intake', (): void => {
       skipped: 0,
       surfaces: 0,
     });
-    expect(runtime.listSurfaces).not.toHaveBeenCalled();
+    expect(runtime.readSweep).not.toHaveBeenCalled();
 
     await expect(runDecisionSweep(runtime, { mode: 'mock' })).resolves.toEqual({
       mode: 'mock',
@@ -4122,6 +4126,75 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
     expect(harness.records[0]?.skipReason).toContain(
       'CASKS:1770000000.000100 (seed write conflicted)',
     );
+  });
+});
+
+describe('the owner the surfaces were read under (the wave 10 review FR-m4)', (): void => {
+  const slackCredential = id<'credentials'>('credential-slack');
+  const fetcher = async (input: string | URL | Request): Promise<Response> => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/conversations.list')) {
+      return slackResponse({
+        ok: true,
+        channels: [
+          { id: 'CASKS', name: 'revops-asks' },
+          { id: 'CREVOPS', name: 'revops' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    }
+    const channel = url.searchParams.get('channel') ?? '';
+    return slackResponse({
+      ok: true,
+      messages: [{ ts: '1770000000.000100', user: 'UUSER', text: `<@UBOT> ask in ${channel}` }],
+      response_metadata: { next_cursor: '' },
+    });
+  };
+  const harness = (): ReturnType<typeof runtimeHarness> =>
+    runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+
+  it('polls nothing for an employee handed over after the sweep read its cards, so the old connection seeds nothing', async (): Promise<void> => {
+    const moved = harness();
+    // The handover lands between the sweep's one surface read and this employee's turn.
+    moved.runtime.getAgent = async (): Promise<Doc<'agents'>> => ({
+      ...agentRow(),
+      userId: 'new-owner',
+    });
+    await expect(
+      runIntakeSweep(moved.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0 });
+    expect(moved.seeds.size).toBe(0);
+    expect(moved.decrypted).toEqual([]);
+    expect(moved.records).toEqual([]);
+  });
+
+  it('seeds under the owner the cards were read under while the employee stays theirs', async (): Promise<void> => {
+    const kept = harness();
+    await expect(
+      runIntakeSweep(kept.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    expect([...kept.seeds.values()].map((seed) => seed.startedUnder)).toEqual(['owner', 'owner']);
   });
 });
 

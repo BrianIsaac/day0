@@ -6,6 +6,7 @@ import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
 import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
+import type { SweepRead } from './intakeSeed';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { forEachStoredPage, namesSystem } from './orientationActions';
@@ -148,7 +149,11 @@ export interface IntakeDocumentation {
 }
 
 export interface IntakeRuntime {
-  listSurfaces(): Promise<Doc<'surfaces'>[]>;
+  /**
+   * Every declared surface and its employee's owner, read in one transaction: the owner each
+   * employee is polled under and its seeds are fenced by (FR-m4).
+   */
+  readSweep(): Promise<SweepRead>;
   /** The chat rows alone, for the poll that runs once a minute. */
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
@@ -1785,7 +1790,8 @@ export async function runIntakeSweep(
   const browserAbsent = browserComponentRefusal(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
-  const surfaces = await runtime.listSurfaces();
+  const { surfaces, owners } = await runtime.readSweep();
+  const ownerAtRead = new Map(owners.map(({ agentId, owner }) => [agentId, owner]));
   const target = dependencies.surfaceId;
   const inScope = (surface: Doc<'surfaces'>): boolean =>
     target === undefined || surface._id === target;
@@ -1801,8 +1807,11 @@ export async function runIntakeSweep(
   let skipped = 0;
   for (const [agentId, agentSurfaces] of byAgent) {
     if (!agentSurfaces.some(inScope)) continue;
+    const startedUnder = ownerAtRead.get(agentId);
     const agent = await runtime.getAgent(agentId);
-    if (!agent) continue;
+    // Gone at the read, gone since, or handed over since: the rows read above carry the old
+    // owner's connection, so nothing is polled with them; the next sweep reads the new owner's.
+    if (!agent || startedUnder === undefined || (agent.userId ?? null) !== startedUnder) continue;
     let documentation: IntakeDocumentation;
     let scopes: string[];
     let queue: { waiting: number; limit: number };
@@ -2153,8 +2162,8 @@ export async function readIntakeDocumentation(
 /** Create the Convex runtime boundary used by the scheduled action. */
 function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
-    listSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
-      await ctx.runQuery(internal.orientationData.surfacesForIntake, {}),
+    readSweep: async (): Promise<SweepRead> =>
+      await ctx.runQuery(internal.intakeSeed.surfacesForSweep, {}),
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       await ctx.runQuery(internal.orientationData.chatSurfacesForIntake, {}),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
