@@ -106,6 +106,10 @@ describe('the no-auth proxy gate', (): void => {
   it('refuses a path that merely starts like the redirect', async (): Promise<void> => {
     expect(await status('/api/oauth-slack')).toBe(403);
   });
+
+  it("keeps the MCP authorisation redirect behind the unlock key: it returns to the manager's own browser", async (): Promise<void> => {
+    expect(await status('/api/oauth/mcp?code=x&state=y')).toBe(403);
+  });
 });
 
 describe('the no-auth unlock session', (): void => {
@@ -179,5 +183,14 @@ describe('the Clerk proxy gate', (): void => {
 
   it('still protects an agent dashboard', async (): Promise<void> => {
     await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');
+  });
+
+  it('lets the MCP authorisation redirect through: its signed, single-use state is the boundary', async (): Promise<void> => {
+    await expect(proxy(request('/api/oauth/mcp?code=x&state=y'))).resolves.toBeUndefined();
+  });
+
+  it('protects a route that only shares the redirect’s prefix', async (): Promise<void> => {
+    const refused = (await proxy(request('/api/oauth/mcpx'))) as Response;
+    expect(refused.status).toBe(401);
   });
 });

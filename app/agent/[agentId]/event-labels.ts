@@ -383,6 +383,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${text(payload.displayName) ?? 'a system'}: the organisation connection's secret rotated`,
   'organisation.connection-revoked': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
+  'surface.authorised': 'authorised at its authorisation server',
+  'surface.authorisation-failed': (payload) => `authorisation failed${because(payload.reason)}`,
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>
     `plan obligations not judged${because(payload.reason)}; the planner's stand unchecked`,

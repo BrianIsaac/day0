@@ -869,6 +869,15 @@ export interface OrganisationConnectionRevokedPayload extends OrganisationConnec
   readonly reason: string;
 }
 
+/** The payload of `surface.authorised`: an MCP server's authorisation landed its tokens on the card. */
+export interface SurfaceAuthorisedPayload extends SurfaceNamed {
+  /** The authorisation server that issued the tokens. */
+  readonly issuer: string;
+}
+
+/** The payload of `surface.authorisation-failed`: an authorisation or a refresh did not land. */
+export type SurfaceAuthorisationFailedPayload = SurfaceReason;
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1437,6 +1446,8 @@ export interface EventPayloads {
   'organisation.connection-landed': OrganisationConnectionLandedPayload;
   'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
+  'surface.authorised': SurfaceAuthorisedPayload;
+  'surface.authorisation-failed': SurfaceAuthorisationFailedPayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1605,6 +1616,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'organisation.connection-landed',
   'organisation.connection-rotated',
   'organisation.connection-revoked',
+  'surface.authorised',
+  'surface.authorisation-failed',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',

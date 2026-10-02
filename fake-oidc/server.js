@@ -14,6 +14,15 @@
  *   FAKE_OIDC_TOKEN_SECONDS   the ID token lifetime (default 300)
  *   FAKE_OIDC_TLS_DIR         a directory holding cert.pem and key.pem; HTTPS
  *                             when it has both, HTTP otherwise
+ *
+ * The authorisation server's protected MCP resource (11-AM), off unless named:
+ *
+ *   FAKE_OIDC_MCP_PATH            the resource's path, `/mcp`; the resource is
+ *                                 the issuer plus it
+ *   FAKE_OIDC_MCP_SCOPES          its scopes, space-separated (default `read write`)
+ *   FAKE_OIDC_MCP_CLIENT_ID       a public client pre-registered for it (no secret)
+ *   FAKE_OIDC_MCP_REDIRECT_URIS   that client's redirect URIs, comma-separated
+ *   FAKE_OIDC_DYNAMIC_REGISTRATION  `1` to let public clients register (RFC 7591)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
@@ -31,6 +40,16 @@ if (!issuerUrl || redirectUris.length === 0) {
   process.exit(2);
 }
 
+const mcpPath = process.env.FAKE_OIDC_MCP_PATH?.trim() ?? '';
+const mcpClientId = process.env.FAKE_OIDC_MCP_CLIENT_ID?.trim() ?? '';
+const mcpRedirectUris = (process.env.FAKE_OIDC_MCP_REDIRECT_URIS ?? '')
+  .split(',')
+  .map((uri) => uri.trim())
+  .filter((uri) => uri !== '');
+const mcpScopes = (process.env.FAKE_OIDC_MCP_SCOPES || 'read write')
+  .split(' ')
+  .filter((scope) => scope !== '');
+
 const port = Number(process.env.FAKE_OIDC_PORT || 8443);
 const tlsDir = process.env.FAKE_OIDC_TLS_DIR;
 const certPath = tlsDir ? join(tlsDir, 'cert.pem') : '';
@@ -45,9 +64,12 @@ const issuer = createIssuer({
       secret: process.env.FAKE_OIDC_CLIENT_SECRET || 'day0-test-client-secret',
       redirectUris,
     },
+    ...(mcpClientId ? [{ id: mcpClientId, redirectUris: mcpRedirectUris }] : []),
   ],
   people: process.env.FAKE_OIDC_PEOPLE ? JSON.parse(process.env.FAKE_OIDC_PEOPLE) : DEFAULT_PEOPLE,
   tokenSeconds: Number(process.env.FAKE_OIDC_TOKEN_SECONDS || DEFAULT_TOKEN_SECONDS),
+  ...(mcpPath ? { protectedResource: { path: mcpPath, scopes: mcpScopes } } : {}),
+  dynamicRegistration: process.env.FAKE_OIDC_DYNAMIC_REGISTRATION === '1',
 });
 
 /**

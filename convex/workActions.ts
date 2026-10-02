@@ -96,7 +96,7 @@ import {
   type ListedHeldItem,
 } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
-import { decryptCredential } from '../src/surfaces/credentials';
+import { readSurfaceBearer } from './mcpOauthActions';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -3126,7 +3126,7 @@ async function ticketRereadRefusal(
   ];
   let bearer = '';
   try {
-    bearer = await decryptCredential(ctx, surface.credentialId);
+    bearer = await readSurfaceBearer(ctx, surface.credentialId);
     const client = createMastraMcpClient({
       serverName: surface.slug,
       url: new URL(surface.endpoint),
@@ -3666,8 +3666,10 @@ async function claimPlannedWriteTargets(
 }
 
 /**
- * The runtime the real-mode adapters run in: credentials decrypted through
- * the credentials action, Mastra's MCP client, and the Node `fetch`.
+ * The runtime the real-mode adapters run in: credentials read through the MCP
+ * token seam (`readSurfaceBearer`: the credentials action's decrypt, with an MCP
+ * authorisation's token refreshed first when it is due), Mastra's MCP client,
+ * and the Node `fetch`.
  *
  * Returns:
  *   Adapter dependencies for this action runtime.
@@ -3678,7 +3680,7 @@ function realAdapterDeps(
   knownValues: readonly string[] = [],
 ): RealAdapterDeps {
   return {
-    decrypt: decryptCredential,
+    decrypt: readSurfaceBearer,
     createMcpClient: createMastraMcpClient,
     browserMcpUrl,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),

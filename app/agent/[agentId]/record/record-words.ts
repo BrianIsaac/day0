@@ -614,6 +614,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
   'organisation.connection-revoked': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
+  'surface.authorised': (p, subject) =>
+    `${decider(subject)} authorised ${connectionOf(subject)}${
+      text(p.issuer) ? ` at ${text(p.issuer)}` : ''
+    }`,
+  'surface.authorisation-failed': (p, subject) =>
+    `Authorising ${connectionOf(subject)} failed${because(p.reason)}`,
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

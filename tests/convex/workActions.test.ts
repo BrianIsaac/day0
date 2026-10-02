@@ -2,7 +2,7 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -38,6 +38,9 @@ import {
   log3Plan,
 } from '../fixtures/work/full-run-4-2026-09-19-log-1';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
+import type { McpTokenStore } from '../../convex/mcpOauthActions';
+import { createIssuer } from '../../fake-oidc/issuer.js';
+import type { FakeIssuer } from '../../fake-oidc/issuer';
 import {
   AWAITING_APPROVAL,
   HELD_MUTATION,
@@ -267,6 +270,42 @@ function obligations(
     transitionStep,
     basis: 'judgement',
   };
+}
+
+/** Authorise once at a fake authorisation server, as a manager's browser would, for its refresh token. */
+async function authoriseAtFakeServer(issuer: FakeIssuer): Promise<{ refreshToken: string }> {
+  const verifier = randomBytes(32).toString('base64url');
+  const authorise = new URL('https://auth.acme.test/authorize');
+  for (const [name, value] of Object.entries({
+    response_type: 'code',
+    client_id: 'day0-mcp',
+    redirect_uri: 'https://day0.acme.test/api/oauth/mcp',
+    code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+    code_challenge_method: 'S256',
+    resource: 'https://auth.acme.test/mcp',
+    scope: 'read',
+    login_hint: 'priya',
+  })) {
+    authorise.searchParams.set(name, value);
+  }
+  const back = new URL((await issuer.handle(new Request(authorise))).headers.get('location') ?? '');
+  const tokens = (await (
+    await issuer.handle(
+      new Request('https://auth.acme.test/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: 'day0-mcp',
+          code: back.searchParams.get('code') ?? '',
+          redirect_uri: 'https://day0.acme.test/api/oauth/mcp',
+          code_verifier: verifier,
+          resource: 'https://auth.acme.test/mcp',
+        }),
+      }),
+    )
+  ).json()) as { refresh_token: string };
+  return { refreshToken: tokens.refresh_token };
 }
 
 describe('skill selection surface boundary', (): void => {
@@ -3725,6 +3764,84 @@ describe('executing an approved plan through the gate', (): void => {
       'work.actions-pending',
     ]);
     expect(row.pendingRunId).toBe(events[0]._id);
+  });
+
+  it("sends an MCP authorisation's refreshed token, not the one about to expire, on every read and write", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'day0-mcp', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const authorised = await authoriseAtFakeServer(issuer);
+    const fetchToIssuer = async (url: URL, init: RequestInit): Promise<Response> =>
+      await issuer.handle(new Request(url, init));
+    const now = Date.now();
+    // A token store holding one pair in memory: the expiring token until a rotation lands.
+    const held = {
+      generation: 0,
+      expiresAt: now + 10_000,
+      accessToken: 'expiring-access-token',
+      refreshToken: authorised.refreshToken,
+    };
+    const store: McpTokenStore = {
+      land: async () => {
+        throw new Error('nothing lands in this test');
+      },
+      read: async (_ctx, credentialId) => ({
+        credentialId,
+        ownerKey: 'owner',
+        generation: held.generation,
+        expiresAt: held.expiresAt,
+        issuedBy: {
+          system: 'mcp:auth.acme.test',
+          grant: 'authorisation-code',
+          clientId: 'day0-mcp',
+        },
+        refreshable: true,
+        connection: {
+          issuer: 'https://auth.acme.test',
+          resource: 'https://auth.acme.test/mcp',
+          clientId: 'day0-mcp',
+        } as Doc<'organisationConnections'>,
+      }),
+      accessToken: async () => held.accessToken,
+      refreshToken: async () => held.refreshToken,
+      rotate: async (_ctx, rotation) => {
+        if (rotation.expectedGeneration !== held.generation) return { ok: false, reason: 'stale' };
+        held.generation += 1;
+        held.expiresAt = rotation.tokens.expiresAt ?? held.expiresAt;
+        held.accessToken = rotation.tokens.accessToken;
+        held.refreshToken = rotation.tokens.refreshToken ?? held.refreshToken;
+        return { ok: true, generation: held.generation };
+      },
+    };
+    const oauth = await import('../../convex/mcpOauthActions');
+    oauth.__setMcpOauthDepsForTest({ fetch: fetchToIssuer, store, now: () => now });
+    try {
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      const { runId } = await park(harness, workItemId);
+      await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1],
+      });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const bearers = new Set(recorded.mcp.map((call) => call.bearer));
+      expect(recorded.mcp.map((call) => call.tool)).toEqual([
+        'get_issue',
+        'save_comment',
+        'save_issue',
+      ]);
+      expect(bearers.has('expiring-access-token')).toBe(false);
+      expect(bearers.has('plain-cred-linear')).toBe(false);
+      expect(bearers.size).toBeGreaterThan(0);
+      expect([...bearers]).toEqual([held.accessToken]);
+      expect(held.generation).toBe(1);
+    } finally {
+      oauth.__setMcpOauthDepsForTest(undefined);
+    }
   });
 
   it('applies the approved actions with the preserved run id, holds the rest, and completes', async (): Promise<void> => {
