@@ -20,6 +20,7 @@ import {
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../src/agent/manager-transfer';
+import { isOrganisationOwnerKey } from '../src/lib/organisation-key';
 import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
 
@@ -47,15 +48,35 @@ import { notAuthenticatedMessage } from './devAuth';
  * deployment with the other (Clerk is declared only when neither of the other
  * two is).
  *
+ * No token is ever keyed on the organisation's reserved key: `getCaller` answers such a token as
+ * no caller, and this throws for it.
+ *
  * @param identity - The verified token's identity.
  * @returns The owner key.
+ * @throws Error with {@link RESERVED_OWNER_KEY_REFUSAL} when the key would be the reserved one.
  */
 export function ownerKeyOf(identity: UserIdentity): string {
+  const key = ownerKeyOrReserved(identity);
+  if (key === undefined) throw new Error(RESERVED_OWNER_KEY_REFUSAL);
+  return key;
+}
+
+/** Why a token is no caller: its owner key would be the organisation's reserved key. */
+export const RESERVED_OWNER_KEY_REFUSAL =
+  "a token whose subject is the organisation's reserved key is no caller";
+
+/**
+ * The owner key a token is keyed on, or undefined when it would be the organisation's reserved
+ * key (`ORGANISATION_OWNER_KEY`): a bare subject is its issuer's to choose, and a caller
+ * keyed on it would own every organisation row (the access plan, section 4.1; AC12).
+ */
+function ownerKeyOrReserved(identity: UserIdentity): string | undefined {
   const customer = process.env[CUSTOMER_OIDC_ISSUER_VAR];
-  if (customer && issuerKey(customer) === issuerKey(identity.issuer)) {
-    return identity.tokenIdentifier;
-  }
-  return identity.subject;
+  const key =
+    customer && issuerKey(customer) === issuerKey(identity.issuer)
+      ? identity.tokenIdentifier
+      : identity.subject;
+  return isOrganisationOwnerKey(key) ? undefined : key;
 }
 
 /**
@@ -80,16 +101,19 @@ export interface Caller extends UserIdentity {
 }
 
 /**
- * The verified caller, or null for an anonymous one and for a customer-issuer
+ * The verified caller, or null for an anonymous one, for a customer-issuer
  * caller the domain rule refuses (decision S2): the second of the two places it
  * is checked, after the sign-in's callback, so a token forced past the callback
- * is refused here. The local issuer and Clerk keep their own rules.
+ * is refused here, and for a token whose owner key would be the organisation's
+ * reserved key. The local issuer and Clerk keep their own rules.
  */
 export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
   if (customerCallerRefused(identity, deploymentEnv)) return null;
-  return { ...identity, ownerKey: ownerKeyOf(identity) };
+  const ownerKey = ownerKeyOrReserved(identity);
+  if (ownerKey === undefined) return null;
+  return { ...identity, ownerKey };
 }
 
 /** The deployment's own env, as the auth config and the owner key read it. */

@@ -22,6 +22,7 @@ import {
   EMPLOYEE_NOT_YOURS,
   isEmployeeNotYours,
 } from '../../src/agent/employee-access';
+import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
@@ -581,6 +582,24 @@ describe('the domain rule in getCaller (S2)', (): void => {
     await expect(
       callerKeyOf(managerIdentity('user_1', { issuer: CLERK_ISSUER, email: 'a@elsewhere.test' })),
     ).resolves.toBe('user_1');
+  });
+});
+
+describe('the reserved organisation key in getCaller (11-AO)', (): void => {
+  it('answers a token whose bare subject is the reserved key as no caller at all', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const caller = await harness
+      .withIdentity(managerIdentity(ORGANISATION_OWNER_KEY, { issuer: CLERK_ISSUER }))
+      .run(async (ctx) => {
+        const { getCaller } = await import('../../convex/ownership');
+        return await getCaller(ctx);
+      });
+    expect(caller).toBeNull();
+    await expect(
+      harness
+        .withIdentity(managerIdentity(ORGANISATION_OWNER_KEY, { issuer: CLERK_ISSUER }))
+        .mutation(api.agents.deploy, {}),
+    ).rejects.toThrow();
   });
 });
 
