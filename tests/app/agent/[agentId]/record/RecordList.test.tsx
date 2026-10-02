@@ -30,6 +30,7 @@ vi.mock('convex/react', () => ({
 
 import { AgentZoneContext } from '../../../../../app/components/time';
 import {
+  RECORD_CHIPS,
   RECORD_PAGE,
   RecordFilters,
   RecordList,
@@ -149,13 +150,23 @@ describe('RecordList', (): void => {
     view.unmount();
   });
 
+  it('names the decisions filter for every manager it lists, not the reader alone (an earlier manager’s decisions are on it after a handover)', (): void => {
+    const decisions = RECORD_CHIPS.find((chip) => chip.view === 'decisions');
+    expect(decisions).toEqual({
+      view: 'decisions',
+      label: 'Manager decisions',
+      empty: 'No manager decisions recorded yet.',
+      end: 'That is every manager decision.',
+    });
+  });
+
   it('shows one filter at a time, the record asked again under it, each chip a 44 px toggle', async (): Promise<void> => {
     const view = mount(<Recorded />);
     const chips = [...view.container.querySelectorAll('[role="group"] button')];
     expect(chips.map((chip) => chip.textContent)).toEqual([
       'All',
       'Writes',
-      'Your decisions',
+      'Manager decisions',
       'Reads',
       'Refused and withheld',
       'Charter',

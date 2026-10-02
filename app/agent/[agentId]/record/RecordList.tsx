@@ -40,10 +40,12 @@ export const RECORD_CHIPS: readonly RecordChip[] = [
     end: 'That is every write.',
   },
   {
+    // Every manager's decisions: after a handover the filter lists the earlier manager's too,
+    // each line naming who decided (decision 5), so the label is not the reader's alone.
     view: 'decisions',
-    label: 'Your decisions',
-    empty: 'None of your decisions recorded yet.',
-    end: 'That is every decision of yours.',
+    label: 'Manager decisions',
+    empty: 'No manager decisions recorded yet.',
+    end: 'That is every manager decision.',
   },
   { view: 'reads', label: 'Reads', empty: 'No reads recorded yet.', end: 'That is every read.' },
   {
