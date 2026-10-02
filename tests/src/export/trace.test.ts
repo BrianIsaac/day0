@@ -16,6 +16,7 @@ const HEAD = {
   agent: { id: 'a', name: 'Priya' },
   owner: { retired: [] },
   credentialNames: [],
+  organisationLedger: [],
   next: { section: 'charters', cursor: null },
 } as unknown as TraceHead;
 
@@ -88,7 +89,14 @@ describe('assembling a trace from its pages', (): void => {
     expect(
       readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 3 } })?.manifest.version,
     ).toBe(3);
-    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 5 } })).toBe(
+    // A version 4 trace, without the organisation's ledger version 5 adds, is read with none.
+    const { organisationLedger, ...version4 } = trace;
+    expect(organisationLedger).toEqual([]);
+    expect(
+      readAgentTrace({ ...version4, manifest: { ...trace.manifest, version: 4 } })
+        ?.organisationLedger,
+    ).toEqual([]);
+    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 6 } })).toBe(
       undefined,
     );
   });

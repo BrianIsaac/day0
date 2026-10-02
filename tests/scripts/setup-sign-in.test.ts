@@ -63,6 +63,19 @@ describe('setup: the sign-in verb', (): void => {
     }
   });
 
+  it('puts convex/_generated back after its push, when it held no change (join 13)', async (): Promise<void> => {
+    const bed = harness({
+      envLocal: INSTALLED,
+      environment: { DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret' },
+    });
+    expect(await runCommand(parseSetupArguments(ENTRA_ARGUMENTS), bed.io)).toBe(0);
+    const ran = lines(bed.commands);
+    const pushed = ran.findIndex((line) => line.includes('convex dev --once'));
+    expect(ran.indexOf('git status --porcelain -- convex/_generated')).toBeLessThan(pushed);
+    expect(ran.indexOf('git checkout -- convex/_generated')).toBeGreaterThan(pushed);
+    expect(bed.output.join('\n')).toContain('convex/_generated put back as this checkout has it.');
+  });
+
   it('writes the customer-local block, the audience as the client id, and a fresh session secret', async (): Promise<void> => {
     const bed = harness({
       envLocal: INSTALLED,

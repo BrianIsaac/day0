@@ -123,6 +123,11 @@ const COMPONENTS = [
     profile: 'redactor',
     purpose: 'the span model documentation sync and the ledger redact with',
   },
+  {
+    service: 'nango-server',
+    profile: 'token-store',
+    purpose: "Nango, which keeps and refreshes the API rung's OAuth tokens",
+  },
   { service: 'dashboard', profile: 'dev', purpose: 'the Convex dashboard' },
 ] as const;
 
@@ -178,6 +183,8 @@ export const WATCHED = [
   'DAY0_CREDENTIAL_KEY',
   'DAY0_BROWSER_MCP_URL',
   'DAY0_REDACTOR_URL',
+  'DAY0_NANGO_URL',
+  'DAY0_NANGO_SECRET_KEY',
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
 ] as const;
@@ -768,6 +775,40 @@ export function browserSetupConfiguration(configured: string | undefined): {
 }
 
 /**
+ * The token store's half-states (11-AT, `--profile token-store`): configured with nothing running,
+ * running without the key the backend presents to it, or running with day0 not told. None when it
+ * is configured and running with its key, or neither, since a credential the token store would
+ * keep is refused by name without it. Names the key only by its variable, never its value.
+ *
+ * @param values - Resolved deployment environment.
+ * @param running - Whether `nango-server` is running.
+ */
+function tokenStoreLines(values: Values, running: boolean): string[] {
+  const url = values.DAY0_NANGO_URL;
+  if (url && !running) {
+    return [
+      `DAY0_NANGO_URL names ${url} and nothing is running there.`,
+      'A credential the token store keeps cannot be read until it runs. Start it with',
+      '`pnpm convex:up --profile token-store`, or clear the variable.',
+    ];
+  }
+  if (url && !values.DAY0_NANGO_SECRET_KEY) {
+    return [
+      'DAY0_NANGO_SECRET_KEY is unset, so the backend cannot present its key to Nango.',
+      'Generate it with `pnpm dev:no-auth-key` and re-run `pnpm sync:env`.',
+    ];
+  }
+  if (!url && running) {
+    return [
+      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      `Set DAY0_NANGO_URL=http://nango-server:3003 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
+      'or stop the component.',
+    ];
+  }
+  return [];
+}
+
+/**
  * Report which optional components are running and which are merely configured.
  *
  * One thing here fails the command: the redactor in real mode, missing or not
@@ -867,6 +908,11 @@ export function componentsSection(
       'provider outcomes record that only the exact-value and structural layers ran.',
       'Start it with `pnpm redactor:up` and set DAY0_REDACTOR_URL=http://redactor:8000.',
     );
+  }
+  const tokenStore = tokenStoreLines(values, services.includes('nango-server'));
+  if (tokenStore.length > 0) {
+    status = status === 'gap' ? 'gap' : 'warn';
+    lines.push(...tokenStore);
   }
   const kinds = linkedDocSourceKinds(values);
   if (kinds === undefined) {
@@ -1786,7 +1832,10 @@ export function egressHosts(
     add(outboundHost(connection.resource), purpose);
     add(outboundHost(connection.issuer), `${connection.displayName}'s authorisation server`);
   }
-  add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
+  add(
+    'registry-1.docker.io',
+    "image pulls at setup (ollama, python, node, and the token store's nango-server, postgres and redis)",
+  );
   add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
   add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
   return rows;

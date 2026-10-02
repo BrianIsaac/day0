@@ -43,6 +43,7 @@ import {
 import { sessionSecretGap } from '../src/lib/customer-session';
 import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
 import { errorMessage } from '../src/lib/errors';
+import { generatedCodeState, restoreGeneratedCode } from './lib/generated-code';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { isLoopback } from './setup-route';
 
@@ -74,6 +75,7 @@ export interface SignInOptions {
 /** A child process's status and output, as the setup's runner returns it. */
 interface StepResult {
   readonly status: number | null;
+  readonly stdout?: string;
   readonly stderr: string;
 }
 
@@ -349,8 +351,12 @@ export async function runSignIn(options: SignInOptions, io: SignInIo): Promise<n
   for (const step of PUSH_STEPS) {
     if (step.args.includes('convex:restart') && !selfHosted) continue;
     const before = readEnvValues(envPath);
+    const pushes = step.args.includes('--once');
+    const generated = pushes ? generatedCodeState(io) : undefined;
     const result = runStep(io, step);
-    if (step.args.includes('--once')) restoreRewrites(envPath, before);
+    if (pushes) restoreRewrites(envPath, before);
+    // The push regenerates convex/_generated whether or not it lands (11-AI's finding 7).
+    if (generated !== undefined) io.log(restoreGeneratedCode(io, generated));
     if (result.status !== 0) {
       io.log(`That step failed, so the verb stops here: ${result.stderr.trim() || 'no message'}`);
       return result.status ?? 1;

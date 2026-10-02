@@ -15,8 +15,9 @@ the connection and in the install record:
   in Linear and a ticket is handed to it by assigning it to that app user.
   Linear documents one app user per app per workspace, so each employee needs
   its own app, created and installed by a Linear administrator when the
-  employee's card asks for it (the card's access request carries the link).
-  Nothing is handed to the setup verb for this mode at install.
+  employee's card asks for it. Nothing is handed to the setup verb for this
+  mode: it lands the connection with no client id and no secret, since each
+  employee's own app brings its own.
 
 ## 1. What IT creates
 
@@ -30,8 +31,11 @@ shows its **client id** and **client secret**.
 **Per employee.** When an employee's Linear card asks for access, its manager
 forwards the access request to IT. A Linear administrator creates the
 employee's own app from the same manifest with the employee's name
-(`<employee name> (Day0)`) and without client credentials, then installs it
-from the request's link, which authorises it with `actor=app`.
+(`<employee name> (Day0)`) and without client credentials, an administrator
+records its client id and client secret on the employee's card, and the card
+then asks IT for nothing more: Connect gives a fresh installation link (valid
+15 minutes), which a Linear administrator follows to authorise it with
+`actor=app`.
 
 ## 2. The manifest or the form
 
@@ -151,8 +155,11 @@ EOF
 rm answers.env
 ```
 
-**Per employee.** Nothing at install: `./setup.sh access` names the mode and
-points here. Each employee's app arrives through its card's access request.
+**Per employee.** Nothing to hand over:
+`./setup.sh access --administrators it@acme.com --connect-mode linear=per-employee`
+lands the connection with its mode, scopes and redirect, and no secret. Each
+employee's app arrives through its card's access request. A per-employee
+connection has no organisation secret to rotate.
 
 ## 7. What check:access must show
 

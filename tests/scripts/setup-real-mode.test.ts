@@ -1126,3 +1126,46 @@ describe('--company', (): void => {
     expect(existsSync(join(h.directory, 'docs-local'))).toBe(false);
   });
 });
+
+describe('the generated code after the push (join 13)', (): void => {
+  /** The commands a run made, each as one line. */
+  function ran(h: { commands: ReadonlyArray<{ command: string; args: string[] }> }): string[] {
+    return h.commands.map((call) => [call.command, ...call.args].join(' '));
+  }
+
+  it('puts convex/_generated back after the push, as the cloud verb does, when it held no change', async (): Promise<void> => {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      services: ['backend', 'sandbox', 'redactor'],
+    });
+    expect(await runSetup(realRoute(), h.io)).toBe(0);
+    const lines = ran(h);
+    const asked = lines.indexOf('git status --porcelain -- convex/_generated');
+    const pushed = lines.indexOf('npx convex dev --once');
+    const restored = lines.indexOf('git checkout -- convex/_generated');
+    expect(asked).toBeGreaterThanOrEqual(0);
+    expect(asked).toBeLessThan(pushed);
+    expect(restored).toBeGreaterThan(pushed);
+    expect(h.output.join('\n')).toContain('convex/_generated put back as this checkout has it.');
+  });
+
+  it('leaves a checkout’s own changes to convex/_generated as the push wrote them', async (): Promise<void> => {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      services: ['backend', 'sandbox', 'redactor'],
+    });
+    const run = h.io.run;
+    h.io = {
+      ...h.io,
+      run: (command, args, options) =>
+        command === 'git' && args[0] === 'status'
+          ? { status: 0, stdout: ' M convex/_generated/api.d.ts\n', stderr: '' }
+          : run(command, args, options),
+    };
+    expect(await runSetup(realRoute(), h.io)).toBe(0);
+    expect(ran(h)).not.toContain('git checkout -- convex/_generated');
+    expect(h.output.join('\n')).toContain(
+      'convex/_generated held changes before the push, so it is left as the push wrote it.',
+    );
+  });
+});

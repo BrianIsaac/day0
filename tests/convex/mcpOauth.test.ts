@@ -166,6 +166,23 @@ describe('landing an authorisation’s tokens', (): void => {
     }
   });
 
+  it('ends the pair it replaces through the end of access, scheduling the revocation at the vendor (join 4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, heldIds } = await seedCard(harness, 'issued');
+    await land(harness, surfaceId);
+    const attempts = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (job) => job.name === 'sourceRevocationActions:attempt',
+      ),
+    );
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.args[0]).toMatchObject({
+      credentialId: heldIds[0],
+      companionIds: [heldIds[1]],
+      surfaceId,
+    });
+  });
+
   it('keeps a newer authorisation the manager started while the code was being exchanged', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedCard(harness);

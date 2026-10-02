@@ -13,6 +13,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
 import { endCardsOnConnection } from './surfaces';
 import { log } from '../src/lib/logger';
@@ -22,6 +23,7 @@ import {
   ORGANISATION_CONNECTION_KINDS,
   ORGANISATION_CONNECTION_MODES,
   type OrganisationConnectionKind,
+  type OrganisationConnectionMode,
   type OrganisationRegistrar,
 } from '../src/surfaces/access-identity';
 import { isOrganisationSystemKey, organisationSystemOf } from '../src/surfaces/access-request';
@@ -152,10 +154,23 @@ function scopesRefusal(scopes: readonly string[], name: string): string | undefi
 }
 
 /**
+ * Whether a connection holds no organisation secret by its nature: a per-employee OAuth app, whose
+ * every employee's own app carries its own client id and secret (Linear, L1; AI5), so the
+ * organisation's connection records only the system, its mode, its scopes and its redirect.
+ */
+function holdsNoOrganisationSecret(connection: {
+  readonly kind: OrganisationConnectionKind;
+  readonly mode: OrganisationConnectionMode;
+}): boolean {
+  return connection.kind === 'oauth-app' && connection.mode === 'per-employee';
+}
+
+/**
  * Why a landing cannot be one, or undefined when it can (the access plan, section 4.1): a system
  * key, a name, scopes, a secret for every kind but an MCP client (which may be a public client
- * with PKCE), the client-credentials scopes only on a shared OAuth app (L2), and the MCP fields
- * only on an MCP client, whose system names its server by host.
+ * with PKCE) and a per-employee OAuth app (which holds none, nor a client id), the
+ * client-credentials scopes only on a shared OAuth app (L2), and the MCP fields only on an MCP
+ * client, whose system names its server by host.
  *
  * @param landing - The landing as given.
  */
@@ -169,7 +184,12 @@ export function landingRefusal(landing: Landing): string | undefined {
   }
   const scopes = scopesRefusal(landing.scopes, 'The registration');
   if (scopes !== undefined) return scopes;
-  const secretNeeded = landing.kind !== 'mcp-client';
+  if (holdsNoOrganisationSecret(landing)) {
+    if (landing.secret !== undefined || landing.clientId !== undefined) {
+      return 'A per-employee OAuth app holds no organisation secret or client id: each employee’s own app brings its own.';
+    }
+  }
+  const secretNeeded = landing.kind !== 'mcp-client' && !holdsNoOrganisationSecret(landing);
   if (secretNeeded && (landing.secret === undefined || landing.secret.trim() === '')) {
     return `A ${landing.kind} connection needs its ${SECRET_NOUNS[landing.kind]}.`;
   }
@@ -224,22 +244,6 @@ const CONNECTION_NOT_FOUND = 'That organisation connection does not exist.';
 
 /** The refusal for a change to a revoked connection. */
 const CONNECTION_REVOKED = 'That organisation connection is revoked: land a new one instead.';
-
-/**
- * The system's active organisation connection, if it has one.
- *
- * @param ctx - A query's or a mutation's context.
- * @param system - The system key.
- */
-export async function activeConnectionFor(
-  ctx: Pick<QueryCtx, 'db'>,
-  system: string,
-): Promise<Doc<'organisationConnections'> | null> {
-  return await ctx.db
-    .query('organisationConnections')
-    .withIndex('by_system_status', (index) => index.eq('system', system).eq('status', 'active'))
-    .first();
-}
 
 /**
  * The system's connection that keeps it occupied, if any: an active one, or one that needs IT's
@@ -605,9 +609,37 @@ export const landFromSetup = internalAction({
 });
 
 /**
+ * Empty the shared token a connection's cards hold, in place, when its app's secret is rotated:
+ * rotating the secret ends every client-credentials token issued with the old one at the vendor
+ * (Linear, L2), so the stored value would only meet a 401. The row keeps its id, which every
+ * shared-mode card holds (AL6), and its next read requests a token with the new secret into it
+ * (`linearIdentity.landSharedToken`); its generation moves, so a renewal that read the old value
+ * never lands a token requested with the old secret. A revoke ends the row instead.
+ *
+ * @param credentialId - The connection's shared token, when it holds one.
+ */
+async function emptySharedToken(
+  ctx: MutationCtx,
+  credentialId: Id<'credentials'> | undefined,
+): Promise<void> {
+  if (credentialId === undefined) return;
+  const row = await ctx.db.get(credentialId);
+  if (row === null || row.revokedAt !== undefined || row.ciphertext === undefined) return;
+  await ctx.db.patch(credentialId, {
+    ciphertext: undefined,
+    iv: undefined,
+    keyId: undefined,
+    expiresAt: undefined,
+    lastUsedAt: undefined,
+    generation: (row.generation ?? 0) + 1,
+  });
+}
+
+/**
  * Record a rotation and its ledger line, in one transaction. Internal, for
  * {@link rotateConnection}. The new secret replaces the old, which is revoked with its refresh
- * token (its ciphertext kept for the vendor call, F19); the scopes change only when given, and the
+ * token (its ciphertext kept for the vendor call, F19), and the shared token issued with it is
+ * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
  * and the secrets the action stored are revoked here.
  */
@@ -637,6 +669,7 @@ export const recordRotated = internalMutation({
       });
     }
     await revokeSecrets(ctx, await secretAndRefresh(ctx, connection.secretCredentialId), now);
+    await emptySharedToken(ctx, connection.sharedTokenCredentialId);
     const scopes = args.scopes === undefined ? connection.scopes : [...cleanScopes(args.scopes)];
     const changed = scopes.join('\n') !== connection.scopes.join('\n');
     await ctx.db.patch(connection._id, {
@@ -688,6 +721,11 @@ async function rotateConnection(
   });
   if (connection === null) throw new ConvexError(CONNECTION_NOT_FOUND);
   if (connection.status === 'revoked') throw new ConvexError(CONNECTION_REVOKED);
+  if (holdsNoOrganisationSecret(connection)) {
+    throw new ConvexError(
+      'A per-employee OAuth app holds no organisation secret to rotate: each employee’s own app is rotated where it was created.',
+    );
+  }
   const secrets = await storeSecrets(ctx, connection, rotation);
   const recorded = await recordOrRelease(
     ctx,

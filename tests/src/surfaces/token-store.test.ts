@@ -10,6 +10,7 @@ import {
   SCHEDULED_REFRESH_RETRIES,
   TokenRefreshRefused,
   type HeldTokens,
+  type RefreshWords,
   type RotateTokens,
   type RotationOutcome,
   type TokenKeeper,
@@ -214,6 +215,84 @@ describe('the token store', (): void => {
       'access-0',
     );
     expect(keeper.refreshReads()).toBe(0);
+  });
+});
+
+describe('a refresher with its own words and its own rotation write (join 5)', (): void => {
+  /** Words an issuer names its refresh's failures in, each marked so a test can tell them apart. */
+  const ISSUER_WORDS: RefreshWords = {
+    reason: (error: unknown): string => (error instanceof Error ? error.message : 'unknown'),
+    refused: (message: string): string => `Issuer refused: ${message}`,
+    revokedMeanwhile: 'Issuer token revoked meanwhile.',
+    unreachableWhenExpired: (reason: string): Error => new Error(`Issuer unreachable: ${reason}`),
+    refusedWhenExpired: (refusal: string): Error => new Error(`${refusal} Install again.`),
+    unreachableAfter: (attempts: number, reason: string): string =>
+      `Issuer unreachable ${attempts} times: ${reason}`,
+    failed: (reason: string): string => `Issuer failed: ${reason}`,
+  };
+
+  it('refuses an expired token in the issuer’s words, not the store’s', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor({ expiresAt: NOW - 1 }));
+    const refresher: TokenRefresher = {
+      ...scriptedRefresher(async (): Promise<IssuedTokens> => {
+        throw new TokenRefreshRefused('invalid_grant');
+      }),
+      words: ISSUER_WORDS,
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).rejects.toThrow(
+      'Issuer refused: invalid_grant Install again.',
+    );
+  });
+
+  it('records a scheduled refresh’s spent retries in the issuer’s words', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor());
+    const refresher: TokenRefresher = {
+      ...scriptedRefresher(
+        async (): Promise<IssuedTokens> => {
+          throw new Error('fetch failed');
+        },
+        { retryable: true },
+      ),
+      words: ISSUER_WORDS,
+    };
+    const refusals: string[] = [];
+    await runScheduledRefresh(
+      ctx,
+      { credentialId: CREDENTIAL, generation: 0, attempt: SCHEDULED_REFRESH_RETRIES },
+      {
+        ...storeDeps(keeper, refresher),
+        retryAfter: async (): Promise<void> => {
+          throw new Error('no retry expected');
+        },
+        recordRefusal: async (reason): Promise<void> => {
+          refusals.push(reason);
+        },
+      },
+    );
+    expect(refusals).toEqual([
+      `Issuer unreachable ${SCHEDULED_REFRESH_RETRIES + 1} times: fetch failed`,
+    ]);
+  });
+
+  it('writes the rotation through the issuer’s own write, never the keeper’s', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor());
+    const written: RotateTokens[] = [];
+    const refresher: TokenRefresher = {
+      ...scriptedRefresher(
+        async (): Promise<IssuedTokens> => ({ accessToken: 'access-1', refreshToken: 'refresh-1' }),
+      ),
+      rotate: async (_ctx, rotation): Promise<RotationOutcome> => {
+        written.push(rotation);
+        return { ok: true, generation: rotation.expectedGeneration + 1 };
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).resolves.toBe(
+      'access-1',
+    );
+    expect(written.map((rotation) => [rotation.expectedGeneration, rotation.ownerKey])).toEqual([
+      [0, 'owner-1'],
+    ]);
+    expect(keeper.rotations).toEqual([]);
   });
 });
 

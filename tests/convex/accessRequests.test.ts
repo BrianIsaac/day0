@@ -9,6 +9,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { NO_ACCESS_REQUEST } from '../../convex/accessRequests';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
 
@@ -113,6 +114,52 @@ describe('the access request a card shows (A24)', (): void => {
     expect(view?.text).toContain('For how long: until 2026-12-31.');
     expect(view).not.toHaveProperty('draftedAt');
     await connectLinear(harness);
+    await expect(owner.query(api.accessRequests.forCard, { surfaceId })).resolves.toBeNull();
+  });
+
+  it('asks IT to install a per-employee Linear card the setup verb landed, until an administrator records its app (join 2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    await harness.action(internal.organisationConnections.landFromSetup, {
+      system: 'linear',
+      displayName: 'Linear',
+      kind: 'oauth-app',
+      mode: 'per-employee',
+      scopes: ['read', 'write', 'app:assignable'],
+      redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    const view = await owner.query(api.accessRequests.forCard, { surfaceId });
+    expect(view).toMatchObject({ system: 'linear', reason: 'install-needed' });
+    expect(view?.text).toContain('Maya’s own app needs an administrator to install it.');
+    expect(view?.text).toContain('./setup.sh access for linear');
+
+    // An administrator recorded Maya's app; its installation link has since lapsed.
+    await harness.run(async (ctx) => {
+      const secretId = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Day0 Maya client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 3,
+      });
+      await ctx.db.patch(surfaceId, {
+        provisioning: {
+          appId: 'maya-app',
+          appName: 'Day0 Maya',
+          clientId: 'maya-app',
+          clientSecretCredentialId: secretId,
+          installUrl: 'https://linear.app/oauth/authorize?client_id=maya-app',
+          redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+          scopes: ['read', 'write', 'app:assignable'],
+          createdAt: 3,
+          stateExpiresAt: 4,
+        },
+      });
+    });
     await expect(owner.query(api.accessRequests.forCard, { surfaceId })).resolves.toBeNull();
   });
 

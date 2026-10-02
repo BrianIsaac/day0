@@ -3,6 +3,7 @@ import {
   accessRequestReason,
   draftAccessRequest,
   isOrganisationSystemKey,
+  mcpSystemKey,
   organisationConnectedRefusal,
   organisationSystemOf,
 } from '../../../src/surfaces/access-request';
@@ -25,6 +26,48 @@ describe('the organisation system a key names (the access plan, section 4.1)', (
       'mcp:MCP.notion.com',
       'linear:read',
       '-slack',
+    ]) {
+      expect(isOrganisationSystemKey(key), key).toBe(false);
+    }
+  });
+});
+
+describe('one MCP system key, for the cards, the connections and the kit', (): void => {
+  it('keeps a non-default port, since two MCP servers on one host are two systems', (): void => {
+    expect(organisationSystemOf({ path: 'mcp', endpoint: 'https://mcp.acme.com:8443/mcp' })).toBe(
+      'mcp:mcp.acme.com:8443',
+    );
+    expect(mcpSystemKey(new URL('https://MCP.Acme.com:8443/mcp'))).toBe('mcp:mcp.acme.com:8443');
+    expect(isOrganisationSystemKey('mcp:mcp.acme.com:8443')).toBe(true);
+  });
+
+  it('drops the default port, which names the same server as no port', (): void => {
+    expect(organisationSystemOf({ path: 'mcp', endpoint: 'https://mcp.acme.com:443/mcp' })).toBe(
+      'mcp:mcp.acme.com',
+    );
+    expect(mcpSystemKey(new URL('https://mcp.acme.com:443/mcp'))).toBe('mcp:mcp.acme.com');
+  });
+
+  it('keys an endpoint the same way whichever reader keys it, its case and trailing dot aside', (): void => {
+    for (const endpoint of [
+      'https://MCP.Acme.com/sse',
+      'https://mcp.acme.com.:9000/mcp',
+      'https://10.1.2.3:8443/mcp',
+    ]) {
+      const system = organisationSystemOf({ path: 'mcp', endpoint });
+      expect(system, endpoint).toBe(mcpSystemKey(new URL(endpoint)));
+      expect(isOrganisationSystemKey(system ?? ''), endpoint).toBe(true);
+    }
+  });
+
+  it('refuses a key no endpoint produces: the default port, port zero, a padded or out-of-range port', (): void => {
+    for (const key of [
+      'mcp:mcp.acme.com:443',
+      'mcp:mcp.acme.com:0',
+      'mcp:mcp.acme.com:08443',
+      'mcp:mcp.acme.com:65536',
+      'mcp:mcp.acme.com:',
+      'mcp::8443',
     ]) {
       expect(isOrganisationSystemKey(key), key).toBe(false);
     }
@@ -118,6 +161,38 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
       'install-needed',
     );
     expect(accessRequestReason(linearCard, linear)).toBeUndefined();
+  });
+
+  it('asks for a per-employee app only until an administrator records it, then offers Connect and never a lapsed link', (): void => {
+    const perEmployee = { ...linear, mode: 'per-employee' as const };
+    expect(accessRequestReason(linearCard, perEmployee)).toBe('install-needed');
+    const recorded = {
+      ...linearCard,
+      provisioning: {
+        clientId: 'leo-app',
+        installUrl: 'https://linear.app/oauth/authorize?client_id=leo-app',
+      },
+    };
+    expect(accessRequestReason(recorded, perEmployee)).toBeUndefined();
+  });
+
+  it('asks nothing of an MCP card whose server is connected: its manager authorises it (AM6)', (): void => {
+    const mcpCard = {
+      slug: 'docs',
+      displayName: 'Acme docs',
+      path: 'mcp',
+      endpoint: 'https://mcp.acme.com:8443/mcp',
+      managerApprovedAt: 1,
+    };
+    const server = {
+      system: 'mcp:mcp.acme.com:8443',
+      displayName: 'mcp.acme.com',
+      kind: 'mcp-client' as const,
+      mode: 'per-employee' as const,
+      scopes: [],
+    };
+    expect(accessRequestReason(mcpCard, server)).toBeUndefined();
+    expect(accessRequestReason(mcpCard, null)).toBe('no-connection');
   });
 
   it('asks for a scope the registration does not hold, when the card names the scopes it needs', (): void => {

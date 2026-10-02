@@ -52,3 +52,35 @@ describe('surface row narrowing', (): void => {
     expect(toSurfaceRecord({ ...base, path: 'unknown' }).path).toBeUndefined();
   });
 });
+
+describe('the attribution a record carries (join 14)', (): void => {
+  it('reads it off the identity the card acts as, and carries none for a card that names none', (): void => {
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'oauth', actsAs: { kind: 'delegated' } })
+        .attribution,
+    ).toBe('trailer');
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'oauth', actsAs: { kind: 'own-app' } })
+        .attribution,
+    ).toBe('identity');
+    expect(toSurfaceRecord({ ...base, credentialKind: 'value' })).not.toHaveProperty('attribution');
+    expect(toSurfaceRecord({ ...base, actsAs: { kind: 'not-a-kind' } })).not.toHaveProperty(
+      'attribution',
+    );
+  });
+});
+
+describe('an identity its credential contradicts (join 14, the second pass)', (): void => {
+  it('carries no attribution, so the credential’s kind decides as before wave 11', (): void => {
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'oauth', actsAs: { kind: 'shared-key' } }),
+    ).not.toHaveProperty('attribution');
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'value', actsAs: { kind: 'own-app' } }),
+    ).not.toHaveProperty('attribution');
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'value', actsAs: { kind: 'shared-app' } })
+        .attribution,
+    ).toBe('trailer');
+  });
+});

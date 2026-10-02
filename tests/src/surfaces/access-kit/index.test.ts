@@ -27,9 +27,10 @@ describe('the access kit', (): void => {
     expect(recipeForSystem('github')).toBeUndefined();
   });
 
-  it('keys an MCP server as the card’s system rule does: its host, lower case, no port', (): void => {
+  it('keys an MCP server as the card’s system rule does: its host, lower case, with a non-default port', (): void => {
     const system = mcpConnectionSystem('https://MCP.Acme.com:8443/mcp');
-    expect(system).toBe('mcp:mcp.acme.com');
+    expect(system).toBe('mcp:mcp.acme.com:8443');
+    expect(mcpConnectionSystem('https://MCP.Acme.com:443/mcp')).toBe('mcp:mcp.acme.com');
     expect(isOrganisationSystemKey(system)).toBe(true);
     expect(organisationSystemOf({ endpoint: 'https://mcp.acme.com:8443/mcp', path: 'mcp' })).toBe(
       system,

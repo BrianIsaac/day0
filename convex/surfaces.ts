@@ -53,6 +53,7 @@ import {
   slackClientSecretIssuer,
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
+import { organisationSystemOf } from '../src/surfaces/access-request';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
@@ -2125,8 +2126,10 @@ export const recordExpired = internalMutation({
 /** What a renewal needs beyond the new end date (11-AR; A26, A27). */
 interface Renewal {
   /**
-   * The identity the expiry revoked at the vendor, to be issued again: the install of the app Day0
-   * created for the employee, or a new authorisation.
+   * The identity the expiry revoked at the vendor, to be issued again: the install of the Slack
+   * app Day0 created for the employee (11-AS), or a new authorisation (an employee's own Linear
+   * app through `linearIdentityActions.startAuthorisation`, an MCP server through
+   * `mcpOauthActions.startAuthorisation`).
    */
   readonly reissue?: 'install' | 'authorise';
   /** A pasted key whose system has an organisation connection: the move to its own identity. */
@@ -2135,6 +2138,18 @@ interface Renewal {
 
 /** What `setAccessDays` answers: the end date, and what the renewal needs. */
 type AccessDaysSet = { readonly expiresAt: number } & Renewal;
+
+/**
+ * How a card's identity is issued again after its expiry revoked it at the vendor: an app Day0
+ * created and keeps (Slack's, 11-AS) through its install link; an employee's own Linear app, which
+ * an administrator recorded rather than Day0 created, and an MCP authorisation through a new
+ * authorisation (`linearIdentityActions.startAuthorisation` mints the Linear app's fresh link).
+ */
+function reissueOf(surface: Doc<'surfaces'>): 'install' | 'authorise' {
+  return surface.provisioning !== undefined && organisationSystemOf(surface) !== 'linear'
+    ? 'install'
+    : 'authorise';
+}
 
 /**
  * What renewing an ended card needs: a card whose expiry revoked its credential at the vendor
@@ -2149,9 +2164,7 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
   if (surface.credentialId === undefined) {
     for await (const event of eventsOfType(ctx, surface.agentId, 'surface.expired').order('desc')) {
       if (!isEventOf(event, 'surface.expired') || event.payload.surfaceId !== surface._id) continue;
-      return event.payload.revokedAtSource === true
-        ? { reissue: surface.provisioning !== undefined ? 'install' : 'authorise' }
-        : {};
+      return event.payload.revokedAtSource === true ? { reissue: reissueOf(surface) } : {};
     }
     return {};
   }

@@ -1,5 +1,6 @@
 'use node';
 
+import { v } from 'convex/values';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -10,6 +11,13 @@ import {
   type RevocationJob,
 } from './sourceRevocation';
 import { log } from '../src/lib/logger';
+import { TransientProviderError } from '../src/lib/transport-error';
+import {
+  forgetNangoConnection,
+  NangoRefusal,
+  nangoConfigFrom,
+  parseNangoLocation,
+} from '../src/surfaces/nango-token-store';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { linearTokenRevocation, readLinearAnswer } from '../src/surfaces/revokers/linear';
 import { oauthTokenRevocation, readOAuthRevocationAnswer } from '../src/surfaces/revokers/oauth';
@@ -97,7 +105,8 @@ function plannedCalls(plans: AttemptPlans): RevocationCall[] {
 /**
  * Open the held token and only what the planned calls need: the refresh tokens a call revokes,
  * IT's configuration token for an app deletion, the app's secret for an uninstall, and the
- * connection's client secret for an RFC 7009 revoke.
+ * connection's client secret for an RFC 7009 revoke (through the path that admits it revoked, for
+ * the end the connection's own revoke made).
  *
  * @throws Error when a needed row cannot be opened.
  */
@@ -122,7 +131,11 @@ async function openNeeded(
       Promise.all(refreshIds.map(async (id) => await open(ctx, id))),
       optional(plan.clientSecretCredentialId, needs('slack-uninstall-app')),
       optional(plan.configurationTokenCredentialId, needs('slack-delete-app')),
-      optional(plan.connectionSecretCredentialId, needs('oauth-revoke')),
+      plan.connectionSecretRevoked === true && needs('oauth-revoke')
+        ? ctx.runAction(internal.credentials.decryptConnectionSecretForRevocation, {
+            credentialId: job.credentialId,
+          })
+        : optional(plan.connectionSecretCredentialId, needs('oauth-revoke')),
     ]);
   return {
     token,
@@ -458,6 +471,67 @@ async function runAttempt(ctx: ActionCtx, job: RevocationJob): Promise<void> {
       : {}),
   });
 }
+
+/** How many times a token store that could not answer is asked again to forget a connection. */
+const FORGET_RETRIES = 5;
+
+/** Whether a failed forgetting may succeed later: the token store could not be reached or was busy. */
+function forgetRetryable(error: unknown): boolean {
+  return (
+    error instanceof TransientProviderError ||
+    (error instanceof NangoRefusal && error.reason === 'unavailable')
+  );
+}
+
+/**
+ * Ask the token store to forget the connection of a row whose access ended (11-AT; join 9 of
+ * 11-AJ), so Nango neither keeps nor refreshes the token any longer, then delete the location Day0
+ * kept. A store that cannot answer is asked again with a growing wait, {@link FORGET_RETRIES}
+ * times; any other failure, or the retries running out, is logged and the revoked row keeps its
+ * location for the operator. Nango revokes nothing at the vendor. Internal; scheduled by
+ * `endAccessAtSource`.
+ */
+export const forgetInTokenStore = internalAction({
+  args: { credentialId: v.id('credentials'), attempt: v.optional(v.number()) },
+  handler: async (ctx, args): Promise<void> => {
+    const attempt = args.attempt ?? 0;
+    try {
+      const location: string = await ctx.runAction(internal.credentials.decryptTokenStoreLocation, {
+        credentialId: args.credentialId,
+      });
+      await forgetNangoConnection(
+        async (input: URL, init: RequestInit): Promise<Response> => await fetch(input, init),
+        nangoConfigFrom(process.env),
+        parseNangoLocation(location),
+      );
+    } catch (error: unknown) {
+      const reason = safeFailureMessage(error, '', 'The token store could not be reached.');
+      if (forgetRetryable(error) && attempt < FORGET_RETRIES) {
+        log.warn('token store did not forget a connection; asking again', {
+          credentialId: args.credentialId,
+          attempt,
+          reason,
+        });
+        await ctx.scheduler.runAfter(
+          60_000 * 2 ** attempt,
+          internal.sourceRevocationActions.forgetInTokenStore,
+          { credentialId: args.credentialId, attempt: attempt + 1 },
+        );
+        return;
+      }
+      log.error('token store did not forget a connection; its location is kept', {
+        credentialId: args.credentialId,
+        attempt,
+        reason,
+      });
+      return;
+    }
+    await ctx.runMutation(internal.credentials.forgottenInTokenStore, {
+      credentialId: args.credentialId,
+      now: Date.now(),
+    });
+  },
+});
 
 /**
  * One attempt at revoking a held credential at its vendor (the access plan, section 4.4).

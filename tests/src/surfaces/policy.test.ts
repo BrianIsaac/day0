@@ -49,6 +49,7 @@ import {
   type ParsedSurfaceAction,
   type ReviewScope,
 } from '../../../src/surfaces/policy';
+import { toSurfaceRecord } from '../../../src/surfaces/records';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
@@ -1118,6 +1119,111 @@ describe('the autonomous-actions switch', (): void => {
       disposition: 'held',
       reason: 'write held for the manager',
     });
+  });
+});
+
+describe('the provenance every existing card carries (join 14, pinned before the key moves to actsAs)', (): void => {
+  /** A card's row as the deployment stores it, converted the way the work loop converts it. */
+  function card(fields: {
+    readonly credentialKind?: string;
+    readonly actsAs?: { kind: string; label: string };
+  }): SurfaceRecord {
+    const row = {
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      verdict: 'connected' as const,
+      credentialLanded: true,
+      lastVerifiedAt: now,
+      endpoint: 'https://mcp.linear.app/mcp',
+      path: 'mcp',
+      toolAllowlist: ['get_issue', 'save_comment', 'save_issue', 'list_issues'],
+      credentialId: 'cred-linear',
+      ...fields,
+    };
+    return toSurfaceRecord(row);
+  }
+
+  /** Whether the card's comment carries the trailer and its bare status change is refused. */
+  function signs(record: SurfaceRecord): { readonly trailer: boolean; readonly refused: boolean } {
+    const credentialKind = record.credentialKind ?? 'value';
+    const signed = applyProvenance(parsed(comment()), record, run, credentialKind);
+    const change = parsed(statusChange());
+    return {
+      trailer:
+        signed.ok &&
+        signed.action.kind === 'mcp.call' &&
+        String(signed.action.toolArgs.body).endsWith('-- Priya (Day0) · run wi_1/run_1'),
+      refused: sharedWriteWithoutAttribution(change, record, credentialKind, 0, [change], []),
+    };
+  }
+
+  const existing: ReadonlyArray<{
+    readonly name: string;
+    readonly fields: Parameters<typeof card>[0];
+    readonly sign: boolean;
+  }> = [
+    { name: 'a pasted key, before the upgrade', fields: { credentialKind: 'value' }, sign: true },
+    {
+      name: 'a documented location, before the upgrade',
+      fields: { credentialKind: 'location' },
+      sign: true,
+    },
+    {
+      name: 'an installed app, before the upgrade',
+      fields: { credentialKind: 'oauth' },
+      sign: false,
+    },
+    { name: 'a card with no kind recorded', fields: {}, sign: true },
+    {
+      name: 'a pasted key, after the upgrade',
+      fields: { credentialKind: 'value', actsAs: { kind: 'shared-key', label: 'a pasted key' } },
+      sign: true,
+    },
+    {
+      name: 'a documented location, after the upgrade',
+      fields: { credentialKind: 'location', actsAs: { kind: 'shared-key', label: 'a key' } },
+      sign: true,
+    },
+    {
+      name: 'the employee’s own app (Slack, or Linear per employee)',
+      fields: { credentialKind: 'oauth', actsAs: { kind: 'own-app', label: 'Day0 Leo' } },
+      sign: false,
+    },
+    {
+      name: 'the shared Linear app as wave 11 landed it (AL8)',
+      fields: { credentialKind: 'value', actsAs: { kind: 'shared-app', label: 'Linear' } },
+      sign: true,
+    },
+    {
+      // recordInstalledApp replaces the pasted key with the app's token and leaves actsAs as it was.
+      name: 'a pasted key the dedicated app replaced, its identity not restamped',
+      fields: { credentialKind: 'oauth', actsAs: { kind: 'shared-key', label: 'a pasted key' } },
+      sign: false,
+    },
+  ];
+
+  for (const shape of existing) {
+    it(`${shape.sign ? 'signs' : 'does not sign'} ${shape.name}`, (): void => {
+      expect(signs(card(shape.fields))).toEqual({ trailer: shape.sign, refused: shape.sign });
+    });
+  }
+
+  it('signs by the identity a card acts as, not its credential’s kind: a delegated grant and the shared app sign (join 14)', (): void => {
+    expect(
+      signs(
+        card({ credentialKind: 'oauth', actsAs: { kind: 'delegated', label: 'sam@acme.test' } }),
+      ),
+    ).toEqual({ trailer: true, refused: true });
+    expect(
+      signs(card({ credentialKind: 'oauth', actsAs: { kind: 'shared-app', label: 'Linear' } })),
+    ).toEqual({ trailer: true, refused: true });
+  });
+
+  it('does not sign a dedicated browser seat, which acts as the employee’s own seat (join 14)', (): void => {
+    expect(
+      signs(card({ credentialKind: 'location', actsAs: { kind: 'browser-seat', label: 'Leo' } })),
+    ).toEqual({ trailer: false, refused: false });
   });
 });
 

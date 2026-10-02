@@ -254,7 +254,8 @@ function cardLine(sorted: SortedRows, end: AccessEnd, surfaceName: string): Card
  * goes. The organisation's own row is untouched; a per-employee identity the organisation holds is
  * ended as any row Day0 obtained. One line is written per card, so per system
  * ({@link cardLine}), or none where the attempts will write it. A row already held by an earlier
- * end keeps its scheduled attempts and is not scheduled again.
+ * end keeps its scheduled attempts and is not scheduled again. A row the token store keeps is
+ * revoked in Day0 and the store is asked to forget its connection (`forgetInTokenStore`).
  *
  * @param ctx - The ending transaction.
  * @param input - The card, its credentials, the end and its time.
@@ -286,6 +287,13 @@ export async function endAccessAtSource(
   }
   for (const row of sorted.unrevocable) {
     if (row.revokedAt === undefined) await ctx.db.patch(row._id, { revokedAt: input.now });
+    // The token store keeps the token: it is asked to forget the connection, so it neither keeps
+    // nor refreshes it any longer (11-AT; join 9). Nango revokes nothing at the vendor itself.
+    if (row.tokenStore === 'nango' && holdsValue(row)) {
+      await ctx.scheduler.runAfter(0, internal.sourceRevocationActions.forgetInTokenStore, {
+        credentialId: row._id,
+      });
+    }
   }
   const answer = {
     pasted: ids(sorted.pasted),
@@ -464,6 +472,11 @@ const attemptPlanValidator = v.object({
   revocationEndpoint: v.optional(v.string()),
   connectionClientId: v.optional(v.string()),
   connectionSecretCredentialId: v.optional(v.id('credentials')),
+  /**
+   * True where the connection's own revoke revoked that secret in the transaction that ended the
+   * card (`organisation-revoked`): the attempt opens it through the path that admits only that.
+   */
+  connectionSecretRevoked: v.optional(v.boolean()),
   /** The companion rows that are the refresh token of the pair. */
   refreshCredentialIds: v.array(v.id('credentials')),
 });
@@ -481,8 +494,9 @@ function holdsValue(row: Doc<'credentials'> | null): row is Doc<'credentials'> {
  * vendor is called, so an attempt that dies on the way still has its successor: the next attempt
  * at its offset from the end of access, or, after the last, the purge at the 24-hour bound. Reads
  * what the call needs: the organisation connection the credential was issued through (its
- * configuration token for Slack's app deletion; its revocation endpoint and client for RFC 7009)
- * and the app's client secret while Day0 still holds it.
+ * configuration token for Slack's app deletion; its revocation endpoint, client and, while it is
+ * active or for the end its own revoke made, its client secret for RFC 7009) and the app's client
+ * secret while Day0 still holds it.
  *
  * Internal; `sourceRevocationActions.attempt` is its only caller.
  *
@@ -517,6 +531,12 @@ export const beginAttempt = internalMutation({
       );
     }
     const means = await meansOf(ctx.db, credential);
+    const mcpSecretId =
+      means.connection?.kind === 'mcp-client' ? means.connection.secretCredentialId : undefined;
+    // The organisation's own revoke revoked the client secret with the connection, in the same
+    // transaction that ended the card; its own end still revokes the card's token with it, or a
+    // confidential client answers invalid_client (join 8).
+    const revokedWithConnection = !means.active && held.end === 'organisation-revoked';
     const companions = await Promise.all(job.companionIds.map(async (id) => await ctx.db.get(id)));
     return {
       attempt,
@@ -534,10 +554,11 @@ export const beginAttempt = internalMutation({
       ...(means.connection?.clientId !== undefined
         ? { connectionClientId: means.connection.clientId }
         : {}),
-      ...(means.active &&
-      means.connection?.kind === 'mcp-client' &&
-      means.connection.secretCredentialId !== undefined
-        ? { connectionSecretCredentialId: means.connection.secretCredentialId }
+      ...(mcpSecretId !== undefined && (means.active || revokedWithConnection)
+        ? {
+            connectionSecretCredentialId: mcpSecretId,
+            ...(revokedWithConnection ? { connectionSecretRevoked: true } : {}),
+          }
         : {}),
       refreshCredentialIds: companions
         .filter(

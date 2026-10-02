@@ -10,6 +10,8 @@ import { toSurfaceRecord } from '../../src/surfaces/records';
 import type { MockAction } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
+import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -71,6 +73,7 @@ afterEach(async (): Promise<void> => {
   actions.__setLinearIdentityDepsForTest(undefined);
   restoreSurfaceMode();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 /** The generated API as the reset module registry evaluates it. */
@@ -256,6 +259,35 @@ describe('shared mode: the organisation app actor', (): void => {
     });
   });
 
+  it('lands the shared token as the OAuth token it is, and still signs every write as the employee (join 14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface).toMatchObject({ credentialKind: 'oauth', actsAs: { kind: 'shared-app' } });
+    const parsedComment = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'FIN-3', body: 'Reconciled.' }),
+      },
+    });
+    if (!parsedComment.ok) throw new Error(parsedComment.reason);
+    const record = toSurfaceRecord(surface);
+    expect(
+      applyProvenance(
+        parsedComment.action,
+        record,
+        { agentName: 'Leo', workItemId: 'wi_1', runId: 'run_1' },
+        record.credentialKind ?? 'value',
+      ),
+    ).toMatchObject({
+      ok: true,
+      action: { toolArgs: { body: 'Reconciled.\n\n-- Leo (Day0) · run wi_1/run_1' } },
+    });
+  });
+
   it("requests the shared token with the connection's scope set and never another", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared', cards: 2 });
@@ -351,6 +383,98 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(tokenRequests()).toHaveLength(2);
   });
 
+  it('empties the shared token in place when IT rotates the app’s secret, so the next read never meets the 401 (join 3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { api } = await liveApi();
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    expect(linear.live(await bearerOf(harness, tokenId))).toBe(true);
+
+    // IT rotates the secret in Linear, which ends every app-actor token issued with the old one
+    // (L2), then records the new secret on the organisation page.
+    const rotatedSecret = 'shared-client-secret-rotated';
+    const rotated = fakeLinear(
+      [
+        {
+          clientId: SHARED_CLIENT,
+          clientSecret: rotatedSecret,
+          clientCredentials: true,
+          appUser: { id: 'app-user-day0-shared', name: 'Day0' },
+          redirectUris: [REDIRECT],
+        },
+      ],
+      () => clock,
+    );
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({ fetch: rotated.fetch, now: () => clock });
+    await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.organisationConnections.rotate, {
+        organisationConnectionId: connectionId,
+        secret: rotatedSecret,
+      });
+
+    const emptied = (await read(harness, surfaceIds[0]!)).credentials.find(
+      (row) => row._id === tokenId,
+    );
+    expect(emptied).toMatchObject({ _id: tokenId });
+    expect(emptied?.ciphertext).toBeUndefined();
+    expect(emptied?.revokedAt).toBeUndefined();
+
+    expect(rotated.live(await bearerOf(harness, tokenId))).toBe(true);
+    expect(rotated.requests.filter((request) => request.path === '/oauth/token')).toHaveLength(1);
+    const { surface, connection, credentials } = await read(harness, surfaceIds[0]!);
+    expect(connection.sharedTokenCredentialId).toBe(tokenId);
+    expect(surface.credentialId).toBe(tokenId);
+    expect(credentials.find((row) => row._id === tokenId)?.generation).toBe(2);
+  });
+
+  it('refuses to land a token a renewal requested before the rotation emptied the shared row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { api, internal } = await liveApi();
+    await connect(harness, surfaceIds[0]!);
+    const before = (await read(harness, surfaceIds[0]!)).connection;
+    const tokenId = before.sharedTokenCredentialId!;
+    await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.organisationConnections.rotate, {
+        organisationConnectionId: connectionId,
+        secret: 'shared-client-secret-rotated',
+      });
+
+    const late = await harness.mutation(internal.linearIdentity.landSharedToken, {
+      organisationConnectionId: connectionId,
+      sealed: sealForOwner(
+        'lin_oauth_shared_minted_before',
+        { current: credentialKey },
+        ORGANISATION_OWNER_KEY,
+      ),
+      expectedGeneration: 0,
+      secretCredentialId: before.secretCredentialId!,
+      now: clock,
+    });
+
+    expect(late).toEqual({ ok: false, reason: 'stale', credentialId: tokenId });
+    // A renewal that read the emptied row with the secret a second rotation has since replaced.
+    const afterSecondRotation = await harness.mutation(internal.linearIdentity.landSharedToken, {
+      organisationConnectionId: connectionId,
+      sealed: sealForOwner(
+        'lin_oauth_shared_minted_with_the_old_secret',
+        { current: credentialKey },
+        ORGANISATION_OWNER_KEY,
+      ),
+      secretCredentialId: before.secretCredentialId!,
+      now: clock,
+    });
+    expect(afterSecondRotation).toEqual({ ok: false, reason: 'stale', credentialId: tokenId });
+    const row = (await read(harness, surfaceIds[0]!)).credentials.find(
+      (one) => one._id === tokenId,
+    );
+    expect(row?.ciphertext).toBeUndefined();
+  });
+
   it('names an app without client credentials turned on, and connects nothing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });
@@ -419,6 +543,172 @@ async function installLeo(
     ...param('error'),
   });
 }
+
+describe('one bearer read for every rung, the probe and intake (join 5)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  /** The bearer every rung, the probe and intake send: the store's one read. */
+  async function rungBearer(
+    harness: TestConvex<typeof schema>,
+    credentialId: Id<'credentials'>,
+  ): Promise<string> {
+    const { internal } = await liveApi();
+    return await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+  }
+
+  it('refreshes an employee’s own token that is due, through the native store', async (): Promise<void> => {
+    // Scheduled refreshes stay queued: the fixture clock runs ahead of the real one, and a queued
+    // refresh would otherwise fire at once and renew the token before the read under test.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+
+    clock += DAY + 60_000;
+    const bearer = await rungBearer(harness, surface.credentialId!);
+
+    expect(linear.live(bearer)).toBe(true);
+    expect(tokenRequests().map((request) => request.grant)).toEqual([
+      'authorization_code',
+      'refresh_token',
+    ]);
+    const { credentials, scheduled } = await read(harness, surfaceIds[0]!);
+    expect(credentials.find((row) => row._id === surface.credentialId)).toMatchObject({
+      generation: 1,
+      issuedBy: { grant: 'token-rotation' },
+    });
+    // The rotation queues Linear's own scheduled refresh, never the MCP client's.
+    expect(scheduled.map((job) => job.name)).not.toContain('mcpOauthActions:refreshScheduled');
+  });
+
+  it('ends with Linear’s own words when Linear refuses the refresh of an expired token', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    linear.revokeAppTokens(LEO_CLIENT);
+
+    clock += DAY + 60_000;
+
+    await expect(rungBearer(harness, surface.credentialId!)).rejects.toThrow(
+      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+    );
+  });
+
+  it('renews the shared app-actor token in its last day through its issuer', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const first = await rungBearer(harness, tokenId);
+
+    clock += 29.5 * DAY;
+    const renewed = await rungBearer(harness, tokenId);
+
+    expect(renewed).not.toBe(first);
+    expect(linear.live(renewed)).toBe(true);
+    expect(tokenRequests().map((request) => request.grant)).toEqual([
+      'client_credentials',
+      'client_credentials',
+    ]);
+  });
+});
+
+describe('an employee acts at the vendor only as the identity its card names (cross-unit test 1, backend half)', (): void => {
+  /** The bearer every rung sends for a card: the runtime's one read. */
+  async function rungBearer(
+    harness: TestConvex<typeof schema>,
+    credentialId: Id<'credentials'>,
+  ): Promise<string> {
+    const { internal } = await liveApi();
+    return await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+  }
+
+  it('own-app: the bearer acts at Linear as the employee’s own app user, the one the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.actsAs?.kind).toBe('own-app');
+
+    const viewer = await readLinearViewer(
+      linear.fetch,
+      await rungBearer(harness, surface.credentialId!),
+    );
+
+    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+  });
+
+  it('shared-app: the bearer acts at Linear as the organisation’s shared app user, the one the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.actsAs?.kind).toBe('shared-app');
+
+    const viewer = await readLinearViewer(
+      linear.fetch,
+      await rungBearer(harness, surface.credentialId!),
+    );
+
+    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+  });
+
+  it('shared-key: the bearer is the key someone pasted, read as it was stored', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    const pasted = 'lin_api_pasted_0123456789';
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear key',
+      plaintext: pasted,
+      source: 'entered',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, {
+        credentialId,
+        credentialKind: 'value',
+        actsAs: { kind: 'shared-key', label: 'a key someone pasted' },
+      });
+    });
+
+    expect(await rungBearer(harness, credentialId)).toBe(pasted);
+    expect(tokenRequests()).toEqual([]);
+  });
+});
+
+describe("Linear's own bearer read for a credential its issuer did not obtain (the second pass)", (): void => {
+  it('reads it through the token store, so a Nango-held row is never answered with its location', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'location',
+          label: 'Tracker token (Nango)',
+          ...sealForOwner(
+            nangoLocation({ providerConfigKey: 'tracker-cc', connectionId: 'tracker' }),
+            { current: credentialKey },
+            ORGANISATION_OWNER_KEY,
+          ),
+          source: 'entered',
+          createdAt: 1,
+          tokenStore: 'nango',
+          issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        }),
+    );
+
+    await expect(bearerOf(harness, credentialId)).rejects.toThrow(
+      'The nango token store is not configured on this deployment.',
+    );
+  });
+});
 
 describe("per-employee mode: the employee's own app", (): void => {
   it('acts as its own app user once a Linear administrator installs its app', async (): Promise<void> => {
@@ -616,6 +906,94 @@ describe("per-employee mode: the employee's own app", (): void => {
       clientId: LEO_CLIENT,
       redirectUrl: REDIRECT,
     });
+  });
+
+  it('ends a replaced pair at Linear through the end of access: held, and its revocation scheduled (join 4)', async (): Promise<void> => {
+    // The scheduled revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const first = (await read(harness, surfaceIds[0]!)).surface.credentialId!;
+    const { api } = await liveApi();
+
+    const started = await connect(harness, surfaceIds[0]!);
+    if (!started.ok || !('authoriseUrl' in started)) throw new Error('no installation started');
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const { surface, credentials, scheduled } = await read(harness, surfaceIds[0]!);
+    expect(surface.credentialId).not.toBe(first);
+    const replaced = credentials.find((row) => row._id === first);
+    expect(replaced).toMatchObject({
+      revokedAt: clock,
+      sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
+    });
+    expect(replaced?.ciphertext).toEqual(expect.any(String));
+    const attempts = scheduled.filter((job) => job.name === 'sourceRevocationActions:attempt');
+    expect(attempts.map((job) => (job.args[0] as { credentialId: string }).credentialId)).toEqual([
+      first,
+    ]);
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceIds[0]!);
+      expect(
+        events
+          .filter((event) => event.type === 'credential.revoked-at-source')
+          .map((event) => event.payload),
+      ).toEqual([expect.objectContaining({ credentialId: first, outcome: 'token-revoked' })]);
+    });
+  });
+
+  it('renews an expired card by re-authorising its own app through the issuer, with a fresh link (join 6)', async (): Promise<void> => {
+    // The expiry's revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api, internal } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const surfaceId = surfaceIds[0]!;
+    await harness.run(async (ctx) => await ctx.db.patch(surfaceId, { expiresAt: Date.now() - 1 }));
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: Date.now() });
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceId);
+      expect(events.map((event) => event.type)).toContain('credential.revoked-at-source');
+    });
+
+    const renewal = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 });
+    expect(renewal).toEqual({ expiresAt: expect.any(Number), reissue: 'authorise' });
+
+    const started = await harness
+      .withIdentity(managerIdentity())
+      .action(api.linearIdentityActions.startAuthorisation, { surfaceId });
+    if (!started.ok) throw new Error(started.message);
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const { surface } = await read(harness, surfaceId);
+    expect(surface).toMatchObject({
+      verdict: 'approved',
+      actsAs: { kind: 'own-app', providerIdentityId: 'app-user-day0-leo' },
+    });
+    expect(linear.live(await bearerOf(harness, surface.credentialId!))).toBe(true);
   });
 
   it("keeps the installed app's secret until a newly recorded app's installation lands", async (): Promise<void> => {

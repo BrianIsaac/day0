@@ -10,7 +10,7 @@
  * `TRACE_PAGE_ROWS` rows, with the cursor of the next.
  */
 import type { Doc } from '../../convex/_generated/dataModel';
-import type { EventType } from '../events/contract';
+import type { ConnectionEventType, EventType } from '../events/contract';
 import type { AcceptedHandover } from '../metrics/tenure';
 import { sha256OfText } from '../lib/sha256';
 
@@ -22,15 +22,16 @@ export const TRACE_FORMAT = 'day0-trace';
  * the delivery records of Day0's own messages and the event contract's types;
  * 4 adds the employee's accepted handovers to the manifest, so a recompute
  * from traces cuts each manager's figures by tenure, each owner key as a
- * salted digest ({@link ownerKeyDigest}).
+ * salted digest ({@link ownerKeyDigest}); 5 adds the organisation's ledger
+ * lines about the connections the employee's cards use (wave 11, F17).
  */
-export const TRACE_VERSION = 4;
+export const TRACE_VERSION = 5;
 
 /**
  * The earlier versions this release still reads: a version 2 trace has no
  * delivery records, and neither 2 nor 3 carries the handovers.
  */
-const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, TRACE_VERSION]);
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -122,7 +123,7 @@ export type TraceRetirement = Omit<Doc<'retirements'>, 'userId'> | TombstoneReti
 export interface TraceManifest {
   readonly format: typeof TRACE_FORMAT;
   /** This release's version, or the earlier one a file read from an older export keeps. */
-  readonly version: 2 | 3 | typeof TRACE_VERSION;
+  readonly version: 2 | 3 | 4 | typeof TRACE_VERSION;
   readonly exportedAt: number;
   /** The export's date, `YYYY-MM-DD`, in the agent's zone. */
   readonly exportedOn: string;
@@ -203,6 +204,18 @@ export function handoversForRecompute(
   );
 }
 
+/**
+ * One line of the organisation's ledger (`connectionEvents`, F17) as a trace carries it: a line
+ * about a connection the employee's cards use, redacted as the export redacts, with the
+ * administrator's address left out (the file names no account but the exporter's own).
+ */
+export interface TraceLedgerLine {
+  readonly type: ConnectionEventType;
+  readonly organisationConnectionId: string;
+  readonly createdAt: number;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
 /** The first call's answer: everything but the paged sections, and where they start. */
 export interface TraceHead {
   readonly manifest: TraceManifest;
@@ -210,6 +223,12 @@ export interface TraceHead {
   /** The owner section (N1, Q15): the owner's retired employees. */
   readonly owner: { readonly retired: readonly TraceRetirement[] };
   readonly credentialNames: ReadonlyArray<{ readonly label: string }>;
+  /**
+   * The organisation's ledger lines about the connections the employee's cards use, oldest first:
+   * each connection's landing, rotations and revoke, and the vendor calls made with its secret to
+   * end this employee's access, never another employee's. Empty before version 5.
+   */
+  readonly organisationLedger: readonly TraceLedgerLine[];
   readonly next: TraceCursor;
 }
 
@@ -227,6 +246,7 @@ export interface AgentTrace {
   readonly agent: TraceAgent;
   readonly owner: TraceHead['owner'];
   readonly credentialNames: TraceHead['credentialNames'];
+  readonly organisationLedger: TraceHead['organisationLedger'];
   readonly sections: TraceRows;
 }
 
@@ -289,6 +309,7 @@ export async function assembleTrace(
     agent: head.agent,
     owner: head.owner,
     credentialNames: head.credentialNames,
+    organisationLedger: head.organisationLedger,
     sections: sections as unknown as TraceRows,
   };
 }
@@ -303,7 +324,7 @@ export async function assembleTrace(
  */
 export function readAgentTrace(value: unknown): AgentTrace | undefined {
   if (value === null || typeof value !== 'object') return undefined;
-  const { manifest, agent, sections } = value as Record<string, unknown>;
+  const { manifest, agent, sections, organisationLedger } = value as Record<string, unknown>;
   if (
     manifest === null ||
     typeof manifest !== 'object' ||
@@ -327,7 +348,11 @@ export function readAgentTrace(value: unknown): AgentTrace | undefined {
   const filled = Object.fromEntries(
     TRACE_SECTIONS.map((section) => [section, carried[section] ?? []]),
   ) as unknown as TraceRows;
-  return { ...(value as AgentTrace), sections: filled };
+  // A trace before version 5 carried no organisation ledger: read as none.
+  const ledger = Array.isArray(organisationLedger)
+    ? (organisationLedger as AgentTrace['organisationLedger'])
+    : [];
+  return { ...(value as AgentTrace), organisationLedger: ledger, sections: filled };
 }
 
 /**

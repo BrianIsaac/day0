@@ -116,6 +116,182 @@ async function seedTracedAgent(harness: TestConvex<typeof schema>): Promise<Id<'
   });
 }
 
+describe('the organisation’s ledger in the audit export (join 11)', (): void => {
+  it('carries the ledger of the connections the employee’s cards use, its own revocations only, redacted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const connection = async (system: string) =>
+        await ctx.db.insert('organisationConnections', {
+          system,
+          displayName: system === 'linear' ? 'Linear' : 'Notion',
+          kind: 'oauth-app',
+          mode: 'per-employee',
+          scopes: ['read'],
+          registeredBy: { via: 'organisation-page', at: 1, address: 'ines@acme.test' },
+          status: 'revoked',
+          createdAt: 1,
+        });
+      const linear = await connection('linear');
+      const notion = await connection('notion');
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(surface!._id, { organisationConnectionId: linear });
+      const own = surface!.credentialId!;
+      const other = await ctx.db.insert('credentials', {
+        userId: 'someone-else',
+        kind: 'oauth',
+        label: 'Another employee’s token',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'credential.revoked-at-source',
+        payload: {
+          credentialId: own,
+          surfaceId: surface!._id,
+          surfaceName: 'Linear',
+          system: 'linear',
+          end: 'organisation-revoked',
+          outcome: 'token-revoked',
+          attempt: 1,
+        },
+        createdAt: 4,
+      });
+      const named = { organisationConnectionId: linear, system: 'linear', displayName: 'Linear' };
+      const line = async (
+        organisationConnectionId: Id<'organisationConnections'>,
+        type: string,
+        payload: Record<string, unknown>,
+        createdAt: number,
+        actorAddress?: string,
+      ) =>
+        await ctx.db.insert('connectionEvents', {
+          organisationConnectionId,
+          type,
+          payload,
+          createdAt,
+          ...(actorAddress ? { actorAddress } : {}),
+        });
+      await line(
+        linear,
+        'organisation.connection-landed',
+        {
+          ...named,
+          via: 'organisation-page',
+          kind: 'oauth-app',
+          mode: 'per-employee',
+          scopes: ['read'],
+        },
+        2,
+        'ines@acme.test',
+      );
+      await line(
+        linear,
+        'organisation.connection-revoked',
+        { ...named, via: 'organisation-page', reason: 'replaced; ask ines@acme.test' },
+        3,
+        'ines@acme.test',
+      );
+      const revokedAtSource = { system: 'linear', end: 'organisation-revoked', attempt: 1 };
+      await line(
+        linear,
+        'organisation.revoked-at-source',
+        { ...revokedAtSource, credentialId: own, outcome: 'token-revoked' },
+        5,
+      );
+      await line(
+        linear,
+        'organisation.revoked-at-source',
+        { ...revokedAtSource, credentialId: other, outcome: 'failed' },
+        6,
+      );
+      await line(
+        notion,
+        'organisation.connection-landed',
+        { organisationConnectionId: notion, system: 'notion', displayName: 'Notion' },
+        7,
+      );
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(head.organisationLedger.map((one) => [one.type, one.createdAt])).toEqual([
+      ['organisation.connection-landed', 2],
+      ['organisation.connection-revoked', 3],
+      ['organisation.revoked-at-source', 5],
+    ]);
+    expect(JSON.stringify(head.organisationLedger)).not.toContain('ines@acme.test');
+    expect(JSON.stringify(head)).not.toContain('Notion');
+  });
+});
+
+describe('the organisation’s ledger on a busy connection (join 11, the second pass)', (): void => {
+  it('keeps the connection’s landing however many other employees’ lines came after it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const linear = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(surface!._id, { organisationConnectionId: linear });
+      const other = await ctx.db.insert('credentials', {
+        userId: 'someone-else',
+        kind: 'oauth',
+        label: 'Another employee’s token',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: linear,
+        type: 'organisation.connection-landed',
+        payload: { organisationConnectionId: linear, system: 'linear', displayName: 'Linear' },
+        createdAt: 2,
+      });
+      for (let index = 0; index < 501; index += 1) {
+        await ctx.db.insert('connectionEvents', {
+          organisationConnectionId: linear,
+          type: 'organisation.revoked-at-source',
+          payload: {
+            credentialId: other,
+            system: 'linear',
+            end: 'retire',
+            outcome: 'token-revoked',
+            attempt: 1,
+          },
+          createdAt: 3 + index,
+        });
+      }
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(head.organisationLedger.map((one) => one.type)).toEqual([
+      'organisation.connection-landed',
+    ]);
+  });
+});
+
 describe('the paged trace export', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
@@ -139,7 +315,7 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      version: 4,
+      version: 5,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -158,6 +334,7 @@ describe('the paged trace export', (): void => {
     });
     expect(head.next).toEqual({ section: 'charters', cursor: null });
     expect(head.credentialNames).toEqual([{ label: 'Linear service token' }]);
+    expect(head.organisationLedger).toEqual([]);
     expect(JSON.stringify(head)).not.toContain('boss@day0.local');
   });
 

@@ -26,9 +26,6 @@ import type { PrivateHostAllowlist } from '../lib/private-hosts';
 /** The fetch discovery, the token requests and registration go through. */
 export type OauthFetch = (url: URL, init: RequestInit) => Promise<Response>;
 
-/** The prefix of an MCP server's system key on its organisation connection. */
-export const MCP_SYSTEM_PREFIX = 'mcp:';
-
 /** The MCP protocol revision the discovery request names; the one the tree's client speaks (V-A10). */
 const DISCOVERY_PROTOCOL_VERSION = '2025-11-25';
 
@@ -80,14 +77,6 @@ export class McpOauthRefusal extends Error {
     this.reason = reason;
     if (oauthError !== undefined) this.oauthError = oauthError;
   }
-}
-
-/**
- * The system key an MCP server's organisation connection is registered under: `mcp:` and the
- * endpoint's host (with its port when it has one), lower case.
- */
-export function mcpSystemKey(endpoint: URL): string {
-  return `${MCP_SYSTEM_PREFIX}${endpoint.host.toLowerCase()}`;
 }
 
 /**

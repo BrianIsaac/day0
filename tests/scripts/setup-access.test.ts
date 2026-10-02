@@ -293,7 +293,7 @@ describe('setup: the access verb', (): void => {
     );
   });
 
-  it('takes the systems and their modes from flags, and records a mode not landed at install while landing the rest', async (): Promise<void> => {
+  it('takes the systems and their modes from flags, and lands Linear per employee with nothing handed over (join 2)', async (): Promise<void> => {
     const bed = accessBed();
     const status = await bed.run([
       ...ACCESS,
@@ -305,15 +305,23 @@ describe('setup: the access verb', (): void => {
       bed.record,
     ]);
     expect(status).toBe(0);
-    const landed = bed.deployment.calls
-      .filter((call) => call.path === 'organisationConnections:landFromSetup')
-      .map((call) => call.args.system);
-    expect(landed).toEqual(['slack']);
-    expect(bed.bed.output.join('\n')).toContain('Linear: per employee, not landed at install: ');
-    const [file] = readdirSync(bed.record);
-    expect(readFileSync(join(bed.record, file), 'utf8')).toContain(
-      '- linear: per employee, not landed at install:',
+    const landings = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationConnections:landFromSetup',
     );
+    expect(landings.map((call) => call.args.system)).toEqual(['slack', 'linear']);
+    expect(landings[1].args).toEqual({
+      system: 'linear',
+      displayName: 'Linear',
+      kind: 'oauth-app',
+      mode: 'per-employee',
+      scopes: ['read', 'write', 'app:assignable'],
+      redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+    });
+    expect(bed.bed.output.join('\n')).toContain('Linear: connect per employee. ');
+    const [file] = readdirSync(bed.record);
+    const record = readFileSync(join(bed.record, file), 'utf8');
+    expect(record).toContain('### Linear, per employee');
+    expect(record).not.toContain('not landed at install');
   });
 
   it('reads each MCP server’s answers under its own host’s names when stdin answers for several', async (): Promise<void> => {

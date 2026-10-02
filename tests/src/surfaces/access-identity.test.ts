@@ -12,6 +12,8 @@ import {
   SOURCE_REVOCATION_STATES,
   TOKEN_STORES,
   actsAsAtUpgrade,
+  attributionOf,
+  isActsAsKind,
 } from '../../../src/surfaces/access-identity';
 
 describe('the stored values of the access literals (11-AK), which rows keep once written', (): void => {
@@ -110,5 +112,19 @@ describe('the identity an existing card acts as at the upgrade', (): void => {
       kind: 'shared-key',
       label: 'Linear',
     });
+  });
+});
+
+describe('how a write through each identity is attributed (join 14)', (): void => {
+  it('signs a shared app, a shared key and a delegated grant; the employee’s own app and seat sign themselves', (): void => {
+    expect(ACTS_AS_KINDS.map((kind) => [kind, attributionOf(kind)])).toEqual([
+      ['own-app', 'identity'],
+      ['shared-app', 'trailer'],
+      ['delegated', 'trailer'],
+      ['shared-key', 'trailer'],
+      ['browser-seat', 'identity'],
+    ]);
+    expect(ACTS_AS_KINDS.every(isActsAsKind)).toBe(true);
+    expect(isActsAsKind('pasted')).toBe(false);
   });
 });

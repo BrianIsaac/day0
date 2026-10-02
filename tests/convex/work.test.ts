@@ -6923,6 +6923,140 @@ describe('work.needsYou', (): void => {
     expect(entry).toMatchObject({ kind: 'one-to-one', waitingSince: sentBackAt });
   });
 
+  it('lists a card whose access request IT has answered as ready to connect, from the connection’s landing (join 12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId: mira,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          // As the approval's own probe leaves a card that holds no credential.
+          verdict: 'ungranted',
+          reason: 'credential not in the docs; location not documented',
+          whereFound: [],
+          path: 'documented-api',
+          endpoint: 'https://api.linear.app/graphql',
+          managerApprovedAt: 2,
+          credentialLanded: false,
+          accessRequest: { reason: 'no-connection', scopes: ['linear:read'], draftedAt: 3 },
+          createdAt: 1,
+        }),
+    );
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 50 },
+        status: 'active',
+        createdAt: 50,
+      });
+    });
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries).toEqual([
+      expect.objectContaining({
+        kind: 'surface',
+        key: `surface:${surfaceId}`,
+        surfaceId,
+        subject: 'Linear',
+        ready: 'connect',
+        waitingSince: 50,
+      }),
+    ]);
+    expect(inbox.waitingByEmployee.find((row) => row.agentId === mira)?.waiting).toBe(1);
+  });
+
+  it('lists no card the manager disconnected, nor one whose access ended, though IT answered its request (join 12, the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      const card = {
+        agentId: mira,
+        class: 'kanban',
+        verdict: 'approved' as const,
+        whereFound: [],
+        path: 'documented-api' as const,
+        endpoint: 'https://api.linear.app/graphql',
+        managerApprovedAt: 2,
+        credentialLanded: false,
+        accessRequest: { reason: 'no-connection' as const, scopes: ['linear:read'], draftedAt: 3 },
+        createdAt: 1,
+      };
+      const disconnected = await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'linear',
+        displayName: 'Linear',
+        reason: 'Disconnected by the manager.',
+      });
+      // It connected after it asked IT, and was then disconnected.
+      await ctx.db.insert('events', {
+        agentId: mira,
+        type: 'surface.connected',
+        payload: { surfaceId: disconnected, slug: 'linear', displayName: 'Linear' },
+        createdAt: 10,
+      });
+      await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'linear-ops',
+        displayName: 'Linear ops',
+        expiresAt: 4,
+      });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 50 },
+        status: 'active',
+        createdAt: 50,
+      });
+    });
+
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
+  it('lists no card that asked IT while its connection still asks an administrator for more', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId: mira,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://api.linear.app/graphql',
+        managerApprovedAt: 2,
+        credentialLanded: false,
+        accessRequest: { reason: 'install-needed', scopes: ['linear:read'], draftedAt: 3 },
+        createdAt: 1,
+      });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write'],
+        registeredBy: { via: 'setup-cli', at: 50 },
+        status: 'active',
+        createdAt: 50,
+      });
+    });
+
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
   it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

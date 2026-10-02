@@ -8,7 +8,6 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { SweepRead } from './intakeSeed';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
-import { readLinearBearer } from './linearIdentityActions';
 import { readSurfaceBearer } from './mcpOauthActions';
 import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
@@ -2248,12 +2247,10 @@ export function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
         (grant: Doc<'permissionGrants'>): string => grant.scope,
       ),
-    // A Linear token Day0 obtained is read through its issuer (11-AL): renewed when it is due, and
-    // refused once the organisation's connection has ended. Everything else comes from the token
-    // store (11-AT): an MCP authorisation's token is refreshed first when due, a Nango-held one is
-    // asked of Nango, any other credential decrypts as before.
+    // The runtime's one read (`readSurfaceBearer`, join 5): the shared Linear token from its
+    // issuer, every other credential from the token store, refreshed first when due.
     decrypt: async (credentialId: CredentialId): Promise<string> =>
-      (await readLinearBearer(ctx, credentialId)) ?? (await readSurfaceBearer(ctx, credentialId)),
+      await readSurfaceBearer(ctx, credentialId),
     recordIntake: async (record: IntakeRecord): Promise<void> => {
       await ctx.runMutation(internal.surfaces.recordIntake, record);
     },

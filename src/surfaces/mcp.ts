@@ -1,7 +1,7 @@
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
-import { decryptCredential, type DecryptCredential } from './credentials';
+import type { DecryptCredential } from './credentials';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
@@ -242,6 +242,7 @@ export type CreateMcpClient = (options: McpClientOptions) => McpClientLike;
 
 /** What the MCP adapter depends on: the decrypt and the client factory. */
 export interface McpAdapterDeps {
+  /** The card's live bearer from the token store (`readSurfaceBearer`), refreshed first when due. */
   decrypt: DecryptCredential;
   createClient: CreateMcpClient;
   now: () => number;
@@ -518,17 +519,14 @@ export class McpAdapter implements SurfaceAdapter {
   readonly tools = MCP_TOOLS;
 
   /**
-   * Args:
-   *   surfaces: The agent's surfaces.
-   *   deps: Credential decryption, the client factory and a clock.
+   * @param surfaces - The agent's surfaces.
+   * @param deps - The token store's read of the bearer, the client factory and a clock. There is
+   *   no default: a plain decrypt would send a Nango-held row's pointer, or a token past its
+   *   expiry, as `HttpAdapter` says.
    */
   constructor(
     private readonly surfaces: readonly SurfaceRecord[],
-    private readonly deps: McpAdapterDeps = {
-      decrypt: decryptCredential,
-      createClient: createMastraMcpClient,
-      now: (): number => Date.now(),
-    },
+    private readonly deps: McpAdapterDeps,
   ) {}
 
   /**

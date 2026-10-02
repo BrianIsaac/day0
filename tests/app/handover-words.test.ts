@@ -68,6 +68,7 @@ const PREVIEW: TransferPreview = {
       { slug: 'linear', displayName: 'Linear' },
       { slug: 'slack', displayName: 'Slack' },
     ],
+    reapprove: [],
     scopesRevoked: ['linear:read'],
     mirroredPages: 12,
     mirroredPagesAtLeast: false,

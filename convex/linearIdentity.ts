@@ -9,8 +9,9 @@ import {
 } from './_generated/server';
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
-import { activeConnectionFor } from './organisationConnections';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { pendingAuthorisationValidator } from './schema';
+import { endAccessAtSource } from './sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import type { ActsAs } from '../src/surfaces/access-identity';
 import { organisationSystemOf } from '../src/surfaces/access-request';
@@ -179,8 +180,9 @@ function holdsValue(row: Doc<'credentials'> | null): row is Doc<'credentials'> {
 /**
  * Write the shared app-actor token a `client_credentials` request returned (L2), the one row per
  * connection every shared-mode card holds: renewed in place, so no card is touched, and only while
- * the row is still at the generation the renewal read, so two renewals racing write once and the
- * loser uses the winner's token (both are live: Linear keeps up to 1,000 with the same scopes).
+ * the row is still at the generation the renewal read (or still empty, after a rotation of the
+ * app's secret emptied it), so two renewals racing write once and the loser uses the winner's
+ * token (both are live: Linear keeps up to 1,000 with the same scopes).
  * Queues the next renewal for the token's last day. Internal, for `linearIdentityActions`.
  */
 export const landSharedToken = internalMutation({
@@ -190,6 +192,11 @@ export const landSharedToken = internalMutation({
     expiresAt: v.optional(v.number()),
     /** The generation the renewal read; absent for the connection's first token. */
     expectedGeneration: v.optional(v.number()),
+    /**
+     * The connection's secret the token was requested with: a token requested before a rotation
+     * replaced it may be dead at Linear (L2), so it never lands.
+     */
+    secretCredentialId: v.id('credentials'),
     now: v.number(),
   },
   handler: async (ctx, args): Promise<LinearRotationOutcome> => {
@@ -198,13 +205,19 @@ export const landSharedToken = internalMutation({
     const held = connection.sharedTokenCredentialId
       ? await ctx.db.get(connection.sharedTokenCredentialId)
       : null;
+    if (connection.secretCredentialId !== args.secretCredentialId) {
+      return { ok: false, reason: 'stale', ...(held ? { credentialId: held._id } : {}) };
+    }
     let credentialId: Id<'credentials'>;
     let generation: number;
-    if (holdsValue(held)) {
-      generation = (held.generation ?? 0) + 1;
-      if (args.expectedGeneration !== generation - 1) {
+    if (held !== null && held.revokedAt === undefined) {
+      // A rotation of the app's secret empties the row in place (join 3): only a renewal that read
+      // it empty fills it, so a token requested with the old secret never lands.
+      const read = held.ciphertext === undefined ? undefined : (held.generation ?? 0);
+      if (args.expectedGeneration !== read) {
         return { ok: false, reason: 'stale', credentialId: held._id };
       }
+      generation = (held.generation ?? 0) + 1;
       await ctx.db.patch(held._id, {
         ...args.sealed,
         expiresAt: args.expiresAt,
@@ -246,10 +259,11 @@ export const landSharedToken = internalMutation({
 
 /**
  * Detach the credential a card held before a Linear identity lands on it. A token Day0 obtained for
- * this card alone is revoked with its refresh token and its revocation at Linear asked for (11-AR's
- * revoker answers it), its ciphertext kept for that call (F19). A pasted key is only detached: Day0
- * never revokes one (D5, A27). The organisation's shared token, and any credential another card
- * still holds, are left alone.
+ * this card alone is ended with its refresh token through the end of access (`endAccessAtSource`,
+ * end `disconnect`): revoked in Day0, its ciphertext kept for the call (F19), and the revocation
+ * at Linear scheduled (11-AR's seam: a card's pointer to such a row is never dropped without
+ * ending it). A pasted key is only detached: Day0 never revokes one (D5, A27). The organisation's
+ * shared token, and any credential another card still holds, are left alone.
  */
 async function retireReplaced(
   ctx: MutationCtx,
@@ -267,13 +281,14 @@ async function retireReplaced(
     .take(2);
   if (holders.some((holder) => holder._id !== surface._id)) return;
   const pair = replaced.refreshCredentialId ? await ctx.db.get(replaced.refreshCredentialId) : null;
-  for (const row of [replaced, pair]) {
-    if (!row || row.revokedAt !== undefined) continue;
-    await ctx.db.patch(row._id, {
-      revokedAt: now,
-      sourceRevocation: { state: 'pending', attempts: 0, end: 'disconnect' },
-    });
-  }
+  await endAccessAtSource(ctx, {
+    agentId: surface.agentId,
+    surfaceId: surface._id,
+    surfaceName: surface.displayName,
+    credentials: [replaced, ...(pair !== null && pair.revokedAt === undefined ? [pair] : [])],
+    end: 'disconnect',
+    now,
+  });
 }
 
 /** The client secret the card's held token is refreshed with, if it holds one Day0 obtained. */
@@ -336,8 +351,8 @@ async function landingCard(
 /**
  * Connect a card through the organisation's shared Linear app (D3, shared mode): the card holds the
  * connection's one app-actor token and acts as the shared app user, so its writes carry the
- * employee's trailer (the card's credential is landed as a shared value, which the provenance rules
- * read: `applyProvenance`). The probe is queued. Internal, for `linearIdentityActions.connect`,
+ * employee's trailer (the provenance rules read the card's `shared-app` identity:
+ * `signsForEmployee`). The probe is queued. Internal, for `linearIdentityActions.connect`,
  * which has checked the caller owns the employee and linked the card; refuses when the employee
  * changed hands since, or the token is no longer the connection's.
  */
@@ -372,8 +387,9 @@ export const connectSharedCard = internalMutation({
     };
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
-      // A shared value: every write through it names the employee (`applyProvenance`).
-      credentialKind: 'value',
+      // The OAuth token it is; the card's `shared-app` identity makes every write through it name
+      // the employee (`signsForEmployee`).
+      credentialKind: 'oauth',
       credentialLocation: undefined,
       credentialLanded: false,
       actsAs,

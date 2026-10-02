@@ -16,7 +16,6 @@ import {
   discoverAuthorisation,
   fetchAuthorisationServerMetadata,
   McpOauthRefusal,
-  mcpSystemKey,
   newPkcePair,
   parseBearerChallenge,
   protectedResourceMetadataUrls,
@@ -149,10 +148,7 @@ const METADATA: AuthorisationServerMetadata = {
 };
 
 describe('naming a server', (): void => {
-  it('keys an MCP server by its host and its resource by the canonical URI', (): void => {
-    expect(mcpSystemKey(new URL('https://MCP.Example.com:8443/mcp'))).toBe(
-      'mcp:mcp.example.com:8443',
-    );
+  it('names a server’s resource by the canonical URI', (): void => {
     expect(canonicalResource(new URL('HTTPS://MCP.Example.com/mcp#frag'))).toBe(
       'https://mcp.example.com/mcp',
     );

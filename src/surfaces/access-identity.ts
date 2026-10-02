@@ -1,4 +1,4 @@
-import type { CredentialKind } from './types';
+import type { Attribution, CredentialKind } from './types';
 
 /*
  * The access track's literals as the schema declares them (wave 11, 11-AK): whom a card acts as,
@@ -24,6 +24,37 @@ export const ACTS_AS_KINDS = [
 
 /** One of {@link ACTS_AS_KINDS}. */
 export type ActsAsKind = (typeof ACTS_AS_KINDS)[number];
+
+const ACTS_AS_LISTED: ReadonlySet<string> = new Set(ACTS_AS_KINDS);
+
+/** Whether a value is one of {@link ACTS_AS_KINDS}. */
+export function isActsAsKind(value: unknown): value is ActsAsKind {
+  return typeof value === 'string' && ACTS_AS_LISTED.has(value);
+}
+
+/**
+ * How writes through a card acting as this identity are attributed to the employee: a shared app,
+ * a shared key and a person's delegated grant act as someone or something besides the employee,
+ * so each write carries the employee's trailer; the employee's own app and its dedicated browser
+ * seat are the employee at the vendor, which attributes the write itself.
+ *
+ * @param kind - Whom the card acts as.
+ */
+export function attributionOf(kind: ActsAsKind): Attribution {
+  switch (kind) {
+    case 'shared-app':
+    case 'shared-key':
+    case 'delegated':
+      return 'trailer';
+    case 'own-app':
+    case 'browser-seat':
+      return 'identity';
+    default: {
+      const unknown: never = kind;
+      throw new Error(`unhandled identity kind ${String(unknown)}`);
+    }
+  }
+}
 
 /** The identity a card acts as, written by the connect paths and never by the model. */
 export interface ActsAs {

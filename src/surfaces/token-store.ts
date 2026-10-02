@@ -204,6 +204,41 @@ export class TokenRefreshRefused extends Error {
   }
 }
 
+/**
+ * How an issuer words a refresh's failures, on the card and in its record. The store's own words
+ * ({@link STORE_REFRESH_WORDS}) serve an issuer that names none.
+ */
+export interface RefreshWords {
+  /** The safe, clipped reason a failed refresh carries, from what it threw. */
+  reason(error: unknown): string;
+  /** The refusal when the issuer refused the refresh token. */
+  refused(message: string): string;
+  /** The refusal when the credential was revoked while the refresh was being made. */
+  readonly revokedMeanwhile: string;
+  /** What a read throws for an expired token whose issuer could not be reached. */
+  unreachableWhenExpired(reason: string): Error;
+  /** What a read throws for an expired token whose refresh was refused. */
+  refusedWhenExpired(refusal: string): Error;
+  /** The refusal a scheduled refresh records once its retries ran out. */
+  unreachableAfter(attempts: number, reason: string): string;
+  /** The refusal a scheduled refresh records for a failure no retry would mend. */
+  failed(reason: string): string;
+}
+
+/** The store's own words for a refresh's failures (the MCP client's, 11-AM). */
+export const STORE_REFRESH_WORDS: RefreshWords = {
+  reason: (error: unknown): string =>
+    safeFailureMessage(error, '', 'The authorisation server could not be reached.'),
+  refused: (message: string): string => `Refreshing the authorisation was refused: ${message}`,
+  revokedMeanwhile: 'The authorisation was revoked while it was being refreshed.',
+  unreachableWhenExpired: (reason: string): Error =>
+    new Error(`The authorisation server could not be reached to refresh the token: ${reason}`),
+  refusedWhenExpired: (refusal: string): Error => new Error(`${refusal} Authorise the card again.`),
+  unreachableAfter: (attempts: number, reason: string): string =>
+    `The authorisation server could not be reached to refresh the token after ${attempts} attempts: ${reason}`,
+  failed: (reason: string): string => `Refreshing the authorisation failed: ${reason}`,
+};
+
 /** An issuer's refresh, ready to exchange the refresh token once the store has read it. */
 export interface PreparedRefresh {
   /**
@@ -245,6 +280,18 @@ export interface TokenRefresher {
   prepare(ctx: ActionCtx, held: HeldTokens): Promise<RefreshPreparation>;
   /** Whether a failed refresh may succeed later (a transport failure, a busy server). */
   retryable(error: unknown): boolean;
+  /** How the issuer words a refresh's failures; the store's own ({@link STORE_REFRESH_WORDS}) when absent. */
+  readonly words?: RefreshWords;
+  /**
+   * The issuer's own rotation-safe write, for an issuer whose rows queue its own next scheduled
+   * refresh (Linear's, 11-AL); the keeper's `rotate` when absent.
+   */
+  rotate?(ctx: ActionCtx, rotation: RotateTokens): Promise<RotationOutcome>;
+}
+
+/** The words a refresher's failures are given in. */
+function wordsOf(refresher: TokenRefresher): RefreshWords {
+  return refresher.words ?? STORE_REFRESH_WORDS;
 }
 
 /** What the native store depends on: its keeper, the issuers it refreshes for, the clock. */
@@ -296,7 +343,8 @@ async function rotatedSince(
  * the new pair only while the pair is still at that generation. A refresh that loses to a
  * concurrent one (the pair moved on before it read the token, its write refused as stale, or its
  * spent token refused) takes the winner's token; one whose credential was revoked meanwhile has
- * the issuer revoke what it was issued.
+ * the issuer revoke what it was issued. The write is the issuer's own where it has one
+ * ({@link TokenRefresher.rotate}), else the keeper's; refusals are in the issuer's words.
  *
  * @throws a transport error, or the issuer's own, when the server cannot be reached or answers
  *   unusably; a refusal of the refresh by the server is the typed outcome instead.
@@ -324,15 +372,18 @@ export async function refreshHeld(
     if (await rotatedSince(ctx, held, keeper)) {
       return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
     }
-    return { ok: false, refusal: `Refreshing the authorisation was refused: ${error.message}` };
+    return { ok: false, refusal: wordsOf(refresher).refused(error.message) };
   }
-  const rotation = await keeper.rotate(ctx, {
+  const written: RotateTokens = {
     credentialId: held.credentialId,
     ownerKey: held.ownerKey,
     expectedGeneration: held.generation,
     tokens: issued,
     now: deps.now(),
-  });
+  };
+  const rotation = refresher.rotate
+    ? await refresher.rotate(ctx, written)
+    : await keeper.rotate(ctx, written);
   if (rotation.ok) return { ok: true, accessToken: issued.accessToken };
   if (rotation.reason === 'stale') {
     // The winner's pair shares this grant: revoking the loser's sibling token could end the whole
@@ -340,7 +391,7 @@ export async function refreshHeld(
     return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
   }
   await preparation.refresh.discard(presented, issued);
-  return { ok: false, refusal: 'The authorisation was revoked while it was being refreshed.' };
+  return { ok: false, refusal: wordsOf(refresher).revokedMeanwhile };
 }
 
 /**
@@ -364,16 +415,13 @@ export async function nativeAccessToken(
     return await deps.keeper.accessToken(ctx, credentialId);
   }
   const alive = (held.expiresAt ?? 0) > deps.now();
+  const words = wordsOf(refresher);
   let outcome: RefreshOutcome;
   try {
     outcome = await refreshHeld(ctx, held, refresher, deps);
   } catch (error) {
-    const reason = safeFailureMessage(error, '', 'The authorisation server could not be reached.');
-    if (!alive) {
-      throw new Error(
-        `The authorisation server could not be reached to refresh the token: ${reason}`,
-      );
-    }
+    const reason = words.reason(error);
+    if (!alive) throw words.unreachableWhenExpired(reason);
     log.warn(`${refresher.name} read-time refresh failed; the stored token still lives`, {
       credentialId,
       reason,
@@ -388,7 +436,7 @@ export async function nativeAccessToken(
     });
     return await deps.keeper.accessToken(ctx, credentialId);
   }
-  throw new Error(`${outcome.refusal} Authorise the card again.`);
+  throw words.refusedWhenExpired(outcome.refusal);
 }
 
 /**
@@ -472,7 +520,8 @@ export async function runScheduledRefresh(
     if (outcome.ok) return;
     refusal = outcome.refusal;
   } catch (error) {
-    const reason = safeFailureMessage(error, '', 'The authorisation server could not be reached.');
+    const words = wordsOf(refresher);
+    const reason = words.reason(error);
     const retryable = refresher.retryable(error);
     if (retryable && attempt < SCHEDULED_REFRESH_RETRIES) {
       log.warn(`${refresher.name} scheduled refresh failed`, {
@@ -483,9 +532,7 @@ export async function runScheduledRefresh(
       await deps.retryAfter(60_000 * 2 ** attempt, attempt + 1);
       return;
     }
-    refusal = retryable
-      ? `The authorisation server could not be reached to refresh the token after ${attempt + 1} attempts: ${reason}`
-      : `Refreshing the authorisation failed: ${reason}`;
+    refusal = retryable ? words.unreachableAfter(attempt + 1, reason) : words.failed(reason);
   }
   await deps.recordRefusal(refusal);
 }

@@ -17,22 +17,59 @@ import { isSlackApiEndpoint } from './slack-endpoint';
 /** A plain system key: lower-case words joined by hyphens (`slack`, `google-workspace`). */
 const PLAIN_SYSTEM_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** The prefix of an MCP server's system key, followed by the server's host. */
-const MCP_SYSTEM_PREFIX = 'mcp:';
+/** The prefix of an MCP server's system key, followed by the server's host and any port. */
+export const MCP_SYSTEM_PREFIX = 'mcp:';
 
 /** One DNS host name, lower-case: what follows the MCP prefix. */
 const HOST_NAME =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
+/** A port as a URL writes it: digits with no leading zero. */
+const PORT = /^[1-9][0-9]{0,4}$/;
+
+/** The largest TCP port. */
+const PORT_MAX = 65_535;
+
+/** The port an https address names when it names none, which a URL never writes out. */
+const HTTPS_DEFAULT_PORT = '443';
+
+/**
+ * The system key of the MCP server at an endpoint: `mcp:`, the host in lower case without a
+ * trailing dot, and the port when it is not the scheme's default. Two MCP servers on one host
+ * are two systems, so a non-default port is part of the key; the default port names the same
+ * server as no port, so it never is. The one rule the cards, the organisation's connections, the
+ * MCP client and the access kit key a server by.
+ *
+ * @param endpoint - The MCP server's address.
+ */
+export function mcpSystemKey(endpoint: URL): string {
+  const host = endpoint.hostname.toLowerCase().replace(/\.$/, '');
+  return `${MCP_SYSTEM_PREFIX}${host}${endpoint.port === '' ? '' : `:${endpoint.port}`}`;
+}
+
+/** Whether what follows the MCP prefix is a host, with a port only where {@link mcpSystemKey} writes one. */
+function isMcpServer(server: string): boolean {
+  const colon = server.lastIndexOf(':');
+  if (colon === -1) return HOST_NAME.test(server);
+  const port = server.slice(colon + 1);
+  return (
+    HOST_NAME.test(server.slice(0, colon)) &&
+    PORT.test(port) &&
+    Number(port) <= PORT_MAX &&
+    port !== HTTPS_DEFAULT_PORT
+  );
+}
+
 /**
  * Whether a value is an organisation system key: a plain lower-case key (`slack`, `linear`,
- * `github`, ...) or `mcp:<host>` for a generic MCP server (the access plan, section 4.1).
+ * `github`, ...) or `mcp:<host>` (with `:<port>` for a non-default port) for a generic MCP
+ * server (the access plan, section 4.1), as {@link mcpSystemKey} writes it.
  *
  * @param value - The key as given.
  */
 export function isOrganisationSystemKey(value: string): boolean {
   if (value.startsWith(MCP_SYSTEM_PREFIX)) {
-    return HOST_NAME.test(value.slice(MCP_SYSTEM_PREFIX.length));
+    return isMcpServer(value.slice(MCP_SYSTEM_PREFIX.length));
   }
   return PLAIN_SYSTEM_KEY.test(value);
 }
@@ -65,7 +102,7 @@ function hostWithin(host: string, domain: string): boolean {
 
 /**
  * The organisation system a card needs, read off its endpoint: Slack's Web API base, a host the
- * access kit knows, and on the MCP rung any other server by its host. A card with no endpoint, or
+ * access kit knows, and on the MCP rung any other server by {@link mcpSystemKey}. A card with no endpoint, or
  * one on a host nobody registers for the organisation, needs no organisation system, and keeps
  * the paths it has today.
  *
@@ -90,7 +127,7 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
     entry.hosts.some((domain: string): boolean => hostWithin(host, domain)),
   );
   if (known !== undefined) return known.system;
-  if (card.path === 'mcp' && HOST_NAME.test(host)) return `${MCP_SYSTEM_PREFIX}${host}`;
+  if (card.path === 'mcp' && HOST_NAME.test(host)) return mcpSystemKey(url);
   return undefined;
 }
 
@@ -116,8 +153,11 @@ export interface AccessRequestCard extends SystemCard {
   /** The card's proposal, whose `scopeRequested` names the scopes it was approved for. */
   readonly request?: unknown;
   readonly discoveryEvidence?: ReadonlyArray<{ readonly quote: string; readonly current: boolean }>;
-  /** The employee's own app, when Day0 created one: its install link is what IT follows. */
-  readonly provisioning?: { readonly installUrl?: string };
+  /**
+   * The employee's own app, once Day0 created it (Slack) or an administrator recorded it (Linear):
+   * its client id, and the install link IT follows.
+   */
+  readonly provisioning?: { readonly clientId?: string; readonly installUrl?: string };
 }
 
 /** The parts of an organisation connection the access request reads. */
@@ -133,11 +173,13 @@ export interface AccessRequestConnection {
  * Why an approved card asks IT for access instead of offering Connect, or undefined when it does
  * not (the access plan, section 4.5; A24): its system has no active organisation connection; the
  * connection is per employee and an administrator must install the employee's app (Linear's app
- * per employee, L1; Slack's only when the install link the workspace holds for approval waits on
+ * per employee until an administrator records it, L1, after which Connect starts its installation
+ * with a fresh link; Slack's only when the install link the workspace holds for approval waits on
  * IT, since Day0 creates Slack's app itself); or the card needs scopes the registration does not
- * hold, when the caller knows the vendor scopes it needs. A card not yet approved, one holding a
- * credential (a pasted key keeps working to expiry, A27), and one on no organisation system never
- * ask.
+ * hold, when the caller knows the vendor scopes it needs. An MCP card on its server's client is
+ * authorised by its manager's own consent (AM6), so it never asks once the server is connected. A
+ * card not yet approved, one holding a credential (a pasted key keeps working to expiry, A27),
+ * and one on no organisation system never ask.
  *
  * @param card - The card.
  * @param connection - The system's active organisation connection, or null.
@@ -155,10 +197,21 @@ export function accessRequestReason(
     return 'scope-widening';
   }
   if (connection.mode === 'shared') return undefined;
-  if (connection.kind === 'slack-configuration') {
-    return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+  switch (connection.kind) {
+    case 'slack-configuration':
+      return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+    case 'oauth-app':
+      return card.provisioning?.clientId === undefined ? 'install-needed' : undefined;
+    case 'mcp-client':
+      return undefined;
+    case 'service-account':
+    case 'static-key':
+      return 'install-needed';
+    default: {
+      const unknown: never = connection.kind;
+      throw new Error(`unhandled organisation connection kind ${String(unknown)}`);
+    }
   }
-  return 'install-needed';
 }
 
 /** Everything the request's words are built from. */

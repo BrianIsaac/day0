@@ -948,6 +948,131 @@ export const decryptForRevocation = internalAction({
   },
 });
 
+/**
+ * The client secret of the organisation connection a held credential was issued through, when its
+ * revocation may use it after the connection's own revoke revoked it (join 8 of 11-AJ): the held
+ * credential's revocation for the `organisation-revoked` end is pending, the connection is a
+ * revoked MCP client, and the secret is the organisation's and still holds its value (F19).
+ * Internal, for {@link decryptConnectionSecretForRevocation}; writes nothing.
+ *
+ * @returns The secret's row, or null when it is not admitted.
+ */
+export const connectionSecretForRevocation = internalQuery({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<Doc<'credentials'> | null> => {
+    const held = await ctx.db.get(args.credentialId);
+    const connectionId = held?.issuedBy?.organisationConnectionId;
+    if (
+      !held ||
+      held.sourceRevocation?.state !== 'pending' ||
+      held.sourceRevocation.end !== 'organisation-revoked' ||
+      connectionId === undefined
+    ) {
+      return null;
+    }
+    const connection = await ctx.db.get(connectionId);
+    if (
+      !connection ||
+      connection.status !== 'revoked' ||
+      connection.kind !== 'mcp-client' ||
+      connection.secretCredentialId === undefined
+    ) {
+      return null;
+    }
+    const secret = await ctx.db.get(connection.secretCredentialId);
+    return secret?.holder === ORGANISATION_HOLDER &&
+      secret.ciphertext !== undefined &&
+      secret.iv !== undefined
+      ? secret
+      : null;
+  },
+});
+
+/**
+ * Decrypt the client secret of a revoked MCP client connection for the one RFC 7009 call that
+ * revokes a card's token its own revoke ended (`organisation-revoked`, join 8 of 11-AJ): the revoke
+ * revoked the secret in the same transaction, and a confidential client answers `invalid_client`
+ * without it. Admits only what {@link connectionSecretForRevocation} admits; records no use.
+ * Internal; `sourceRevocationActions` is its only caller.
+ *
+ * @throws Error when the secret is not admitted for this credential's revocation.
+ */
+export const decryptConnectionSecretForRevocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const secret: Doc<'credentials'> | null = await ctx.runQuery(
+      internal.credentials.connectionSecretForRevocation,
+      args,
+    );
+    if (!secret || secret.ciphertext === undefined || secret.iv === undefined) {
+      throw new Error("The connection's client secret is not admitted for this revocation.");
+    }
+    return await openSealed(ctx, secret, secret.ciphertext, secret.iv);
+  },
+});
+
+/**
+ * A revoked row the token store keeps, whose connection the store is still to forget: Day0
+ * obtained it (`issuedBy`), it is revoked, and it still holds its sealed location. Internal, for
+ * {@link decryptTokenStoreLocation} and {@link forgottenInTokenStore}; writes nothing.
+ */
+async function awaitingForget(
+  db: QueryCtx['db'],
+  credentialId: Id<'credentials'>,
+): Promise<Doc<'credentials'> | null> {
+  const row = await db.get(credentialId);
+  return row !== null &&
+    row.tokenStore === 'nango' &&
+    row.issuedBy !== undefined &&
+    row.revokedAt !== undefined &&
+    row.ciphertext !== undefined &&
+    row.iv !== undefined
+    ? row
+    : null;
+}
+
+/** The row {@link awaitingForget} admits, for the action. Internal; writes nothing. */
+export const tokenStoreRowAwaitingForget = internalQuery({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<Doc<'credentials'> | null> =>
+    await awaitingForget(ctx.db, args.credentialId),
+});
+
+/**
+ * Decrypt the sealed location (the Nango connection, never a token) of a revoked row the token
+ * store keeps, so the end of access can ask the store to forget that connection (11-AT; join 9 of
+ * 11-AJ). Admits only a row {@link awaitingForget} admits; records no use. Internal;
+ * `sourceRevocationActions.forgetInTokenStore` is its only caller.
+ *
+ * @throws Error when the row is not awaiting its forgetting in the token store.
+ */
+export const decryptTokenStoreLocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const row: Doc<'credentials'> | null = await ctx.runQuery(
+      internal.credentials.tokenStoreRowAwaitingForget,
+      args,
+    );
+    if (!row || row.ciphertext === undefined || row.iv === undefined) {
+      throw new Error('Credential is not awaiting its forgetting in the token store.');
+    }
+    return await openSealed(ctx, row, row.ciphertext, row.iv);
+  },
+});
+
+/**
+ * Delete the location Day0 kept for a row once the token store has forgotten its connection.
+ * Internal; `sourceRevocationActions.forgetInTokenStore` is its only caller. Writes the row's
+ * ciphertext away (it stays as the audit trail of a credential that was held).
+ */
+export const forgottenInTokenStore = internalMutation({
+  args: { credentialId: v.id('credentials'), now: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await awaitingForget(ctx.db, args.credentialId);
+    if (row !== null) await purgeCredential(ctx, row, args.now);
+  },
+});
+
 /** Revoke one owner credential without returning its encrypted fields. */
 export const revoke = mutation({
   args: { credentialId: v.id('credentials') },

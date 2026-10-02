@@ -87,6 +87,7 @@ import {
   unreachableFix,
 } from './model-reach';
 import { writePrivateEnv } from './private-env';
+import { generatedCodeState, restoreGeneratedCode } from './lib/generated-code';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
 import { parseAnswers, runAccess, type AccessFlags } from './setup-access';
@@ -3540,6 +3541,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const pushFunctions = (): boolean => {
+      const generated = generatedCodeState(io);
       // Captured rather than streamed, so an auth config refusal can be named;
       // a refusal prints whole, since a typecheck's first error is its head.
       const pushed = runStep('convex dev --once', 'npx convex dev --once', {
@@ -3551,6 +3553,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           }
         },
       });
+      // The push regenerates convex/_generated whether or not it lands (11-AI's finding 7).
+      io.log(`    ${restoreGeneratedCode(io, generated)}`);
       if (pushed) {
         for (const line of `${pushed.stdout}${pushed.stderr}`.split('\n')) {
           if (line.trim() !== '') io.log(`    ${line.trimEnd()}`);

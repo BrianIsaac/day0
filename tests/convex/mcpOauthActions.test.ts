@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { createIssuer } from '../../fake-oidc/issuer.js';
 import type { FakeIssuer } from '../../fake-oidc/issuer';
 import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
+import { mcpConnectionSystem } from '../../src/surfaces/access-kit';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { sealForOwner } from '../../src/lib/credential-crypto';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -228,6 +229,41 @@ describe('starting an authorisation', (): void => {
     const { surfaceId } = await seed(harness, { connection: false });
     expect(await start(harness, surfaceId)).toMatchObject({ ok: false, reason: 'no-connection' });
     expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeUndefined();
+  });
+
+  it('finds the connection the setup verb landed for a server on a non-default port, keyed as the card keys it', async (): Promise<void> => {
+    const ported = 'https://auth.acme.test:8443';
+    server = createIssuer({
+      issuer: ported,
+      clients: [{ id: CLIENT, redirectUris: [REDIRECT] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+      now: () => clock,
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { connection: false });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { endpoint: `${ported}/mcp` });
+    });
+    const { internal } = await liveApi();
+    const connectionId = await harness.action(internal.organisationConnections.landFromSetup, {
+      system: mcpConnectionSystem(`${ported}/mcp`),
+      displayName: 'Acme docs MCP',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      scopes: [],
+      clientId: CLIENT,
+      clientRegistration: 'pre-registered',
+    });
+
+    const started = await start(harness, surfaceId);
+
+    if (!started.ok) throw new Error(started.reason);
+    expect(new URL(started.authoriseUrl).origin).toBe(ported);
+    const { surface } = await read(harness, surfaceId);
+    expect(surface.pendingAuthorisation).toMatchObject({
+      organisationConnectionId: connectionId,
+      resource: `${ported}/mcp`,
+    });
   });
 
   it('refuses a connection registered with another authorisation server', async (): Promise<void> => {
@@ -856,6 +892,89 @@ describe('refreshing with rotation', (): void => {
     expect(failed?.payload.reason).toContain('invalid_grant');
     const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     expect(row?.generation).toBe(0);
+  });
+});
+
+describe('an employee acts at the vendor only as the identity its card names (cross-unit test 1, backend half)', (): void => {
+  it('delegated: the bearer every rung sends acts for the manager whose address the card names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await seed(harness);
+    // The manager consents in their own browser (AM6): the fake's person is the manager.
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { bossEmail: 'priya@acme.test' }));
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    const { surface } = await read(harness, surfaceId);
+    expect(surface.actsAs).toMatchObject({ kind: 'delegated', label: 'priya@acme.test' });
+    const { internal } = await liveApi();
+    const bearer = await harness.action(internal.mcpOauthActions.currentBearer, {
+      credentialId: surface.credentialId as Id<'credentials'>,
+    });
+
+    const answer = await server.handle(
+      new Request(RESOURCE, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'whoami', arguments: {} },
+        }),
+      }),
+    );
+    const reply = (await answer.json()) as { result?: { content?: Array<{ text?: string }> } };
+
+    expect(reply.result?.content?.[0]?.text).toBe(surface.actsAs?.label);
+  });
+});
+
+describe('the organisation’s revoke of a confidential client’s connection (join 8)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  it('revokes every card’s token at the server with the client secret it revoked in the same act', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    // The revocation reaches the authorisation server through the deployment's own fetch.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await server.handle(new Request(input, init)),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, connectionId } = await seed(harness, {
+      confidential: { issuer: ISSUER },
+    });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 1, liveRefreshTokens: 1 });
+
+    const { api } = await liveApi();
+    await harness
+      .withIdentity(managerIdentity('ines', { email: 'ines@acme.test' }))
+      .mutation(api.organisationConnections.revoke, {
+        organisationConnectionId: connectionId as Id<'organisationConnections'>,
+        reason: 'the server is retired',
+      });
+
+    await vi.waitFor(async (): Promise<void> => {
+      const lines = await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent_type', (index) =>
+              index.eq('agentId', agentId).eq('type', 'credential.revoked-at-source'),
+            )
+            .collect()
+        ).map((event) => event.payload),
+      );
+      expect(lines).toEqual([
+        expect.objectContaining({ end: 'organisation-revoked', outcome: 'token-revoked' }),
+      ]);
+    });
+    expect(await adminState()).toMatchObject({ liveAccessTokens: 0, liveRefreshTokens: 0 });
   });
 });
 
