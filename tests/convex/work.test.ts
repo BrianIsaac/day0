@@ -6933,7 +6933,9 @@ describe('work.needsYou', (): void => {
           slug: 'linear',
           displayName: 'Linear',
           class: 'kanban',
-          verdict: 'approved',
+          // As the approval's own probe leaves a card that holds no credential.
+          verdict: 'ungranted',
+          reason: 'credential not in the docs; location not documented',
           whereFound: [],
           path: 'documented-api',
           endpoint: 'https://api.linear.app/graphql',
@@ -6988,11 +6990,18 @@ describe('work.needsYou', (): void => {
         accessRequest: { reason: 'no-connection' as const, scopes: ['linear:read'], draftedAt: 3 },
         createdAt: 1,
       };
-      await ctx.db.insert('surfaces', {
+      const disconnected = await ctx.db.insert('surfaces', {
         ...card,
         slug: 'linear',
         displayName: 'Linear',
         reason: 'Disconnected by the manager.',
+      });
+      // It connected after it asked IT, and was then disconnected.
+      await ctx.db.insert('events', {
+        agentId: mira,
+        type: 'surface.connected',
+        payload: { surfaceId: disconnected, slug: 'linear', displayName: 'Linear' },
+        createdAt: 10,
       });
       await ctx.db.insert('surfaces', {
         ...card,

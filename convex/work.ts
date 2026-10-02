@@ -7490,13 +7490,45 @@ interface WaitingRows {
 }
 
 /**
- * The cards whose access request IT has answered (the access plan, section 4.5): approved,
- * holding no credential, never ended since (no reason recorded: a disconnect, an organisation's
- * revoke or an expiry each records one, and an ended card is renewed or reconnected on purpose),
- * their access not past its end date, a request drafted for IT, and their system's organisation
- * connection now active and asking an administrator for nothing more, so the manager's Connect is
- * the way on. Each is dated from when that connection landed, or from the request when it was
- * drafted after.
+ * How many of an employee's newest `surface.connected` events the inbox walks to tell whether a
+ * card connected since it asked IT: the hourly re-probe writes one per connected card an hour, so
+ * a card's own is among the last few hundred.
+ */
+const NEEDS_YOU_CONNECTED_READ_LIMIT = 200;
+
+/**
+ * Whether a card connected at or after an instant, among its employee's newest
+ * {@link NEEDS_YOU_CONNECTED_READ_LIMIT} `surface.connected` events.
+ *
+ * @param ctx - Query context.
+ * @param surface - The card.
+ * @param since - The instant, its access request's draft.
+ */
+async function connectedSince(
+  ctx: QueryCtx,
+  surface: Doc<'surfaces'>,
+  since: number,
+): Promise<boolean> {
+  const recent = await eventsOfType(ctx, surface.agentId, 'surface.connected')
+    .order('desc')
+    .take(NEEDS_YOU_CONNECTED_READ_LIMIT);
+  return recent.some(
+    (event) =>
+      isEventOf(event, 'surface.connected') &&
+      event.payload.surfaceId === surface._id &&
+      event.createdAt >= since,
+  );
+}
+
+/**
+ * The cards whose access request IT has answered (the access plan, section 4.5): approved by the
+ * manager, holding no credential, their access not past its end date, a request drafted for IT,
+ * their system's organisation connection now active and asking an administrator for nothing more,
+ * and not connected since the request (a card that connected and was then disconnected, revoked
+ * with its organisation's connection or expired is reconnected or renewed on purpose, from its
+ * card), so the manager's Connect is the way on. The approval's own probe leaves such a card
+ * `ungranted` for want of a credential, so the verdict is not read. Each is dated from when the
+ * connection landed, or from the request when it was drafted after.
  *
  * @param ctx - Query context.
  * @param surfaces - The employee's cards, as the inbox read them.
@@ -7512,9 +7544,8 @@ async function connectReadyCards(
       const request = surface.accessRequest;
       const system = organisationSystemOf(surface);
       if (
-        surface.verdict !== 'approved' ||
+        surface.managerApprovedAt === undefined ||
         surface.credentialId !== undefined ||
-        surface.reason !== undefined ||
         accessEnded(surface, now) ||
         request === undefined ||
         system === undefined
@@ -7523,6 +7554,7 @@ async function connectReadyCards(
       }
       const connection = await activeConnectionFor(ctx, system);
       if (connection === null || accessRequestReason(surface, connection) !== undefined) return [];
+      if (await connectedSince(ctx, surface, request.draftedAt)) return [];
       return [{ surface, since: Math.max(connection.createdAt, request.draftedAt) }];
     }),
   );
