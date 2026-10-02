@@ -339,19 +339,23 @@ describe('the acceptance dialog (plan 7.3)', () => {
     ]);
   });
 
-  it("lists a card that keeps its identity for one re-approval, naming the identity it keeps (11-AJ's preview field)", () => {
+  it("lists a card that keeps its identity for one re-approval, naming the kind and the name it keeps (11-AC's cockpit item 6)", () => {
     expect(
       leavesBehindLines({
         ...PREVIEW,
         leavesBehind: {
           ...PREVIEW.leavesBehind,
           surfaces: [],
-          reapprove: [{ slug: 'slack', displayName: 'Slack', identity: 'Leo (Day0)' }],
+          reapprove: [
+            { slug: 'slack', displayName: 'Slack', identity: 'Maya (Day0)', kind: 'own-app' },
+            { slug: 'linear', displayName: 'Linear', identity: 'Day0', kind: 'shared-app' },
+          ],
           mirroredPages: 0,
         },
       }),
     ).toEqual([
-      'Slack: re-approve with one click; it keeps acting as Leo (Day0), with nothing to paste',
+      "Slack: re-approve with one click; it keeps acting as Maya's own app, named “Maya (Day0)” in Slack, with nothing to paste",
+      'Linear: re-approve with one click; it keeps acting as the Day0 app your employees share, with nothing to paste',
       'autonomous actions: off until you turn them on',
     ]);
   });

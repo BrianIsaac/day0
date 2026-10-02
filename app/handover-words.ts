@@ -443,12 +443,39 @@ export function takesOnLines(preview: Pick<HandoverPreview, 'takesOn'>): string[
 }
 
 /**
+ * Whom a card kept for re-approval keeps acting as, by its kind (11-AC's cockpit item 6): the
+ * employee's own app by the name the system shows, or the app the employees share.
+ *
+ * @param surface - The kept card's system, identity and kind.
+ * @param employee - The employee's name.
+ */
+function keptIdentityWords(
+  surface: HandoverPreview['leavesBehind']['reapprove'][number],
+  employee: string,
+): string {
+  switch (surface.kind) {
+    case 'own-app':
+      return `${employee}'s own app, named “${surface.identity}” in ${surface.displayName}`;
+    case 'shared-app':
+      return 'the Day0 app your employees share';
+    case 'delegated':
+    case 'shared-key':
+    case 'browser-seat':
+      return surface.identity;
+    default: {
+      const unknown: never = surface.kind;
+      throw new Error(`unhandled identity kind ${String(unknown)}`);
+    }
+  }
+}
+
+/**
  * What does not come with the employee, line by line (plan 7.3).
  *
  * @param preview - The request's preview.
  */
 export function leavesBehindLines(
-  preview: Pick<HandoverPreview, 'leavesBehind' | 'fromAddress'>,
+  preview: Pick<HandoverPreview, 'leavesBehind' | 'fromAddress' | 'employee'>,
 ): string[] {
   const left = preview.leavesBehind;
   const pages = countedAtLeast(left.mirroredPages, left.mirroredPagesAtLeast, 'page', 'pages');
@@ -458,7 +485,7 @@ export function leavesBehindLines(
     ),
     ...left.reapprove.map(
       (surface) =>
-        `${surface.displayName}: re-approve with one click; it keeps acting as ${surface.identity}, with nothing to paste`,
+        `${surface.displayName}: re-approve with one click; it keeps acting as ${keptIdentityWords(surface, preview.employee.name)}, with nothing to paste`,
     ),
     ...(left.mirroredPages > 0
       ? [`${pages} of ${preview.fromAddress}'s documentation it stops reading`]
