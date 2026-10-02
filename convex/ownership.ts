@@ -110,8 +110,10 @@ export interface Caller extends UserIdentity {
  * The verified caller, or null for an anonymous one, for a customer-issuer
  * caller the domain rule refuses (decision S2): the second of the two places it
  * is checked, after the sign-in's callback, so a token forced past the callback
- * is refused here, and for a token whose owner key would be the organisation's
- * reserved key. The local issuer and Clerk keep their own rules.
+ * is refused here; for a caller of a generic-preset issuer whose address is not
+ * verified (decision 7 (b)), which the callback does not check; and for a token
+ * whose owner key would be the organisation's reserved key. The local issuer and
+ * Clerk keep their own rules.
  */
 export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
