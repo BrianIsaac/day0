@@ -17,7 +17,7 @@
  * with nothing changed.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { ADMINISTRATORS_VAR, parseAdministrators } from '../src/lib/administrators';
 import {
   CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR,
@@ -690,7 +690,14 @@ function writeRecord(
   checkStatus: number | undefined,
 ): void {
   const project = values.COMPOSE_PROJECT_NAME?.trim() || 'day0';
-  const home = io.environment.HOME ?? '';
+  const home = (io.environment.HOME ?? '').trim();
+  if (options.access.record === undefined && !isAbsolute(home)) {
+    io.log(
+      '\nHOME is unset, so the install record has no default place and was not written: run ' +
+        'again with --record <dir> to keep it.',
+    );
+    return;
+  }
   const directory =
     options.access.record !== undefined
       ? resolve(io.cwd, options.access.record)

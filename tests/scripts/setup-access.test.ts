@@ -207,6 +207,20 @@ describe('setup: the access verb', (): void => {
     expect(record).toContain('30 days');
   });
 
+  it('writes the record under HOME by default, and nowhere when HOME is unset and no --record is given', async (): Promise<void> => {
+    const home = mkdtempSync(join(tmpdir(), 'day0-home-'));
+    const withHome = accessBed({ environment: { HOME: home } });
+    await withHome.run(ACCESS);
+    expect(readdirSync(join(home, 'day0-install', 'day0-w11ai'))).toHaveLength(1);
+
+    const homeless = accessBed();
+    const status = await homeless.run(ACCESS);
+    expect(status).toBe(0);
+    expect(homeless.bed.output.join('\n')).toContain(
+      'HOME is unset, so the install record has no default place',
+    );
+  });
+
   it('stops before writing or landing anything when an answer is missing, naming it', async (): Promise<void> => {
     const bed = accessBed();
     const status = await bed.run(ACCESS, STDIN.replace(/^LINEAR_CLIENT_SECRET=.*$/m, ''));
