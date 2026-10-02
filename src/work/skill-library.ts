@@ -92,7 +92,19 @@ export function newerVersionReason(newer: number, held: number): string {
 }
 
 /** The shape `newerVersionReason` writes, and nothing else. */
-const NEWER_VERSION_REASON = /^v\d+ is verified; this runs v\d+$/;
+const NEWER_VERSION_REASON = /^v(\d+) is verified; this runs v(\d+)$/;
+
+/**
+ * A newer-version reason as a manager reads it: "version 3 is verified; this runs version 2".
+ * The stored reason keeps its short form, which the triggers and the handover match on.
+ *
+ * @param reason - A row's `recheckReason`, with or without a closing full stop.
+ * @returns The words, or undefined for any other reason.
+ */
+export function newerVersionWords(reason: string): string | undefined {
+  const match = NEWER_VERSION_REASON.exec(reason.trim().replace(/[.]+$/, ''));
+  return match ? `version ${match[1]} is verified; this runs version ${match[2]}` : undefined;
+}
 
 /**
  * Whether a re-check reason is the newer-version one, which names version numbers of the

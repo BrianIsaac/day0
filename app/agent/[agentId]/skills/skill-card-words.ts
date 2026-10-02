@@ -1,4 +1,8 @@
-import { type AdoptedSource, MAX_AUTHORING_ATTEMPTS } from '@/work/skill-library';
+import {
+  type AdoptedSource,
+  MAX_AUTHORING_ATTEMPTS,
+  newerVersionWords,
+} from '@/work/skill-library';
 
 /*
  * The Skills tab's words for the five controls (10-C; the prototype's `agent-skills.html`): how
@@ -41,7 +45,7 @@ function sentence(reason: string): string {
  * @param reason - The stamp's reason (`recheckReason`).
  */
 export function recheckSentence(reason: string, employee: string): string {
-  return `${sentence(reason)} ${employee} keeps running the verified version until it is re-checked.`;
+  return `${sentence(newerVersionWords(reason) ?? reason)} ${employee} keeps running the verified version until it is re-checked.`;
 }
 
 /**

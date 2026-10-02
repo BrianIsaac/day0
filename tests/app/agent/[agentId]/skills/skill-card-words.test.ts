@@ -37,8 +37,12 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(recheckSentence('the tools you approved on linear changed', 'Mira')).toBe(
       'The tools you approved on linear changed. Mira keeps running the verified version until it is re-checked.',
     );
+    // The stored newer-version reason is said in words (the pre-tag walk, W-1: "V2 is verified").
+    expect(recheckSentence('v3 is verified; this runs v2', 'Mira')).toBe(
+      'Version 3 is verified; this runs version 2. Mira keeps running the verified version until it is re-checked.',
+    );
     expect(recheckSentence('v3 is verified; this runs v2.', 'Mira')).toBe(
-      'V3 is verified; this runs v2. Mira keeps running the verified version until it is re-checked.',
+      'Version 3 is verified; this runs version 2. Mira keeps running the verified version until it is re-checked.',
     );
   });
 
