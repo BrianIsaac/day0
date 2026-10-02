@@ -128,20 +128,32 @@ export async function newerVersionToRecheck(
 }
 
 /**
- * Every employee's row that holds a version. A version's holders are one owner's employees, so
- * the set is as small as that owner's staff.
+ * Every row that holds a version on an employee of the version's owner: the one place the owner
+ * boundary on a version's holders is drawn (the wave 10 review K-m3), so no caller reaches a row
+ * of another owner that points at the version.
+ *
+ * @remarks
+ * `skills` carries no owner, so no index leads with one: the rows are read by `by_version` and
+ * the owner compared on each row's employee. The read is not cut short, since a withdrawal must
+ * reach every holder; a version's rows are its owner's employees' rows of one skill name. An
+ * index leading with the owner needs an owner key on `skills` (recorded for the next schema step).
  *
  * @param db - A query's or a mutation's database.
  * @param versionId - The version.
+ * @returns Nothing for a version that is gone.
  */
 export async function holdersOf(
   db: DatabaseReader,
   versionId: Id<'skillVersions'>,
 ): Promise<Doc<'skills'>[]> {
-  return await db
+  const version = await db.get(versionId);
+  if (version === null) return [];
+  const rows = await db
     .query('skills')
     .withIndex('by_version', (q) => q.eq('versionId', versionId))
     .collect();
+  const employees = await Promise.all(rows.map(async (row) => await db.get(row.agentId)));
+  return rows.filter((_row, index) => employees[index]?.userId === version.userId);
 }
 
 /**
