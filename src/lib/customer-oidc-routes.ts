@@ -589,13 +589,6 @@ export function signedOutRoute(): NextResponse {
   });
 }
 
-/**
- * What the deployment makes of a token: `config.whoAmI` asked with it, as the
- * browser would ask, so the answer says whether the backend verified it
- * against the issuer's keys (V3) and whether `getCaller` admits the person.
- *
- * @param idToken - The ID token the issuer handed over.
- */
 /** What the live check says of a person the deployment verified and refused, by its reason. */
 const WHO_AM_I_REFUSALS: Readonly<Record<CallerRefusal, string>> = {
   'outside-domains':
@@ -607,6 +600,13 @@ const WHO_AM_I_REFUSALS: Readonly<Record<CallerRefusal, string>> = {
     'from the issuer; DAY0_OIDC_EMAIL_TRUSTED only for an issuer that sends no such claim).',
 };
 
+/**
+ * What the deployment makes of a token: `config.whoAmI` asked with it, as the
+ * browser would ask, so the answer says whether the backend verified it
+ * against the issuer's keys (V3) and whether `getCaller` admits the person.
+ *
+ * @param idToken - The ID token the issuer handed over.
+ */
 async function askWhoAmI(idToken: string): Promise<SignInCheckReport['whoAmI']> {
   try {
     const client = new ConvexHttpClient(serverConvexUrl());
