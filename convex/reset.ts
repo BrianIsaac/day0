@@ -81,6 +81,15 @@ export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const
  */
 export const OWNER_LIBRARY_TABLES = ['skillVersions'] as const;
 
+/**
+ * The tables of the organisation as a whole (wave 11, 11-AK; the access plan, section 4.1): the
+ * systems IT connected at install and their ledger. They belong to no owner, so neither a retire
+ * nor an owner's deletion touches them, and the organisation's secrets they name are
+ * `credentials` rows under the reserved organisation key, which every owner read and purge here
+ * misses by index. Only an administrator's revoke ends a connection (11-AO).
+ */
+export const DEPLOYMENT_ACCESS_TABLES = ['organisationConnections', 'connectionEvents'] as const;
+
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
 

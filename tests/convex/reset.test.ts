@@ -5,6 +5,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
   AGENT_KEYED_TABLES,
+  DEPLOYMENT_ACCESS_TABLES,
   OWNER_LIBRARY_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
@@ -16,6 +17,7 @@ import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -197,6 +199,80 @@ describe('reset completeness', (): void => {
     // before a demo finds it.
     expect([...AGENT_KEYED_TABLES].sort()).toEqual(tables);
     expect([...AGENT_KEYED_TABLES, ...RETIRE_RECORD_TABLES].sort()).toEqual(agentKeyedTables());
+  });
+});
+
+describe("the organisation's deployment tables (11-AK)", (): void => {
+  it('names the two tables of the organisation, none of them agent-keyed or an owner’s library', (): void => {
+    expect([...DEPLOYMENT_ACCESS_TABLES]).toEqual(['organisationConnections', 'connectionEvents']);
+    for (const table of DEPLOYMENT_ACCESS_TABLES) {
+      expect(Object.keys(schema.tables), table).toContain(table);
+      expect(agentKeyedTables(), table).not.toContain(table);
+      expect([...AGENT_KEYED_TABLES, ...RETIRE_RECORD_TABLES], table).not.toContain(table);
+      expect([...OWNER_LIBRARY_TABLES], table).not.toContain(table);
+    }
+  });
+
+  it("keeps every organisation row through a retire and the whole owner's deletion, its secret sealed as it was", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness);
+    const retiring = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Leo',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    const { secret } = await harness.run(async (ctx) => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Slack configuration refresh token',
+        source: 'entered',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      });
+      const connection = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: ['app_configurations:write'],
+        secretCredentialId: secret,
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: connection,
+        type: 'organisation.connection-landed',
+        payload: { system: 'slack' },
+        createdAt: 1,
+      });
+      return { secret };
+    });
+    const organisationRows = async (): Promise<unknown> =>
+      await harness.run(async (ctx) => ({
+        organisationConnections: await ctx.db.query('organisationConnections').collect(),
+        connectionEvents: await ctx.db.query('connectionEvents').collect(),
+        secret: await ctx.db.get(secret),
+      }));
+    const before = await organisationRows();
+
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.reset.retire, { agentId: retiring });
+    expect(await organisationRows()).toEqual(before);
+    await owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    expect(await organisationRows()).toEqual(before);
+    expect(await harness.run(async (ctx) => await ctx.db.get(secret))).toMatchObject({
+      ciphertext: 'sealed',
+      iv: 'iv',
+    });
   });
 });
 
