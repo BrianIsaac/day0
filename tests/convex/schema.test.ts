@@ -1408,7 +1408,8 @@ describe('the wave 12 schema step (12-S3, N10)', (): void => {
             .eq('providerTs', undefined)
             .eq('failure', undefined)
             .eq('discardedAt', undefined)
-            .gt('claimedAt', 0),
+            .gt('claimedAt', 0)
+            .lt('claimedAt', 3),
         )
         .collect();
       const notices = await ctx.db
