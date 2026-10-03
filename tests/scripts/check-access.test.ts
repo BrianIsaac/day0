@@ -4,6 +4,7 @@ import {
   accessExitCode,
   administratorsCheck,
   formatAccessChecks,
+  noConnectionLine,
   parseConnectionRows,
   slackApiBaseForCheck,
   type AccessCheck,
@@ -543,5 +544,14 @@ describe('check:access', (): void => {
         DAY0_TEST_SLACK_AUTHORIZE_URL: 'http://127.0.0.1:1@evil.example/oauth/v2/authorize',
       }),
     ).toThrow(/this machine/);
+  });
+});
+
+describe('the check with nothing to check', (): void => {
+  it('says none is connected, never "yet", since every connection may have been revoked (the re-walk, row 10)', (): void => {
+    expect(noConnectionLine(undefined)).toBe(
+      '  None is connected: `./setup.sh access` connects them with the customer’s IT.',
+    );
+    expect(noConnectionLine('linear')).toBe('  Nothing is connected for linear.');
   });
 });

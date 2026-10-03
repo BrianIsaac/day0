@@ -900,6 +900,19 @@ function onThisMachine(address: string): boolean {
   );
 }
 
+/**
+ * What the check says when no connection is active or needs IT's attention, for every system or
+ * the one asked for. Never "yet": the deployment may have had connections that were all revoked
+ * (the re-walk, row 10).
+ *
+ * @param system - The system the check was asked for, if one was.
+ */
+export function noConnectionLine(system: string | undefined): string {
+  return system === undefined
+    ? '  None is connected: `./setup.sh access` connects them with the customer’s IT.'
+    : `  Nothing is connected for ${system}.`;
+}
+
 /** The connections the deployment holds, through the Convex CLI pointed at it. */
 function listConnections(values: Values): ConnectionRow[] {
   const names = ['CONVEX_SELF_HOSTED_URL', 'CONVEX_SELF_HOSTED_ADMIN_KEY'];
@@ -1009,13 +1022,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     { install: args.install },
   );
   console.log(`The organisation's connections, read from ${args.envFile}:`);
-  if (rows.length === 0) {
-    console.log(
-      args.system === undefined
-        ? '  None is connected yet: `./setup.sh access` connects them with the customer’s IT.'
-        : `  Nothing is connected for ${args.system}.`,
-    );
-  }
+  if (rows.length === 0) console.log(noConnectionLine(args.system));
   for (const line of formatAccessChecks(checks)) console.log(line);
   if (args.report) {
     console.log(
