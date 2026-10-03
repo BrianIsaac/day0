@@ -1793,7 +1793,10 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, linearId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId: linearId });
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'messaged',
+    });
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     const posts = calls.filter((call) => call.method === 'chat.postMessage');
@@ -1825,6 +1828,50 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
   });
 
+  it("sends no DM when the manager copied or emailed the request, and one when they ask for it after (11-AC's item 2)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'copied',
+    });
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'emailed' });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(calls.filter((call) => call.method === 'chat.postMessage')).toEqual([]);
+
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts.map((post) => asRead(post.text))).toEqual([drafted.text]);
+    const view = await owner.query(api.accessRequests.forCard, { surfaceId: linearId });
+    expect(view).toMatchObject({ draftedAt: drafted.draftedAt, messagedAt: expect.any(Number) });
+  });
+
+  it('lets the manager ask again once a DM Slack refused is released', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    slackDm({ postFails: true });
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+
+    const calls = slackDm();
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+
+    expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
   it('sends the words the draft recorded, even when the card changed before the DM went out', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -1833,7 +1880,7 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     const { linearId } = await seedMaya(harness);
     const drafted = await harness
       .withIdentity(managerIdentity())
-      .mutation(api.accessRequests.draft, { surfaceId: linearId });
+      .mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
     await harness.run(async (ctx) => {
       await ctx.db.patch(linearId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
     });
@@ -1851,6 +1898,7 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     const { linearId } = await seedMaya(refused);
     await refused.withIdentity(managerIdentity()).mutation(api.accessRequests.draft, {
       surfaceId: linearId,
+      via: 'messaged',
     });
     await refused.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
     const kept = await refused.run(async (ctx) => await ctx.db.get(linearId));
@@ -1861,6 +1909,7 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     const seeded = await seedMaya(ungranted, []);
     await ungranted.withIdentity(managerIdentity()).mutation(api.accessRequests.draft, {
       surfaceId: seeded.linearId,
+      via: 'messaged',
     });
     await ungranted.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
     expect(calls).toEqual([]);

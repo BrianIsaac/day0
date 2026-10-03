@@ -188,10 +188,10 @@ describe('drafting and sending the access request', (): void => {
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     expect(drafted.text).toBe(shown?.text);
     expect(drafted.draftedAt).toEqual(expect.any(Number));
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const events = await requestEvents(harness, agentId);
     expect(events).toEqual([
       {
@@ -214,7 +214,7 @@ describe('drafting and sending the access request', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const page = await owner.action(api.exportActions.exportPage, {
       agentId,
       section: 'events',
@@ -233,7 +233,7 @@ describe('drafting and sending the access request', (): void => {
     await expect(
       owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' }),
     ).rejects.toThrow(ConvexError);
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'emailed' });
     const view = await owner.query(api.accessRequests.forCard, { surfaceId });
@@ -244,13 +244,15 @@ describe('drafting and sending the access request', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const jobs = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
     expect(jobs).toEqual([]);
     await connectLinear(harness);
-    await expect(owner.mutation(api.accessRequests.draft, { surfaceId })).rejects.toSatisfy(
+    await expect(
+      owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' }),
+    ).rejects.toSatisfy(
       (error: unknown) => error instanceof ConvexError && error.data === NO_ACCESS_REQUEST,
     );
   });
@@ -264,7 +266,7 @@ describe('a request after the system was connected and revoked again (11-AO revi
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
     vi.setSystemTime(Date.UTC(2026, 9, 2, 10));
     await connectLinear(harness);
@@ -278,7 +280,7 @@ describe('a request after the system was connected and revoked again (11-AO revi
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
     expect(shown).not.toHaveProperty('copiedAt');
     expect(shown).not.toHaveProperty('draftedAt');
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     expect(await requestEvents(harness, agentId)).toHaveLength(2);
   });
 });
@@ -288,7 +290,7 @@ describe('the card after a draft (11-AO re-review)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await harness.run(async (ctx) => {
       await ctx.db.patch(surfaceId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
     });

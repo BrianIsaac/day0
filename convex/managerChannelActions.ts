@@ -638,10 +638,11 @@ export const sendAccessRequest = internalAction({
       providerTs = posted.ts;
     } catch (error) {
       const reason = safeFailureMessage(error, credential, 'Access request DM failed.');
-      log.warn('the access request was not sent to the manager; it is not tried again', {
+      log.warn('the access request was not sent to the manager; the card offers it again', {
         surfaceId: args.surfaceId,
         reason,
       });
+      await ctx.runMutation(internal.accessRequests.releaseMessage, args);
       return { sent: false, reason };
     }
     await ctx.runMutation(internal.accessRequests.recordMessage, { ...args, providerTs });

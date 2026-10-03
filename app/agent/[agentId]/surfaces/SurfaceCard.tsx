@@ -156,7 +156,7 @@ export interface SurfaceCardActions {
   /** End the card's access (`surfaces.disconnect`), once the dialog confirmed it. */
   readonly disconnect: () => Promise<unknown>;
   /** Draft the card's access request (`accessRequests.draft`). */
-  readonly draftAccessRequest: () => Promise<unknown>;
+  readonly draftAccessRequest: (via: 'copied' | 'emailed' | 'messaged') => Promise<unknown>;
   /** Record the request copied or opened in an email (`accessRequests.recordSent`). */
   readonly recordAccessRequestSent: (via: 'copied' | 'emailed') => Promise<unknown>;
 }
