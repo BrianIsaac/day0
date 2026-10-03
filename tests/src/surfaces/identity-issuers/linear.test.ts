@@ -22,6 +22,7 @@ import {
   tokenDue,
   type LinearFetch,
 } from '../../../../src/surfaces/identity-issuers/linear';
+import { LINEAR_REFRESH_TOKEN_REVOKED } from '../../../fixtures/real-vendor-walk-2026-10-03';
 import {
   ARRAY_SCOPE_TOKEN,
   AUTHORISATION_CODE_TOKEN,
@@ -202,6 +203,24 @@ describe('the per-employee grants', (): void => {
     expect(refusal.reason).toBe('unavailable');
     expect(refusal.message).toContain('fetch failed');
   });
+
+  it.each(LINEAR_REFRESH_TOKEN_REVOKED)(
+    'reads "Refresh token revoked" as a refused refresh, an authority withdrawn, never an unreadable answer (R41V-9): %j',
+    ({ status, body }): void => {
+      let thrown: unknown;
+      try {
+        readTokenResponse(status, body, NOW);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(LinearIssuerRefusal);
+      expect((thrown as LinearIssuerRefusal).reason).toBe('token-refused');
+      expect(isAuthorityRefusal(thrown)).toBe(true);
+      expect((thrown as Error).message).toBe(
+        'Linear refused the token or code it was shown: Refresh token revoked.',
+      );
+    },
+  );
 
   it("says Linear's description only when it is one short printable line, else its error code (the review's m13)", (): void => {
     const words = (description: string): string => {

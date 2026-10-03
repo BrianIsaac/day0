@@ -1067,7 +1067,8 @@ function unreachable(error: unknown): boolean {
  * store's scheduled refresh (`runScheduledRefresh`) through {@link linearTokenRefresher}. Does
  * nothing when another refresh has moved the pair on. Linear unreachable is tried again with a
  * growing wait; a refusal, or the retries running out, goes on the record of every card holding the
- * token, and each card ends with the reason when the token stops working. Internal; scheduled by
+ * token, and each card is checked at once and ends with the reason when Linear refuses its access
+ * token (at once after a revoke in Linear's settings, R41V-9). Internal; scheduled by
  * `linearIdentity` at each landing and rotation.
  */
 export const refreshScheduled = internalAction({

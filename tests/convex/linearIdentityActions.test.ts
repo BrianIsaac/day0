@@ -599,7 +599,7 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
     clock += DAY + 60_000;
 
     await expect(throughTimers(rungBearer(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -845,7 +845,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     clock += DAY + 60_000;
 
     await expect(throughTimers(bearerOf(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -879,6 +879,46 @@ describe("per-employee mode: the employee's own app", (): void => {
           job.name === 'surfaceActions:probeInternal' && job.scheduledTime === access.expiresAt,
       ),
     ).toBe(true);
+  });
+
+  it("checks the card at once when a scheduled refresh is refused, so a revoke in Linear's settings ends it now, not at the token's expiry (R41V-9)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { internal } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface, credentials } = await read(harness, surfaceIds[0]!);
+    const access = credentials.find((row) => row._id === surface.credentialId)!;
+    // A Linear administrator's "Revoke access" ends both tokens of the pair at once.
+    linear.revokeAppTokens(LEO_CLIENT);
+    const refusedAt = clock;
+
+    await throughTimers(
+      harness.action(internal.linearIdentityActions.refreshScheduled, {
+        credentialId: access._id,
+        generation: 0,
+      }),
+    );
+
+    const after = await read(harness, surfaceIds[0]!);
+    const failed = after.events.at(-1);
+    expect(failed?.type).toBe('surface.install-failed');
+    expect((failed?.payload as { reason: string }).reason).toBe(
+      'Linear refused to renew the token: Linear refused the token or code it was shown: Refresh ' +
+        'token revoked. Day0 is unauthorised in Linear until a Linear administrator installs the ' +
+        'app again from the card.',
+    );
+    const probes = after.scheduled.filter((job) => job.name === 'surfaceActions:probeInternal');
+    expect(probes.some((job) => job.scheduledTime <= refusedAt)).toBe(true);
+    // The probe that ends the card meets Linear's 401 and asks once for a new token: refused, in
+    // the install-again words, as an authority withdrawn, never an unreadable answer.
+    await expect(
+      throughTimers(
+        harness.action(internal.linearIdentityActions.renewAfterRefusal, {
+          credentialId: access._id,
+          generation: 0,
+        }),
+      ),
+    ).rejects.toThrow(/Refresh token revoked\..*installs the app again from the card\./);
   });
 
   it('records a declined installation on the card and keeps no token', async (): Promise<void> => {
