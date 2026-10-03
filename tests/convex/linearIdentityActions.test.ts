@@ -282,6 +282,35 @@ describe('shared mode: the organisation app actor', (): void => {
     });
   });
 
+  it('revokes at Linear the shared token issued while the connection was being revoked, which Day0 keeps nowhere', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    const issued: string[] = [];
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({
+      now: () => clock,
+      fetch: async (url, init) => {
+        const answer = await linear.fetch(url, init);
+        if (url.href === 'https://api.linear.app/oauth/token') {
+          const body = (await answer.clone().json()) as { access_token?: string };
+          if (body.access_token !== undefined) issued.push(body.access_token);
+          // An administrator revokes the connection while Linear issues the token.
+          await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+            organisationConnectionId: connectionId,
+            reason: 'IT is moving workspaces',
+          });
+        }
+        return answer;
+      },
+    });
+
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: false });
+
+    expect(issued).toHaveLength(1);
+    expect(linear.live(issued[0]!)).toBe(false);
+  });
+
   it("writes through the shared card carry the employee's trailer", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });

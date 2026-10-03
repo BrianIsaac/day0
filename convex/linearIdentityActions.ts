@@ -307,6 +307,9 @@ async function sharedToken(
       bearer: await valueOf(ctx, landed.credentialId),
     };
   }
+  // The connection was revoked while Linear issued the token: Day0 keeps it nowhere, so it is
+  // revoked at Linear now rather than left live for 30 days (R41V-1).
+  await revokeUnkept(deps, issued);
   throw new LinearIssuerRefusal(
     'connection-ended',
     "The organisation's Linear connection was revoked while its token was requested.",
