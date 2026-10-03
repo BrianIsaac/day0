@@ -39,6 +39,8 @@ import {
   slackChannelsGoWords,
   unservedConnectionWords,
   identityChip,
+  actsAsAfterRevokeWords,
+  itsReasonWords,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -381,7 +383,9 @@ export function SurfaceCard({
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
             M13); a reason that is the skip line is said once, as the skip. */}
         {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
-          <p className="text-sm text-[var(--color-fg)]">{surface.reason}</p>
+          <p className="text-sm text-[var(--color-fg)]">
+            {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
+          </p>
         ) : null}
         {skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
@@ -415,8 +419,10 @@ export function SurfaceCard({
           <dl className="grid gap-2.5">
             {showsIdentity ? (
               <Fact label="Acts as">
-                {actsAsWords(identity, identityNames)}
-                {chipForIdentity !== undefined ? (
+                {surface.connectionRevoked
+                  ? actsAsAfterRevokeWords(identityNames)
+                  : actsAsWords(identity, identityNames)}
+                {chipForIdentity !== undefined && !surface.connectionRevoked ? (
                   <>
                     {' '}
                     <Chip tone="warn">{chipForIdentity}</Chip>

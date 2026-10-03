@@ -61,9 +61,16 @@ export type ExpirySurface = Pick<
   '_id' | 'displayName' | 'verdict' | 'expiresAt' | 'accessSetBy' | 'reason'
 >;
 
-/** What brings back a card an administrator ended by revoking its connection, in place of Renew. */
-export const REVOKED_CONNECTION_NOTE =
-  'IT revoked the organisation’s connection this card used, so renewing brings nothing back: it connects again once IT connects the system again.';
+/**
+ * What a card an administrator ended by revoking its connection says in place of its renewal: the
+ * approval's date stands, and nothing is read or sent until IT connects the system again (the
+ * design pass's major 1). Renewing brings nothing back, so none is offered.
+ *
+ * @param system - The card's system, as the card names it.
+ */
+export function revokedConnectionWords(system: string): string {
+  return `Nothing is read or sent through this card until IT connects ${system} again.`;
+}
 
 /**
  * The card's expiry block (Q5, U3, K): when access ends, in the employee's zone, who set the
@@ -85,7 +92,8 @@ export const REVOKED_CONNECTION_NOTE =
  * @param endedNote - What the end did beyond the card, said while the access has ended.
  * @param move - The move off a pasted key, where the card offers one.
  * @param connectionRevoked - The card's organisation connection was revoked by an administrator,
- *   which ended it: no renewal is offered, since none brings it back, and the block says what does.
+ *   which ended it: the block says until when it was approved and what brings it back, and offers
+ *   no renewal, since none would.
  * @returns The block, or nothing for a card whose access has not started.
  */
 export function ExpiryBlock({
@@ -147,25 +155,32 @@ export function ExpiryBlock({
   };
   return (
     <div className="grid gap-3">
-      <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
-        <p className="text-[13px] text-[var(--color-muted)]">
-          {standing.kind === 'ended' ? 'Access ended' : 'Access lasts until'}
-        </p>
-        <p
-          className={`text-sm ${standing.kind === 'running' ? 'text-[var(--color-fg-2)]' : 'text-[var(--color-warn)]'}`}
-        >
-          {end}
-          {setBy}.{' '}
-          {standing.kind === 'ended'
-            ? 'Nothing is read or sent through this card until you renew it.'
-            : standing.kind === 'ending'
-              ? 'After that, nothing is read or sent through this card until you renew it.'
-              : EXPIRY_RULE}
-        </p>
-      </div>
       {connectionRevoked ? (
-        <p className="text-sm text-[var(--color-warn)]">{REVOKED_CONNECTION_NOTE}</p>
+        <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+          <p className="text-[13px] text-[var(--color-muted)]">Approved until</p>
+          <p className="text-sm text-[var(--color-warn)]">
+            {end}. {revokedConnectionWords(surface.displayName)}
+          </p>
+        </div>
       ) : (
+        <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+          <p className="text-[13px] text-[var(--color-muted)]">
+            {standing.kind === 'ended' ? 'Access ended' : 'Access lasts until'}
+          </p>
+          <p
+            className={`text-sm ${standing.kind === 'running' ? 'text-[var(--color-fg-2)]' : 'text-[var(--color-warn)]'}`}
+          >
+            {end}
+            {setBy}.{' '}
+            {standing.kind === 'ended'
+              ? 'Nothing is read or sent through this card until you renew it.'
+              : standing.kind === 'ending'
+                ? 'After that, nothing is read or sent through this card until you renew it.'
+                : EXPIRY_RULE}
+          </p>
+        </div>
+      )}
+      {connectionRevoked ? null : (
         <div className="flex flex-wrap items-end gap-2">
           <div className="grid gap-1.5">
             <label htmlFor={periodId} className="text-[13px] font-medium text-[var(--color-fg-2)]">

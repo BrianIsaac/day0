@@ -467,6 +467,29 @@ export function documentedKeyUnusedWords(employee: string): string {
 }
 
 /**
+ * Whom a card an administrator ended by revoking its connection acts as: nobody, until IT connects
+ * the system again (the design pass's major 3: never the planned key the card no longer plans).
+ *
+ * @param names - The employee's name and the system's.
+ */
+export function actsAsAfterRevokeWords(names: {
+  readonly employee: string;
+  readonly system: string;
+}): string {
+  return `nobody until IT connects ${names.system} again; then ${names.employee}, through IT's connection`;
+}
+
+/**
+ * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
+ * pass's major 2).
+ *
+ * @param reason - The administrator's words.
+ */
+export function itsReasonWords(reason: string): string {
+  return `IT's reason: ${reason}`;
+}
+
+/**
  * What a card says where IT connected its system in a way no issuer of Day0's acts through (a
  * shared key, a service account): the card takes a key of its own meanwhile (11-AC's item 8, a
  * product call, flagged).

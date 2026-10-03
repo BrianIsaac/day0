@@ -673,6 +673,30 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(ended).not.toContain('After the renewal');
   });
 
+  it("says once, on a card an administrator's revoke ended, what happened, whose reason it is and whom it acts as (the design pass's majors)", (): void => {
+    const markup = render(
+      listed({
+        displayName: 'Acme docs',
+        endpoint: 'https://docs.acme.test/mcp',
+        path: 'mcp',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        reason: 'The docs server is moving to a new host.',
+        connectionRevoked: true,
+      }),
+    );
+    expect(markup).toContain("IT's reason: The docs server is moving to a new host.");
+    expect(fact(markup, 'Acts as')).toBe(
+      "nobody until IT connects Acme docs again; then Maya, through IT's connection",
+    );
+    expect(markup).not.toContain('Pasted key');
+    expect(markup).not.toMatch(/Renew for/);
+    expect(markup).toContain(
+      'Nothing is read or sent through this card until IT connects Acme docs again.',
+    );
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);

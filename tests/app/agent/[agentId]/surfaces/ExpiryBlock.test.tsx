@@ -68,8 +68,10 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     );
     expect(markup).not.toMatch(/Renew for/);
     expect(markup).not.toContain('Access period');
+    expect(markup).not.toContain('Access lasts until');
+    expect(markup).toContain('>Approved until</p>');
     expect(markup).toContain(
-      'IT revoked the organisation’s connection this card used, so renewing brings nothing back: it connects again once IT connects the system again.',
+      'Nothing is read or sent through this card until IT connects Linear again.',
     );
   });
 
