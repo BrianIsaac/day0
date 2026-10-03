@@ -1,12 +1,16 @@
+import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
+import { getFunctionName } from 'convex/server';
 import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { IssuedTokens } from '../../../src/surfaces/mcp-oauth';
+import { sealForOwner } from '../../../src/lib/credential-crypto';
 import { LIVE_TOKEN_LEASE_POLLS, REFRESH_LEASE_MS } from '../../../src/surfaces/refresh-lease';
 import {
   accessTokenFor,
   heldFromRows,
+  nativeTokenKeeper,
   runScheduledRefresh,
   SCHEDULED_REFRESH_RETRIES,
   TokenRefreshRefused,
@@ -623,5 +627,37 @@ describe('every rung in the deployment reads its bearer through the token store'
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('the native keeper’s claim (R-S)', (): void => {
+  it('ends the lease and says why when the claimed refresh token cannot be opened, even if the release fails', async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    const refresh = {
+      _id: 'refresh-1',
+      userId: 'owner-1',
+      // Sealed for another owner than the row names, so the keeper refuses to open it.
+      ...sealForOwner('refresh-elsewhere', { current: key }, 'someone-else'),
+    } as unknown as Doc<'credentials'>;
+    const called: string[] = [];
+    const failingCtx = {
+      runMutation: async (reference: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as never);
+        called.push(name);
+        if (name === 'refreshLease:claim') {
+          return { kind: 'claimed', leaseUntil: NOW + REFRESH_LEASE_MS, refresh };
+        }
+        throw new Error('the backend could not be reached');
+      },
+    } as unknown as ActionCtx;
+    const keeper = nativeTokenKeeper(() => ({ current: key }));
+    const claimed = keeper.claimRefreshToken(failingCtx, {
+      credentialId: CREDENTIAL,
+      expectedGeneration: 0,
+      now: NOW,
+    });
+    await expect(claimed).rejects.toThrow('Credential decryption failed');
+    await expect(claimed).rejects.not.toThrow('the backend could not be reached');
+    expect(called).toEqual(['refreshLease:claim', 'refreshLease:release']);
   });
 });

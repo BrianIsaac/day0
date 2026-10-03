@@ -202,10 +202,7 @@ export function nativeTokenKeeper(keyring: () => CredentialKeyring): TokenKeeper
             presented = openRefreshToken(claimed.refresh, keyring());
           } catch (error) {
             // Nothing was presented: the lease is ended here, or the next refresh waits it out.
-            await ctx.runMutation(internal.refreshLease.release, {
-              credentialId: claim.credentialId,
-              leaseUntil: claimed.leaseUntil,
-            });
+            await releaseUnpresented(ctx, claim.credentialId, claimed.leaseUntil);
             throw error;
           }
           return { kind: 'claimed', leaseUntil: claimed.leaseUntil, presented };
@@ -239,6 +236,27 @@ export function nativeTokenKeeper(keyring: () => CredentialKeyring): TokenKeeper
         now: rotation.now,
       }),
   };
+}
+
+/**
+ * End a lease whose refresh token was never presented. A release that fails is logged, so the
+ * caller rethrows why the token could not be opened rather than the release's failure; the lease
+ * lapses by itself at its end.
+ */
+async function releaseUnpresented(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  leaseUntil: number,
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.refreshLease.release, { credentialId, leaseUntil });
+  } catch (error) {
+    log.warn('refresh lease not released after an unreadable refresh token; it lapses at its end', {
+      credentialId,
+      leaseUntil,
+      reason: safeFailureMessage(error, '', 'no detail'),
+    });
+  }
 }
 
 /**
