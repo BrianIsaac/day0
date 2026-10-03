@@ -690,6 +690,34 @@ export async function backfillLibraryPage(
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/** Skill rows one page of the owner-key backfill reads; each reads its employee once. */
+const OWNER_KEY_BACKFILL_PAGE = 100;
+
+/**
+ * One page of the `skills-owner-key` pass (K-m3, R-S): give each row written before the field its
+ * employee's owner key, so `holdersOf` reads it by `by_owner_version`. A row of an employee with no
+ * owner, and a row that already carries a key, are left, so the page is safe to run twice.
+ *
+ * @param ctx - The migration's mutation context.
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillOwnerKeyPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('skills').paginate({ cursor, numItems: OWNER_KEY_BACKFILL_PAGE });
+  let changed = 0;
+  for (const row of page.page) {
+    if (row.ownerKey !== undefined) continue;
+    const owner = await skillOwnerKeyOf(ctx.db, row.agentId);
+    if (owner.ownerKey === undefined) continue;
+    await ctx.db.patch(row._id, owner);
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /** Skill rows one page of the use-count backfill reads: one, since each reads its employee's claims. */
 const USE_COUNT_BACKFILL_PAGE = 1;
 

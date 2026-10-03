@@ -648,8 +648,9 @@ export default defineSchema({
      * orientation from its own role's documented `Team:`, `Project:` and
      * `Channels:` lines, each value kept with the page line that states it,
      * and approved by the manager with the card. Absent on rows
-     * proposed before the field, which keep the page scan; present with no
-     * value means intake reads nothing, and `notes` says why. */
+     * proposed before the field that the `surfaces-intake-scope` pass (0.15.0)
+     * could not scope, which keep the page scan and say so on the card;
+     * present with no value means intake reads nothing, and `notes` says why. */
     intakeScope: v.optional(
       v.object({
         team: v.optional(

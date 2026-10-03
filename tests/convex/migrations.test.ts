@@ -25,6 +25,8 @@ import { listingCursor } from '../../src/docs/readers/batch';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { upgradeScopeNote } from '../../src/surfaces/intake-scope';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -171,9 +173,9 @@ describe('the upgrade migrations', (): void => {
       'credentials-superseded-at',
       'decision-batches-settled',
     ];
-    // Re-pinned behind the skill library's two backfills (0.13.0) and the acts-as and issued-by
-    // backfills (0.14.0), which follow them.
-    expect(MIGRATION_NAMES.slice(-secondStep.length - 4, -4)).toEqual(secondStep);
+    // Re-pinned behind the skill library's two backfills (0.13.0), the acts-as and issued-by
+    // backfills (0.14.0) and the owner key, intake scope and purge passes (0.15.0), which follow.
+    expect(MIGRATION_NAMES.slice(-secondStep.length - 7, -7)).toEqual(secondStep);
     const harness = limitedHarness();
     await runAll(harness);
     const status = await harness.query(internal.migrations.status, {});
@@ -1108,21 +1110,21 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.14.0, the access track's release, from 0.6.0, 0.10.0 and 0.13.0: a stamp
-    // names a release no older than the newest a shipped migration names.
+    // Re-pinned at 0.15.0, the schema step after the access track, from 0.6.0, 0.10.0, 0.13.0 and
+    // 0.14.0: a stamp names a release no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.14.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.15.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.14.0', previous: '0.14.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.15.0', previous: '0.15.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.15.0', previous: '0.14.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.16.0', previous: '0.15.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.15.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.16.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2034,6 +2036,8 @@ describe('the skill library backfills (10-K, K3)', (): void => {
     ).toEqual([
       ['skills-library', '0.13.0', true],
       ['skills-use-count', '0.13.0', true],
+      // Re-pinned: the owner key pass (0.15.0) is a skills pass too, and finishes with them.
+      ['skills-owner-key', '0.15.0', true],
     ]);
   });
 
@@ -2498,5 +2502,316 @@ describe('the issued-by backfill (11-AR; the cockpit item 4 of 11-AK)', (): void
       Promise.all([botToken, clientSecret].map((id) => ctx.db.get(id))),
     );
     expect(rows.map((row) => row?.issuedBy)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('the owner key backfill (K-m3; R-S)', (): void => {
+  it('is registered at 0.15.0, after the access track’s backfills', (): void => {
+    expect(MIGRATIONS['skills-owner-key'].release).toBe('0.15.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.15.0');
+    expect(MIGRATION_NAMES.indexOf('skills-owner-key')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('credentials-issued-by'),
+    );
+  });
+
+  it('keys every row of an owned employee on its owner, leaves an owner-less one and a keyed one, and is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    // A second owner, so the owner adoption leaves the owner-less employee as it is.
+    await agent(harness, { userId: 'rival' });
+    const ownerless = await agent(harness);
+    const rows = await harness.run(async (ctx) => {
+      const row = {
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        body: '',
+        sourceType: 'agent-authored' as const,
+        state: 'proposed' as const,
+        createdAt: 1,
+      };
+      return {
+        older: await ctx.db.insert('skills', { ...row, agentId: priya }),
+        builtin: await ctx.db.insert('skills', {
+          ...row,
+          agentId: priya,
+          name: 'triage',
+          sourceType: 'builtin',
+          state: 'registered',
+        }),
+        keyed: await ctx.db.insert('skills', { ...row, agentId: priya, ownerKey: 'kept' }),
+        ownerless: await ctx.db.insert('skills', { ...row, agentId: ownerless }),
+      };
+    });
+
+    await runAll(harness);
+
+    const read = async (): Promise<Record<string, string | null>> =>
+      await harness.run(async (ctx) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(rows).map(async ([name, id]) => [
+              name,
+              (await ctx.db.get(id))?.ownerKey ?? null,
+            ]),
+          ),
+        ),
+      );
+    expect(await read()).toEqual({
+      older: 'owner',
+      builtin: 'owner',
+      keyed: 'kept',
+      ownerless: null,
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'skills-owner-key')).toMatchObject({
+      release: '0.15.0',
+      changed: 2,
+    });
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    expect(await read()).toEqual({
+      older: 'owner',
+      builtin: 'owner',
+      keyed: 'kept',
+      ownerless: null,
+    });
+  });
+});
+
+describe('the organisation secret purge (F19; the pre-tag’s cockpit item; R-S)', (): void => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('is registered at 0.15.0, after the owner key and intake scope passes', (): void => {
+    expect(MIGRATIONS['credentials-organisation-purge'].release).toBe('0.15.0');
+    expect(MIGRATION_NAMES.indexOf('credentials-organisation-purge')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('surfaces-intake-scope'),
+    );
+  });
+
+  it('deletes the value of an organisation secret revoked over 24 hours ago, leaves every other row, and is safe to run twice', async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    const harness = limitedHarness();
+    const now = Date.now();
+    const rows = await harness.run(async (ctx) => {
+      const secret = {
+        userId: 'day0:organisation',
+        holder: 'organisation' as const,
+        kind: 'value' as const,
+        label: 'Slack configuration token',
+        source: 'entered' as const,
+        ...sealForOwner('xoxe.xoxp-1-cfg1', { current: key }, 'day0:organisation'),
+        createdAt: 1,
+      };
+      return {
+        expired: await ctx.db.insert('credentials', { ...secret, revokedAt: now - 2 * DAY }),
+        held: await ctx.db.insert('credentials', { ...secret, revokedAt: now - 60 * 60 * 1000 }),
+        live: await ctx.db.insert('credentials', secret),
+        pending: await ctx.db.insert('credentials', {
+          ...secret,
+          revokedAt: now - 2 * DAY,
+          sourceRevocation: { state: 'pending', attempts: 1 },
+        }),
+        owners: await ctx.db.insert('credentials', {
+          ...secret,
+          ...sealForOwner('lin_api_1234567890', { current: key }, 'owner'),
+          userId: 'owner',
+          holder: undefined,
+          revokedAt: now - 2 * DAY,
+        }),
+      };
+    });
+
+    await runAll(harness);
+
+    const read = async (): Promise<Record<string, [boolean, number | null]>> =>
+      await harness.run(async (ctx) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(rows).map(async ([name, id]) => {
+              const row = await ctx.db.get(id);
+              return [name, [row?.ciphertext !== undefined, row?.revokedAt ?? null]];
+            }),
+          ),
+        ),
+      );
+    expect(await read()).toEqual({
+      expired: [false, now - 2 * DAY],
+      held: [true, now - 60 * 60 * 1000],
+      live: [true, null],
+      pending: [true, now - 2 * DAY],
+      owners: [true, now - 2 * DAY],
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'credentials-organisation-purge'),
+    ).toMatchObject({ release: '0.15.0', changed: 1 });
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    expect((await read()).expired).toEqual([false, now - 2 * DAY]);
+  });
+});
+
+describe('the intake scope backfill (the wave 11 review’s m5; R-S)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** The manager's sentence about Linear in the charter, as discovery quoted it on the card. */
+  function charterQuote(quote: string): NonNullable<Doc<'surfaces'>['discoveryEvidence']> {
+    return [
+      { kind: 'charter', ref: 'charter', quote, current: true, firstSeenAt: 1, lastSeenAt: 1 },
+    ];
+  }
+
+  /**
+   * Two employees of one owner on the RevOps handbook's Linear page, each with a Linear card
+   * proposed before the field: Priya's charter sentence names the project, Mateo's names none.
+   */
+  async function seedCards(harness: Harness): Promise<{
+    priyaCard: Id<'surfaces'>;
+    mateoCard: Id<'surfaces'>;
+    chatCard: Id<'surfaces'>;
+    declaredCard: Id<'surfaces'>;
+  }> {
+    const sourceId = await source(harness, 'owner');
+    return await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'linear.md',
+        title: 'Linear',
+        markdown:
+          '# Linear\n\nThe RevOps team tracks its work in Linear.\n\n- Team: `RevOps`\n- Project: `Renewals`\n',
+        updatedAt: 1,
+      });
+      const employee = async (name: string): Promise<Id<'agents'>> => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '1',
+          body: { proposedFunction: 'Revenue operations coordinator', namedSystems: [] },
+          approved: true,
+          approvedAt: 1,
+          createdAt: 1,
+        });
+        return agentId;
+      };
+      const [priya, mateo] = [await employee('Priya'), await employee('Mateo')];
+      const card = {
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected' as const,
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      };
+      return {
+        priyaCard: await ctx.db.insert('surfaces', {
+          ...card,
+          agentId: priya,
+          discoveryEvidence: charterQuote('Priya works the Renewals project in Linear.'),
+        }),
+        mateoCard: await ctx.db.insert('surfaces', {
+          ...card,
+          agentId: mateo,
+          discoveryEvidence: charterQuote('Mateo keeps the tickets moving in Linear.'),
+        }),
+        chatCard: await ctx.db.insert('surfaces', {
+          ...card,
+          agentId: priya,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+        }),
+        declaredCard: await ctx.db.insert('surfaces', {
+          ...card,
+          agentId: mateo,
+          slug: 'jira',
+          displayName: 'Jira',
+          verdict: 'declared',
+        }),
+      };
+    });
+  }
+
+  async function scopes(
+    harness: Harness,
+    cards: Record<string, Id<'surfaces'>>,
+  ): Promise<Record<string, Doc<'surfaces'>['intakeScope'] | null>> {
+    return await harness.run(async (ctx) =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.entries(cards).map(async ([name, id]) => [
+            name,
+            (await ctx.db.get(id))?.intakeScope ?? null,
+          ]),
+        ),
+      ),
+    );
+  }
+
+  it('is registered at 0.15.0, after the owner key, and runs in the Node runtime', (): void => {
+    expect(MIGRATIONS['surfaces-intake-scope'].release).toBe('0.15.0');
+    expect(MIGRATION_NAMES.indexOf('surfaces-intake-scope')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('skills-owner-key'),
+    );
+  });
+
+  it("scopes a card older than the field from the manager's own words, leaves one they do not scope on the page scan, and is safe to run twice", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const cards = await seedCards(harness);
+
+    await runAll(harness);
+
+    const read = await scopes(harness, cards);
+    expect(read.priyaCard).toEqual({
+      project: {
+        value: 'Renewals',
+        sourceId: expect.any(String),
+        ref: 'linear.md',
+        quote: '- Project: `Renewals`',
+      },
+      notes: [upgradeScopeNote('Linear')],
+    });
+    expect(read.mateoCard).toBeNull();
+    expect(read.chatCard).toBeNull();
+    expect(read.declaredCard).toBeNull();
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-intake-scope')).toMatchObject({
+      release: '0.15.0',
+      changed: 1,
+      note: expect.stringContaining('keeps the page scan'),
+    });
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    expect(await scopes(harness, cards)).toEqual(read);
+  });
+
+  it('reads no card in mock mode, where intake reads the mock office', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const cards = await seedCards(harness);
+
+    await runAll(harness);
+
+    expect(Object.values(await scopes(harness, cards))).toEqual([null, null, null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-intake-scope')).toMatchObject({
+      changed: 0,
+      note: expect.stringContaining('mock mode'),
+    });
   });
 });

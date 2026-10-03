@@ -32,6 +32,8 @@ import type * as exportActions from '../exportActions.js';
 import type * as handoverFence from '../handoverFence.js';
 import type * as intakeActions from '../intakeActions.js';
 import type * as intakeIdentity from '../intakeIdentity.js';
+import type * as intakeScopeBackfill from '../intakeScopeBackfill.js';
+import type * as intakeScopeBackfillActions from '../intakeScopeBackfillActions.js';
 import type * as intakeSeed from '../intakeSeed.js';
 import type * as linearIdentity from '../linearIdentity.js';
 import type * as linearIdentityActions from '../linearIdentityActions.js';
@@ -122,6 +124,8 @@ declare const fullApi: ApiFromModules<{
   handoverFence: typeof handoverFence;
   intakeActions: typeof intakeActions;
   intakeIdentity: typeof intakeIdentity;
+  intakeScopeBackfill: typeof intakeScopeBackfill;
+  intakeScopeBackfillActions: typeof intakeScopeBackfillActions;
   intakeSeed: typeof intakeSeed;
   linearIdentity: typeof linearIdentity;
   linearIdentityActions: typeof linearIdentityActions;

@@ -33,7 +33,9 @@ import {
   CREDENTIAL_RESEAL_MIGRATION,
   CREDENTIAL_VALUE_REF_MIGRATION,
   credentialKeyCounts,
+  purgeCredential,
 } from './credentials';
+import { ORGANISATION_SECRET_HOLD_MS } from './organisationSecrets';
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
@@ -49,7 +51,7 @@ import {
 } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
-import { backfillLibraryPage, backfillUseCountPage } from './skillVersions';
+import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
@@ -57,6 +59,7 @@ import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-
 import { deploymentZone } from '../src/lib/zone';
 import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
 import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
@@ -90,6 +93,9 @@ export const MIGRATION_NAMES = [
   'skills-use-count',
   'surfaces-acts-as',
   'credentials-issued-by',
+  'skills-owner-key',
+  'surfaces-intake-scope',
+  'credentials-organisation-purge',
 ] as const;
 
 /** One migration's name. */
@@ -97,13 +103,15 @@ export type MigrationName = (typeof MIGRATION_NAMES)[number];
 
 /**
  * The migrations whose page runs in an action: the re-seal opens and seals
- * values, and the ref rewrite opens and fingerprints them, which only the
- * Node runtime can do. Their pages are recorded by `recordActionPage`; every
+ * values, the ref rewrite opens and fingerprints them, and the intake scope
+ * reads each card's pages as orientation reads them, which only the Node
+ * runtime can do. Their pages are recorded by `recordActionPage`; every
  * other migration's page is one mutation.
  */
 const ACTION_MIGRATION_NAMES = [
   CREDENTIAL_RESEAL_MIGRATION,
   CREDENTIAL_VALUE_REF_MIGRATION,
+  'surfaces-intake-scope',
 ] as const;
 
 /** A migration whose page runs in an action. */
@@ -143,6 +151,13 @@ const SKILL_LIBRARY_RELEASE = '0.13.0';
  * Day0 obtained each credential an installed app gave it (11-AR).
  */
 const ACCESS_RELEASE = '0.14.0';
+
+/**
+ * The schema step after the access track (the round after wave 11, R-S): the skill rows' owner
+ * key, the intake scope of cards older than it, and the purge of organisation secrets kept past
+ * their 24 hours.
+ */
+const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -260,6 +275,23 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'records how Day0 obtained each live credential an installed Slack app gave it: the bot token from the install redirect, with the app it was issued to, and the client secret of the app the card provisioned; a pasted key, and a revoked or emptied row, are left',
     thenRemoves:
       'nothing: the Slack install path is to write issuedBy as 11-AS lands; until it does, a token installed after the upgrade is read as a pasted key and is not revoked at the vendor',
+  },
+  'skills-owner-key': {
+    release: ACCESS_FOLLOW_UP_RELEASE,
+    does: 'gives every skill row of an owned employee its owner’s key, which a version’s holders are now read by (K-m3); a row of an employee with no owner is left',
+    thenRemoves:
+      'nothing: every insert writes the key and a handover’s move rewrites it from here on',
+  },
+  'surfaces-intake-scope': {
+    release: ACCESS_FOLLOW_UP_RELEASE,
+    does: 'scopes each kanban card proposed before the approved intake scope as a proposal scopes it without its model: the documented team or project of the role’s handbook that the manager’s own words name, with a note saying so; a card the words do not scope keeps the page scan and says so on the card; mock mode reads nothing',
+    thenRemoves:
+      'nothing: the page scan stays for a card the pass could not scope, until its manager proposes it again',
+  },
+  'credentials-organisation-purge': {
+    release: ACCESS_FOLLOW_UP_RELEASE,
+    does: 'deletes the value of every organisation-held secret revoked more than 24 hours ago that still keeps it (an older revoke kept it, or its scheduled purge was lost), keeping the row and its revoke date; a row whose revocation at the vendor is still pending is left to its own sweep',
+    thenRemoves: 'nothing: a revoke holds a secret 24 hours and schedules its purge from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -731,6 +763,50 @@ async function backfillIssuedBy(ctx: MutationCtx, cursor: string | null): Promis
 }
 
 /**
+ * Delete the values of organisation-held secrets revoked more than 24 hours
+ * ago that still keep them (F19; the pre-tag's cockpit item, the wave 11
+ * review's M6): a revoke before v0.14.0 kept the ciphertext with no purge, and
+ * a scheduled purge can be lost. The row and its revoke date stay as the
+ * audit trail; a row whose revocation at the vendor is still pending is the
+ * hourly sweep's (`sourceRevocation.expireOverdue`). A purged row keeps no
+ * value, so a second run changes nothing.
+ */
+async function purgeExpiredOrganisationSecrets(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<MigrationPage> {
+  const keptUntil = Date.now() - ORGANISATION_SECRET_HOLD_MS;
+  const page = await ctx.db
+    .query('credentials')
+    .withIndex('by_userId', (q) => q.eq('userId', ORGANISATION_OWNER_KEY))
+    .paginate({ cursor, numItems: MIGRATION_PAGE });
+  const expired = page.page.filter(
+    (row) =>
+      row.holder === ORGANISATION_HOLDER &&
+      row.revokedAt !== undefined &&
+      row.revokedAt < keptUntil &&
+      (row.ciphertext !== undefined || row.iv !== undefined) &&
+      row.sourceRevocation?.state !== 'pending',
+  );
+  for (const row of expired) await purgeCredential(ctx, row, row.revokedAt ?? keptUntil);
+  return {
+    read: page.page.length,
+    changed: expired.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/**
+ * Scope one page of cards intake reads by the page scan, in the Node runtime
+ * (R-S; the wave 11 review's m5). The action writes each card itself; this
+ * reports the page.
+ */
+async function scopeIntakeCards(ctx: ActionCtx, cursor: string | null): Promise<MigrationPage> {
+  return await ctx.runAction(internal.intakeScopeBackfillActions.backfillPage, { cursor });
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -770,6 +846,7 @@ const ACTION_MIGRATION_PAGES: Readonly<
 > = {
   [CREDENTIAL_RESEAL_MIGRATION]: resealCredentials,
   [CREDENTIAL_VALUE_REF_MIGRATION]: rewriteValueRefs,
+  'surfaces-intake-scope': scopeIntakeCards,
 };
 
 /** Each mutation migration's page, keyed by name, so a name with no page fails the typecheck. */
@@ -803,6 +880,8 @@ const MIGRATION_PAGES: Readonly<
   'skills-use-count': async (ctx, cursor) => await backfillUseCountPage(ctx, cursor),
   'surfaces-acts-as': backfillActsAs,
   'credentials-issued-by': backfillIssuedBy,
+  'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
+  'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
 };
 
 /** A migration's row, if it has started. */
