@@ -147,14 +147,28 @@ export function secretWords(
  *
  * @param view - The connection.
  */
-export function revokeLines(view: Pick<ConnectionView, 'displayName' | 'system'>): string[] {
+export function revokeLines(
+  view: Pick<ConnectionView, 'displayName' | 'system' | 'kind'>,
+): string[] {
   const system = systemDisplayName(view.system);
   return [
     `Every employee's ${view.displayName} card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at ${system}.`,
     'No card on any other system changes. Each manager sees the reason on the card.',
+    // Slack's `auth.revoke` ends the configuration token alone (R41V-10).
+    ...(view.kind === 'slack-configuration' ? [SLACK_REFRESH_TOKEN_LINE] : []),
     'IT can connect it again with ./setup.sh access.',
   ];
 }
+
+/**
+ * What a revoke of Slack's configuration connection cannot do, said before it is confirmed: Slack
+ * offers no call that ends the configuration token's refresh token (the real-vendor walk,
+ * R41V-10), so IT ends it by deleting the token's row on api.slack.com.
+ */
+export const SLACK_REFRESH_TOKEN_LINE =
+  'Day0 revokes the configuration token at Slack, but Slack offers no call that ends its refresh ' +
+  'token: once this is revoked, IT deletes the token\'s row under "Your App Configuration Tokens" ' +
+  'on api.slack.com, signed in as the account that generated it.';
 
 /** What a rotation does, said before the administrator gives the new secret. */
 export const ROTATE_NOTE =

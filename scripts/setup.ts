@@ -506,6 +506,8 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
     --record <dir>                        where the install record goes (default
                                           ~/day0-install/<project>)
     --print-manifest <slack|linear>       print the kit's manifest for that system and stop
+    --employee <name>                     with --print-manifest linear: the employee's own app's
+                                          form instead of the shared app's (per employee)
     --correct <slack|linear|https://...>  record the redirect Day0 returns to and the kit's
                                           scopes on that system's connection, after IT fixed
                                           them at the vendor; no secret changes, no card ends
@@ -564,6 +566,7 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     '--connect-mode': 'connectModes',
     '--record': 'record',
     '--print-manifest': 'printManifest',
+    '--employee': 'employee',
     '--correct': 'correct',
   };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {

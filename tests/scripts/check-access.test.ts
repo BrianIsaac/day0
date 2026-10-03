@@ -40,8 +40,8 @@ const LINEAR: ConnectionRow = {
   kind: 'oauth-app',
   mode: 'shared',
   status: 'active',
-  scopes: ['read', 'write'],
-  clientCredentialsScopes: ['read', 'write'],
+  scopes: ['read', 'write', 'app:assignable'],
+  clientCredentialsScopes: ['read', 'write', 'app:assignable'],
   clientId: 'lin-client',
   redirectUrl: `${PUBLIC_URL}/api/oauth/linear`,
   secretCredentialId: 'cred-linear',
@@ -84,11 +84,15 @@ function vendors(
       if (request.url === 'https://api.linear.app/oauth/token') {
         const form = new URLSearchParams(await request.text());
         expect(form.get('grant_type')).toBe('client_credentials');
-        expect(form.get('scope')).toBe('read,write');
         expect(form.get('client_secret')).toBe(LINEAR_SECRET);
+        // Linear's own answer to the set, 3 October: `scope: "app:assignable read write"`.
         const answer = overrides.linearToken ?? {
           status: 200,
-          body: { access_token: 'lin-test-token', token_type: 'Bearer', scope: 'read write' },
+          body: {
+            access_token: 'lin-test-token',
+            token_type: 'Bearer',
+            scope: form.get('scope')?.split(',').sort().join(' '),
+          },
         };
         return Response.json(answer.body, { status: answer.status });
       }
@@ -197,6 +201,52 @@ describe('check:access', (): void => {
     expect(scopes.status).toBe('warn');
     expect(scopes.detail).toContain('admin, files:write');
     expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('passes a shared Linear connection landed read, write, app:assignable, with no note to remove a scope (R41V-3)', async (): Promise<void> => {
+    const checks = await accessChecks([LINEAR], VALUES, vendors());
+    expect(only(checks, 'linear', 'scopes')).toMatchObject({
+      status: 'ok',
+      detail: 'Holds read, write, app:assignable.',
+    });
+  });
+
+  it('says a shared Linear connection landed without app:assignable takes no delegated ticket, cured by revoke and land again', async (): Promise<void> => {
+    const landedBefore = {
+      ...LINEAR,
+      scopes: ['read', 'write'],
+      clientCredentialsScopes: ['read', 'write'],
+    };
+    const checks = await accessChecks([landedBefore], VALUES, vendors());
+    const scopes = only(checks, 'linear', 'scopes');
+    expect(scopes.status).toBe('gap');
+    expect(scopes.detail).toContain('app:assignable');
+    expect(scopes.detail).toContain('no ticket can be delegated');
+    expect(scopes.detail).toContain('revoke');
+    expect(scopes.detail).toContain('land it again');
+    expect(scopes.detail).not.toContain('--correct');
+    expect(accessExitCode(checks)).toBe(1);
+  });
+
+  it('says what a per-employee Linear registration without app:assignable costs (decision 5)', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [
+        {
+          ...LINEAR,
+          mode: 'per-employee',
+          scopes: ['read', 'write'],
+          clientCredentialsScopes: undefined,
+          secretCredentialId: undefined,
+        },
+      ],
+      VALUES,
+      vendors(),
+    );
+    const scopes = only(checks, 'linear', 'scopes');
+    expect(scopes.status).toBe('gap');
+    expect(scopes.detail).toContain(
+      'Missing scope app:assignable (no ticket can be delegated or assigned to the app user, so its employees take only unassigned tickets)',
+    );
   });
 
   it('says what Slack refused, and that an expired configuration token renews at the next app', async (): Promise<void> => {

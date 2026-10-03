@@ -12,6 +12,7 @@ import { appendEvent } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { pendingAuthorisationValidator } from './schema';
 import { endAccessAtSource } from './sourceRevocation';
+import { stampRecheckOnIdentityMove } from './surfaces';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import type { ActsAs } from '../src/surfaces/access-identity';
 import { organisationSystemOf } from '../src/surfaces/access-request';
@@ -385,6 +386,7 @@ export const connectSharedCard = internalMutation({
       label: connection.displayName,
       providerIdentityId: args.appUser.id,
     };
+    await stampRecheckOnIdentityMove(ctx, surface, actsAs, args.now);
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       // The OAuth token it is; the card's `shared-app` identity makes every write through it name
@@ -632,6 +634,7 @@ export const landEmployeeTokens = internalMutation({
       label: app.appName,
       providerIdentityId: args.appUser.id,
     };
+    await stampRecheckOnIdentityMove(ctx, surface, actsAs, args.now);
     await ctx.db.patch(surface._id, {
       credentialId,
       credentialKind: 'oauth',
@@ -723,9 +726,10 @@ async function cardsHolding(
 
 /**
  * Write a refused renewal onto the record of every card holding the token, with the reason, and
- * queue each card's check for when the token stops working, so the card ends with the reason then
- * (`surface.install-failed`: the remedy is a Linear administrator installing the app again).
- * Internal, for `linearIdentityActions.refreshScheduled`.
+ * queue each card's check now and for when the token stops working, so the card ends with the
+ * reason as soon as Linear refuses its access token too (`surface.install-failed`: the remedy is a
+ * Linear administrator installing the app again). Internal, for
+ * `linearIdentityActions.refreshScheduled`.
  */
 export const recordRefusal = internalMutation({
   args: {
@@ -742,11 +746,19 @@ export const recordRefusal = internalMutation({
         payload: { surfaceId: surface._id, reason: args.reason },
         createdAt: args.now,
       });
-      await ctx.scheduler.runAt(
-        Math.max(args.now, args.endsAt ?? args.now),
-        internal.surfaceActions.probeInternal,
-        { surfaceId: surface._id, routine: true },
-      );
+      // Checked at once, since a revoke in Linear's settings ends the access token with the
+      // refresh token (R41V-9), and again when the token dies, since a refused refresh while the
+      // access token still lives keeps using it (AL12).
+      await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+        surfaceId: surface._id,
+        routine: true,
+      });
+      if (args.endsAt !== undefined && args.endsAt > args.now) {
+        await ctx.scheduler.runAt(args.endsAt, internal.surfaceActions.probeInternal, {
+          surfaceId: surface._id,
+          routine: true,
+        });
+      }
     }
   },
 });

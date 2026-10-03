@@ -42,7 +42,7 @@ import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
-import type { AccessEnd } from '../src/surfaces/access-identity';
+import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
@@ -1329,6 +1329,11 @@ export const recordInstalledApp = internalMutation({
     if (secret !== null && secret.issuedBy === undefined) {
       await ctx.db.patch(secret._id, { issuedBy: slackClientSecretIssuer(app) });
     }
+    const actsAs = slackActsAs({
+      appName: provisioning.appName,
+      ...(args.botUserId === undefined ? {} : { botUserId: args.botUserId }),
+    });
+    await stampRecheckOnIdentityMove(ctx, surface, actsAs, args.now);
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: 'oauth',
@@ -1338,10 +1343,7 @@ export const recordInstalledApp = internalMutation({
         surface.verdict === 'ungranted' || surface.verdict === 'listed-dead'
           ? 'approved'
           : surface.verdict,
-      actsAs: slackActsAs({
-        appName: provisioning.appName,
-        ...(args.botUserId === undefined ? {} : { botUserId: args.botUserId }),
-      }),
+      actsAs,
       provisioning: {
         ...provisioning,
         installedAt: args.now,
@@ -1839,6 +1841,54 @@ function frozenTools(
     withheld: probed.toolAllowlist.filter((tool: string): boolean => !approved.has(tool)),
     approved: approvedList,
   };
+}
+
+/**
+ * The words a skill's re-check carries when the card it acts on moved to another identity while it
+ * stayed connected (R41V-7): the skill was checked against one identity and now acts as another.
+ *
+ * @param slug - The card's system.
+ */
+export function identityMovedReason(slug: string): string {
+  return `its connection to ${slug} now acts as another identity`;
+}
+
+/**
+ * Whether two identities a card acts as are one: the same kind, and the same user at the vendor
+ * where both name one, else the same name (a Slack app installed before its bot user was read).
+ */
+function sameIdentity(before: ActsAs | undefined, after: ActsAs): boolean {
+  if (before === undefined || before.kind !== after.kind) return false;
+  return before.providerIdentityId !== undefined && after.providerIdentityId !== undefined
+    ? before.providerIdentityId === after.providerIdentityId
+    : before.label === after.label;
+}
+
+/**
+ * Put the employee's skills acting on a connected card due a re-check when its connection moves to
+ * another identity (the move off a pasted key onto an app, R41V-7). The probe that follows finds
+ * the card connected before and after, so the reconnection's stamp in {@link recordConnected},
+ * which reads only a change of verdict, never fires; a card not connected gets that stamp instead.
+ * Called in the landing's own transaction, before the card's `actsAs` is replaced.
+ *
+ * @param ctx - The landing's transaction.
+ * @param surface - The card as it stood before the landing.
+ * @param next - The identity the card acts as from now on.
+ * @param now - The landing's time.
+ */
+export async function stampRecheckOnIdentityMove(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  next: ActsAs,
+  now: number,
+): Promise<void> {
+  if (surface.verdict !== 'connected' || sameIdentity(surface.actsAs, next)) return;
+  await stampRecheckDueOnSurfaces(ctx, {
+    agentId: surface.agentId,
+    slugs: [surface.slug],
+    reasonFor: identityMovedReason,
+    now,
+  });
 }
 
 /**

@@ -157,8 +157,10 @@ describe("building one employee's manifest", (): void => {
 });
 
 describe('the public origin', (): void => {
-  it('refuses plain http, which Slack will not redirect to', (): void => {
-    expect(() => publicOrigin('http://localhost:3000')).toThrow('must be https');
+  it('refuses plain http as Day0’s own rule: Slack’s manifest check accepted an http redirect (R41V-R3)', (): void => {
+    expect(() => publicOrigin('http://localhost:3000')).toThrow(
+      'DAY0_PUBLIC_URL must be https: Day0 has Slack send its codes and tokens back to an https address only.',
+    );
   });
 
   it('refuses a value that is not a URL', (): void => {

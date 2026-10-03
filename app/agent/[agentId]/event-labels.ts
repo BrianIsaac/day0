@@ -153,9 +153,20 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       : `an employee's ${name} app not created${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
-    return payload.outcome === 'done'
-      ? `${name} configuration token revoked at ${name}`
-      : `${name} configuration token not revoked at ${name}${because(payload.reason)}`;
+    switch (payload.outcome) {
+      case 'done':
+        return `${name} configuration token revoked at ${name}`;
+      case 'already-revoked':
+        return `${name} configuration token had already ended at ${name}`;
+      case 'failed':
+      case 'superseded':
+      case undefined:
+        return `${name} configuration token not revoked at ${name}${because(payload.reason)}`;
+      default: {
+        const unknown: never = payload.outcome;
+        return `${name} configuration token revocation: ${String(unknown)}`;
+      }
+    }
   }
   switch (payload.outcome) {
     case 'done':
@@ -163,11 +174,43 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
     case 'superseded':
       return `${name} configuration token renewed twice at once: the other renewal kept`;
     case 'failed':
+    case 'already-revoked':
     case undefined:
       return `${name} configuration token not renewed${because(payload.reason)}`;
     default: {
       const unknown: never = payload.outcome;
       return `${name} configuration token used: ${String(unknown)}`;
+    }
+  }
+}
+
+/**
+ * The label of a revoked shared connection's own app-actor token at the vendor (R41V-1): the
+ * organisation's token, not an employee's access.
+ */
+function sharedTokenRevokedLabel(payload: Read<'organisation.revoked-at-source'>): string {
+  const system = systemDisplayName(text(payload.system) ?? 'the vendor');
+  const token = `${system} shared app token`;
+  switch (payload.outcome) {
+    case 'token-revoked':
+      return `${token} revoked at ${system}`;
+    case 'already-gone':
+      return `${token} already revoked at ${system}`;
+    case 'retrying':
+      return `${token}: revocation at ${system} failed, trying again${because(payload.reason)}`;
+    case 'failed':
+      return `${token}: revocation at ${system} failed${because(payload.reason)}; Day0's copy deleted`;
+    case 'app-deleted':
+    case 'app-uninstalled':
+    case 'not-supported':
+    case 'shared':
+    case 'not-at-vendor':
+    case 'pasted-key':
+    case undefined:
+      return `${token} ended with its connection`;
+    default: {
+      const unknown: never = payload.outcome;
+      return `${token} ended with its connection (${String(unknown)})`;
     }
   }
 }
@@ -193,7 +236,10 @@ function revokedAtSourceLabel(payload: Read<'credential.revoked-at-source'>): st
     case 'not-supported':
       return `not revoked at ${system}: no revocation call; Day0's copy deleted`;
     case 'shared':
-      return `shared app token: not revoked at ${system}`;
+      // The connection's own revoke revokes the shared token (R41V-1); any other end keeps it.
+      return payload.end === 'organisation-revoked'
+        ? `shared app token: revoked at ${system} with the organisation's connection`
+        : `shared app token: not revoked at ${system}`;
     case 'not-at-vendor':
       return `nothing changed at ${system}`;
     case 'pasted-key':
@@ -465,7 +511,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       : 'disconnected by the manager',
   'credential.revoked-at-source': (payload) => revokedAtSourceLabel(payload),
   'organisation.revoked-at-source': (payload) =>
-    `${systemDisplayName(text(payload.system) ?? 'the vendor')} organisation connection: ${revokedAtSourceLabel(payload)}`,
+    payload.shared === true
+      ? sharedTokenRevokedLabel(payload)
+      : `${systemDisplayName(text(payload.system) ?? 'the vendor')} organisation connection: ${revokedAtSourceLabel(payload)}`,
   'organisation.configuration-used': (payload) => configurationUsedLabel(payload),
   'surface.channels-rejoined': (payload) => {
     const joined = listed(payload.joined);

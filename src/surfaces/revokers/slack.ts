@@ -91,6 +91,37 @@ export function slackAppUninstall(input: {
   });
 }
 
+/**
+ * Ask Slack whether a token still works (`auth.test`), after `auth.revoke` answered: the walk saw
+ * a configuration token still accepted after Day0 recorded its revoke (R41V-10), so the answer is
+ * checked rather than trusted.
+ *
+ * @param token - The token, which is also the call's bearer.
+ */
+export function slackTokenCheck(token: string): RevocationRequest {
+  return {
+    url: slackApiUrl('auth.test').toString(),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': FORM_CONTENT_TYPE },
+    body: '',
+  };
+}
+
+/**
+ * Read Slack's answer to `auth.test`: the token still works only when Slack says `ok`; any other
+ * answer, or none, leaves the revoke's own answer standing.
+ *
+ * @param status - The HTTP status.
+ * @param body - The parsed JSON body, or the raw text when it was not JSON.
+ */
+export function slackTokenStillWorks(status: number, body: unknown): boolean {
+  return (
+    status < 400 &&
+    typeof body === 'object' &&
+    body !== null &&
+    (body as { ok?: unknown }).ok === true
+  );
+}
+
 /** Whether an HTTP status says the failure was the vendor's side or a limit. */
 function retryableStatus(status: number): boolean {
   return status === 429 || status >= 500;

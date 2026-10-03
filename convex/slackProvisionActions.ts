@@ -11,6 +11,7 @@ import { assertOwnsAgentAction } from './ownership';
 import { logEvent } from './eventLog';
 import type { RefreshClaim } from './refreshLease';
 import type { HeldConfigurationRows, RotationRecorded } from './slackProvision';
+import { revokeSlackConfigurationToken, slackRevocationOutcome } from './sourceRevocationSend';
 import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { log } from '../src/lib/logger';
@@ -459,7 +460,30 @@ async function rotateUnderLease(
     expiresAt: rotated.expiresAt,
     now: dependencies.now(),
   });
-  return recorded.ok ? { kind: 'rotated', token: rotated.token } : { kind: 'moved' };
+  if (recorded.ok) return { kind: 'rotated', token: rotated.token };
+  if (recorded.reason === 'gone') await revokeUnkept(ctx, held, rotated.token, dependencies);
+  return { kind: 'moved' };
+}
+
+/**
+ * Revoke at Slack the configuration token a rotation was issued after its connection was revoked
+ * or given a new secret: Day0 keeps it nowhere, and Slack revoked the token it replaced, so the
+ * connection's own `auth.revoke` met only that one (R41V-10). The call goes on the connection's
+ * ledger as any `auth.revoke` does.
+ */
+async function revokeUnkept(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  token: string,
+  dependencies: ProvisionDependencies,
+): Promise<void> {
+  const answer = await revokeSlackConfigurationToken(token, dependencies.fetch);
+  await ctx.runMutation(internal.organisationSecrets.finishSlackRevocation, {
+    organisationConnectionId: held.connection._id,
+    credentialIds: [],
+    ...slackRevocationOutcome(answer),
+    unkept: true,
+  });
 }
 
 /**

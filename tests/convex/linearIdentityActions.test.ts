@@ -234,6 +234,83 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(await bearerOf(harness, token!._id)).toMatch(/^lin_oauth_shared_/);
   });
 
+  it("puts the employee's skills on a connected card due a re-check when it moves off a pasted key onto the shared app (R41V-7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    // The walk's Wren: the card connected on a key pasted while no connection was active, and a
+    // skill authored and verified under it.
+    const pasted = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear key',
+      plaintext: 'lin_api_pasted_0123456789',
+      source: 'entered',
+    });
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, {
+        verdict: 'connected',
+        credentialId: pasted,
+        credentialKind: 'value',
+        credentialLanded: true,
+        lastVerifiedAt: 3,
+        actsAs: { kind: 'shared-key', label: 'a key someone pasted', providerIdentityId: 'sam' },
+        providerIdentityId: 'sam',
+      });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment and close',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'linear',
+        registeredAt: 3,
+        createdAt: 3,
+      });
+    });
+
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toEqual({ ok: true, connected: true });
+
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.verdict).toBe('connected');
+    expect(surface.actsAs).toMatchObject({ kind: 'shared-app' });
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill).toMatchObject({
+      recheckDueAt: expect.any(Number),
+      recheckReason: 'its connection to linear now acts as another identity',
+    });
+  });
+
+  it('revokes at Linear the shared token issued while the connection was being revoked, which Day0 keeps nowhere', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    const issued: string[] = [];
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({
+      now: () => clock,
+      fetch: async (url, init) => {
+        const answer = await linear.fetch(url, init);
+        if (url.href === 'https://api.linear.app/oauth/token') {
+          const body = (await answer.clone().json()) as { access_token?: string };
+          if (body.access_token !== undefined) issued.push(body.access_token);
+          // An administrator revokes the connection while Linear issues the token.
+          await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+            organisationConnectionId: connectionId,
+            reason: 'IT is moving workspaces',
+          });
+        }
+        return answer;
+      },
+    });
+
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: false });
+
+    expect(issued).toHaveLength(1);
+    expect(linear.live(issued[0]!)).toBe(false);
+  });
+
   it("writes through the shared card carry the employee's trailer", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });
@@ -599,7 +676,7 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
     clock += DAY + 60_000;
 
     await expect(throughTimers(rungBearer(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -845,7 +922,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     clock += DAY + 60_000;
 
     await expect(throughTimers(bearerOf(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -879,6 +956,71 @@ describe("per-employee mode: the employee's own app", (): void => {
           job.name === 'surfaceActions:probeInternal' && job.scheduledTime === access.expiresAt,
       ),
     ).toBe(true);
+  });
+
+  it("checks the card at once when a scheduled refresh is refused, so a revoke in Linear's settings ends it now, not at the token's expiry (R41V-9)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { internal } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface, credentials } = await read(harness, surfaceIds[0]!);
+    const access = credentials.find((row) => row._id === surface.credentialId)!;
+    // A Linear administrator's "Revoke access" ends both tokens of the pair at once.
+    linear.revokeAppTokens(LEO_CLIENT);
+    const refusedAt = clock;
+
+    await throughTimers(
+      harness.action(internal.linearIdentityActions.refreshScheduled, {
+        credentialId: access._id,
+        generation: 0,
+      }),
+    );
+
+    const after = await read(harness, surfaceIds[0]!);
+    const failed = after.events.at(-1);
+    expect(failed?.type).toBe('surface.install-failed');
+    expect((failed?.payload as { reason: string }).reason).toBe(
+      'Linear refused to renew the token: Linear refused the token or code it was shown: Refresh ' +
+        'token revoked. Day0 is unauthorised in Linear until a Linear administrator installs the ' +
+        'app again from the card.',
+    );
+    const probes = after.scheduled.filter((job) => job.name === 'surfaceActions:probeInternal');
+    expect(probes.some((job) => job.scheduledTime <= refusedAt)).toBe(true);
+    // The probe that ends the card meets Linear's 401 and asks once for a new token: refused, in
+    // the install-again words, as an authority withdrawn, never an unreadable answer.
+    await expect(
+      throughTimers(
+        harness.action(internal.linearIdentityActions.renewAfterRefusal, {
+          credentialId: access._id,
+          generation: 0,
+        }),
+      ),
+    ).rejects.toThrow(/Refresh token revoked\..*installs the app again from the card\./);
+  });
+
+  it('leaves the skills alone when a connected card installs the same app again (no move, R41V-7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, { verdict: 'connected', credentialLanded: true });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment and close',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'linear',
+        registeredAt: 3,
+        createdAt: 3,
+      });
+    });
+
+    await expect(installLeo(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: true });
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.recheckReason).toBeUndefined();
   });
 
   it('records a declined installation on the card and keeps no token', async (): Promise<void> => {

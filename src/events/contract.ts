@@ -948,6 +948,11 @@ export interface OrganisationRevokedAtSourcePayload {
   readonly attempt: number;
   /** The vendor's words for a failure. */
   readonly reason?: string;
+  /**
+   * The organisation's own shared app-actor token, revoked at the vendor with its connection's
+   * revoke (R41V-1), not an employee's access.
+   */
+  readonly shared?: true;
 }
 
 /**
@@ -972,15 +977,22 @@ export interface OrganisationConfigurationUsedPayload {
   readonly method: SlackConfigurationMethod;
   /**
    * `done`; `failed` (Slack refused, or did not answer); `superseded` (a rotation that lost to a
-   * concurrent one: Slack issued a pair Day0 did not keep, and the winner's is used).
+   * concurrent one: Slack issued a pair Day0 did not keep, and the winner's is used);
+   * `already-revoked` (`auth.revoke` met a token Slack had already ended, as a rotation or IT's
+   * deletion of its row ends it, R41V-10).
    */
-  readonly outcome: 'done' | 'failed' | 'superseded';
+  readonly outcome: 'done' | 'failed' | 'superseded' | 'already-revoked';
   /** Slack's words for a failure, or why a rotation was superseded. */
   readonly reason?: string;
   /** The app `apps.manifest.create` made. */
   readonly appId?: string;
   /** When the configuration token a rotation issued lapses. */
   readonly expiresAt?: number;
+  /**
+   * `auth.revoke` of a token Slack issued to a rotation that finished after its connection was
+   * revoked, which Day0 kept nowhere (R41V-10).
+   */
+  readonly unkept?: true;
 }
 
 /**

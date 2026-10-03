@@ -263,6 +263,13 @@ function grantedScopes(value: unknown): readonly string[] {
   return listed.map((scope) => scope.trim()).filter((scope) => scope !== '');
 }
 
+/**
+ * Linear's words for a token whose grant was revoked, which it sends without `invalid_grant`
+ * ("Refresh token revoked" after an administrator's "Revoke access", the real-vendor walk, 3
+ * October 2026, R41V-9).
+ */
+const GRANT_REVOKED = /\btoken\b.*\brevoked\b/i;
+
 /** The refusal Linear's OAuth error answer names. */
 function refusalOf(status: number, error: string | undefined, description: string | undefined) {
   if (status >= 500 || status === 429) return 'unavailable' as const;
@@ -275,6 +282,9 @@ function refusalOf(status: number, error: string | undefined, description: strin
   if (error === 'invalid_client' || error === 'unauthorized_client')
     return 'client-refused' as const;
   if (error === 'invalid_grant') return 'token-refused' as const;
+  if ([error, description].some((words) => words !== undefined && GRANT_REVOKED.test(words))) {
+    return 'token-refused' as const;
+  }
   if (status === 401) return 'unauthorised' as const;
   return 'malformed' as const;
 }

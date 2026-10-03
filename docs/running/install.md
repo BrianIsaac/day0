@@ -133,7 +133,9 @@ the customer's service manager.
 `./setup.sh access` writes `~/day0-install/<project>/install-record-<date>.md`
 (`--record <dir>` elsewhere): what was registered and where, the redirect URIs,
 each connection's mode and scopes, the administrators, and when each secret
-expires. It holds no secret. Hand it to the customer's IT.
+expires. It holds no secret. Hand it to the customer's IT. A later run the same
+day adds its own section below the earlier ones, so a day's record names every
+connection landed that day.
 
 ## Each half alone
 
@@ -141,7 +143,7 @@ expires. It holds no secret. Hand it to the customer's IT.
 |---|---|
 | `./setup.sh sign-in --provider entra` | the company sign-in only, ending on `pnpm check:setup` |
 | `./setup.sh access` | the organisation's systems only, ending on `pnpm check:access` |
-| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form) |
+| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form; `linear --employee <name>` an employee's own app's) |
 | `./setup.sh access --dry-run` | lists the systems and what would be landed; writes nothing |
 | `./setup.sh access --correct <system>` | records the redirect Day0 returns to and the kit's scopes on a connection, after IT fixed them at the vendor; no secret changes and no card ends |
 | `pnpm check:setup` | every setting, the sign-in block and the access block, without calling a vendor |

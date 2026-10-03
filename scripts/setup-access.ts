@@ -16,7 +16,15 @@
  * Everything is asked and checked before anything is written: a missing answer stops the verb
  * with nothing changed.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { ADMINISTRATORS_VAR, parseAdministrators } from '../src/lib/administrators';
 import {
@@ -47,6 +55,8 @@ import {
   defaultInstallRecordDirectory,
   installRecordMarkdown,
   installRecordName,
+  installRecordRunMarkdown,
+  type InstallRecord,
   type RecordedConnection,
   type RecordedSignIn,
   type RecordedSkip,
@@ -73,6 +83,11 @@ export interface AccessFlags {
   readonly record?: string;
   /** Print one system's manifest and stop. */
   readonly printManifest?: string;
+  /**
+   * With `printManifest` for Linear, the employee whose own app's form to print (per-employee mode):
+   * its name, `<employee> (Day0)`, and no client credentials (R41V-R5).
+   */
+  readonly employee?: string;
   /**
    * Correct the redirect and the scopes one system's connection records to what Day0 returns to
    * and the kit's list, and stop (the wave 11 review's M12 e): a kit system's key or an MCP
@@ -384,7 +399,7 @@ function originOf(values: Readonly<Record<string, string>>): string {
   }
   if (url.protocol !== 'https:' && !isLoopback(url.origin)) {
     throw new AccessRefused(
-      `${PUBLIC_URL_VAR} must be https: every vendor refuses a plain-http redirect.`,
+      `${PUBLIC_URL_VAR} must be https: Day0 has every vendor send its codes and tokens back to an https address only.`,
     );
   }
   return url.origin;
@@ -393,20 +408,36 @@ function originOf(values: Readonly<Record<string, string>>): string {
 /** Print one system's manifest: the Slack template the issuer builds from, or Linear's app and its link. */
 function printManifest(
   system: string,
+  employee: string | undefined,
   values: Readonly<Record<string, string>>,
   io: AccessIo,
 ): number {
   if (system === 'slack') {
+    if (employee !== undefined) {
+      io.log(
+        "Day0 creates each employee's Slack app itself through the organisation's connection; " +
+          '--print-manifest slack alone prints the template it fills in.',
+      );
+      return 1;
+    }
     io.log(slackKitManifestTemplate());
     return 0;
   }
   if (system === 'linear') {
+    if (employee !== undefined && employee.trim() === '') {
+      io.log("--employee needs the employee's name, as the card shows it.");
+      return 1;
+    }
     try {
-      const manifest = linearKitManifest({
-        appName: 'Day0',
-        publicUrl: values[PUBLIC_URL_VAR] ?? '',
-        mode: 'shared',
-      });
+      const manifest = linearKitManifest(
+        employee === undefined
+          ? { appName: 'Day0', publicUrl: values[PUBLIC_URL_VAR] ?? '', mode: 'shared' }
+          : {
+              appName: `${employee.trim()} (Day0)`,
+              publicUrl: values[PUBLIC_URL_VAR] ?? '',
+              mode: 'per-employee',
+            },
+      );
       io.log(JSON.stringify(manifest, null, 2));
       io.log(
         `\nCreate it in Linear from this link (an administrator, signed in):\n${linearManifestUrl(manifest)}`,
@@ -692,8 +723,12 @@ const CHECK_ACCESS = ['pnpm', 'run', 'check:access'] as const;
 export async function runAccess(options: AccessOptions, io: AccessIo): Promise<number> {
   const envPath = join(io.cwd, ENV_FILE);
   const values = readEnvValues(envPath);
+  if (options.access.employee !== undefined && options.access.printManifest === undefined) {
+    io.log('--employee names whose own app --print-manifest linear prints; it takes nothing else.');
+    return 1;
+  }
   if (options.access.printManifest !== undefined) {
-    return printManifest(options.access.printManifest, values, io);
+    return printManifest(options.access.printManifest, options.access.employee, values, io);
   }
   if (options.access.correct !== undefined) {
     return await correctConnection(options.access.correct, values, io);
@@ -852,7 +887,7 @@ function writeRecord(
       : defaultInstallRecordDirectory(home, project);
   const at = new Date(io.now?.() ?? Date.now());
   const signIn = recordedSignIn(values, origin);
-  const markdown = installRecordMarkdown({
+  const record: InstallRecord = {
     project,
     recordedAt: at,
     publicUrl: origin,
@@ -863,11 +898,16 @@ function writeRecord(
     ...(checkStatus === undefined
       ? {}
       : { check: { command: CHECK_ACCESS.join(' '), status: checkStatus } }),
-  });
+  };
   try {
     mkdirSync(directory, { recursive: true });
     const path = join(directory, installRecordName(at));
-    writeFileSync(path, markdown, { encoding: 'utf8', mode: 0o600 });
+    // A later run the same day is added to the day's record, never in place of it (R41V-12).
+    if (existsSync(path)) {
+      appendFileSync(path, `\n${installRecordRunMarkdown(record)}`, { encoding: 'utf8' });
+    } else {
+      writeFileSync(path, installRecordMarkdown(record), { encoding: 'utf8', mode: 0o600 });
+    }
     io.log(`\nThe install record for the customer's IT: ${path}`);
   } catch (err) {
     io.log(`The install record could not be written to ${directory}: ${errorMessage(err)}`);

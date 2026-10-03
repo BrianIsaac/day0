@@ -4,6 +4,7 @@ import {
   linearTokenRevocation,
   readLinearAnswer,
 } from '../../../../src/surfaces/revokers/linear';
+import { LINEAR_REVOKE_ALREADY_REVOKED } from '../../../fixtures/real-vendor-walk-2026-10-03';
 
 const ACCESS_TOKEN = 'lin_oauth_0123456789';
 
@@ -34,5 +35,10 @@ describe('the Linear revoker (L3: POST https://api.linear.app/oauth/revoke)', ()
       kind: 'refused',
       words: 'Linear refused: invalid_request',
     });
+  });
+
+  it('reads "Token has already been revoked." as already gone, since a revoke ends the whole grant (R41V-8)', (): void => {
+    const { status, body } = LINEAR_REVOKE_ALREADY_REVOKED;
+    expect(readLinearAnswer(status, body)).toEqual({ kind: 'gone' });
   });
 });

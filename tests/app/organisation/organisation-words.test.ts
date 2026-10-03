@@ -86,9 +86,20 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
   });
 
   it('says before a revoke that every card on the connection ends with the reason, and no card on another system', (): void => {
+    expect(
+      revokeLines(view({ kind: 'oauth-app', system: 'linear', displayName: 'Linear' })),
+    ).toEqual([
+      "Every employee's Linear card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at Linear.",
+      'No card on any other system changes. Each manager sees the reason on the card.',
+      'IT can connect it again with ./setup.sh access.',
+    ]);
+  });
+
+  it("says before a Slack revoke that Slack cannot end the configuration token's refresh token, and what IT deletes (R41V-10)", (): void => {
     expect(revokeLines(view())).toEqual([
       "Every employee's Slack card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at Slack.",
       'No card on any other system changes. Each manager sees the reason on the card.',
+      'Day0 revokes the configuration token at Slack, but Slack offers no call that ends its refresh token: once this is revoked, IT deletes the token\'s row under "Your App Configuration Tokens" on api.slack.com, signed in as the account that generated it.',
       'IT can connect it again with ./setup.sh access.',
     ]);
   });

@@ -307,6 +307,9 @@ async function sharedToken(
       bearer: await valueOf(ctx, landed.credentialId),
     };
   }
+  // The connection was revoked while Linear issued the token: Day0 keeps it nowhere, so it is
+  // revoked at Linear now rather than left live for 30 days (R41V-1).
+  await revokeUnkept(deps, issued);
   throw new LinearIssuerRefusal(
     'connection-ended',
     "The organisation's Linear connection was revoked while its token was requested.",
@@ -1067,7 +1070,8 @@ function unreachable(error: unknown): boolean {
  * store's scheduled refresh (`runScheduledRefresh`) through {@link linearTokenRefresher}. Does
  * nothing when another refresh has moved the pair on. Linear unreachable is tried again with a
  * growing wait; a refusal, or the retries running out, goes on the record of every card holding the
- * token, and each card ends with the reason when the token stops working. Internal; scheduled by
+ * token, and each card is checked at once and ends with the reason when Linear refuses its access
+ * token (at once after a revoke in Linear's settings, R41V-9). Internal; scheduled by
  * `linearIdentity` at each landing and rotation.
  */
 export const refreshScheduled = internalAction({

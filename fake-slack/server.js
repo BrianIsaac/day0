@@ -17,6 +17,11 @@ const configuration = {
   rotations: 0,
 };
 
+// As real Slack answered the real-vendor walk (3 October 2026, R41V-10): a rotation revokes the
+// configuration token it replaces, auth.revoke of a configuration token ends that token alone
+// (its refresh token still rotates), and a token already revoked answers token_revoked.
+const revokedConfigurationTokens = new Set();
+
 /**
  * One employee's own app, as apps.manifest.create made it. The first is the app
  * the fake has always answered for: its bot token works before any install, as
@@ -149,8 +154,15 @@ function jsonArguments(request, body) {
   }
 }
 
-function authorisedConfiguration(request) {
-  return request.headers.authorization === `Bearer ${configuration.token}`;
+function bearerOf(request) {
+  return String(request.headers.authorization || '').replace(/^Bearer /, '');
+}
+
+/** Why the request's bearer is not the live configuration token, or nothing when it is. */
+function configurationRefusal(request) {
+  const bearer = bearerOf(request);
+  if (revokedConfigurationTokens.has(bearer)) return 'token_revoked';
+  return bearer === configuration.token ? undefined : 'invalid_auth';
 }
 
 const server = createServer(async (request, response) => {
@@ -165,6 +177,7 @@ const server = createServer(async (request, response) => {
       apps: apps.filter((app) => app.created && !app.deleted).map((app) => app.appId),
       revokedTokens: revokedTokens.size,
       configurationRotations: configuration.rotations,
+      configurationRevoked: revokedConfigurationTokens.size,
       // Channel ids each live app's bot is in, by app id.
       memberships: Object.fromEntries(
         apps
@@ -210,6 +223,7 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { ok: false, error: 'invalid_refresh_token' });
     }
     configuration.rotations += 1;
+    revokedConfigurationTokens.add(configuration.token);
     configuration.token = `xoxe-day0-fake-configuration-token-${configuration.rotations}`;
     configuration.refreshToken = `xoxe-day0-fake-configuration-refresh-${configuration.rotations}`;
     const iat = Math.floor(Date.now() / 1000);
@@ -224,9 +238,8 @@ const server = createServer(async (request, response) => {
     });
   }
   if (method === 'apps.manifest.create') {
-    if (!authorisedConfiguration(request)) {
-      return json(response, 200, { ok: false, error: 'invalid_auth' });
-    }
+    const refused = configurationRefusal(request);
+    if (refused) return json(response, 200, { ok: false, error: refused });
     const manifest = new URLSearchParams(body).get('manifest');
     if (!manifest) return json(response, 200, { ok: false, error: 'invalid_manifest' });
     // The first create is the app the fake has always answered for; each later one is a new app.
@@ -253,9 +266,8 @@ const server = createServer(async (request, response) => {
   }
   if (method === 'apps.manifest.delete') {
     // S4: a manager app's configuration token deletes only the apps it created.
-    if (!authorisedConfiguration(request)) {
-      return json(response, 200, { ok: false, error: 'invalid_auth' });
-    }
+    const refused = configurationRefusal(request);
+    if (refused) return json(response, 200, { ok: false, error: refused });
     const appId = readArguments(url, request, body).get('app_id');
     const app = apps.find((candidate) => candidate.appId === appId);
     if (!app || !app.created || app.deleted) {
@@ -276,6 +288,14 @@ const server = createServer(async (request, response) => {
     revokeBot(app);
     return json(response, 200, { ok: true });
   }
+  if (method === 'auth.revoke' && revokedConfigurationTokens.has(bearerOf(request))) {
+    return json(response, 200, { ok: false, error: 'token_revoked' });
+  }
+  if (method === 'auth.revoke' && bearerOf(request) === configuration.token) {
+    // The token alone: its refresh token still rotates.
+    revokedConfigurationTokens.add(configuration.token);
+    return json(response, 200, { ok: true, revoked: true });
+  }
   if (method === 'auth.revoke' && botOf(request)) {
     // S1: the bot user is deactivated and leaves its channels; the app stays.
     revokeBot(botOf(request));
@@ -284,9 +304,8 @@ const server = createServer(async (request, response) => {
   // Validates a manifest with the configuration token (`check:access`, 11-AI): the token must be
   // the configuration token and the manifest JSON that names a redirect and bot scopes.
   if (method === 'apps.manifest.validate') {
-    if (!authorisedConfiguration(request)) {
-      return json(response, 200, { ok: false, error: 'invalid_auth' });
-    }
+    const refused = configurationRefusal(request);
+    if (refused) return json(response, 200, { ok: false, error: refused });
     let manifest;
     try {
       manifest = JSON.parse(new URLSearchParams(body).get('manifest') || '');

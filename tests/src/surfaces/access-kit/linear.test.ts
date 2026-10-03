@@ -55,6 +55,14 @@ describe('the Linear recipe', (): void => {
     ).toThrow(/https/);
   });
 
+  it('refuses plain http as Day0’s own rule, never as a rule Linear keeps (Linear’s form accepted an http callback, R41V-2)', (): void => {
+    expect(() =>
+      linearKitManifest({ appName: 'Day0', publicUrl: 'http://day0.acme.test', mode: 'shared' }),
+    ).toThrow(
+      'DAY0_PUBLIC_URL must be https: Day0 has Linear send its codes and tokens back to an https address only.',
+    );
+  });
+
   it('pre-fills Linear’s create form with the manifest itself', (): void => {
     const manifest = linearKitManifest({ appName: 'Day0', publicUrl: PUBLIC_URL, mode: 'shared' });
     const url = new URL(linearManifestUrl(manifest));
@@ -100,5 +108,14 @@ describe('the Linear recipe', (): void => {
     expect(perEmployee.asks).toEqual([]);
     expect(LINEAR_PER_EMPLOYEE_SCOPES).toContain('app:assignable');
     expect(LINEAR_CLIENT_CREDENTIALS_SCOPES).not.toContain('admin');
+  });
+
+  it('lands the shared app with app:assignable, without which Linear refuses a ticket delegated to it (decision 5)', (): void => {
+    // Linear, 3 October, a manager delegating a ticket to the shared app user under `read,write`:
+    // "One or more app users lack the required capability." With `app:assignable` held: success.
+    expect(LINEAR_CLIENT_CREDENTIALS_SCOPES).toEqual(['read', 'write', 'app:assignable']);
+    const [shared] = LINEAR_RECIPE.modes;
+    expect(shared.clientCredentialsScopes).toContain('app:assignable');
+    expect(shared.missingScopeWords?.['app:assignable']).toContain('delegated');
   });
 });

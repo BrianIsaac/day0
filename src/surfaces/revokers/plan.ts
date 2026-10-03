@@ -138,7 +138,8 @@ function slackPlan(
  *
  * A handover's cut revokes as a Disconnect does (the wave 11 review's M1, decision 2 (a)): the
  * card it keeps for re-approval never reaches here (A25). A client-credentials app-actor token is
- * shared by other employees and never revoked (L2); a per-employee token is revoked whoever holds
+ * shared by other employees and never revoked by one employee's end (L2): its connection's own
+ * revoke revokes it (`convex/organisationSecrets.ts`, R41V-1); a per-employee token is revoked whoever holds
  * its row ({@link sharedByOrganisation}). Slack's two calls follow {@link endRemovesApp}; Linear
  * revokes each token of the pair by its hint (L3); an MCP server is
  * revoked at the endpoint it advertises (RFC 7009); a system with no revoker, or an app Linear

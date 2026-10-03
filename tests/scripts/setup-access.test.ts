@@ -163,8 +163,8 @@ describe('setup: the access verb', (): void => {
         displayName: 'Linear',
         kind: 'oauth-app',
         mode: 'shared',
-        scopes: ['read', 'write'],
-        clientCredentialsScopes: ['read', 'write'],
+        scopes: ['read', 'write', 'app:assignable'],
+        clientCredentialsScopes: ['read', 'write', 'app:assignable'],
         clientId: 'lin-client',
         redirectUrl: 'https://day0.acme.test/api/oauth/linear',
         secret: SECRETS.LINEAR_CLIENT_SECRET,
@@ -244,6 +244,33 @@ describe('setup: the access verb', (): void => {
     expect(record).toContain('12 hours');
     expect(record).toContain('Linear, shared');
     expect(record).toContain('30 days');
+  });
+
+  it('adds a second run on the same day to the install record, never replacing the first (R41V-12)', async (): Promise<void> => {
+    const bed = accessBed();
+    // The walk: Linear per employee, then Slack later the same day.
+    await bed.run([
+      'access',
+      '--administrators',
+      'ines@acme.test',
+      '--systems',
+      'linear',
+      '--connect-mode',
+      'linear=per-employee',
+      '--record',
+      bed.record,
+    ]);
+    await bed.run([...ACCESS, '--systems', 'slack', '--record', bed.record]);
+
+    const files = readdirSync(bed.record);
+    expect(files).toHaveLength(1);
+    const record = readFileSync(join(bed.record, files[0]!), 'utf8');
+    expect(record).toContain('Linear, per employee');
+    expect(record).toContain('Slack, per employee');
+    expect(record.indexOf('Linear, per employee')).toBeLessThan(
+      record.indexOf('Slack, per employee'),
+    );
+    expect(record.match(/^# Day0 install record/gm)).toHaveLength(1);
   });
 
   it('writes the record under HOME by default, and nowhere when HOME is unset and no --record is given', async (): Promise<void> => {
@@ -385,6 +412,39 @@ describe('setup: the access verb', (): void => {
     const printed = bed.bed.output.join('\n');
     expect(printed).toContain('"client_credentials"');
     expect(printed).toContain('https://linear.app/settings/api/applications/new?manifest=');
+  });
+
+  it('prints an employee’s own Linear app’s form, pre-filled with its name and no client credentials (R41V-R5)', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'linear', '--employee', 'Leo'])).toBe(0);
+    const printed = bed.bed.output.join('\n');
+    const link = /https:\/\/linear\.app\/settings\/api\/applications\/new\?manifest=\S+/.exec(
+      printed,
+    )?.[0];
+    expect(link).toBeDefined();
+    const manifest = JSON.parse(new URL(link ?? '').searchParams.get('manifest') ?? '');
+    expect(manifest.oauth).toMatchObject({
+      client_name: 'Leo (Day0)',
+      grant_types: ['authorization_code'],
+    });
+    expect(printed).not.toContain('"client_credentials"');
+  });
+
+  it('refuses --employee without --print-manifest linear, and an empty name, landing nothing', async (): Promise<void> => {
+    const alone = accessBed();
+    expect(await alone.run([...ACCESS, '--employee', 'Leo'])).toBe(1);
+    expect(alone.bed.output.join('\n')).toContain('--employee names whose own app');
+    expect(alone.deployment.calls.filter((call) => call.kind === 'action')).toEqual([]);
+
+    const empty = accessBed();
+    expect(await empty.run(['access', '--print-manifest', 'linear', '--employee', ' '])).toBe(1);
+    expect(empty.bed.output.join('\n')).toContain("--employee needs the employee's name");
+  });
+
+  it('refuses an employee’s name for Slack, whose employees’ apps Day0 creates itself', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'slack', '--employee', 'Leo'])).toBe(1);
+    expect(bed.bed.output.join('\n')).toContain("Day0 creates each employee's Slack app itself");
   });
 
   it("corrects a connection's recorded redirect and scopes to what Day0 returns to and the kit's list, revoking nothing (M12 e)", async (): Promise<void> => {

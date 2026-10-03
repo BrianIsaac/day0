@@ -13,6 +13,7 @@ import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { intakeFailureWords } from '../src/surfaces/intake-failure-words';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../src/surfaces/mcp-address';
 import {
@@ -2060,10 +2061,17 @@ export async function runIntakeSweep(
         if (unseeded.length > 0) skipped += 1;
         else polled += 1;
       } catch (error) {
+        const own = safeIntakeError(error, credential);
+        // The card says what the failure means; the provider's own line stays in the log.
+        log.warn('intake poll failed', { surfaceId: surface._id, reason: own });
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          skipReason: `intake failed: ${safeIntakeError(error, credential)}`,
+          skipReason: `intake failed: ${intakeFailureWords({
+            system: surface.displayName,
+            error,
+            otherwise: () => own,
+          })}`,
         });
         skipped += 1;
       } finally {

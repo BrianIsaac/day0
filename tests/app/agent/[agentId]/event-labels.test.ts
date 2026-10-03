@@ -275,6 +275,18 @@ describe('the live feed labels', (): void => {
     expect(
       eventLabel({
         type: 'organisation.configuration-used',
+        payload: { ...used, method: 'auth.revoke', outcome: 'done' },
+      }),
+    ).toBe('Slack configuration token revoked at Slack');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'auth.revoke', outcome: 'already-revoked' },
+      }),
+    ).toBe('Slack configuration token had already ended at Slack');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
         payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
       }),
     ).toBe("an employee's Slack app A123 created with the configuration token");
@@ -307,6 +319,35 @@ describe('the live feed labels', (): void => {
         payload: { surfaceId: 's1', joined: [], needsPerson: [] },
       }),
     ).toBe('no channel to re-join');
+  });
+
+  it("labels the shared token as revoked with the organisation's revoke of its connection, and its own ledger line as the organisation's token (R41V-1)", (): void => {
+    const ended = { credentialId: 'k1', system: 'linear', outcome: 'shared' } as const;
+    expect(
+      eventLabel({
+        type: 'credential.revoked-at-source',
+        payload: { ...ended, surfaceId: 's1', end: 'organisation-revoked' },
+      }),
+    ).toBe("shared app token: revoked at Linear with the organisation's connection");
+    expect(
+      eventLabel({
+        type: 'credential.revoked-at-source',
+        payload: { ...ended, surfaceId: 's1', end: 'retire' },
+      }),
+    ).toBe('shared app token: not revoked at Linear');
+    expect(
+      eventLabel({
+        type: 'organisation.revoked-at-source',
+        payload: {
+          credentialId: 'k2',
+          system: 'linear',
+          end: 'organisation-revoked',
+          outcome: 'token-revoked',
+          attempt: 1,
+          shared: true,
+        },
+      }),
+    ).toBe('Linear shared app token revoked at Linear');
   });
 
   it('says which credential the documentation dropped and how many cards need one again', (): void => {

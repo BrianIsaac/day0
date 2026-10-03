@@ -11,7 +11,13 @@ import { ORGANISATION_SECRET_HOLD_MS } from '../../convex/organisationSecrets';
 import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
 import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
-import { SLACK_AUTH_REVOKE_OK } from '../fixtures/revokers';
+import { SLACK_AUTH_REVOKE_OK, SLACK_TOKEN_REVOKED } from '../fixtures/revokers';
+import {
+  LINEAR_REVOKE_ALREADY_REVOKED,
+  LINEAR_REVOKE_SUCCESS,
+} from '../fixtures/real-vendor-walk-2026-10-03';
+import { sealForOwner } from '../../src/lib/credential-crypto';
+import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 
 /*
  * The wave 11 review's M6: a revoked or rotated organisation secret kept its ciphertext for ever
@@ -31,6 +37,7 @@ const CONFIGURATION_TOKEN = 'xoxe.xoxp-1234567890-abcdefghij';
 const REFRESH_TOKEN = 'xoxe-1234567890-abcdefghij';
 const CLIENT_SECRET = 'lin_oauth_secret_0123456789';
 const MCP_SECRET = 'mcp-client-secret-0123';
+const SHARED_TOKEN = 'lin_oauth_shared_1';
 
 const SLACK: Landing = {
   system: 'slack',
@@ -99,6 +106,30 @@ async function runDueNow(harness: Harness): Promise<void> {
   await harness.finishInProgressScheduledFunctions();
 }
 
+/**
+ * The shared app-actor token the connection holds once a card has connected through it, as
+ * `linearIdentity.landSharedToken` stores it: the organisation's, under the reserved key.
+ */
+async function sharedTokenOf(
+  harness: Harness,
+  connectionId: Id<'organisationConnections'>,
+): Promise<Id<'credentials'>> {
+  const sealed = sealForOwner(
+    SHARED_TOKEN,
+    { current: process.env.DAY0_CREDENTIAL_KEY ?? '' },
+    ORGANISATION_OWNER_KEY,
+  );
+  const landed = await harness.mutation(internal.linearIdentity.landSharedToken, {
+    organisationConnectionId: connectionId,
+    sealed: { ciphertext: sealed.ciphertext, iv: sealed.iv, keyId: sealed.keyId ?? '' },
+    secretCredentialId: (await harness.run(async (ctx) => await ctx.db.get(connectionId)))!
+      .secretCredentialId!,
+    now: Date.now(),
+  });
+  if (!landed.ok) throw new Error('the shared token did not land');
+  return landed.credentialId;
+}
+
 /** Revoke a connection as Ines, with a reason. */
 async function revoke(
   harness: Harness,
@@ -114,6 +145,7 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
   it("revokes a revoked connection's Slack configuration token at Slack and deletes both values of the pair", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    network.answer('/api/auth.test', { status: 200, body: SLACK_TOKEN_REVOKED });
     const connectionId = await harness
       .withIdentity(INES)
       .action(api.organisationConnections.land, SLACK);
@@ -121,9 +153,15 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     await revoke(harness, connectionId);
     await runDueNow(harness);
 
+    // The revoke, then Slack asked whether the token still works (R41V-10).
     expect(network.calls).toEqual([
       {
         url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: {},
+      },
+      {
+        url: 'https://slack.com/api/auth.test',
         authorization: `Bearer ${CONFIGURATION_TOKEN}`,
         form: {},
       },
@@ -146,6 +184,7 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
   it('revokes the old configuration token at Slack when IT rotates the pair, and keeps the new one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    network.answer('/api/auth.test', { status: 200, body: SLACK_TOKEN_REVOKED });
     const ines = harness.withIdentity(INES);
     const connectionId = await ines.action(api.organisationConnections.land, SLACK);
     const before = (await rows(harness)).credentials.map((row) => row._id);
@@ -160,6 +199,11 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     expect(network.calls).toEqual([
       {
         url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: {},
+      },
+      {
+        url: 'https://slack.com/api/auth.test',
         authorization: `Bearer ${CONFIGURATION_TOKEN}`,
         form: {},
       },
@@ -190,6 +234,71 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     expect(credentials).toHaveLength(1);
     expect(credentials[0]?.revokedAt).toEqual(expect.any(Number));
     expect(credentials[0]?.ciphertext).toBeUndefined();
+  });
+
+  it.each([
+    ['revoked', LINEAR_REVOKE_SUCCESS, 'token-revoked'],
+    ['already revoked', LINEAR_REVOKE_ALREADY_REVOKED, 'already-gone'],
+  ] as const)(
+    "revokes a revoked shared Linear connection's app-actor token at Linear, with no client authentication, when Linear answers %s (R41V-1)",
+    async (_answered, answer, outcome): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      // Linear, 3 October: POST /oauth/revoke {token} answered {"success":true}, then 401.
+      network.answer('/oauth/revoke', answer);
+      const connectionId = await harness
+        .withIdentity(INES)
+        .action(api.organisationConnections.land, LINEAR);
+      const shared = await sharedTokenOf(harness, connectionId);
+
+      await revoke(harness, connectionId);
+      await runDueNow(harness);
+
+      expect(network.calls).toEqual([
+        {
+          url: 'https://api.linear.app/oauth/revoke',
+          form: { token: SHARED_TOKEN, token_type_hint: 'access_token' },
+        },
+      ]);
+      const { credentials, ledger } = await rows(harness);
+      for (const row of credentials) {
+        expect(row.revokedAt).toEqual(expect.any(Number));
+        expect(row.ciphertext).toBeUndefined();
+      }
+      expect(
+        ledger.find((line) => line.type === 'organisation.revoked-at-source')?.payload,
+      ).toEqual({
+        credentialId: shared,
+        system: 'linear',
+        end: 'organisation-revoked',
+        outcome,
+        attempt: 1,
+        shared: true,
+      });
+      expect(JSON.stringify(ledger)).not.toContain(SHARED_TOKEN);
+    },
+  );
+
+  it('asks Linear three times an hour apart for the shared token while it fails, then deletes it and says so', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    network.answer('/oauth/revoke', { status: 503, body: '' });
+    const connectionId = await harness
+      .withIdentity(INES)
+      .action(api.organisationConnections.land, LINEAR);
+    await sharedTokenOf(harness, connectionId);
+
+    await revoke(harness, connectionId);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await runDueNow(harness);
+      vi.advanceTimersByTime(60 * 60 * 1_000);
+    }
+    await runDueNow(harness);
+
+    expect(network.calls).toHaveLength(3);
+    const { credentials, ledger } = await rows(harness);
+    for (const row of credentials) expect(row.ciphertext).toBeUndefined();
+    expect(
+      ledger.find((line) => line.type === 'organisation.revoked-at-source')?.payload,
+    ).toMatchObject({ outcome: 'failed', attempt: 3, reason: 'Linear answered HTTP 503.' });
   });
 
   it("keeps a revoked MCP client's secret for the card revocations that need it, and deletes it after 24 hours", async (): Promise<void> => {
