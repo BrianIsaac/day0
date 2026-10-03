@@ -32,6 +32,7 @@ import {
 import { recipeForSystem, type RecipeMode } from '../src/surfaces/access-kit';
 import { slackKitManifest } from '../src/surfaces/access-kit/slack';
 import {
+  LINEAR_GRAPHQL_URL,
   LinearIssuerRefusal,
   readLinearViewer,
   requestAppActorToken,
@@ -44,7 +45,12 @@ import { SLACK_API_ENDPOINT } from '../src/surfaces/slack-endpoint';
 import type { CheckStatus } from './check-sign-in';
 import { adminTarget, deploymentAdmin } from './lib/convex-admin';
 import { readEnvValues } from './lib/env-file';
-import { firstLine } from './model-reach';
+import {
+  containerReachArguments,
+  firstLine,
+  readContainerDial,
+  type ModelDial,
+} from './model-reach';
 
 type Values = Readonly<Record<string, string>>;
 
@@ -56,6 +62,7 @@ export const ACCESS_CHECK_NAMES = [
   'scopes',
   'secret',
   'identity',
+  'reach',
 ] as const;
 
 /** One of {@link ACCESS_CHECK_NAMES}. */
@@ -97,6 +104,11 @@ export interface VendorProbes {
    * @throws Error saying why it does not open; never its value.
    */
   openSecret(credentialId: string): Promise<string>;
+  /**
+   * Ask one address from inside the backend container, with a GET and no secret: what the
+   * deployment's own way out to the vendor finds, where every other probe asks from this machine.
+   */
+  fromBackend(address: URL): Promise<ModelDial>;
 }
 
 /** How long one vendor call may take. */
@@ -603,6 +615,76 @@ async function liveChecks(
   }
 }
 
+/**
+ * The address the deployment calls a connection's vendor at, as the backend container reaches it:
+ * Slack's Web API (the fake a bed names on the Compose network, as the deployment does), Linear's
+ * API, or the MCP server IT connected. Undefined for a system the kit knows no address for.
+ */
+export function backendAddressOf(row: ConnectionRow, values: Values): URL | undefined {
+  if (row.kind === 'slack-configuration') {
+    const fake = (values.DAY0_TEST_SLACK_API_URL ?? '').trim();
+    return new URL('api.test', fake === '' ? SLACK_API_ENDPOINT : fake);
+  }
+  if (row.system === 'linear') return new URL(LINEAR_GRAPHQL_URL);
+  if (row.kind === 'mcp-client') {
+    const server = row.resource ?? row.issuer;
+    return server === undefined ? undefined : new URL(server);
+  }
+  return undefined;
+}
+
+/**
+ * Whether the backend container itself reaches the connection's vendor (the wave 11 review's
+ * section 11, item 4; AI9): every other check here asks from this machine, which says nothing of
+ * the deployment's own way out. Nothing is sent but a GET: any HTTP answer means it is reached.
+ */
+async function reachCheck(
+  row: ConnectionRow,
+  values: Values,
+  probes: VendorProbes,
+): Promise<AccessCheck> {
+  const address = backendAddressOf(row, values);
+  if (address === undefined) {
+    return check(
+      row.system,
+      'reach',
+      'warn',
+      `Not asked from the backend container: the kit knows no address for ${row.displayName}.`,
+    );
+  }
+  const dial = await probes.fromBackend(address);
+  switch (dial.reach) {
+    case 'reached':
+      return check(
+        row.system,
+        'reach',
+        'ok',
+        `The backend container reached ${address.href} (${dial.detail}).`,
+      );
+    case 'unreachable':
+      return check(
+        row.system,
+        'reach',
+        'gap',
+        `The backend container could not reach ${address.href}: ${dial.detail}. Every call the ` +
+          `deployment makes to ${row.displayName} starts there: open its way out (the proxy or ` +
+          'firewall in front of the backend), then run the check again.',
+      );
+    case 'unknown':
+      return check(
+        row.system,
+        'reach',
+        'warn',
+        `Not asked from the backend container: ${dial.detail}. Start it (\`./setup.sh resume\`) ` +
+          'and run the check again.',
+      );
+    default: {
+      const unhandled: never = dial.reach;
+      throw new Error(`unhandled dial ${String(unhandled)}`);
+    }
+  }
+}
+
 /** A later verdict on the same check replaces the earlier one (a granted scope after a registered one). */
 function merged(checks: readonly AccessCheck[]): AccessCheck[] {
   const out: AccessCheck[] = [];
@@ -629,7 +711,11 @@ export async function accessChecks(
   const checks: AccessCheck[] = [administratorsCheck(values)];
   for (const row of rows) {
     checks.push(
-      ...merged([...connectionChecks(row, values), ...(await liveChecks(row, values, probes))]),
+      ...merged([
+        ...connectionChecks(row, values),
+        ...(await liveChecks(row, values, probes)),
+        await reachCheck(row, values, probes),
+      ]),
     );
   }
   return checks;
@@ -787,6 +873,20 @@ function listConnections(values: Values): ConnectionRow[] {
   return parseConnectionRows(run.stdout ?? '');
 }
 
+/** Ask one address from the backend container of the project the env file names. */
+function dialFromBackend(project: string, envFile: string, address: URL): ModelDial {
+  const run = spawnSync(
+    'docker',
+    ['compose', '-p', project, '--env-file', envFile, ...containerReachArguments(address.href)],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  return readContainerDial({
+    status: run.status,
+    stdout: run.stdout ?? '',
+    stderr: run.stderr ?? (run.error ? errorMessage(run.error) : ''),
+  });
+}
+
 /** The parsed command line. */
 interface CheckArguments {
   readonly envFile: string;
@@ -846,6 +946,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     slackApiBase,
     openSecret: async (credentialId: string): Promise<string> =>
       await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
+    fromBackend: async (address: URL): Promise<ModelDial> =>
+      dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
   });
   console.log(`The organisation's connections, read from ${args.envFile}:`);
   if (rows.length === 0) {

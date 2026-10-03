@@ -467,7 +467,8 @@ The other half of the same install: the customer's IT connects each system the d
                                         # the target checks, sign-in, access, check:setup and check:sign-in,
                                         # stopping at the first that fails and saying which
 ./setup.sh access                       # the access half alone: administrators, then each system's recipe
-pnpm check:access                       # each connection: redirect, scopes, its secret opens, its vendor answers
+pnpm check:access                       # each connection: redirect, scopes, its secret opens, its vendor answers,
+                                        # and the backend container reaches the vendor
 ```
 
 `./setup.sh access` lists the systems the documentation names, shows each one's recipe ([Slack](docs/running/access-slack.md), [Linear](docs/running/access-linear.md), [an MCP server](docs/running/access-mcp.md)), records the mode chosen for it (per employee or shared), asks for what the recipe produced, secrets in a hidden prompt or from a file on stdin (`--secrets-stdin`) and never as a flag, and lands it sealed under the deployment's credential key. It then runs `pnpm check:access` and writes an install record for the customer's IT (`~/day0-install/<project>/`): what was registered, where, with which scopes, and when each secret expires, without any secret. A system the documentation names that has no recipe yet (GitHub, Atlassian, Notion, Microsoft 365, Google Workspace) keeps the pasted key on each employee's card.
@@ -1597,7 +1598,8 @@ pnpm check:sign-in                      # 与客户 IT 一起：一次测试登�
                                         # 目标检查、sign-in、access、check:setup 与 check:sign-in，
                                         # 在第一个失败的步骤处停止并说明是哪一步
 ./setup.sh access                       # 单独运行 access 这一半：先指定管理员，再逐个系统按配方连接
-pnpm check:access                       # 每个连接：重定向、scope、密钥能否打开、厂商是否应答
+pnpm check:access                       # 每个连接：重定向、scope、密钥能否打开、厂商是否应答，
+                                        # 以及后端容器能否连到厂商
 ```
 
 `./setup.sh access` 列出文档提到的系统，展示每个系统的配方（[Slack](docs/running/access-slack.md)、[Linear](docs/running/access-linear.md)、[MCP server](docs/running/access-mcp.md)），记录为它选择的模式（每名员工各自一个，或共享），询问配方产出的值：密钥在隐藏提示中输入或通过 stdin 从文件读取（`--secrets-stdin`），从不作为命令行参数；然后用部署的凭据密钥加密封装后落地。随后它运行 `pnpm check:access`，并为客户 IT 写一份安装记录（`~/day0-install/<project>/`）：注册了什么、在哪里、用哪些 scope、每个密钥何时过期，其中不含任何密钥。文档提到但尚无配方的系统（GitHub、Atlassian、Notion、Microsoft 365、Google Workspace）在每名员工的卡片上继续使用粘贴的密钥。

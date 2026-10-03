@@ -10,6 +10,7 @@ import {
   type ConnectionRow,
   type VendorProbes,
 } from '../../scripts/check-access';
+import type { ModelDial } from '../../scripts/model-reach';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -54,16 +55,24 @@ function vendors(
     readonly linearToken?: { status: number; body: unknown };
     readonly linearViewer?: unknown;
     readonly opened?: Readonly<Record<string, string | Error>>;
+    /** What the backend container's dial of an address finds; reached by default. */
+    readonly backend?: (url: URL) => ModelDial | undefined;
   } = {},
-): VendorProbes & { readonly calls: string[] } {
+): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
   const calls: string[] = [];
+  const fromTheBackend: string[] = [];
   const opened: Readonly<Record<string, string | Error>> = overrides.opened ?? {
     'cred-slack': CONFIGURATION_TOKEN,
     'cred-linear': LINEAR_SECRET,
   };
   return {
     calls,
+    fromTheBackend,
     slackApiBase: new URL('https://slack.com/api/'),
+    fromBackend: async (url: URL): Promise<ModelDial> => {
+      fromTheBackend.push(url.href);
+      return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
+    },
     openSecret: async (credentialId: string): Promise<string> => {
       const value = opened[credentialId];
       if (value instanceof Error) throw value;
@@ -126,11 +135,13 @@ describe('check:access', (): void => {
       'slack scopes',
       'slack secret',
       'slack identity',
+      'slack reach',
       'linear status',
       'linear redirect',
       'linear scopes',
       'linear secret',
       'linear identity',
+      'linear reach',
     ]);
     expect(only(checks, 'linear', 'identity').detail).toContain('Day0');
     // The check's own token is revoked again: it leaves nothing usable behind.
@@ -290,6 +301,7 @@ describe('check:access', (): void => {
     };
     const metadata = (scopes: readonly string[]): VendorProbes => ({
       slackApiBase: new URL('https://slack.com/api/'),
+      fromBackend: async (): Promise<ModelDial> => ({ reach: 'reached', detail: 'HTTP 401' }),
       openSecret: async (): Promise<string> => {
         throw new Error('a public client opens no secret');
       },
@@ -360,6 +372,70 @@ describe('check:access', (): void => {
     expect(only(checks, 'linear', 'secret').detail).toContain('own app');
     expect(accessExitCode(checks)).toBe(0);
     expect(probes.calls).toEqual([]);
+  });
+
+  it("asks each vendor's address from inside the backend container, with no secret, so a pass says the deployment itself reaches it (the review's section 11, item 4)", async (): Promise<void> => {
+    const mcp: ConnectionRow = {
+      _id: 'conn-mcp',
+      system: 'mcp:mcp.acme.com',
+      displayName: 'mcp.acme.com',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      status: 'active',
+      scopes: [],
+      clientId: 'day0-mcp',
+      resource: 'https://mcp.acme.com/mcp',
+      redirectUrl: `${PUBLIC_URL}/api/oauth/mcp`,
+    };
+    const probes = vendors();
+
+    const checks = await accessChecks([SLACK, LINEAR, mcp], VALUES, probes);
+
+    expect(probes.fromTheBackend).toEqual([
+      'https://slack.com/api/api.test',
+      'https://api.linear.app/graphql',
+      'https://mcp.acme.com/mcp',
+    ]);
+    expect(only(checks, 'slack', 'reach')).toEqual({
+      subject: 'slack',
+      name: 'reach',
+      status: 'ok',
+      detail: 'The backend container reached https://slack.com/api/api.test (HTTP 200).',
+    });
+    expect(only(checks, 'mcp:mcp.acme.com', 'reach').status).toBe('ok');
+  });
+
+  it('reports a vendor the backend container cannot reach as a gap with the cure, and a dial that did not run as a note', async (): Promise<void> => {
+    const probes = vendors({
+      backend: (url: URL) =>
+        url.hostname === 'slack.com'
+          ? { reach: 'unreachable', detail: 'curl: (6) Could not resolve host: slack.com' }
+          : { reach: 'unknown', detail: 'service "backend" is not running' },
+    });
+
+    const checks = await accessChecks([SLACK, LINEAR], VALUES, probes);
+
+    expect(only(checks, 'slack', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        'The backend container could not reach https://slack.com/api/api.test: curl: (6) Could not resolve host: slack.com. Every call the deployment makes to Slack starts there: open its way out (the proxy or firewall in front of the backend), then run the check again.',
+    });
+    expect(only(checks, 'linear', 'reach')).toMatchObject({
+      status: 'warn',
+      detail:
+        'Not asked from the backend container: service "backend" is not running. Start it (`./setup.sh resume`) and run the check again.',
+    });
+    expect(accessExitCode(checks)).toBe(1);
+  });
+
+  it('dials the fake Slack a bed names by the address the deployment itself uses', async (): Promise<void> => {
+    const probes = vendors();
+    await accessChecks(
+      [SLACK],
+      { ...VALUES, DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/' },
+      probes,
+    );
+    expect(probes.fromTheBackend).toEqual(['http://fake-slack:8090/api/api.test']);
   });
 
   it('reaches the fake Slack a bed publishes on this machine, and Slack itself otherwise', (): void => {

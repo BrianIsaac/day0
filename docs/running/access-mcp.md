@@ -104,3 +104,4 @@ by naming the systems with `--systems`.
 | `scopes` | `pass`: the scopes IT gave, each one the server offers |
 | `secret` | `pass`: opens under the deployment's key, or a public client holds none |
 | `identity` | `pass`: the authorisation server's metadata names the issuer and a token endpoint; a `GAP` when no issuer is recorded (a connection landed before v0.15.0), cured by revoking it and landing it again |
+| `reach` | `pass`: the backend container reached the MCP server's address; a `GAP` names curl's words, cured by opening the deployment's way out to it |

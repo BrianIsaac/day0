@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   containerDialArguments,
+  containerReachArguments,
   firstLine,
   readContainerDial,
   unreachableFix,
@@ -13,6 +14,14 @@ describe('dialling the model address from inside the backend container', (): voi
     expect(args.at(-1)).toBe('http://10.1.2.3:8080/v1/models');
     expect(args).toContain('--max-time');
     expect(args.join(' ')).not.toMatch(/authorization|bearer|-H\b/i);
+  });
+
+  it("asks a vendor's address as it is given, with a GET, no credential and a bounded wait", (): void => {
+    const args = containerReachArguments('https://slack.com/api/api.test');
+    expect(args.slice(0, 4)).toEqual(['exec', '-T', 'backend', 'curl']);
+    expect(args.at(-1)).toBe('https://slack.com/api/api.test');
+    expect(args).toContain('--max-time');
+    expect(args.join(' ')).not.toMatch(/authorization|bearer|-H\b|-X|--data/i);
   });
 
   it('counts any HTTP answer as reached, a refusal included', (): void => {
