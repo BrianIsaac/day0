@@ -22,7 +22,10 @@ import {
   tokenDue,
   type LinearFetch,
 } from '../../../../src/surfaces/identity-issuers/linear';
-import { LINEAR_REFRESH_TOKEN_REVOKED } from '../../../fixtures/real-vendor-walk-2026-10-03';
+import {
+  LINEAR_REFRESH_TOKEN_REVOKED,
+  LINEAR_REVOKE_ALREADY_REVOKED,
+} from '../../../fixtures/real-vendor-walk-2026-10-03';
 import {
   ARRAY_SCOPE_TOKEN,
   AUTHORISATION_CODE_TOKEN,
@@ -395,6 +398,26 @@ describe('revoking a token Day0 will not keep', (): void => {
       (await refusalOf(revokeLinearToken(answering(503, 'busy').fetch, 't', 'access_token')))
         .reason,
     ).toBe('unavailable');
+  });
+
+  it("takes a 400 as done only when Linear says the token was already revoked (the round review's m4)", async (): Promise<void> => {
+    await expect(
+      revokeLinearToken(
+        answering(LINEAR_REVOKE_ALREADY_REVOKED.status, LINEAR_REVOKE_ALREADY_REVOKED.body).fetch,
+        'gone',
+        'access_token',
+      ),
+    ).resolves.toBeUndefined();
+    const refused = await refusalOf(
+      revokeLinearToken(
+        answering(400, { error: 'invalid_request', error_description: 'Missing token' }).fetch,
+        'lin_oauth_live',
+        'access_token',
+      ),
+    );
+    expect(refused.reason).toBe('malformed');
+    expect(refused.message).toContain('invalid_request');
+    expect(refused.message).not.toContain('lin_oauth_live');
   });
 });
 
