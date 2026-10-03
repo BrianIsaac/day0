@@ -72,15 +72,20 @@ export async function sendRevocation(input: {
   readonly fetch?: RevocationFetch;
 }): Promise<RevocationAnswer> {
   const send = input.fetch ?? fetch;
-  let response: Response;
+  let status: number;
+  let body: unknown;
   try {
-    response = await send(input.request.url, {
+    // The body is read inside the same bound: an answer whose body never arrives is a transport
+    // failure another attempt may pass, not an error past the retry and the ledger.
+    const response = await send(input.request.url, {
       method: 'POST',
       headers: input.request.headers,
       body: input.request.body,
       redirect: 'manual',
       signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
+    status = response.status;
+    body = await bodyOf(response);
   } catch (error: unknown) {
     return {
       kind: 'retry',
@@ -92,7 +97,7 @@ export async function sendRevocation(input: {
       ),
     };
   }
-  return withoutToken(input.read(response.status, await bodyOf(response)), input.token);
+  return withoutToken(input.read(status, body), input.token);
 }
 
 /** Slack's answer to `auth.revoke`, with Slack's own word when it found the token already gone. */

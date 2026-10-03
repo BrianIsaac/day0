@@ -65,6 +65,28 @@ describe('sendRevocation', (): void => {
     expect(answer.kind).toBe('retry');
     expect(JSON.stringify(answer)).not.toContain('lin_oauth_1');
   });
+
+  it("asks again later when the answer starts but its body never arrives (the round review's m1)", async (): Promise<void> => {
+    const answer = await sendRevocation({
+      request: linearTokenRevocation('lin_oauth_1', 'access_token'),
+      token: 'lin_oauth_1',
+      vendor: 'Linear',
+      read: readLinearAnswer,
+      fetch: async (): Promise<Response> =>
+        new Response(
+          new ReadableStream({
+            pull(controller): void {
+              controller.error(
+                new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+              );
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    expect(answer.kind).toBe('retry');
+    expect(JSON.stringify(answer)).not.toContain('lin_oauth_1');
+  });
 });
 
 describe('revokeSlackConfigurationToken (R41V-10)', (): void => {
