@@ -207,12 +207,23 @@ describe('the token store', (): void => {
   });
 
   it('reads a token no refresher issued exactly as stored, however close its expiry', async (): Promise<void> => {
-    const keeper = memoryKeeper(pairFor({ system: 'slack', expiresAt: NOW - 1 }));
+    const keeper = memoryKeeper(pairFor({ system: 'slack', expiresAt: NOW + 1 }));
     const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
       throw new Error('no exchange expected');
     });
     await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).resolves.toBe(
       'access-0',
+    );
+    expect(keeper.refreshReads()).toBe(0);
+  });
+
+  it('refuses a token past its expiry that nothing held can renew, rather than send it (the review’s m12)', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor({ expiresAt: NOW - 1, refresh: null }));
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).rejects.toThrow(
+      'The token has expired and nothing Day0 holds can renew it. Authorise the card again.',
     );
     expect(keeper.refreshReads()).toBe(0);
   });

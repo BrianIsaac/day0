@@ -447,6 +447,15 @@ export const rotateTokens = internalMutation({
       return { ok: false, reason: 'gone' };
     }
     if ((access.generation ?? 0) !== args.expectedGeneration) return { ok: false, reason: 'stale' };
+    // An end of access that revoked the refresh row while the refresh was out ends the pair: the
+    // rotation never writes a live value back into it (the wave 11 review's m12).
+    const held = access.refreshCredentialId ? await ctx.db.get(access.refreshCredentialId) : null;
+    if (
+      access.refreshCredentialId &&
+      (held === null || held.revokedAt !== undefined || held.ciphertext === undefined)
+    ) {
+      return { ok: false, reason: 'gone' };
+    }
     const generation = args.expectedGeneration + 1;
     const issuedBy = { ...access.issuedBy, grant: 'token-rotation' as const };
     let refreshCredentialId = access.refreshCredentialId;

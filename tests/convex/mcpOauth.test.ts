@@ -371,3 +371,31 @@ describe('claiming a pending authorisation', (): void => {
     expect(surface?.pendingAuthorisation?.stateNonce).toBe('nonce-1');
   });
 });
+
+describe('writing a refresh’s rotation', (): void => {
+  it('writes nothing over a refresh token an end of access revoked meanwhile (the review’s m12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { heldIds } = await seedCard(harness, 'issued');
+    const [accessId, refreshId] = heldIds as [Id<'credentials'>, Id<'credentials'>];
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(refreshId, { revokedAt: 1_500, ciphertext: undefined, iv: undefined });
+    });
+    const { internal } = await liveApi();
+
+    const outcome = await harness.mutation(internal.mcpOauth.rotateTokens, {
+      credentialId: accessId,
+      expectedGeneration: 3,
+      access: { ...SEALED, ciphertext: 'renewed-access' },
+      refresh: { ...SEALED, ciphertext: 'renewed-refresh' },
+      expiresAt: 10_000_000,
+      now: 2_000,
+    });
+
+    expect(outcome).toEqual({ ok: false, reason: 'gone' });
+    const [access, refresh] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(accessId), ctx.db.get(refreshId)]),
+    );
+    expect(refresh?.ciphertext).toBeUndefined();
+    expect(access).toMatchObject({ ciphertext: 'sealed', generation: 3 });
+  });
+});
