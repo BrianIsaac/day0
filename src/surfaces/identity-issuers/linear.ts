@@ -273,9 +273,6 @@ const GRANT_REVOKED = /\btoken\b.*\brevoked\b/i;
 /** The refusal Linear's OAuth error answer names. */
 function refusalOf(status: number, error: string | undefined, description: string | undefined) {
   if (status >= 500 || status === 429) return 'unavailable' as const;
-  if ([error, description].some((words) => words !== undefined && GRANT_REVOKED.test(words))) {
-    return 'token-refused' as const;
-  }
   if (
     description !== undefined &&
     /does not support the client_credentials grant/i.test(description)
@@ -285,6 +282,9 @@ function refusalOf(status: number, error: string | undefined, description: strin
   if (error === 'invalid_client' || error === 'unauthorized_client')
     return 'client-refused' as const;
   if (error === 'invalid_grant') return 'token-refused' as const;
+  if ([error, description].some((words) => words !== undefined && GRANT_REVOKED.test(words))) {
+    return 'token-refused' as const;
+  }
   if (status === 401) return 'unauthorised' as const;
   return 'malformed' as const;
 }

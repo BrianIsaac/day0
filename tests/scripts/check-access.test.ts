@@ -228,6 +228,27 @@ describe('check:access', (): void => {
     expect(accessExitCode(checks)).toBe(1);
   });
 
+  it('says what a per-employee Linear registration without app:assignable costs (decision 5)', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [
+        {
+          ...LINEAR,
+          mode: 'per-employee',
+          scopes: ['read', 'write'],
+          clientCredentialsScopes: undefined,
+          secretCredentialId: undefined,
+        },
+      ],
+      VALUES,
+      vendors(),
+    );
+    const scopes = only(checks, 'linear', 'scopes');
+    expect(scopes.status).toBe('gap');
+    expect(scopes.detail).toContain(
+      'Missing scope app:assignable (no ticket can be delegated or assigned to the app user, so its employees take only unassigned tickets)',
+    );
+  });
+
   it('says what Slack refused, and that an expired configuration token renews at the next app', async (): Promise<void> => {
     const refused = await accessChecks(
       [SLACK],
