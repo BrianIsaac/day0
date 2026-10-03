@@ -172,14 +172,13 @@ function viewOf(
           ...(request.copiedAt === undefined ? {} : { copiedAt: request.copiedAt }),
           ...(request.emailedAt === undefined ? {} : { emailedAt: request.emailedAt }),
           // The claim of the DM writes `messagedAt`; Slack's timestamp says it went out, and a
-          // claim with none is shown as on its way only while it stands.
+          // claim with none is on its way until the release scheduled at the claim ends it, a
+          // write, so the query runs again (the round review's m9).
           ...(request.messagedAt === undefined
             ? {}
             : request.messageProviderTs !== undefined
               ? { messagedAt: request.messagedAt }
-              : messageClaimed(request, Date.now())
-                ? { messaging: true }
-                : {}),
+              : { messaging: true }),
         }),
   };
 }
@@ -465,7 +464,15 @@ export const claimMessage = internalMutation({
       return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
     }
     // Claimed once: a second press, or a second send scheduled meanwhile, is refused above.
-    await ctx.db.patch(surface._id, { accessRequest: { ...recorded, messagedAt: Date.now() } });
+    const claimedAt = Date.now();
+    await ctx.db.patch(surface._id, { accessRequest: { ...recorded, messagedAt: claimedAt } });
+    // A send whose action died between the claim and Slack is released at the claim's bound by a
+    // write, never by a query reading the clock (the round review's m9).
+    await ctx.scheduler.runAfter(MESSAGE_CLAIM_STANDS_MS, internal.accessRequests.releaseMessage, {
+      surfaceId: surface._id,
+      draftedAt: args.draftedAt,
+      claimedAt,
+    });
     return {
       claimed: true,
       credentialId: card.credentialId,
@@ -500,12 +507,17 @@ export const recordMessage = internalMutation({
 });
 
 /**
- * Internal, for `managerChannelActions.sendAccessRequest`: release the claim of a DM Slack did not
- * take, on the request drafted at `draftedAt` only, so the card offers Send to me in Slack again.
- * A DM Slack has the timestamp of is never released.
+ * Internal, for `managerChannelActions.sendAccessRequest`, and scheduled by `claimMessage` at its
+ * bound: release the claim of a DM Slack did not take, on the request drafted at `draftedAt` only,
+ * so the card offers Send to me in Slack again. A DM Slack has the timestamp of is never released,
+ * and a release scheduled at one claim (`claimedAt`) never ends a later one.
  */
 export const releaseMessage = internalMutation({
-  args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
+  args: {
+    surfaceId: v.id('surfaces'),
+    draftedAt: v.number(),
+    claimedAt: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const surface = await ctx.db.get(args.surfaceId);
@@ -514,7 +526,8 @@ export const releaseMessage = internalMutation({
       surface === null ||
       recorded === undefined ||
       recorded.draftedAt !== args.draftedAt ||
-      recorded.messageProviderTs !== undefined
+      recorded.messageProviderTs !== undefined ||
+      (args.claimedAt !== undefined && recorded.messagedAt !== args.claimedAt)
     ) {
       return null;
     }
