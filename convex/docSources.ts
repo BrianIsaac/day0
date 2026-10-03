@@ -28,7 +28,6 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
 import {
   endedShort,
-  reasonWithoutLegacyRecord,
   unreadPagesLine,
   unreadRecordIn,
   withUnreadPages,
@@ -113,8 +112,7 @@ const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this on
 
 /**
  * The patch that says why a run ended short: the reason on one line, and the
- * run's record of its unread pages on its own field, where an earlier
- * release's record kept in the reason text moves as the reason is rewritten.
+ * run's record of its unread pages on its own field.
  */
 function endedShortPatch(
   ending: string,
@@ -148,18 +146,12 @@ async function storedPageCount(ctx: QueryCtx, source: Doc<'docSources'>): Promis
   return newest ? listedCount(newest) : 0;
 }
 
-/** How many page refs a run's listing has named, counted from a pre-0.6.0 run's refs where it kept no count. */
-function listedCount(run: Doc<'docSyncRuns'>): number {
-  return run.pagesListed ?? run.refs?.length ?? 0;
-}
-
 /**
- * The page refs a run begun before 0.6.0 recorded before its listing was
- * stamped on `docPageListings`: its finish keeps them as listed. Empty for
- * every later run.
+ * How many page refs a run's listing has named. A run of a release before 0.6.0 counted its refs,
+ * which the `sync-runs-refs` migration carries into `pagesListed` as it clears them.
  */
-function legacyListedRefs(run: Doc<'docSyncRuns'>): ReadonlySet<string> {
-  return new Set(run.refs ?? []);
+function listedCount(run: Doc<'docSyncRuns'>): number {
+  return run.pagesListed ?? 0;
 }
 
 /** Start the next listing of a source, one that reads from page one, and return its number. */
@@ -877,7 +869,6 @@ export const beginSync = internalMutation({
       listing:
         resumed === undefined ? await nextListing(ctx, source) : await runListing(ctx, resumed),
       pagesListed: resumed === undefined ? 0 : listedCount(resumed),
-      ...(resumed?.refs !== undefined ? { refs: resumed.refs } : {}),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
@@ -1041,7 +1032,6 @@ export const recordSyncBatch = internalMutation({
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
       unread: withUnreadPages(unreadRecordIn(run), args.unread ?? []),
-      reason: reasonWithoutLegacyRecord(run.reason),
     });
     await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
@@ -1133,8 +1123,7 @@ function phaseOf(checkpoint: string, phase: FinishingPhase): void {
  * Internal; the finishing sync walks, with it, only the source's listing rows
  * an earlier listing stamped (D D2 (a)): a page this generation listed was
  * restamped by its batch, one it listed but could not read too (P5-11), so
- * the walk reads nothing a stable corpus keeps, whatever its size. A page a
- * run begun before 0.6.0 recorded in its refs is kept and restamped.
+ * the walk reads nothing a stable corpus keeps, whatever its size.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1144,23 +1133,14 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    // A run begun before 0.6.0 cut off here holds a cursor of its walk over the
-    // pages themselves, which this walk cannot take; the walk starts over, as
-    // every row it has already passed is gone or restamped.
-    const from = finishing.run.listing === undefined ? null : args.from;
     const listing = await runListing(ctx, finishing.run);
-    const legacy = legacyListedRefs(finishing.run);
-    // A row this page restamps or deletes leaves the range behind the cursor.
+    // A row this page deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
-      .paginate({ numItems: STALE_LISTING_PAGE, cursor: from });
+      .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
     let removed = 0;
     for (const row of page.page) {
-      if (legacy.has(row.ref)) {
-        await ctx.db.patch(row._id, { seenBy: listing });
-        continue;
-      }
       const stored = await ctx.db
         .query('docPages')
         .withIndex('by_source_ref', (index) =>
@@ -1246,20 +1226,13 @@ export const pruneMirrors = internalMutation({
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
     const listing = await runListing(ctx, finishing.run);
-    // A run begun before 0.6.0 names some of its pages only in its refs, and a
-    // page the listing migration has not reached yet has no row to restamp.
-    const legacy = legacyListedRefs(finishing.run);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (
-        mirror.sourceRef &&
-        (legacy.has(mirror.sourceRef) ||
-          (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing)))
-      ) {
+      if (mirror.sourceRef && (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing))) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is

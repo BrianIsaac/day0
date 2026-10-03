@@ -93,7 +93,9 @@ describe('the record an earlier release kept in the reason text', (): void => {
     '- and 10 more',
   ].join('\n');
 
-  it('is read until the migration has moved it onto the field', (): void => {
+  // Re-pinned at 12-S3: the sync-runs-unread migration moved every such record onto the field at
+  // 0.6.0, so a run reads its record from the field alone and only the migration reads the text.
+  it('is read by the migration alone, never by a run, which reads its own field (12-S3)', (): void => {
     const record = {
       count: 12,
       pages: [
@@ -102,7 +104,7 @@ describe('the record an earlier release kept in the reason text', (): void => {
       ],
     };
     expect(legacyUnreadRecord(legacy)).toEqual(record);
-    expect(unreadRecordIn({ reason: legacy })).toEqual(record);
+    expect(unreadRecordIn({ reason: legacy })).toBeUndefined();
     expect(legacyUnreadRecord('a newer sync of the source started before this one finished')).toBe(
       undefined,
     );

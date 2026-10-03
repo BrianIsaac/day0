@@ -368,9 +368,10 @@ export default defineSchema({
     cursor: v.optional(v.string()),
     /**
      * The page refs a run of a release before 0.6.0 listed, which bounded a
-     * generation at Convex's 8,192-entry array. Nothing writes it from 0.6.0:
-     * a listed page is stamped on its `docPageListings` row instead. Read only
-     * as a pre-0.6.0 run's listing when that run is resumed or finished.
+     * generation at Convex's 8,192-entry array. Nothing writes or reads it from
+     * 0.16.0: a listed page is stamped on its `docPageListings` row instead, and
+     * the `sync-runs-refs` migration clears it, carrying its count into
+     * `pagesListed`. The release after that removes this declaration (N10).
      */
     refs: v.optional(v.array(v.string())),
     /**

@@ -92,6 +92,7 @@ export const MIGRATION_NAMES = [
   'skills-owner-key',
   'surfaces-intake-scope',
   'credentials-organisation-purge',
+  'sync-runs-refs',
 ] as const;
 
 /** One migration's name. */
@@ -154,6 +155,12 @@ const ACCESS_RELEASE = '0.14.0';
  * their 24 hours.
  */
 const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
+
+/**
+ * The release of the work loop and supervision (wave 12): the schema step's narrowing of the
+ * sync runs' page refs (12-S3, N10).
+ */
+const SUPERVISION_RELEASE = '0.16.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -283,6 +290,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: ACCESS_FOLLOW_UP_RELEASE,
     does: 'deletes the value of every organisation-held secret revoked more than 24 hours ago that still keeps it (an older revoke kept it, or its scheduled purge was lost), keeping the row and its revoke date; a row whose revocation at the vendor is still pending is left to its own sweep',
     thenRemoves: 'nothing: a revoke holds a secret 24 hours and schedules its purge from here on',
+  },
+  'sync-runs-refs': {
+    release: SUPERVISION_RELEASE,
+    does: 'clears the page refs each sync run of a release before 0.6.0 kept, carrying their count into the run’s pagesListed where it kept none; a run that did not complete loses its cursor too, so no sync resumes or finishes a listing it no longer carries and the next reads the source from page one',
+    thenRemoves: 'the docSyncRuns.refs declaration',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -633,6 +645,31 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
+ * Clear the page refs a sync run of a release before 0.6.0 listed its generation by (12-S3, N10:
+ * the first release of the narrowing). From 0.6.0 a listed page is stamped on its
+ * `docPageListings` row, and the finish no longer reads a run's refs; their count is kept in
+ * `pagesListed`, where the page count reads it. A run that did not complete also loses its cursor:
+ * its refs named pages its listing never stamped, so finishing it without them could remove a page
+ * it listed, and a run of that age is past every resume already (`runToResume`). The next sync then
+ * reads the source from page one and lists every page again. A run carrying no refs is left, so a
+ * second run changes nothing. Each run can hold 8,192 refs, so the page is bounded by bytes.
+ */
+async function clearRunRefs(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docSyncRuns').paginate({ ...LARGE_ROWS_READ, cursor });
+  let changed = 0;
+  for (const run of page.page) {
+    if (run.refs === undefined) continue;
+    await ctx.db.patch(run._id, {
+      refs: undefined,
+      pagesListed: run.pagesListed ?? run.refs.length,
+      ...(run.state !== 'completed' ? { cursor: undefined } : {}),
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Give each stored documentation page a listing row (D D2 (a)). A page of a
  * release before 0.6.0 was kept by its run's refs; from this release a finish
  * removes a page whose row an earlier listing stamped, so every page needs
@@ -874,6 +911,7 @@ const MIGRATION_PAGES: Readonly<
   'credentials-issued-by': backfillIssuedBy,
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
+  'sync-runs-refs': clearRunRefs,
 };
 
 /** A migration's row, if it has started. */

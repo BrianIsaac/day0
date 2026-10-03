@@ -2078,7 +2078,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(stored.sort()).toEqual(['gone.md', 'read-before.md']);
   });
 
-  it('keeps the mirror of a page a run begun before 0.6.0 named, while the listing migration has not reached the page', async (): Promise<void> => {
+  // Re-pinned at 12-S3: the finish no longer reads a run's refs (legacyListedRefs). The
+  // sync-runs-refs pass clears them and ends the run, so its finish is refused and nothing it
+  // named is removed; the next sync reads the source from page one.
+  it('keeps the page and mirror a run begun before 0.6.0 named once the clearing pass has ended it, refusing its finish (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2131,12 +2134,19 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       return { sourceId, agentId, runId };
     });
 
-    await harness.action(internal.docSyncActions.syncBatch, {
-      sourceId,
-      runId,
-      cursor: FINISHING_CURSOR,
-    });
+    await harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' });
+    await expect(
+      harness.action(internal.docSyncActions.syncBatch, {
+        sourceId,
+        runId,
+        cursor: FINISHING_CURSOR,
+      }),
+    ).resolves.toMatchObject({ ok: false });
 
+    const ended = await harness.run(async (ctx) => await ctx.db.get(runId));
+    expect(ended).toMatchObject({ pagesListed: 1, state: 'running' });
+    expect(ended?.refs).toBeUndefined();
+    expect(ended?.cursor).toBeUndefined();
     const left = await harness.run(async (ctx) => ({
       pages: (
         await ctx.db
@@ -2154,7 +2164,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(left).toEqual({ pages: ['runbook.md'], mirrors: ['runbook.md'] });
   });
 
-  it('finishes a run begun before 0.6.0 that was cut off part-way through its pages, whose cursor walked the pages themselves', async (): Promise<void> => {
+  // Re-pinned at 12-S3: the finish no longer reads a run's refs, and the sync-runs-refs pass ends
+  // a run begun before 0.6.0, so its checkpoint over the pages themselves is refused and every
+  // page stays until a sync from page one lists the source again.
+  it('refuses the finish of a run begun before 0.6.0 cut off part-way through its pages once the clearing pass has ended it, and removes nothing (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2190,9 +2203,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     });
     const checkpoint = await harness.run(async (ctx) => (await ctx.db.get(runId))?.cursor);
 
+    await harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' });
     await expect(
       harness.action(internal.docSyncActions.syncBatch, { sourceId, runId, cursor: checkpoint }),
-    ).resolves.toMatchObject({ ok: true, complete: true });
+    ).resolves.toMatchObject({ ok: false, complete: true });
     const left = await harness.run(async (ctx) =>
       (
         await ctx.db
@@ -2203,7 +2217,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         .map((page) => page.ref)
         .sort(),
     );
-    expect(left).toEqual(['kept.md', 'page.md']);
+    expect(left).toEqual(['kept.md', 'page.md', 'stale.md']);
   });
 
   it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
