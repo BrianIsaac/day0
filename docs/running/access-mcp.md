@@ -16,8 +16,10 @@ manager's delegated consent for that employee.
 ## 1. What IT creates
 
 A **client registration** for Day0 at the server's authorisation server,
-registered by IT ahead of time (Day0 does not register itself unless the
-customer allows dynamic registration):
+registered by IT ahead of time. Day0 does not register itself, even where the
+server offers dynamic registration: IT registers the client, by the server's
+form or by its registration endpoint, and hands Day0 its id. The
+registration:
 
 - client type: a confidential client with a secret, or a public client (Day0
   uses PKCE either way);

@@ -22,8 +22,14 @@ needs to create those apps: an app configuration token and its refresh token.
 2. Signed in to <https://api.slack.com/apps> **as that service account**, under
    **Your App Configuration Tokens**, **Generate Token** for the customer's
    workspace. Slack shows two values: the **access token** (the configuration
-   token) and the **refresh token**. Copy both now; Slack does not show them
-   again.
+   token) and the **refresh token**. The table keeps a row for the workspace
+   with a **Copy** button for each, and once Day0 has renewed the pair the row
+   yields Day0's current token: whoever signs in as the service account can
+   copy the live token, so its sign-in is guarded as the secret it is. The
+   row's **Delete** ends the pair, under Day0 too. **Generate Token** is
+   disabled while the account holds a token for that workspace, so a fresh
+   pair needs the old row deleted first; do that only when the connection is
+   to be landed again or rotated at once.
 3. **A second collaborator** on each app Day0 creates: once an employee's app
    exists (its name is `<employee name> (Day0)`), add a second collaborator
    on its **Collaborators** page, an IT administrator or a second service
@@ -81,8 +87,9 @@ same app, since Day0's documentation reader finds it there.
 ```
 
 The redirect is `<Day0 public URL>/api/oauth/slack`, with `DAY0_PUBLIC_URL`
-the https origin people reach Day0 on through the customer's proxy. Slack
-refuses a plain-http redirect.
+the https origin people reach Day0 on through the customer's proxy. https is
+Day0's own rule, not Slack's (Slack's manifest check accepts an http redirect):
+the codes and tokens come back on the redirect.
 
 ## 3. The scopes
 

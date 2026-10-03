@@ -29,14 +29,24 @@ enabled on the form (the manifest enables it), and create the app. Linear
 shows its **client id** and **client secret**.
 
 **Per employee.** When an employee's Linear card asks for access, its manager
-forwards the access request to IT. A Linear administrator creates the
-employee's own app from the same manifest with the employee's name
-(`<employee name> (Day0)`) and without client credentials. An administrator
-then opens the link in the access request, which names the employee's card on
-the organisation page (`${DAY0_PUBLIC_URL}/organisation?card=<card>`), and
-records the app's client id and client secret there; Day0 then opens Linear
-for a Linear administrator to install it with `actor=app`. The card asks IT for
-nothing more: afterwards its Connect gives a fresh installation link (valid 15
+forwards the access request to IT. The request names the employee and links
+the employee's card on the organisation page
+(`${DAY0_PUBLIC_URL}/organisation?card=<card>`); the page itself offers the
+Client id and Client secret fields and no form link. So IT builds the
+employee's app first:
+
+```bash
+./setup.sh access --print-manifest linear --employee "<employee name>"
+```
+
+prints the employee's own app's manifest, named `<employee name> (Day0)`,
+authorisation code only (no client credentials), and the link that pre-fills
+Linear's create form with it. A Linear administrator opens the link signed in
+to Linear and creates the app. An administrator then opens the request's link
+to the organisation page, records the app's client id and client secret there,
+and presses **Record the app and install it**: Day0 opens Linear for a Linear
+administrator to install it with `actor=app`. The card asks IT for nothing
+more: afterwards its Connect gives a fresh installation link (valid 15
 minutes) whenever the employee's app needs installing again.
 
 ## 2. The manifest or the form
@@ -78,6 +88,14 @@ the manifest is:
 The redirect is `${DAY0_PUBLIC_URL}/api/oauth/linear`, byte for byte. An
 employee's own app has its own name and `grant_types` of
 `authorization_code` only. A name may not contain the word Linear.
+
+What Linear's form takes, as it answered on 3 October 2026: it refuses a
+Developer URL (the manifest's `client_uri`) whose host is `localhost` ("Must
+be a valid URL") and accepts `127.0.0.1` or a hostname, so a customer's
+`DAY0_PUBLIC_URL`, a hostname, passes; its callback field accepts an http
+address too. https is Day0's own rule, not Linear's: the codes and tokens come
+back on the redirect, so the kit refuses a `DAY0_PUBLIC_URL` that is not
+https.
 
 ## 3. The scopes
 
