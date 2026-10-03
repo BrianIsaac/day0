@@ -22,7 +22,7 @@ import {
   ORGANISATION_REFUSED,
   registeredWords,
   revokeLines,
-  ROTATE_NOTE,
+  rotateNote,
   secretWords,
   type ConnectionView,
   type LedgerLine,
@@ -382,7 +382,7 @@ function RotateDialog({
   return (
     <Dialog
       title={`Give ${connection.displayName} a new secret`}
-      description={ROTATE_NOTE}
+      description={rotateNote(connection)}
       onClose={onClose}
       busy={change.busy}
     >

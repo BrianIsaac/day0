@@ -7,6 +7,7 @@ import {
   ORGANISATION_REFUSED,
   registeredWords,
   revokeLines,
+  rotateNote,
   secretWords,
   type ConnectionView,
 } from '../../../app/organisation/organisation-words';
@@ -116,6 +117,30 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
     );
     expect(revokeLines(view(), { cards: 1000, atLeast: true })[0]).toBe(
       'More than 1000 employee cards are connected through it, too many to end at once: Day0 refuses the revoke until some are removed.',
+    );
+  });
+
+  it("says each manager sees the reason only where a card ends (the round review's m17)", (): void => {
+    expect(revokeLines(view(), { cards: 0, atLeast: false })[1]).toBe(
+      'No card on any other system changes.',
+    );
+    expect(revokeLines(view(), { cards: 1000, atLeast: true })[1]).toBe(
+      'No card on any other system changes.',
+    );
+    expect(revokeLines(view(), { cards: 2, atLeast: false })[1]).toBe(
+      'No card on any other system changes. Each manager sees the reason on the card.',
+    );
+  });
+
+  it("says before a Slack rotation that the old configuration token's refresh token outlives it, as the revoke does (the round review's m17)", (): void => {
+    expect(rotateNote(view())).toBe(
+      'No card is affected. Day0 seals the new secret and switches to it. Day0 revokes the old ' +
+        'configuration token at Slack, but Slack offers no call that ends its refresh token: once ' +
+        'this is rotated, IT deletes the old token\'s row under "Your App Configuration Tokens" on ' +
+        'api.slack.com, signed in as the account that generated it.',
+    );
+    expect(rotateNote(view({ kind: 'oauth-app', system: 'linear', displayName: 'Linear' }))).toBe(
+      'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.',
     );
   });
 
