@@ -430,6 +430,17 @@ describe('setup: the access verb', (): void => {
     expect(printed).not.toContain('"client_credentials"');
   });
 
+  it('refuses --employee without --print-manifest linear, and an empty name, landing nothing', async (): Promise<void> => {
+    const alone = accessBed();
+    expect(await alone.run([...ACCESS, '--employee', 'Leo'])).toBe(1);
+    expect(alone.bed.output.join('\n')).toContain('--employee names whose own app');
+    expect(alone.deployment.calls.filter((call) => call.kind === 'action')).toEqual([]);
+
+    const empty = accessBed();
+    expect(await empty.run(['access', '--print-manifest', 'linear', '--employee', ' '])).toBe(1);
+    expect(empty.bed.output.join('\n')).toContain("--employee needs the employee's name");
+  });
+
   it('refuses an employee’s name for Slack, whose employees’ apps Day0 creates itself', async (): Promise<void> => {
     const bed = accessBed();
     expect(await bed.run(['access', '--print-manifest', 'slack', '--employee', 'Leo'])).toBe(1);

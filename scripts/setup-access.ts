@@ -424,6 +424,10 @@ function printManifest(
     return 0;
   }
   if (system === 'linear') {
+    if (employee !== undefined && employee.trim() === '') {
+      io.log("--employee needs the employee's name, as the card shows it.");
+      return 1;
+    }
     try {
       const manifest = linearKitManifest(
         employee === undefined
@@ -719,6 +723,10 @@ const CHECK_ACCESS = ['pnpm', 'run', 'check:access'] as const;
 export async function runAccess(options: AccessOptions, io: AccessIo): Promise<number> {
   const envPath = join(io.cwd, ENV_FILE);
   const values = readEnvValues(envPath);
+  if (options.access.employee !== undefined && options.access.printManifest === undefined) {
+    io.log('--employee names whose own app --print-manifest linear prints; it takes nothing else.');
+    return 1;
+  }
   if (options.access.printManifest !== undefined) {
     return printManifest(options.access.printManifest, options.access.employee, values, io);
   }
