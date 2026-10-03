@@ -438,7 +438,7 @@ describe('recordWords', (): void => {
         { name: 'Mira' },
       ),
     ).toBe(
-      'The documentation replaced the credential \u201clinear service token\u201d (runbooks/linear.md); Day0 bound its new value on 1 card and checks it again.',
+      'The documentation replaced the credential \u201clinear service token\u201d (runbooks/linear.md); Day0 bound its new value on 1 card.',
     );
   });
 

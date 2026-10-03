@@ -463,15 +463,14 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'credential.superseded': (payload) => {
     const label = text(payload.label);
     const page = text(payload.page);
-    // A page swap re-bound the cards to the value the page states now (N23).
     const rebound = payload.reboundSurfaceIds?.length
       ? counted(payload.reboundSurfaceIds.length, 'card')
       : undefined;
-    if (rebound) {
-      return `credential${label ? ` "${label}"` : ''} replaced in the documentation${page ? ` (${page})` : ''}; the new value bound on ${rebound} and checked again`;
-    }
-    const cards = counted(payload.surfaceIds?.length, 'card');
-    return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
+    const unbound = payload.surfaceIds?.length
+      ? counted(payload.surfaceIds.length, 'card')
+      : undefined;
+    const what = rebound ? 'replaced in the documentation' : 'no longer in the documentation';
+    return `credential${label ? ` "${label}"` : ''} ${what}${page ? ` (${page})` : ''}${rebound ? `; the new value bound on ${rebound}` : ''}${unbound ? `; land one again on ${unbound}` : ''}`;
   },
   'surface.reoriented': 'orientation run again at the manager’s request',
   'surface.app-installed': 'app installed by the administrator',

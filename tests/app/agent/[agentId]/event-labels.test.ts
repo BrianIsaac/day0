@@ -412,7 +412,7 @@ describe('the live feed labels', (): void => {
         },
       }),
     ).toBe(
-      'credential "linear service token" replaced in the documentation (runbooks/linear.md); the new value bound on 1 card and checked again',
+      'credential "linear service token" replaced in the documentation (runbooks/linear.md); the new value bound on 1 card',
     );
   });
 

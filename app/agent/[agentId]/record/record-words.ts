@@ -789,19 +789,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'credential.superseded': (p) => {
     const label = text(p.label);
     const page = text(p.page);
-    // A page swap re-bound the cards to the value the page states now (N23).
     const rebound = p.reboundSurfaceIds?.length
       ? counted(p.reboundSurfaceIds.length, 'card')
       : undefined;
-    if (rebound) {
-      return `The documentation replaced the credential${label ? ` \u201c${label}\u201d` : ''}${
-        page ? ` (${page})` : ''
-      }; Day0 bound its new value on ${rebound} and checks it again`;
-    }
-    const cards = counted(p.surfaceIds?.length, 'card');
-    return `The credential${label ? ` \u201c${label}\u201d` : ''} is no longer in the documentation${
-      page ? ` (${page})` : ''
-    }${cards ? `; land one again on ${cards}` : ''}`;
+    const unbound = p.surfaceIds?.length ? counted(p.surfaceIds.length, 'card') : undefined;
+    const named = `${label ? ` \u201c${label}\u201d` : ''}`;
+    const where = page ? ` (${page})` : '';
+    const landAgain = unbound ? `; land one again on ${unbound}` : '';
+    return rebound
+      ? `The documentation replaced the credential${named}${where}; Day0 bound its new value on ${rebound}${landAgain}`
+      : `The credential${named} is no longer in the documentation${where}${landAgain}`;
   },
   'surface.reoriented': (_, subject) =>
     `${decider(subject)} asked ${subject.name} to look again for a way to reach ${
