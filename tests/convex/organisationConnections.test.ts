@@ -310,7 +310,7 @@ describe("a confidential MCP client names its issuer (the wave 11 review's M12 f
     expect((await organisationRows(harness)).credentials).toEqual([]);
   });
 
-  it('lands a confidential client with its issuer, and a public client without one', async (): Promise<void> => {
+  it('lands a confidential client and a public client, each with its issuer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const ines = harness.withIdentity(INES);
     await ines.action(api.organisationConnections.land, {
@@ -322,8 +322,25 @@ describe("a confidential MCP client names its issuer (the wave 11 review's M12 f
       ...MCP,
       system: 'mcp:wiki.acme.test',
       displayName: 'Wiki',
+      issuer: 'https://auth.acme.test',
     });
     expect((await organisationRows(harness)).connections).toHaveLength(2);
+  });
+
+  it("refuses a public client with no issuer, which a manager's first authorisation would otherwise choose for everyone (the review's m4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    expect(
+      await refusalOf(
+        harness.withIdentity(INES).action(api.organisationConnections.land, {
+          ...MCP,
+          system: 'mcp:wiki.acme.test',
+          displayName: 'Wiki',
+        }),
+      ),
+    ).toBe(
+      "An MCP client connection needs the issuer of its authorisation server: every employee's authorisation goes to that server alone. The setup verb finds it from the server's own metadata when IT leaves it blank.",
+    );
+    expect((await organisationRows(harness)).connections).toEqual([]);
   });
 });
 
@@ -503,6 +520,139 @@ describe('rotating and revoking an organisation connection', (): void => {
       expect(row).not.toHaveProperty('actorAddress');
       expect(row.payload).toMatchObject({ via: 'setup-cli' });
     }
+  });
+});
+
+describe("how many cards a revoke ends (11-AC's item 3)", (): void => {
+  it('counts the cards on a connection for an administrator, naming none, and refuses a manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      SLACK,
+    );
+    await harness.run(async (ctx) => {
+      for (const name of ['Maya', 'Leo']) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'sam@acme.test',
+          name,
+          userId: 'sam',
+          state: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          organisationConnectionId: connectionId,
+          createdAt: 1,
+        });
+      }
+    });
+
+    await expect(
+      harness
+        .withIdentity(INES)
+        .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+    ).resolves.toEqual({ cards: 2, atLeast: false });
+    expect(
+      await refusalOf(
+        harness
+          .withIdentity(SAM)
+          .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+      ),
+    ).toBe(NOT_AN_ADMINISTRATOR);
+  });
+});
+
+describe("Slack's configuration token is kept current from its landing (the review's m9)", (): void => {
+  /** The renewals queued for the organisation's configuration token, as the scheduler holds them. */
+  async function renewals(
+    harness: TestConvex<typeof schema>,
+  ): Promise<{ at: number; job: Record<string, unknown> }[]> {
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    return scheduled
+      .filter((row) => row.name === 'slackProvisionActions:keepConfigurationCurrent')
+      .map((row) => ({ at: row.scheduledTime, job: row.args[0] as Record<string, unknown> }));
+  }
+
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('queues the first renewal at the landing, a quarter of an hour on, for the token of unknown age', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      SLACK,
+    );
+    const connection = await harness.run(async (ctx) => await ctx.db.get(connectionId));
+
+    expect(await renewals(harness)).toEqual([
+      {
+        at: Date.now() + 15 * 60 * 1000,
+        job: {
+          organisationConnectionId: connectionId,
+          secretCredentialId: connection?.secretCredentialId,
+          generation: 0,
+        },
+      },
+    ]);
+  });
+
+  it('queues the renewal of the pair an administrator rotated by hand, after a spent refresh token', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      SLACK,
+    );
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(connectionId, { status: 'needs-attention', statusReason: 'spent' });
+      for (const job of await ctx.db.system.query('_scheduled_functions').collect()) {
+        await ctx.scheduler.cancel(job._id);
+      }
+    });
+
+    await harness.withIdentity(INES).action(api.organisationConnections.rotate, {
+      organisationConnectionId: connectionId,
+      secret: 'xoxe.xoxp-1234567890-rotatedbyit',
+      refreshToken: 'xoxe-1234567890-rotatedbyit',
+    });
+    const rotated = await harness.run(async (ctx) => await ctx.db.get(connectionId));
+
+    const queued = (await renewals(harness)).filter(
+      (renewal) => renewal.job.secretCredentialId === rotated?.secretCredentialId,
+    );
+    expect(queued).toEqual([
+      {
+        at: Date.now() + 15 * 60 * 1000,
+        job: {
+          organisationConnectionId: connectionId,
+          secretCredentialId: rotated?.secretCredentialId,
+          generation: 0,
+        },
+      },
+    ]);
+  });
+
+  it('queues nothing for a token landed without its refresh token, or for another system', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const withoutRefresh = Object.fromEntries(
+      Object.entries(SLACK).filter(([key]) => key !== 'refreshToken'),
+    ) as Landing;
+    await harness.action(internal.organisationConnections.landFromSetup, withoutRefresh);
+    await harness.action(internal.organisationConnections.landFromSetup, LINEAR);
+
+    expect(await renewals(harness)).toEqual([]);
   });
 });
 

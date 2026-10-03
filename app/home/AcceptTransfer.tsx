@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -16,7 +17,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { MAX_DECLINE_REASON_LENGTH } from '@/agent/manager-transfer';
 import { deploymentZone } from '@/lib/zone';
 import { Button } from '../components/Button';
-import { Dialog } from '../components/Dialog';
+import { Dialog, DialogFooter } from '../components/Dialog';
 import { Field, INPUT_CLASS } from '../components/Field';
 import { StatusRegion } from '../components/StatusRegion';
 import { refusalText, useChange, type Change } from '../components/use-change';
@@ -217,6 +218,8 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
   const revealButton = useRef<HTMLButtonElement>(null);
   // Set by Back, so focus returns to the Decline that opened the reason, not on first draw.
   const backFromReason = useRef(false);
+  // The answers sit in the dialog's footer, outside the form; the decline names it.
+  const formId = useId();
   const { name } = preview.employee;
   const from = preview.fromAddress;
 
@@ -281,7 +284,7 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
           )
         }
       />
-      <form className="grid gap-4" onSubmit={submitDecline}>
+      <form id={formId} className="grid gap-4" onSubmit={submitDecline}>
         {declining ? (
           <Field label={declineReasonLabel(from)}>
             {(control) => (
@@ -298,6 +301,8 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
             )}
           </Field>
         ) : null}
+      </form>
+      <DialogFooter>
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           {/* Two buttons, never one that changes its type: a click that opened the reason must
@@ -324,6 +329,7 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
               <Button
                 key="send-decline"
                 type="submit"
+                form={formId}
                 variant="danger"
                 size="large"
                 disabled={change.busy}
@@ -350,7 +356,7 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
             {change.busy && answering === 'accept' ? 'Taking on…' : takeOnLabel(name)}
           </Button>
         </div>
-      </form>
+      </DialogFooter>
     </>
   );
 }

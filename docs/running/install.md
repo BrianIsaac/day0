@@ -14,8 +14,11 @@ customer's own deployment on this machine and, from this machine, to the vendor
 that issued it and nowhere else: `pnpm check:access` asks Slack whether it
 accepts the configuration token and Linear whether it accepts the client
 secret, and the company sign-in's client secret may be given in the
-environment (`DAY0_OIDC_CLIENT_SECRET`) instead of the prompt. A check from this
-machine says nothing about the backend container's own way out to the vendor.
+environment (`DAY0_OIDC_CLIENT_SECRET`) instead of the prompt. Since a check from
+this machine says nothing about the backend container's own way out to the
+vendor, `pnpm check:access` also asks each vendor's address from inside the
+backend container (`reach`), with a plain request that carries no secret: a
+pass there says the deployment itself reaches Slack, Linear and the MCP server.
 
 ## Before the day
 

@@ -24,25 +24,25 @@ import {
   authorSchema,
   authorSchemaFor,
   buildAuthorPrompt,
-  FAILED_VERIFICATION_LOG_CHARS,
-  holdSandboxLease,
   linkedRunbookExcerpts,
-  namedHarnessSurfaces,
+  skillAuthorAgent,
+  type AuthorPromptSkill,
+  type AuthorRunbookPage,
+} from './skillAuthorPrompt';
+import { holdSandboxLease, namedHarnessSurfaces, verifyAuthoredSkill } from './skillSandboxCheck';
+import {
+  FAILED_VERIFICATION_LOG_CHARS,
   recordAuthoringFailure,
   recordingAuthoringCalls,
   redactAuthoringTexts,
-  skillAuthorAgent,
   storedCopyRefusedReason,
   SUPERSEDED,
-  verifyAuthoredSkill,
-  type AuthorPromptSkill,
-  type AuthorRunbookPage,
-} from './skillActions';
+} from './skillAuthoringRecord';
 
 /*
  * The stored verification (10-K; the enhancements plan, section 4.1): a version already in the
  * owner's library checked again in the sandbox under one employee's own contract, for an adoption
- * (10-A) or a Re-check now (10-C). Kept apart from `convex/skillActions.ts`, the authoring run,
+ * (10-A) or a Re-check now (10-C). Kept apart from `convex/skillAuthoringRun.ts`, the authoring run,
  * whose claim, lease, gates, redaction and failure path it shares; nothing here writes a body.
  */
 

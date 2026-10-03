@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, internalQuery } from './_generated/server';
 import { ticketSnapshotValidator } from './schema';
-import { seedItemInTransaction, workItemSeedFields } from './work';
+import { LISTING_AFTER_HANDOVER, seedItemInTransaction, workItemSeedFields } from './work';
 
 /*
  * Intake's seed of a listed item, fenced by the owner its poll read the employee under (the wave
@@ -52,8 +52,7 @@ export const surfacesForSweep = internalQuery({
 });
 
 /** Why a listed item is not seeded: the employee is gone or changed owner during its poll. */
-export const SEED_AFTER_HANDOVER =
-  'the employee was handed over to a new manager, or retired, while this poll read its queue';
+export const SEED_AFTER_HANDOVER = LISTING_AFTER_HANDOVER;
 
 /**
  * Seed one listed item or bring its row up to the listing, while the employee is still the owner

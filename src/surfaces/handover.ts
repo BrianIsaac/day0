@@ -53,8 +53,15 @@ function keepsOwnIdentity(
   if (!linked || surface.actsAs === undefined || !OWN_IDENTITY_KINDS.has(surface.actsAs.kind)) {
     return false;
   }
-  // A page reads no rows: the card's own link and identity decide. Rows read and gone keep nothing.
-  if (bound === undefined) return surface.credentialId !== undefined;
+  // A page reads no rows: the card's own link and identity decide, its token or, once an expiry
+  // or a Disconnect cleared that, its app's client secret, which the move reads and keeps
+  // (11-AC's item 15). Rows read and gone keep nothing.
+  if (bound === undefined) {
+    return (
+      surface.credentialId !== undefined ||
+      surface.provisioning?.clientSecretCredentialId !== undefined
+    );
+  }
   return (
     bound.length > 0 &&
     bound.every(

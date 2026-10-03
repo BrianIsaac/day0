@@ -5,7 +5,7 @@ import {
   presentChannelsNotJoined,
   presentProvisioning,
   ORGANISATION_PROVISION_NOTE,
-  REINSTALL_LABEL,
+  reinstallLabel,
   presentSurfaceCredential,
   PROVISION_LABEL,
   PROVISION_NOTE,
@@ -309,12 +309,13 @@ describe('the dedicated-app procedure on the card', (): void => {
       hasPublicUrl: true,
       provisioning: installed,
       credentialHeld: false,
+      employee: 'Leo',
     });
     expect(ended).toMatchObject({
       stage: 'reinstall',
       offerProvisioning: true,
       asksForConfigurationToken: false,
-      title: REINSTALL_LABEL,
+      title: "Install Leo's own app again",
     });
     expect(ended.installUrl).toBeUndefined();
     expect(ended.note).toContain('Leo (Day0) stays in the workspace');
@@ -429,4 +430,11 @@ it('offers replacement beneath an authentication failure even with a bound crede
     summary: { _id: 'credential-1', label: 'Slack bot token', source: 'entered' as const },
   };
   expect(presentSurfaceCredential(input)).toMatchObject({ canLand: true, kind: 'landing' });
+});
+
+describe("the reinstall's label (11-AC's item 12)", (): void => {
+  it('names the employee whose own app is installed again', (): void => {
+    expect(reinstallLabel('Leo')).toBe("Install Leo's own app again");
+    expect(reinstallLabel('Ines')).toBe("Install Ines's own app again");
+  });
 });

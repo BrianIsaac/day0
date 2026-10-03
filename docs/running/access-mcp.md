@@ -33,9 +33,11 @@ There is no manifest: the authorisation server's own client form takes the
 values in step 1. Note the **client id**, and for a confidential client the
 **client secret** and the **issuer** URL of the authorisation server it was
 registered with: Day0 sends the secret to that server alone, and refuses a
-secret landed without its issuer. For a public client the issuer is optional
-(Day0 otherwise discovers it from the MCP server's resource metadata at the
-first authorisation).
+secret landed without its issuer. A public client's issuer is recorded too, so
+every employee authorises at the server IT chose: when IT does not know it, the
+setup verb reads it from the MCP server's own resource metadata at the landing,
+prints it, and records it. A connection with no issuer is refused by every
+card.
 
 ## 3. The scopes
 
@@ -63,8 +65,8 @@ As the authorisation server sets it: ask IT when the client secret expires and k
 
 The verb asks for the server's address, the client id, the client secret (in a
 hidden prompt; Enter for a public client), the issuer (needed with a secret;
-Enter to discover it for a public client) and the scopes (Enter for the
-server's own):
+for a public client, Enter to read it from the server's metadata now) and the
+scopes (Enter for the server's own):
 
 ```bash
 ./setup.sh access --systems https://mcp.acme.com/mcp
@@ -103,4 +105,5 @@ by naming the systems with `--systems`.
 | `redirect` | `pass`: the registered redirect is `${DAY0_PUBLIC_URL}/api/oauth/mcp` |
 | `scopes` | `pass`: the scopes IT gave, each one the server offers |
 | `secret` | `pass`: opens under the deployment's key, or a public client holds none |
-| `identity` | `pass`: the authorisation server's metadata names the issuer and a token endpoint; a `note` when no issuer was given, since Day0 discovers it at the first authorisation |
+| `identity` | `pass`: the authorisation server's metadata names the issuer and a token endpoint; a `GAP` when no issuer is recorded (a connection landed before v0.15.0), cured by revoking it and landing it again |
+| `reach` | `pass`: the backend container reached the MCP server's address; a `GAP` names curl's words, cured by opening the deployment's way out to it |

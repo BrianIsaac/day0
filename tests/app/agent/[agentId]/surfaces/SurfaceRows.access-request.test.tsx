@@ -31,8 +31,8 @@ function mountRow(request: AccessRequestWords, refuse?: 'draft' | 'sent') {
       employee="Maya"
       zone="UTC"
       dmReachable
-      onDraft={vi.fn(async (): Promise<void> => {
-        calls.push('draft');
+      onDraft={vi.fn(async (via: string): Promise<void> => {
+        calls.push(`draft:${via}`);
         if (refuse === 'draft') throw new Error('That card no longer exists.');
       })}
       onSent={vi.fn(async (via: string): Promise<void> => {
@@ -50,22 +50,32 @@ describe('the access request on the card (A24; the access plan, section 4.5)', (
   it('copies the words first, then drafts the request and records it copied', async (): Promise<void> => {
     const { view, calls } = mountRow(REQUEST);
     await press(view.container, 'Copy');
-    expect(calls).toEqual([`clipboard:${REQUEST.text}`, 'draft', 'sent:copied']);
+    expect(calls).toEqual([`clipboard:${REQUEST.text}`, 'draft:copied', 'sent:copied']);
     expect(said(view.container)).toContain('Copied: paste it to IT.');
   });
 
   it('drafts the request when the manager sends it to themselves in Slack', async (): Promise<void> => {
     const { view, calls } = mountRow(REQUEST);
     await press(view.container, 'Send to me in Slack');
-    expect(calls).toEqual(['draft']);
+    expect(calls).toEqual(['draft:messaged']);
     expect(said(view.container)).toContain('Day0 is sending it to you in Slack.');
   });
 
   it('says a refusal beside the request and records nothing as sent', async (): Promise<void> => {
     const { view, calls } = mountRow(REQUEST, 'draft');
     await press(view.container, 'Send to me in Slack');
-    expect(calls).toEqual(['draft']);
+    expect(calls).toEqual(['draft:messaged']);
     expect(said(view.container)).toContain('That card no longer exists.');
+  });
+
+  it("still offers Send to me in Slack after a Copy, and not while the DM is on its way or once it landed (11-AC's item 2)", (): void => {
+    const copied = mountRow({ ...REQUEST, draftedAt: 1, copiedAt: 1 });
+    expect(copied.view.container.textContent).toContain('Send to me in Slack');
+    const sending = mountRow({ ...REQUEST, draftedAt: 1, messaging: true });
+    expect(sending.view.container.textContent).not.toContain('Send to me in Slack');
+    expect(sending.view.container.textContent).toContain('Being sent to you in Slack');
+    const landed = mountRow({ ...REQUEST, draftedAt: 1, messagedAt: Date.UTC(2026, 9, 3, 9) });
+    expect(landed.view.container.textContent).not.toContain('Send to me in Slack');
   });
 
   it('keeps every control at 44 px and passes axe', async (): Promise<void> => {

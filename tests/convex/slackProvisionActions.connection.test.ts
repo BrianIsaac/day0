@@ -491,7 +491,12 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     );
     expect(secrets).toHaveLength(1);
     expect(secrets[0]?.revokedAt).toBeDefined();
-    expect(secrets[0]?.issuedBy).toBeUndefined();
+    // Stored with the app's issuer (the pre-tag's item 10), and revoked once the record refused it.
+    expect(secrets[0]?.issuedBy).toMatchObject({
+      system: 'slack',
+      grant: 'app-created',
+      appId: 'A0APP1',
+    });
   });
 
   it("falls back to the card's field when the organisation's Slack connection is revoked", async (): Promise<void> => {
@@ -1029,9 +1034,10 @@ describe('the install through the connection (the cockpit: recordInstalledApp)',
         row.label.startsWith('Slack bot token'),
       ),
     );
-    expect(bots.map((row) => [row.holder, row.revokedAt !== undefined, row.issuedBy])).toEqual([
-      [ORGANISATION_HOLDER, true, undefined],
-    ]);
+    // Stored with the install's issuer (the pre-tag's item 10), and taken back when the record failed.
+    expect(
+      bots.map((row) => [row.holder, row.revokedAt !== undefined, row.issuedBy?.grant]),
+    ).toEqual([[ORGANISATION_HOLDER, true, 'oauth-install']]);
     expect((await card(harness, leo.surfaceId)).credentialId).toBeUndefined();
   });
 

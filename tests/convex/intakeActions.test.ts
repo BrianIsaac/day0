@@ -2925,6 +2925,47 @@ describe('each employee reads its own approved queues', (): void => {
       expect(unread.withdrawn).toEqual([]);
     });
 
+    it("withdraws under the owner the poll read the employee under, and names a withdraw a handover refused (the wave 10 review's FR-m4)", async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      const under: Array<string | null> = [];
+      const withdraw = harness.runtime.withdraw;
+      harness.runtime.withdraw = async (candidate, startedUnder): Promise<void> => {
+        under.push(startedUnder);
+        if (candidate.externalId === 'FIN-3') {
+          throw new Error(
+            'the employee was handed over to a new manager, or retired, while this poll read its queue',
+          );
+        }
+        await withdraw(candidate, startedUnder);
+      };
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [
+            ticket('FIN-1'),
+            ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+            ticket('FIN-3', { status: 'Done', statusType: 'completed' }),
+          ],
+          { owner: KEY_OWNER },
+        ),
+      });
+      expect(under).toEqual([financeAgent.userId, financeAgent.userId]);
+      expect(harness.withdrawn.map((row) => row.externalId)).toEqual(['FIN-2']);
+      // The refused withdraw holds the checkpoint, so the new owner's first poll reads it again.
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(harness.records[0]?.skipReason).toContain('FIN-3 (');
+    });
+
     it('holds the checkpoint and takes no ticket when the fields selector cannot select who owns it (M8)', async (): Promise<void> => {
       const finance: Doc<'surfaces'> = {
         ...companySurfaces()[1],

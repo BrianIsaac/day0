@@ -130,6 +130,22 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
   return undefined;
 }
 
+/** The systems an issuer of Day0's acts through an organisation connection for. */
+const ISSUER_SYSTEMS: ReadonlySet<string> = new Set(['slack', 'linear']);
+
+/**
+ * Whether an issuer of Day0's acts through the organisation's connection for a system: Slack's own
+ * apps, Linear's app, and an MCP server's client. Any other system's connection (a shared key, a
+ * service account) is recorded and acted through by nothing, so it covers no card: the card takes
+ * a key of its own meanwhile (11-AC's item 8: a product call, flagged). Keyed on the system, as the
+ * card's own prediction is, since a manager's summary carries no connection kind.
+ *
+ * @param system - The system key (`organisationSystemOf`).
+ */
+export function servedByIssuer(system: string): boolean {
+  return ISSUER_SYSTEMS.has(system) || system.startsWith(MCP_SYSTEM_PREFIX);
+}
+
 /**
  * Why a card refuses a pasted credential: its system has an active organisation connection, so
  * the card's credential comes from that connection, never from a paste (the access plan,
@@ -194,8 +210,11 @@ export function accessRequestReason(
   connection: AccessRequestConnection | null,
   neededScopes?: readonly string[],
 ): AccessRequestReason | undefined {
-  if (organisationSystemOf(card) === undefined) return undefined;
+  const system = organisationSystemOf(card);
+  if (system === undefined) return undefined;
   if (card.managerApprovedAt === undefined || card.credentialId !== undefined) return undefined;
+  // A system no issuer acts through asks IT for nothing, connected or not: the card takes a key.
+  if (!servedByIssuer(system)) return undefined;
   if (connection === null) return 'no-connection';
   if (neededScopes?.some((scope: string): boolean => !connection.scopes.includes(scope))) {
     return 'scope-widening';
@@ -240,6 +259,8 @@ export interface AccessRequestInput {
   readonly zone: string;
   /** The app's public origin, for the organisation page's address, when the deployment has one. */
   readonly publicUrl?: string;
+  /** Whether IT revoked the system's connection and none is active since. */
+  readonly connectionRevoked?: boolean;
 }
 
 /** The access request as the card shows it, the manager's DM carries it and the export records it. */
@@ -271,11 +292,18 @@ function approvedScopes(card: AccessRequestCard): readonly string[] {
   return scopes.length > 0 ? scopes : [`${card.slug}:read`, `${card.slug}:write`];
 }
 
-/** Why the card asks, in IT's words. */
-function reasonLine(reason: AccessRequestReason, system: string, employee: string): string {
+/** Why the card asks, in IT's words: a connection IT revoked is said as revoked, never as not yet made. */
+function reasonLine(
+  reason: AccessRequestReason,
+  system: string,
+  employee: string,
+  connectionRevoked: boolean,
+): string {
   switch (reason) {
     case 'no-connection':
-      return `${system} is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.`;
+      return connectionRevoked
+        ? `The organisation’s ${system} connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.`
+        : `${system} is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.`;
     case 'install-needed':
       return `${system} is connected for each employee, and ${employee}’s own app needs an administrator to install it.`;
     case 'scope-widening':
@@ -365,7 +393,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
   const subject = `Day0 access request: ${name} for ${employee}`;
   const lines = [
     `${employee}, a Day0 employee, needs access to ${name}; ${employee}’s manager approved it and asks IT to connect it.`,
-    reasonLine(input.reason, name, employee),
+    reasonLine(input.reason, name, employee, input.connectionRevoked === true),
     `Access needed: ${scopes.join(', ')}.`,
     evidenceLine(input.card, employee),
     lengthLine(input.card, input.zone),

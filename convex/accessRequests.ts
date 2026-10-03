@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import { internal } from './_generated/api';
 import { appendEvent, eventsOfType } from './eventLog';
-import { activeConnectionFor } from './organisationConnectionReads';
+import { activeConnectionFor, systemConnectionRevoked } from './organisationConnectionReads';
 import { assertOwnsAgent } from './ownership';
 import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
@@ -77,6 +77,7 @@ async function currentRequest(
   const reason = accessRequestReason(surface, connection);
   if (reason === undefined) return null;
   const publicUrl = process.env.DAY0_PUBLIC_URL;
+  const connectionRevoked = connection === null && (await systemConnectionRevoked(ctx, system));
   const draft = draftAccessRequest({
     card: surface,
     connection,
@@ -84,6 +85,7 @@ async function currentRequest(
     employeeName: agent.name,
     zone: agentZone(agent),
     ...(publicUrl ? { publicUrl } : {}),
+    ...(connectionRevoked ? { connectionRevoked } : {}),
   });
   return { draft, connection };
 }
@@ -113,11 +115,35 @@ const accessRequestViewValidator = v.object({
   draftedAt: v.optional(v.number()),
   copiedAt: v.optional(v.number()),
   emailedAt: v.optional(v.number()),
+  /** When Slack took the DM to the manager, its timestamp kept as the evidence. */
   messagedAt: v.optional(v.number()),
+  /** True while Day0 is sending the DM the manager asked for, before Slack has it. */
+  messaging: v.optional(v.boolean()),
 });
 
 /** The access request as the card shows it. */
 export type AccessRequestView = Infer<typeof accessRequestViewValidator>;
+
+/** How the manager sent a drafted request: copied, opened in their email, or to themselves in Slack. */
+const sentViaValidator = v.union(v.literal('copied'), v.literal('emailed'), v.literal('messaged'));
+
+/**
+ * How long a claim of the manager's DM stands without Slack's timestamp before it is read as
+ * released: past twice the Slack call's own bound, so a send whose action died between the claim
+ * and Slack never leaves the request stuck "being sent" (the code pass's M2).
+ */
+const MESSAGE_CLAIM_STANDS_MS = 10 * 60 * 1000;
+
+/** Whether the request's DM went out, or a claim of it still stands, at `now`. */
+function messageClaimed(
+  request: NonNullable<Doc<'surfaces'>['accessRequest']>,
+  now: number,
+): boolean {
+  if (request.messagedAt === undefined) return false;
+  return (
+    request.messageProviderTs !== undefined || now - request.messagedAt < MESSAGE_CLAIM_STANDS_MS
+  );
+}
 
 /**
  * The view of a current request: once drafted, the words the draft recorded (which the DM sends
@@ -145,7 +171,15 @@ function viewOf(
           draftedAt: request.draftedAt,
           ...(request.copiedAt === undefined ? {} : { copiedAt: request.copiedAt }),
           ...(request.emailedAt === undefined ? {} : { emailedAt: request.emailedAt }),
-          ...(request.messagedAt === undefined ? {} : { messagedAt: request.messagedAt }),
+          // The claim of the DM writes `messagedAt`; Slack's timestamp says it went out, and a
+          // claim with none is shown as on its way only while it stands.
+          ...(request.messagedAt === undefined
+            ? {}
+            : request.messageProviderTs !== undefined
+              ? { messagedAt: request.messagedAt }
+              : messageClaimed(request, Date.now())
+                ? { messaging: true }
+                : {}),
         }),
   };
 }
@@ -223,23 +257,30 @@ export const forCard = query({
 });
 
 /**
- * Draft the card's access request: record it on the card (`accessRequest`), append
- * `surface.access-requested` with its words to the employee's record, and in real mode schedule
- * the one DM to the manager (`managerChannelActions.sendAccessRequest`). A request already drafted
- * with the same reason and scopes is answered as it stands, with no second event or DM. Public,
- * owner-guarded (`assertOwnsAgent`).
+ * Draft the card's access request, as the manager sends it (`via`): record it on the card
+ * (`accessRequest`) and append `surface.access-requested` with its words to the employee's record,
+ * once; and, in real mode and only when the manager asked for it in Slack (`messaged`), schedule
+ * the one DM to the manager (`managerChannelActions.sendAccessRequest`), for a request drafted now
+ * or drafted before by a Copy or an Email it. A request already drafted with the same reason and
+ * scopes keeps its words and its record line; a DM already sent or being sent is not sent again
+ * (11-AC's item 2: product call, flagged). Public, owner-guarded (`assertOwnsAgent`).
  *
  * @throws ConvexError with {@link NO_ACCESS_REQUEST} for a card that asks IT for nothing.
  */
 export const draft = mutation({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), via: sentViaValidator },
   returns: accessRequestViewValidator,
   handler: async (ctx, args): Promise<AccessRequestView> => {
     const { surface, agent } = await ownedCard(ctx, args.surfaceId);
     const current = await currentRequest(ctx, surface, agent);
     if (current === null) throw new ConvexError(NO_ACCESS_REQUEST);
     const recorded = await recordedRequest(ctx, surface, current.draft);
-    if (recorded !== undefined) return await recordedView(ctx, surface, current.draft, recorded);
+    if (recorded !== undefined) {
+      if (args.via === 'messaged' && !messageClaimed(recorded, Date.now())) {
+        await scheduleMessage(ctx, surface._id, recorded.draftedAt);
+      }
+      return await recordedView(ctx, surface, current.draft, recorded);
+    }
     const now = Date.now();
     const accessRequest = {
       reason: current.draft.reason,
@@ -260,15 +301,23 @@ export const draft = mutation({
       },
       createdAt: now,
     });
-    if (SURFACE_MODE === 'real') {
-      await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendAccessRequest, {
-        surfaceId: surface._id,
-        draftedAt: now,
-      });
-    }
+    if (args.via === 'messaged') await scheduleMessage(ctx, surface._id, now);
     return viewOf(current.draft, { request: accessRequest });
   },
 });
+
+/** Schedule the DM of the request drafted at `draftedAt` to the manager, in real mode only. */
+async function scheduleMessage(
+  ctx: MutationCtx,
+  surfaceId: Id<'surfaces'>,
+  draftedAt: number,
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendAccessRequest, {
+    surfaceId,
+    draftedAt,
+  });
+}
 
 /**
  * Record that the manager copied the drafted request or opened it in their email ("Sent to IT on
@@ -378,10 +427,14 @@ const claimedMessageValidator = v.union(
 /**
  * Internal, for `managerChannelActions.sendAccessRequest`: claim the DM of the request drafted at
  * `draftedAt`, with the words that draft recorded. Refused in mock mode, when the card or its
- * employee is gone, the request was redrafted or already sent to the DM, the card no longer makes
- * it, or the employee has no Slack card that can carry the DM. Writes nothing; the record is
- * written once Slack has the message. Its one caller is the action `draft` schedules once per
- * draft, so two sends of one draft never overlap; a second call after the record is refused.
+ * employee is gone, the request was redrafted or already sent or being sent to the DM, the card
+ * no longer makes it, or the employee has no Slack card that can carry the DM. Writes the claim
+ * (`messagedAt`), so a second press of Send to me in Slack, or a second send scheduled before
+ * this one finished, is refused; Slack's timestamp is written once it has the message
+ * (`recordMessage`), and a send Slack refused releases the claim (`releaseMessage`), so the
+ * manager may ask again, as they may once a claim with no timestamp outlives
+ * `MESSAGE_CLAIM_STANDS_MS`. A post Slack took whose answer was lost is released too, and a second
+ * ask then sends a second DM: a duplicate, never a silent loss.
  */
 export const claimMessage = internalMutation({
   args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
@@ -395,7 +448,7 @@ export const claimMessage = internalMutation({
     if (surface === null || recorded === undefined || recorded.draftedAt !== args.draftedAt) {
       return { claimed: false, reason: 'the request was redrafted or is gone' };
     }
-    if (recorded.messagedAt !== undefined) {
+    if (messageClaimed(recorded, Date.now())) {
       return { claimed: false, reason: 'the request was already sent to the manager' };
     }
     const agent = await ctx.db.get(surface.agentId);
@@ -411,6 +464,8 @@ export const claimMessage = internalMutation({
     if (card?.credentialId === undefined || card.managerDmChannelId === undefined) {
       return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
     }
+    // Claimed once: a second press, or a second send scheduled meanwhile, is refused above.
+    await ctx.db.patch(surface._id, { accessRequest: { ...recorded, messagedAt: Date.now() } });
     return {
       claimed: true,
       credentialId: card.credentialId,
@@ -434,8 +489,38 @@ export const recordMessage = internalMutation({
       return null;
     }
     await ctx.db.patch(surface._id, {
-      accessRequest: { ...recorded, messagedAt: Date.now(), messageProviderTs: args.providerTs },
+      accessRequest: {
+        ...recorded,
+        messagedAt: recorded.messagedAt ?? Date.now(),
+        messageProviderTs: args.providerTs,
+      },
     });
+    return null;
+  },
+});
+
+/**
+ * Internal, for `managerChannelActions.sendAccessRequest`: release the claim of a DM Slack did not
+ * take, on the request drafted at `draftedAt` only, so the card offers Send to me in Slack again.
+ * A DM Slack has the timestamp of is never released.
+ */
+export const releaseMessage = internalMutation({
+  args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    const recorded = surface?.accessRequest;
+    if (
+      surface === null ||
+      recorded === undefined ||
+      recorded.draftedAt !== args.draftedAt ||
+      recorded.messageProviderTs !== undefined
+    ) {
+      return null;
+    }
+    const { messagedAt: released, ...kept } = recorded;
+    if (released === undefined) return null;
+    await ctx.db.patch(surface._id, { accessRequest: kept });
     return null;
   },
 });

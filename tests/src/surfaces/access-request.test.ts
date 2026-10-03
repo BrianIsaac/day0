@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessRequestReason,
+  servedByIssuer,
   draftAccessRequest,
   isOrganisationSystemKey,
   mcpSystemKey,
@@ -155,6 +156,26 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     scopes: ['read', 'write'],
   };
 
+  it("asks IT nothing where its connection is one no issuer of Day0's acts through: the card takes a key (11-AC's item 8)", (): void => {
+    const notionCard = {
+      ...linearCard,
+      slug: 'notion',
+      displayName: 'Notion',
+      endpoint: 'https://api.notion.com/v1',
+    };
+    const notion = { ...linear, system: 'notion', kind: 'static-key' as const };
+    expect(accessRequestReason(notionCard, notion)).toBeUndefined();
+    expect(
+      accessRequestReason(notionCard, { ...notion, mode: 'per-employee' as const }),
+    ).toBeUndefined();
+    // With no connection either: nothing IT could land for Notion would be acted through.
+    expect(accessRequestReason(notionCard, null)).toBeUndefined();
+    expect(servedByIssuer('notion')).toBe(false);
+    expect(servedByIssuer('slack')).toBe(true);
+    expect(servedByIssuer('linear')).toBe(true);
+    expect(servedByIssuer('mcp:docs.acme.test')).toBe(true);
+  });
+
   it('asks when the system has no connection, or a per-employee one IT must install', (): void => {
     expect(accessRequestReason(linearCard, null)).toBe('no-connection');
     expect(accessRequestReason(linearCard, { ...linear, mode: 'per-employee' })).toBe(
@@ -282,6 +303,14 @@ describe('the access request’s words, the same wherever they are shown', (): v
     employeeName: 'Maya',
     zone: 'UTC',
   };
+
+  it('says IT revoked the system’s connection where it did, never that it is not connected yet (the pre-tag second pass)', (): void => {
+    const draft = draftAccessRequest({ ...base, connectionRevoked: true });
+    expect(draft.text).toContain(
+      'The organisation’s Linear connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.',
+    );
+    expect(draft.text).not.toContain('not connected for the organisation yet');
+  });
 
   it('carries the system, the scopes, the evidence, the length and how IT connects it', (): void => {
     const draft = draftAccessRequest({ ...base, publicUrl: 'https://day0.acme.test/' });

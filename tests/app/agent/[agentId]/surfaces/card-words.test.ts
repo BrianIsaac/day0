@@ -11,6 +11,7 @@ import {
   identityChip,
   moveOfferWords,
   reachedWords,
+  rejoinWords,
   stateChip,
   type OrganisationSystem,
   type WordedSurface,
@@ -354,5 +355,39 @@ describe('the move off a pasted key at its renewal (A27)', (): void => {
     ).toBe(
       'IT has connected Acme docs. Maya can act as you there instead of the pasted key, which keeps working until you move it.',
     );
+  });
+});
+
+describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void => {
+  const AFTER = { joined: ['#revops'], needsPerson: ['#revops-leads'], at: 20 };
+
+  it('says what the bot re-joined itself and which channels need a person to add it', (): void => {
+    expect(rejoinWords(AFTER, 'Leo', 10)).toBe(
+      'After the renewal, Leo rejoined #revops itself; #revops-leads needs someone in it to add Leo.',
+    );
+    expect(
+      rejoinWords(
+        { joined: ['#revops', '#sales'], needsPerson: ['#leads', '#finance'], at: 20 },
+        'Leo',
+        10,
+      ),
+    ).toBe(
+      'After the renewal, Leo rejoined #revops and #sales itself; #leads and #finance need someone in each to add Leo.',
+    );
+    expect(
+      rejoinWords(
+        { joined: [], needsPerson: ['#leads'], reason: 'restricted_action', at: 20 },
+        'Leo',
+        10,
+      ),
+    ).toBe(
+      'After the renewal, #leads needs someone in it to add Leo. Slack said: restricted_action.',
+    );
+  });
+
+  it('says nothing of a re-join older than the install the card holds now, or of none', (): void => {
+    expect(rejoinWords(AFTER, 'Leo', 30)).toBeUndefined();
+    expect(rejoinWords(undefined, 'Leo', 10)).toBeUndefined();
+    expect(rejoinWords({ joined: [], needsPerson: [], at: 20 }, 'Leo', 10)).toBeUndefined();
   });
 });

@@ -15,6 +15,7 @@ import {
   type LinearProbeIdentity,
 } from './linearIdentityActions';
 import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
+import type { KeptSweepPage } from './keptIdentities';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
@@ -58,7 +59,11 @@ import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
-import { organisationConnectedRefusal, organisationSystemOf } from '../src/surfaces/access-request';
+import {
+  organisationConnectedRefusal,
+  organisationSystemOf,
+  servedByIssuer,
+} from '../src/surfaces/access-request';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
 import {
@@ -1737,8 +1742,10 @@ export const landCredential = action({
     const refusal = credentialLandingRefusal(context.surface, plaintext);
     if (refusal) throw new ConvexError(refusal);
     const system = organisationSystemOf(context.surface);
+    // Only a connection an issuer acts through refuses a paste: any other covers nothing, and the
+    // card takes a key of its own meanwhile (11-AC's item 8).
     const connection =
-      system === undefined
+      system === undefined || !servedByIssuer(system)
         ? null
         : await ctx.runQuery(internal.organisationConnections.activeFor, { system });
     if (connection !== null)
@@ -1785,12 +1792,16 @@ export const landCredential = action({
  * Connected surfaces are re-verified; a surface the last probe left
  * `listed-dead` with its credential and approval intact is retried, so a
  * transient provider failure does not stay dead until a human clicks Probe.
- * The re-probe neither extends nor ends access (Q5): the end date does.
+ * The re-probe neither extends nor ends access (Q5): the end date does. An
+ * identity a handover kept on a card the new manager has not approved again
+ * within the wait is ended first (m8).
  */
 export const reprobeAll = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ expired: number; noticed: number; scheduled: number }> => {
-    if (SURFACE_MODE === 'mock') return { expired: 0, noticed: 0, scheduled: 0 };
+  handler: async (
+    ctx,
+  ): Promise<{ expired: number; noticed: number; scheduled: number; keptEnded: number }> => {
+    if (SURFACE_MODE === 'mock') return { expired: 0, noticed: 0, scheduled: 0, keptEnded: 0 };
     const now = Date.now();
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.reprobeCandidates,
@@ -1816,6 +1827,36 @@ export const reprobeAll = internalAction({
       });
       scheduled += 1;
     }
-    return { expired, noticed, scheduled };
+    // After the expiries, notices and re-probes, so a failure here stops none of them; it is
+    // logged and the next hour's sweep pages through again (the code pass's m4).
+    let keptEnded = 0;
+    try {
+      keptEnded = await endUnapprovedKeptIdentities(ctx, now);
+    } catch (error) {
+      log.warn('the kept identities sweep failed; the next sweep tries again', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { expired, noticed, scheduled, keptEnded };
   },
 });
+
+/**
+ * Page through every `proposed` card, ending each identity a handover kept that its new manager
+ * has not approved again within the wait (`keptIdentities.endUnapproved`; the wave 11 review's m8).
+ *
+ * @returns How many identities were ended.
+ */
+async function endUnapprovedKeptIdentities(ctx: ActionCtx, now: number): Promise<number> {
+  let ended = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const page: KeptSweepPage = await ctx.runMutation(internal.keptIdentities.endUnapproved, {
+      now,
+      cursor,
+    });
+    ended += page.ended;
+    if (page.isDone) return ended;
+    cursor = page.continueCursor;
+  }
+}

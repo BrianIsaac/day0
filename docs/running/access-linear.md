@@ -200,6 +200,7 @@ connection has no organisation secret to rotate.
 | `scopes` | `pass`: `read, write, app:assignable`, and the token Linear grants holds all three |
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Linear answers as the app (`viewer`) with a client-credentials token, which the check revokes again |
+| `reach` | `pass`: the backend container reached Linear's API (no token sent); a `GAP` names curl's words, cured by opening the deployment's way out to `api.linear.app` |
 
 A `GAP` names what to fix: client credentials not enabled on the app or a
 secret that is no longer the current one (Linear's `invalid_client`), a

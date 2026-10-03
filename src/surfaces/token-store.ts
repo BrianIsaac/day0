@@ -322,6 +322,9 @@ export const STORE_REFRESH_WORDS: RefreshWords = {
   failed: (reason: string): string => `Refreshing the authorisation failed: ${reason}`,
 };
 
+/** Why a read refuses a token past its expiry when no refresh token or refresher is held for it. */
+const EXPIRED_UNRENEWABLE = 'The token has expired and nothing Day0 holds can renew it.';
+
 /** An issuer's refresh, ready to exchange the refresh token once the store has read it. */
 export interface PreparedRefresh {
   /**
@@ -584,11 +587,11 @@ async function exchangeAndRotate(
  * The native store's live access token for a credential: its stored value, refreshed first when
  * it is a token an issuer refreshes and it is within that issuer's margin of its expiry. A refresh
  * that fails while the stored token still lives hands that token back; any other credential is
- * read exactly as `credentials.decrypt` reads it.
+ * read exactly as `credentials.decrypt` reads it, save a token past its expiry, which is refused.
  *
  * @param held - The credential's held metadata, read by the caller; null when no row answers.
  * @throws Error when the credential is unavailable, or an expired token could not be refreshed
- *   (the manager authorises again).
+ *   or has nothing to refresh it with (the manager authorises again).
  */
 export async function nativeAccessToken(
   ctx: ActionCtx,
@@ -597,6 +600,11 @@ export async function nativeAccessToken(
   deps: NativeTokenStoreDeps,
 ): Promise<string> {
   const refresher = held ? refresherFor(held, deps.refreshers) : undefined;
+  if (held && !refresher && held.expiresAt !== undefined && held.expiresAt <= deps.now()) {
+    // A dead token sent on reads as the vendor's refusal of the card; say why it is dead instead
+    // (the wave 11 review's m12).
+    throw STORE_REFRESH_WORDS.refusedWhenExpired(EXPIRED_UNRENEWABLE);
+  }
   if (!held || !refresher || (held.expiresAt ?? 0) - deps.now() > refresher.readRefreshMarginMs) {
     return await deps.keeper.accessToken(ctx, credentialId);
   }

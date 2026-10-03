@@ -104,6 +104,21 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
     ]);
   });
 
+  it("says how many cards a revoke ends once the count is read, naming no employee (11-AC's item 3)", (): void => {
+    expect(revokeLines(view(), { cards: 3, atLeast: false })[0]).toBe(
+      '3 employee cards connected through it end now, each with your reason, and what Day0 obtained through it is revoked at Slack.',
+    );
+    expect(revokeLines(view(), { cards: 1, atLeast: false })[0]).toBe(
+      'One employee card connected through it ends now, with your reason, and what Day0 obtained through it is revoked at Slack.',
+    );
+    expect(revokeLines(view(), { cards: 0, atLeast: false })[0]).toBe(
+      'No employee card is connected through it, so none ends; what Day0 obtained through it is revoked at Slack.',
+    );
+    expect(revokeLines(view(), { cards: 1000, atLeast: true })[0]).toBe(
+      'More than 1000 employee cards are connected through it, too many to end at once: Day0 refuses the revoke until some are removed.',
+    );
+  });
+
   it("says a ledger line in the record's words, with the administrator who made the change", (): void => {
     expect(
       ledgerLineWords({

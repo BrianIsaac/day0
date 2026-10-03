@@ -576,7 +576,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup.match(/re-joins (its|the) public channels/g)).toHaveLength(1);
   });
 
-  it('says a covered card with no way on that it waits on IT, rather than asking for a credential nobody can paste (second pass)', (): void => {
+  it("takes the card's own key where IT connected a system no issuer of Day0's acts through, and says why (11-AC's item 8, a product call)", (): void => {
     const markup = render(
       listed({
         displayName: 'Notion',
@@ -585,13 +585,23 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         verdict: 'approved',
         managerApprovedAt: NOW - DAY,
         expiresAt: NOW + 80 * DAY,
+        request: {
+          credential: {
+            found: 'location',
+            label: 'Notion integration token',
+            location: 'IT / Integrations',
+          },
+        },
+        credentialLocation: 'IT / Integrations',
       }),
       { organisation: organisation({ system: 'notion', displayName: 'Notion', mode: 'shared' }) },
     );
-    expect(chip(markup)).toBe('Waiting on IT');
+    expect(chip(markup)).not.toBe('Waiting on IT');
+    expect(markup).not.toContain('Ask IT how Maya should reach it.');
     expect(markup).toContain(
-      'IT connected Notion for the organisation in a way this card cannot use for Maya. Ask IT how Maya should reach it.',
+      'IT connected Notion for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.',
     );
+    expect(markup).toMatch(/<input[^>]*type="password"/);
   });
 
   it('names an installed Slack app once, in the Acts as row, and asks IT nothing on an ended card (second pass)', (): void => {
@@ -625,6 +635,66 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { accessRequest: REQUEST },
     );
     expect(ended).not.toContain('Ask IT to connect Linear');
+  });
+
+  it("says on a renewed Slack card what its bot re-joined and what needs a person (11-AC's item 5)", (): void => {
+    const renewed = {
+      ...SLACK_CARD,
+      verdict: 'connected' as const,
+      credentialLanded: true,
+      credentialId: 'cred-bot' as ListedSurface['credentialId'],
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 80 * DAY,
+      actsAs: { kind: 'own-app' as const, label: 'Maya (Day0)' },
+      provisioning: {
+        appId: 'A1',
+        appName: 'Maya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: 'cred-secret',
+        installUrl: 'https://slack.test/install',
+        redirectUrl: 'https://day0.test/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      } as ListedSurface['provisioning'],
+      lastRejoin: { joined: ['#revops'], needsPerson: ['#revops-leads'], at: 3 },
+    };
+    const markup = render(listed(renewed), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    expect(markup).toContain(
+      'After the renewal, Maya rejoined #revops itself; #revops-leads needs someone in it to add Maya.',
+    );
+    const ended = render(listed({ ...renewed, credentialId: undefined }), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    expect(ended).not.toContain('After the renewal');
+  });
+
+  it("says once, on a card an administrator's revoke ended, what happened, whose reason it is and whom it acts as (the design pass's majors)", (): void => {
+    const markup = render(
+      listed({
+        displayName: 'Acme docs',
+        endpoint: 'https://docs.acme.test/mcp',
+        path: 'mcp',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        reason: 'The docs server is moving to a new host.',
+        connectionRevoked: true,
+      }),
+    );
+    expect(markup).toContain("IT's reason: The docs server is moving to a new host.");
+    expect(fact(markup, 'Acts as')).toBe(
+      "nobody until IT connects Acme docs again; then Maya, through IT's connection",
+    );
+    expect(markup).not.toContain('Pasted key');
+    expect(markup).not.toMatch(/Renew for/);
+    expect(markup).toContain(
+      'Nothing is read or sent through this card until IT connects Acme docs again.',
+    );
   });
 
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {

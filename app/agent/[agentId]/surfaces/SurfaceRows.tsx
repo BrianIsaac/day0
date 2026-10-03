@@ -1,10 +1,6 @@
 'use client';
 
-import {
-  type ProvisioningPresentation,
-  PROVISION_LABEL,
-  REINSTALL_LABEL,
-} from '@/surfaces/credential-presentation';
+import { type ProvisioningPresentation, PROVISION_LABEL } from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import {
   type ScopeValue,
@@ -379,7 +375,8 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
  * registration again where an install did not complete.
  */
 function provisionLabel(presentation: ProvisioningPresentation): string {
-  if (presentation.stage === 'reinstall') return REINSTALL_LABEL;
+  // The reinstall's title names the employee whose app it is (11-AC's item 12).
+  if (presentation.stage === 'reinstall') return presentation.title;
   if (presentation.stage === 'offer') return CONNECT_LABEL;
   return PROVISION_LABEL;
 }
@@ -448,6 +445,8 @@ export interface AccessRequestWords {
   readonly copiedAt?: number;
   readonly emailedAt?: number;
   readonly messagedAt?: number;
+  /** True while Day0 sends the DM the manager asked for, before Slack has it. */
+  readonly messaging?: boolean;
 }
 
 /** The access request row's inputs. */
@@ -457,8 +456,11 @@ export interface AccessRequestRowProps {
   readonly employee: string;
   /** The zone its days are named in. */
   readonly zone: string;
-  /** Draft it: recorded on the card and the record, and in real mode sent to the manager's DM. */
-  readonly onDraft: () => Promise<unknown>;
+  /**
+   * Draft it, as the manager sends it: recorded on the card and the record, and sent to the
+   * manager's DM in real mode only when they ask for that (`messaged`).
+   */
+  readonly onDraft: (via: 'copied' | 'emailed' | 'messaged') => Promise<unknown>;
   /** Record that it was copied or opened in the manager's email. */
   readonly onSent: (via: 'copied' | 'emailed') => Promise<unknown>;
   /** Whether a connected Slack card can carry the manager's DM, so the request can go there. */
@@ -495,13 +497,14 @@ export function accessRequestTitle(
 
 /**
  * What became of the request, in the card's words: "Sent to IT on 3 October" once copied or
- * emailed, "Sent to you in Slack on 3 October" once the DM landed. Nothing before.
+ * emailed, "Being sent to you in Slack" while the DM the manager asked for is on its way, "Sent to
+ * you in Slack on 3 October" once it landed. Nothing before.
  *
  * @param request - The request's dates.
  * @param zone - The zone the days are named in.
  */
 export function accessRequestSentLines(
-  request: Pick<AccessRequestWords, 'copiedAt' | 'emailedAt' | 'messagedAt'>,
+  request: Pick<AccessRequestWords, 'copiedAt' | 'emailedAt' | 'messagedAt' | 'messaging'>,
   zone: string,
 ): string[] {
   const toIt = [request.copiedAt, request.emailedAt].filter((at): at is number => at !== undefined);
@@ -509,7 +512,9 @@ export function accessRequestSentLines(
     ...(toIt.length > 0 ? [`Sent to IT on ${calendarDay(Math.max(...toIt), zone)}`] : []),
     ...(request.messagedAt !== undefined
       ? [`Sent to you in Slack on ${calendarDay(request.messagedAt, zone)}`]
-      : []),
+      : request.messaging === true
+        ? ['Being sent to you in Slack']
+        : []),
   ];
 }
 
@@ -522,11 +527,11 @@ async function browserClipboard(text: string): Promise<void> {
  * The access request (A24; the access plan, section 4.5), in place of a credential the card cannot
  * take without IT: why it asks, the words IT receives, and three ways to send them, each the
  * manager's own act from their own account: Copy, Email it (their mail client, `mailto:`), and
- * Send to me in Slack, offered until the request is drafted (drafting sends the DM once). What
- * became of it is said under it.
+ * Send to me in Slack, offered until that DM is on its way (Copy and Email it send none; 11-AC's
+ * item 2). What became of it is said under it.
  */
 export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode {
-  // Send to me in Slack goes once the request is drafted: the block takes focus then.
+  // Send to me in Slack goes once its DM is on its way: the block takes focus then.
   const block = useRef<HTMLDivElement>(null);
   const change = useChange(block);
   const { request } = props;
@@ -538,7 +543,7 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
       async (): Promise<void> => {
         // The words go to the clipboard first, while the press still lets the page write it.
         await write(request.text);
-        await props.onDraft();
+        await props.onDraft('copied');
         await props.onSent('copied');
       },
       { done: 'Copied: paste it to IT.', refused: 'The request was not copied.' },
@@ -546,13 +551,13 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
   const emailed = (): void =>
     change.run(
       async (): Promise<void> => {
-        await props.onDraft();
+        await props.onDraft('emailed');
         await props.onSent('emailed');
       },
       { done: 'Opened in your email.', refused: 'The request was not marked as emailed.' },
     );
   const toSlack = (): void =>
-    change.run(props.onDraft, {
+    change.run(async (): Promise<unknown> => await props.onDraft('messaged'), {
       done: 'Day0 is sending it to you in Slack.',
       refused: 'The request was not sent to you in Slack.',
     });
@@ -577,7 +582,7 @@ export function AccessRequestRow(props: AccessRequestRowProps): React.ReactNode 
         <a href={request.mailto} onClick={emailed} className={buttonClass('secondary', 'small')}>
           Email it
         </a>
-        {request.draftedAt === undefined && props.dmReachable ? (
+        {request.messagedAt === undefined && request.messaging !== true && props.dmReachable ? (
           <Button size="small" disabled={change.busy} onClick={toSlack}>
             Send to me in Slack
           </Button>

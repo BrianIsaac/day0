@@ -99,8 +99,15 @@ export const ORGANISATION_PROVISION_NOTE =
   'nothing to paste. Day0 then shows the install link for an administrator to approve; the bot ' +
   'token arrives through the redirect and is never shown to anyone.';
 
-/** Title of the renewal of an installed app whose access ended (A26). */
-export const REINSTALL_LABEL = "Install the employee's own app again";
+/**
+ * Title of the renewal of an installed app whose access ended (A26), naming the employee whose own
+ * app it is (11-AC's item 12).
+ *
+ * @param employee - The employee's name.
+ */
+export function reinstallLabel(employee: string): string {
+  return `Install ${employee}'s own app again`;
+}
 
 /** What the presentation is built from: the verdict, the finding, the stored credentials and the provisioning. */
 export interface CredentialPresentationInput {
@@ -148,6 +155,8 @@ export function presentProvisioning(input: {
    * expiry or a Disconnect revoked its bot token, A26); absent reads as held, as before 11-AS.
    */
   credentialHeld?: boolean;
+  /** The employee's name, which the reinstall's title says; a caller reading only the stage leaves it out. */
+  employee?: string;
 }): ProvisioningPresentation {
   if (input.credential?.method !== 'oauth') {
     return {
@@ -171,7 +180,7 @@ export function presentProvisioning(input: {
       offerProvisioning: true,
       asksForConfigurationToken: false,
       stage: 'reinstall',
-      title: REINSTALL_LABEL,
+      title: reinstallLabel(input.employee ?? 'the employee'),
     };
   }
   if (provisioning?.installedAt) {

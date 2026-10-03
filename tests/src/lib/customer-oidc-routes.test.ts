@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cookieAttributes, fromOwnPages } from '../../../src/lib/customer-oidc-routes';
 import type { CustomerSignInSettings } from '../../../src/lib/customer-oidc-server';
 import { CUSTOMER_OIDC_PRESETS } from '../../../src/lib/customer-oidc-presets';
+import { PUBLIC_URL, customerIssuer, signedIn } from '../../app/api/auth/oidc/customer-issuer';
 
 const SETTINGS: CustomerSignInSettings = {
   issuer: 'https://issuer.acme.test',
@@ -74,5 +75,52 @@ describe('the company sign-in routes and Clerk (Q16)', (): void => {
     const routes = await import('../../../src/lib/customer-oidc-routes');
 
     expect(typeof routes.fromOwnPages).toBe('function');
+  });
+});
+
+describe("a redirect's caller under the company sign-in (the pre-tag second pass; the code pass's m8)", (): void => {
+  const START = new Date('2026-10-03T09:00:00Z').getTime();
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function caller(cookie: string): Promise<{
+    idToken: string | null;
+    setCookies: number;
+  }> {
+    const { redirectCaller } = await import('../../../src/lib/customer-oidc-routes');
+    const { NextResponse } = await import('next/server');
+    const found = await redirectCaller(
+      new NextRequest(`${PUBLIC_URL}/api/oauth/mcp`, { headers: { cookie } }),
+    );
+    const response = NextResponse.redirect(`${PUBLIC_URL}/`);
+    await found.finish(response);
+    return { idToken: found.idToken, setCookies: response.headers.getSetCookie().length };
+  }
+
+  it('acts with no caller and writes nothing when the issuer cannot be reached for a lapsed token', async (): Promise<void> => {
+    vi.resetModules();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    const issuer = customerIssuer({ tokenSeconds: 120 });
+    const cookie = await signedIn(issuer, 'priya');
+    vi.stubGlobal('fetch', async (): Promise<Response> => {
+      throw new TypeError('fetch failed');
+    });
+    vi.setSystemTime(START + 300_000);
+
+    expect(await caller(cookie)).toEqual({ idToken: null, setCookies: 0 });
+  });
+
+  it('acts with no caller where the company sign-in is not set up on this installation', async (): Promise<void> => {
+    vi.resetModules();
+    const issuer = customerIssuer({ tokenSeconds: 120 });
+    const cookie = await signedIn(issuer, 'priya');
+    vi.stubEnv('DAY0_SESSION_SECRET', '');
+
+    expect(await caller(cookie)).toEqual({ idToken: null, setCookies: 0 });
   });
 });

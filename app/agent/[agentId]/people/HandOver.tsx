@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -8,7 +8,7 @@ import { MAX_TRANSFER_NOTE_LENGTH, transferExpiresAt } from '@/agent/manager-tra
 import { deploymentZone } from '@/lib/zone';
 import { surfaceHandoverOf } from '@/surfaces/handover';
 import { Button } from '../../../components/Button';
-import { Dialog } from '../../../components/Dialog';
+import { Dialog, DialogFooter } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import type { Change } from '../../../components/use-change';
@@ -127,6 +127,8 @@ export function HandOverDialog({
   const counted = mode === 'mock' || surfaces !== undefined;
   const [to, setTo] = useState(changing?.toAddress ?? address);
   const [note, setNote] = useState(changing?.note ?? '');
+  // The answers sit in the dialog's footer, outside the form; Ask names it (11-AC's item 13).
+  const formId = useId();
   const now = useNow();
   const zone = deploymentZone();
   const lines = handOverLines({
@@ -171,7 +173,7 @@ export function HandOverDialog({
       onClose={onClose}
       busy={change.busy}
     >
-      <form className="grid gap-4" onSubmit={submit}>
+      <form id={formId} className="grid gap-4" onSubmit={submit}>
         <Field label={HANDOVER_ADDRESS_LABEL} hint={HANDOVER_ADDRESS_HINT}>
           {(control) => (
             <input
@@ -208,6 +210,8 @@ export function HandOverDialog({
             ))}
           </ul>
         </div>
+      </form>
+      <DialogFooter>
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button size="large" disabled={change.busy} onClick={onClose}>
@@ -215,6 +219,7 @@ export function HandOverDialog({
           </Button>
           <Button
             type="submit"
+            form={formId}
             variant="primary"
             size="large"
             disabled={change.busy || !counted}
@@ -224,7 +229,7 @@ export function HandOverDialog({
             {change.busy ? 'Asking…' : askLabel(to)}
           </Button>
         </div>
-      </form>
+      </DialogFooter>
     </Dialog>
   );
 }

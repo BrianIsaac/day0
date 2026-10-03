@@ -139,20 +139,30 @@ export function secretWords(
     : 'None held';
 }
 
+/** How many employee cards a revoke ends, as `organisationConnections.cardsOn` counts them. */
+export interface CardsOnConnection {
+  readonly cards: number;
+  /** More cards than one revoke ends, which the revoke refuses. */
+  readonly atLeast: boolean;
+}
+
 /**
  * What revoking a connection does, said before the administrator confirms it (11-AO's `revoke`
- * with 11-AR's `endCardsOnConnection`): every card on it ends with the reason, what Day0 obtained
- * through it is revoked at the vendor, and no card on another system changes. No read counts the
- * cards beforehand (for the cockpit), so the words say every card rather than a number.
+ * with 11-AR's `endCardsOnConnection`): the cards on it end with the reason, by number once the
+ * count is read (11-AC's item 3; no employee is named, B8) and as every card until then, what Day0
+ * obtained through it is revoked at the vendor, and no card on another system changes.
  *
  * @param view - The connection.
+ * @param counted - How many cards it ends, once `cardsOn` has answered.
  */
 export function revokeLines(
   view: Pick<ConnectionView, 'displayName' | 'system' | 'kind'>,
+  counted?: CardsOnConnection,
 ): string[] {
   const system = systemDisplayName(view.system);
+  const revoked = `what Day0 obtained through it is revoked at ${system}.`;
   return [
-    `Every employee's ${view.displayName} card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at ${system}.`,
+    endedCardsLine(view.displayName, revoked, counted),
     'No card on any other system changes. Each manager sees the reason on the card.',
     // Slack's `auth.revoke` ends the configuration token alone (R41V-10).
     ...(view.kind === 'slack-configuration' ? [SLACK_REFRESH_TOKEN_LINE] : []),
@@ -169,6 +179,26 @@ export const SLACK_REFRESH_TOKEN_LINE =
   'Day0 revokes the configuration token at Slack, but Slack offers no call that ends its refresh ' +
   'token: once this is revoked, IT deletes the token\'s row under "Your App Configuration Tokens" ' +
   'on api.slack.com, signed in as the account that generated it.';
+
+/** The revoke's first line: the cards it ends, by number once counted, then what is revoked. */
+function endedCardsLine(
+  displayName: string,
+  revoked: string,
+  counted: CardsOnConnection | undefined,
+): string {
+  if (counted === undefined) {
+    return `Every employee's ${displayName} card connected through it ends now, each with your reason, and ${revoked}`;
+  }
+  if (counted.atLeast) {
+    return `More than ${counted.cards} employee cards are connected through it, too many to end at once: Day0 refuses the revoke until some are removed.`;
+  }
+  if (counted.cards === 0) {
+    return `No employee card is connected through it, so none ends; ${revoked}`;
+  }
+  return counted.cards === 1
+    ? `One employee card connected through it ends now, with your reason, and ${revoked}`
+    : `${counted.cards} employee cards connected through it end now, each with your reason, and ${revoked}`;
+}
 
 /** What a rotation does, said before the administrator gives the new secret. */
 export const ROTATE_NOTE =

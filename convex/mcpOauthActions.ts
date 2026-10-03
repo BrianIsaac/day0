@@ -238,11 +238,15 @@ async function startingClient(
     );
   }
   // A client secret is unique to the server that issued it: it is sent only to the server it was
-  // registered with, never to whichever one the MCP server's own metadata names first.
-  if (connection.secretCredentialId && !connection.issuer) {
+  // registered with, never to whichever one the MCP server's own metadata names first. A public
+  // client's server is IT's to record as well: a manager's first authorisation never chooses it
+  // for every employee (the wave 11 review's m4), so a connection landed before that rule waits.
+  if (!connection.issuer) {
     return refused(
       'issuer-unregistered',
-      "The organisation's client has a secret but no authorisation server registered with it; IT records the issuer at install.",
+      connection.secretCredentialId
+        ? "The organisation's client has a secret but no authorisation server registered with it; IT records the issuer at install."
+        : "The organisation's connection for this server names no authorisation server; IT records the issuer at install.",
     );
   }
   if (!agent.userId) throw new ConvexError('The employee has no owner.');

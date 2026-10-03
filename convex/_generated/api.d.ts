@@ -11,6 +11,7 @@
 import type * as accessRequests from '../accessRequests.js';
 import type * as agents from '../agents.js';
 import type * as baselineActions from '../baselineActions.js';
+import type * as channelRejoins from '../channelRejoins.js';
 import type * as charters from '../charters.js';
 import type * as config from '../config.js';
 import type * as connectionEvents from '../connectionEvents.js';
@@ -35,6 +36,7 @@ import type * as intakeIdentity from '../intakeIdentity.js';
 import type * as intakeScopeBackfill from '../intakeScopeBackfill.js';
 import type * as intakeScopeBackfillActions from '../intakeScopeBackfillActions.js';
 import type * as intakeSeed from '../intakeSeed.js';
+import type * as keptIdentities from '../keptIdentities.js';
 import type * as linearIdentity from '../linearIdentity.js';
 import type * as linearIdentityActions from '../linearIdentityActions.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
@@ -103,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   accessRequests: typeof accessRequests;
   agents: typeof agents;
   baselineActions: typeof baselineActions;
+  channelRejoins: typeof channelRejoins;
   charters: typeof charters;
   config: typeof config;
   connectionEvents: typeof connectionEvents;
@@ -127,6 +130,7 @@ declare const fullApi: ApiFromModules<{
   intakeScopeBackfill: typeof intakeScopeBackfill;
   intakeScopeBackfillActions: typeof intakeScopeBackfillActions;
   intakeSeed: typeof intakeSeed;
+  keptIdentities: typeof keptIdentities;
   linearIdentity: typeof linearIdentity;
   linearIdentityActions: typeof linearIdentityActions;
   managerChannelActions: typeof managerChannelActions;

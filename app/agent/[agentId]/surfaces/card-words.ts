@@ -360,6 +360,59 @@ export function slackChannelsGoWords(employee: string, restoredBy: string): stri
   return `Slack: ${employee}'s bot is switched off and removed from its channels. ${restoredBy} turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.`;
 }
 
+/** A card's latest re-join after a Slack renewal, as `surfaces.listForAgent` lists it. */
+export interface RejoinFacts {
+  readonly joined: readonly string[];
+  readonly needsPerson: readonly string[];
+  /** Slack's words when it refused a join. */
+  readonly reason?: string;
+  /** When the re-join was recorded. */
+  readonly at: number;
+}
+
+/** Channel names as a sentence lists them: "#a", "#a and #b", "#a, #b and #c". */
+function channelList(channels: readonly string[]): string {
+  return channels.length <= 1
+    ? (channels[0] ?? '')
+    : `${channels.slice(0, -1).join(', ')} and ${channels.at(-1) ?? ''}`;
+}
+
+/**
+ * What the latest renewal's re-join did (AS10; 11-AC's item 5): the channels the bot re-joined
+ * itself, and those that need a person in them to add it, with Slack's words for a refused join.
+ * Nothing for a re-join older than the install the card holds now, or one that touched no channel.
+ *
+ * @param rejoin - The card's latest re-join, when a renewal made one.
+ * @param employee - The employee's name.
+ * @param installedAt - When the card's app was last installed.
+ */
+export function rejoinWords(
+  rejoin: RejoinFacts | undefined,
+  employee: string,
+  installedAt: number | undefined,
+): string | undefined {
+  if (rejoin === undefined || (installedAt !== undefined && rejoin.at < installedAt)) {
+    return undefined;
+  }
+  const parts = [
+    ...(rejoin.joined.length > 0
+      ? [`${employee} rejoined ${channelList(rejoin.joined)} itself`]
+      : []),
+    ...(rejoin.needsPerson.length > 0
+      ? [
+          rejoin.needsPerson.length === 1
+            ? `${channelList(rejoin.needsPerson)} needs someone in it to add ${employee}`
+            : `${channelList(rejoin.needsPerson)} need someone in each to add ${employee}`,
+        ]
+      : []),
+  ];
+  if (parts.length === 0) return undefined;
+  // Slack's words keep their own full stop, never a second one.
+  const said =
+    rejoin.reason === undefined ? '' : ` Slack said: ${rejoin.reason.replace(/[.\s]+$/, '')}.`;
+  return `After the renewal, ${parts.join('; ')}.${said}`;
+}
+
 /**
  * The move off a pasted key a card offers at its renewal once IT has connected its system (A27;
  * the access plan, section 8 step 8): whom it would act as instead, and that the key keeps working
@@ -403,6 +456,40 @@ export function moveLabel(from: KeyOrigin): string {
  */
 export function documentedKeyUnusedWords(employee: string): string {
   return `Found and not used: ${employee} acts through IT's connection.`;
+}
+
+/**
+ * Whom a card an administrator ended by revoking its connection acts as: nobody, until IT connects
+ * the system again (the design pass's major 3: never the planned key the card no longer plans).
+ *
+ * @param names - The employee's name and the system's.
+ */
+export function actsAsAfterRevokeWords(names: {
+  readonly employee: string;
+  readonly system: string;
+}): string {
+  return `nobody until IT connects ${names.system} again; then ${names.employee}, through IT's connection`;
+}
+
+/**
+ * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
+ * pass's major 2).
+ *
+ * @param reason - The administrator's words.
+ */
+export function itsReasonWords(reason: string): string {
+  return `IT's reason: ${reason}`;
+}
+
+/**
+ * What a card says where IT connected its system in a way no issuer of Day0's acts through (a
+ * shared key, a service account): the card takes a key of its own meanwhile (11-AC's item 8, a
+ * product call, flagged).
+ *
+ * @param system - The connection's name.
+ */
+export function unservedConnectionWords(system: string): string {
+  return `IT connected ${system} for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.`;
 }
 
 /**

@@ -55,6 +55,26 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     expect(markup).not.toContain('set by the model');
   });
 
+  it('offers no renewal on a card an administrator ended by revoking its connection, and says what brings it back (the pre-tag second pass)', (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext.Provider value="Asia/Singapore">
+        <ExpiryBlock
+          surface={surface({ reason: 'The docs server is being moved.' })}
+          now={AT - 30 * DAY}
+          onSetDays={vi.fn()}
+          connectionRevoked
+        />
+      </AgentZoneContext.Provider>,
+    );
+    expect(markup).not.toMatch(/Renew for/);
+    expect(markup).not.toContain('Access period');
+    expect(markup).not.toContain('Access lasts until');
+    expect(markup).toContain('>Approved until</p>');
+    expect(markup).toContain(
+      'Nothing is read or sent through this card until IT connects Linear again.',
+    );
+  });
+
   it('warns from the day the week notice is due, and offers the renewal once access has ended', (): void => {
     const ending = renderAccess(surface({ accessSetBy: 'manager' }), AT - 2 * DAY);
     expect(ending).toContain(

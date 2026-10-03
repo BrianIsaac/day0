@@ -721,7 +721,13 @@ describe('an employee acts at the vendor only as the identity its card names (cr
       await rungBearer(harness, surface.credentialId!),
     );
 
-    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+    // The literal Leo's app was created with, never what the landing wrote from the same answer: a
+    // shared token landed on this card would name the shared app user in both (the review's M11 b).
+    expect(viewer).toMatchObject({ id: 'app-user-day0-leo', app: true });
+    expect(surface.actsAs).toMatchObject({
+      kind: 'own-app',
+      providerIdentityId: 'app-user-day0-leo',
+    });
   });
 
   it('shared-app: the bearer acts at Linear as the organisation’s shared app user, the one the card names', async (): Promise<void> => {
@@ -736,7 +742,11 @@ describe('an employee acts at the vendor only as the identity its card names (cr
       await rungBearer(harness, surface.credentialId!),
     );
 
-    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+    expect(viewer).toMatchObject({ id: 'app-user-day0-shared', app: true });
+    expect(surface.actsAs).toMatchObject({
+      kind: 'shared-app',
+      providerIdentityId: 'app-user-day0-shared',
+    });
   });
 
   it('shared-key: the bearer is the key someone pasted, read as it was stored', async (): Promise<void> => {

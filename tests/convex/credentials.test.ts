@@ -1276,6 +1276,53 @@ describe('the organisation holder through the store (11-AO, AC12)', (): void => 
   });
 });
 
+describe('the issuer stored with a value Day0 obtained (the pre-tag item 10)', (): void => {
+  const CLIENT_SECRET = 'w11as-secret-0123';
+  const ISSUED = {
+    system: 'slack',
+    grant: 'app-created' as const,
+    appId: 'A0APP1',
+    clientId: '1234.1',
+  };
+
+  it('writes the issuer in the same write as the sealed value, so no such row is ever without it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'oauth',
+      label: 'Leo (Day0) client secret',
+      plaintext: CLIENT_SECRET,
+      source: 'oauth',
+      appId: 'A0APP1',
+      issuedBy: ISSUED,
+    });
+
+    const [row] = await rows(harness);
+    expect(row).toMatchObject({ _id: credentialId, issuedBy: ISSUED });
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      CLIENT_SECRET,
+    );
+  });
+
+  it('refuses an issuer on a value found in documentation, which Day0 never obtained, storing nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+
+    await expect(
+      harness.action(internal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack token',
+        plaintext: CLIENT_SECRET,
+        source: { sourceId, ref: 'slack-token' },
+        issuedBy: ISSUED,
+      }),
+    ).rejects.toThrow('A value found in documentation is never one Day0 obtained');
+    expect(await rows(harness)).toEqual([]);
+  });
+});
+
 describe('a credential Day0 obtained, held for its revocation at the vendor (11-AR, F19)', (): void => {
   const BOT_TOKEN = ['xoxb', '1234567890', 'abcdefghij'].join('-');
 

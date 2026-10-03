@@ -12,6 +12,7 @@ import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
+  LISTING_AFTER_HANDOVER,
   MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
@@ -5088,6 +5089,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     const agentId = await emptyAgent(harness);
     await harness.mutation(internal.work.seedItem, listed(agentId));
     await harness.mutation(internal.work.withdrawListedItem, {
+      startedUnder: 'owner',
       ...listed(agentId),
       owner: 'Ana Ruiz',
       leftQueue: 'the ticket is assigned to someone else',
@@ -5098,6 +5100,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       skipReason: 'withdrawn from the queue on the tracker: the ticket is assigned to someone else',
     });
     await harness.mutation(internal.work.withdrawListedItem, {
+      startedUnder: 'owner',
       ...listed(agentId),
       owner: 'Ana Ruiz',
       leftQueue: 'the ticket is completed',
@@ -5117,11 +5120,33 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     ]);
   });
 
+  it("refuses to withdraw a listing an old owner's poll read once the employee changed hands (the wave 10 review's FR-m4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    await harness.mutation(internal.work.seedItem, listed(agentId));
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { userId: 'new-owner' }));
+
+    await expect(
+      harness.mutation(internal.work.withdrawListedItem, {
+        ...listed(agentId),
+        leftQueue: 'the ticket is completed',
+        startedUnder: 'owner',
+      }),
+    ).rejects.toThrow(LISTING_AFTER_HANDOVER);
+
+    const row = await onlyRow(harness);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.map((event) => event.type)).toEqual(['work.discovered']);
+  });
+
   it('creates no row for a ticket that left the queue before Day0 saw it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
     await expect(
       harness.mutation(internal.work.withdrawListedItem, {
+        startedUnder: 'owner',
         ...listed(agentId),
         leftQueue: 'the ticket is completed',
       }),
@@ -5314,6 +5339,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'claimed' }));
 
     await harness.mutation(internal.work.withdrawListedItem, {
+      startedUnder: 'owner',
       ...listed(agentId),
       owner: 'Ana Ruiz',
       leftQueue: 'the ticket is assigned to someone else',
@@ -5348,9 +5374,9 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       leftQueue: 'the ticket is assigned to someone else',
       tracker: taken,
     };
-    await harness.mutation(internal.work.withdrawListedItem, refusal);
+    await harness.mutation(internal.work.withdrawListedItem, { ...refusal, startedUnder: 'owner' });
     // The same refusal on the next poll adds no second listing.
-    await harness.mutation(internal.work.withdrawListedItem, refusal);
+    await harness.mutation(internal.work.withdrawListedItem, { ...refusal, startedUnder: 'owner' });
     // Retry on the withdrawn row, then a plan made after the refusal.
     await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'plan-approved' }));
 
@@ -5386,6 +5412,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     const planMadeAt = Date.now();
     await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'failed' }));
     await harness.mutation(internal.work.withdrawListedItem, {
+      startedUnder: 'owner',
       ...listed(agentId),
       leftQueue: 'the ticket is completed',
       tracker: { ...todo, state: 'Done', stateType: 'completed' },
@@ -5418,11 +5445,15 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       contentRefs: row.contentRefs,
       leftQueue: 'the ticket is assigned to someone else',
     };
-    await harness.mutation(internal.work.withdrawListedItem, relisted);
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...relisted,
+      startedUnder: 'owner',
+    });
     const planned = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
     expect(planned).toMatchObject({ state: 'plan-pending', title: 'Renamed on the tracker' });
     await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'completed' }));
     await harness.mutation(internal.work.withdrawListedItem, {
+      startedUnder: 'owner',
       ...relisted,
       title: 'Renamed again',
     });

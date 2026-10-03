@@ -247,11 +247,16 @@ function RevokeDialog({
   onRevoked: () => void;
 }) {
   const revoke = useMutation(api.organisationConnections.revoke);
+  // How many cards it ends (11-AC's item 3): until the count answers, the words say every card.
+  const counted = useQuery(api.organisationConnections.cardsOn, {
+    organisationConnectionId: connection._id as Id<'organisationConnections'>,
+  });
   const keep = useRef<HTMLButtonElement>(null);
   const change = useChange(keep);
   const [reason, setReason] = useState('');
-  const [first, ...rest] = revokeLines(connection);
-  const ready = reason.trim() !== '' && !change.busy;
+  const [first, ...rest] = revokeLines(connection, counted ?? undefined);
+  // More cards than one revoke ends is refused by the backend, so Revoke is held (the design pass).
+  const ready = reason.trim() !== '' && !change.busy && counted?.atLeast !== true;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!ready) return;

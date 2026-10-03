@@ -251,6 +251,58 @@ export function slackBotTokenIssuer(
 }
 
 /**
+ * `issuedBy` of the bot token a card's own app's install gives, read off the card's
+ * `provisioning`: the app, the connection that created it when one did, and its client secret.
+ *
+ * @param provisioning - The card's app, as `provisioning` records it.
+ */
+export function installedBotIssuer(provisioning: {
+  readonly appId: string;
+  readonly clientId: string;
+  readonly organisationConnectionId?: Id<'organisationConnections'>;
+  readonly clientSecretCredentialId: Id<'credentials'>;
+}): SlackIssuedBy {
+  return slackBotTokenIssuer({
+    appId: provisioning.appId,
+    clientId: provisioning.clientId,
+    ...(provisioning.organisationConnectionId === undefined
+      ? {}
+      : { organisationConnectionId: provisioning.organisationConnectionId }),
+    clientSecretCredentialId: provisioning.clientSecretCredentialId,
+  });
+}
+
+/** A stored row's `issuedBy` (the `credentialIssuerValidator` shape), as the check reads it. */
+export interface HeldIssuer {
+  readonly system: string;
+  readonly grant: string;
+  readonly appId?: string;
+  readonly clientId?: string;
+  readonly organisationConnectionId?: string;
+  readonly clientSecretCredentialId?: string;
+}
+
+/**
+ * Whether a stored row's `issuedBy` is exactly the one the issuer gives it: the row the action
+ * just stored for this app, with this grant (the pre-tag's item 10, `credentials.store` writing it
+ * with the value).
+ *
+ * @param held - The row's `issuedBy`, as stored.
+ * @param expected - What the issuer gives the row (`slackClientSecretIssuer`, `installedBotIssuer`).
+ */
+export function isIssuedAs(held: HeldIssuer | undefined, expected: SlackIssuedBy): boolean {
+  return (
+    held !== undefined &&
+    held.system === expected.system &&
+    held.grant === expected.grant &&
+    held.appId === expected.appId &&
+    held.clientId === expected.clientId &&
+    held.organisationConnectionId === expected.organisationConnectionId &&
+    held.clientSecretCredentialId === expected.clientSecretCredentialId
+  );
+}
+
+/**
  * Whom a card with an installed own app acts as (D2): the app, by its name, and its bot user.
  *
  * @param app.appName - The app's name, as the manifest built it.

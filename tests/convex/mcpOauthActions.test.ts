@@ -82,7 +82,7 @@ interface Seeded {
 /** An owned, approved MCP card, and the organisation's pre-registered client for its server. */
 async function seed(
   harness: TestConvex<typeof schema>,
-  options: { connection?: boolean; confidential?: { issuer?: string } } = {},
+  options: { connection?: boolean; confidential?: { issuer?: string }; issuer?: false } = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const agentId = await ctx.db.insert('agents', {
@@ -129,7 +129,14 @@ async function seed(
       status: 'active',
       createdAt: 1,
       ...(secretCredentialId ? { secretCredentialId } : {}),
-      ...(options.confidential?.issuer ? { issuer: options.confidential.issuer } : {}),
+      // A public client carries the issuer IT recorded, or the setup verb found (m4).
+      ...(options.confidential
+        ? options.confidential.issuer
+          ? { issuer: options.confidential.issuer }
+          : {}
+        : options.issuer === false
+          ? {}
+          : { issuer: ISSUER }),
     });
     return { agentId, surfaceId, connectionId };
   });
@@ -266,6 +273,7 @@ describe('starting an authorisation', (): void => {
       scopes: [],
       clientId: CLIENT,
       clientRegistration: 'pre-registered',
+      issuer: ported,
     });
 
     const started = await start(harness, surfaceId);
@@ -298,6 +306,19 @@ describe('starting an authorisation', (): void => {
       reason: 'issuer-unregistered',
     });
     expect((await read(harness, surfaceId)).surface.pendingAuthorisation).toBeUndefined();
+  });
+
+  it("refuses a connection landed before the issuer was required, and writes no issuer onto it (the review's m4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, connectionId } = await seed(harness, { issuer: false });
+
+    expect(await start(harness, surfaceId)).toMatchObject({
+      ok: false,
+      reason: 'issuer-unregistered',
+    });
+    const { surface, connections } = await read(harness, surfaceId);
+    expect(surface.pendingAuthorisation).toBeUndefined();
+    expect(connections.find((row) => row._id === connectionId)?.issuer).toBeUndefined();
   });
 
   it('says so in a message the browser can read when the deployment has no public address', async (): Promise<void> => {

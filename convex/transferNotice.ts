@@ -116,16 +116,6 @@ function withheld(reason: string): NoticeCarrier {
   return { kind: 'withheld', reason };
 }
 
-/** The surface the D7 notice goes through, if the employee has one (`noticeCarrierOf`). */
-export async function noticeSurfaceOf(
-  ctx: QueryCtx,
-  agent: Doc<'agents'>,
-  now: number,
-): Promise<Doc<'surfaces'> | undefined> {
-  const carrier = await noticeCarrierOf(ctx, agent, now);
-  return carrier.kind === 'carried' ? carrier.surface : undefined;
-}
-
 /**
  * Whether the manager's standing authority covers the notice's DM on a card, by the gate's own
  * rule (`grantRefusal`, `src/surfaces/policy.ts`): a DM to a person who is not the manager is a
@@ -201,10 +191,11 @@ const claimedNoticeValidator = v.union(
  * Internal, for `managerChannelActions.sendTransferNotice`: claim the one D7
  * notice of an asked request, once. Refused when the request is no longer
  * asked, its employee is gone or no longer the asker's, the notice was already
- * claimed, the deployment is in mock mode, or the employee has no Slack card
- * that can carry it under the manager's authority. Writes
- * `noticeSentAt` at the claim, so a failed send is never tried again (D7: once,
- * never re-sent).
+ * claimed, or the deployment is in mock mode. Writes `noticeSentAt` at the
+ * claim, so a failed send is never tried again (D7: once, never re-sent); when
+ * the employee has lost, since the ask, the Slack card that could carry it
+ * under the manager's authority, the claim is refused with why, and that
+ * reason goes on the employee's record (`manager.transfer-notice`; m10).
  */
 export const claimTransferNotice = internalMutation({
   args: { transferId: v.id('managerTransfers') },
@@ -226,11 +217,16 @@ export const claimTransferNotice = internalMutation({
     if (!agent || agent.userId !== transfer.fromOwnerKey) {
       return { claimed: false, reason: "the employee is no longer the asking manager's" };
     }
-    const surface = await noticeSurfaceOf(ctx, agent, now);
-    if (surface?.credentialId === undefined) {
-      return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
-    }
+    const carrier = await noticeCarrierOf(ctx, agent, now);
+    const surface = carrier.kind === 'carried' ? carrier.surface : undefined;
+    // The card the ask found can be lost before this claim: the notice is claimed all the same,
+    // so it is never tried again, and the record says why it went to nobody (m10).
     await ctx.db.patch(transfer._id, { noticeSentAt: now });
+    if (surface?.credentialId === undefined) {
+      const reason = carrier.kind === 'withheld' ? carrier.reason : NOTICE_CARD_NOT_CONNECTED;
+      await recordNoticeOutcome(ctx, transfer, { delivered: false, reason });
+      return { claimed: false, reason };
+    }
     return {
       claimed: true,
       credentialId: surface.credentialId,

@@ -18,12 +18,6 @@ export const surfacesForAgent = internalQuery({
   },
 });
 
-/** Return every declared surface for the deployment-local intake sweep. */
-export const surfacesForIntake = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Doc<'surfaces'>[]> => await ctx.db.query('surfaces').collect(),
-});
-
 /** Return the deployment's chat surfaces for the minute-by-minute decision poll. */
 export const chatSurfacesForIntake = internalQuery({
   args: {},

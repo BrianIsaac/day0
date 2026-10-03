@@ -16,6 +16,7 @@ import {
   LEO_APP_ID,
   LEO_BOT_TOKEN,
   LEO_LINEAR_ACCESS,
+  LEO_LINEAR_APP_USER,
   LEO_LINEAR_REFRESH,
   seedIssuedIdentities,
   type IssuedIdentities,
@@ -107,7 +108,8 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
     vi.useFakeTimers();
     network = stubVendorNetwork();
-    // The handover cuts Leo's own Linear app, which no organisation connection issued (M1).
+    // A handover cuts a Linear app no organisation connection issued (rows from before v0.14.0,
+    // and every card with no connection), revoking it at Linear (M1).
     network.answer('/oauth/revoke', { status: 200, body: '' });
   });
 
@@ -119,7 +121,9 @@ describe("the employee's own identity at a handover (A25)", (): void => {
 
   it('a transfer keeps an organisation-backed identity, clears its approval and returns the card to proposed', async (): Promise<void> => {
     const harness = await realHarness();
-    const leo = await seedIssuedIdentities(harness, { connection: true });
+    // Rows as an issuer before v0.14.0 stored them: the Slack app came through IT's connection,
+    // the Linear app through none.
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
 
     await handOverLeo(harness, leo);
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
@@ -158,6 +162,33 @@ describe("the employee's own identity at a handover (A25)", (): void => {
         outcome: 'token-revoked',
       }),
     ]);
+  });
+
+  it("keeps a per-employee Linear identity as the product lands it, and calls neither vendor (the review's M11 c)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const linear = await read(harness, leo.linear.surfaceId);
+    expect(linear).toMatchObject({
+      verdict: 'proposed',
+      reason: HANDOVER_REAPPROVE_REASON,
+      credentialId: leo.linear.access,
+      organisationConnectionId: leo.linear.connectionId,
+      actsAs: { kind: 'own-app', label: 'Leo', providerIdentityId: LEO_LINEAR_APP_USER },
+    });
+    expect(linear?.managerApprovedAt).toBeUndefined();
+    expect(linear?.provisioning?.clientSecretCredentialId).toBe(leo.linear.secret);
+    for (const id of [leo.linear.access, leo.linear.refresh, leo.linear.secret!]) {
+      const row = await read(harness, id);
+      expect(row?.revokedAt).toBeUndefined();
+      expect(row?.ciphertext).toEqual(expect.any(String));
+    }
+    expect((await read(harness, leo.slack.surfaceId))?.credentialId).toBe(leo.slack.token);
+    expect(network.calls).toEqual([]);
+    expect(await lines(harness, leo.agentId)).toEqual([]);
   });
 
   it("revokes at the vendor a cut card's identity Day0 obtained, so the old manager's grant ends where it was given (M1)", async (): Promise<void> => {
@@ -206,11 +237,14 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    const token = await read(harness, leo.slack.token);
-    expect(token?.revokedAt).toBeUndefined();
-    expect(token?.ciphertext).toEqual(expect.any(String));
+    for (const id of [leo.slack.token, leo.linear.access]) {
+      const row = await read(harness, id);
+      expect(row?.revokedAt).toBeUndefined();
+      expect(row?.ciphertext).toEqual(expect.any(String));
+    }
     expect((await read(harness, leo.slack.surfaceId))?.credentialId).toBe(leo.slack.token);
-    expect(network.calls).toEqual(LINEAR_CUT_CALLS);
+    expect((await read(harness, leo.linear.surfaceId))?.credentialId).toBe(leo.linear.access);
+    expect(network.calls).toEqual([]);
   });
 
   it("keeps a disconnected identity's app secret when the old manager later deletes their data", async (): Promise<void> => {
@@ -248,12 +282,12 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       reason: HANDOVER_REAPPROVE_REASON,
       credentialId: leo.slack.token,
     });
-    for (const id of [leo.slack.token, leo.slack.secret]) {
+    for (const id of [leo.slack.token, leo.slack.secret, leo.linear.access, leo.linear.secret!]) {
       const row = await read(harness, id);
       expect(row?.revokedAt).toBeUndefined();
       expect(row?.ciphertext).toEqual(expect.any(String));
     }
-    expect(network.calls).toEqual(LINEAR_CUT_CALLS);
+    expect(network.calls).toEqual([]);
   });
 
   it('deletes the app of an identity the organisation holds when the new manager rejects the card', async (): Promise<void> => {
@@ -267,16 +301,14 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not ours.' });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    expect(sortedCalls(network.calls)).toEqual(
-      sortedCalls([
-        ...LINEAR_CUT_CALLS,
-        {
-          url: 'https://slack.com/api/apps.manifest.delete',
-          authorization: `Bearer ${CONFIGURATION_TOKEN}`,
-          form: { app_id: LEO_APP_ID },
-        },
-      ]),
-    );
+    // The Linear identity was kept: only the rejected Slack card's app is deleted.
+    expect(network.calls).toEqual([
+      {
+        url: 'https://slack.com/api/apps.manifest.delete',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: { app_id: LEO_APP_ID },
+      },
+    ]);
     expect((await read(harness, leo.slack.token))?.sourceRevocation?.state).toBe('done');
   });
 
@@ -291,16 +323,14 @@ describe("the employee's own identity at a handover (A25)", (): void => {
       .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not ours.' });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
-    expect(sortedCalls(network.calls)).toEqual(
-      sortedCalls([
-        ...LINEAR_CUT_CALLS,
-        {
-          url: 'https://slack.com/api/apps.manifest.delete',
-          authorization: `Bearer ${CONFIGURATION_TOKEN}`,
-          form: { app_id: LEO_APP_ID },
-        },
-      ]),
-    );
+    // The Linear identity was kept: only the rejected Slack card's app is deleted.
+    expect(network.calls).toEqual([
+      {
+        url: 'https://slack.com/api/apps.manifest.delete',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: { app_id: LEO_APP_ID },
+      },
+    ]);
     expect(await lines(harness, leo.agentId)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ system: 'slack', end: 'reject', outcome: 'app-deleted' }),

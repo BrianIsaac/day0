@@ -30,6 +30,11 @@ export const LEO_LINEAR_REFRESH = 'lin_oauth_w11ar_refresh';
 export const LEO_APP_ID = 'A0W11AR';
 export const LEO_CLIENT_ID = '1234.5678';
 
+/** Leo's own Linear app's client id, its client secret, and its app user at Linear. */
+export const LEO_LINEAR_CLIENT_ID = 'lin-1';
+export const LEO_LINEAR_CLIENT_SECRET = 'w11ar-linear-client-secret-0123';
+export const LEO_LINEAR_APP_USER = 'app-user-day0-leo';
+
 /** What {@link seedIssuedIdentities} made. */
 export interface IssuedIdentities {
   readonly agentId: Id<'agents'>;
@@ -42,6 +47,10 @@ export interface IssuedIdentities {
     readonly surfaceId: Id<'surfaces'>;
     readonly access: Id<'credentials'>;
     readonly refresh: Id<'credentials'>;
+    /** The app's client secret, when IT's per-employee Linear connection recorded the app. */
+    readonly secret?: Id<'credentials'>;
+    /** IT's per-employee Linear connection, when the card's identity came through one. */
+    readonly connectionId?: Id<'organisationConnections'>;
   };
   readonly connectionId?: Id<'organisationConnections'>;
 }
@@ -70,13 +79,62 @@ async function sealed(
 }
 
 /**
+ * IT's per-employee Linear connection and Leo's app recorded through it, its client secret held by
+ * the organisation as `linearIdentity.recordEmployeeApp` stores it; nothing when not linked.
+ */
+async function linearAppThroughConnection(
+  harness: TestConvex<typeof schema>,
+  options: { readonly linked: boolean },
+): Promise<
+  | { readonly connectionId: Id<'organisationConnections'>; readonly secret: Id<'credentials'> }
+  | undefined
+> {
+  if (!options.linked) return undefined;
+  const connectionId = await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write', 'app:assignable'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      }),
+  );
+  const secret = await sealed(
+    harness,
+    ORGANISATION_OWNER_KEY,
+    LEO_LINEAR_CLIENT_SECRET,
+    'Leo client secret',
+    {
+      kind: 'value',
+      source: 'entered',
+      issuedBy: {
+        system: 'linear',
+        grant: 'app-created',
+        organisationConnectionId: connectionId,
+        clientId: LEO_LINEAR_CLIENT_ID,
+      },
+    },
+  );
+  return { connectionId, secret };
+}
+
+/**
  * Seed Leo, the owner's employee, with his own Slack app and his own Linear app, both connected.
+ * By default the rows are as the product writes them since v0.14.0 (the wave 11 review's M11 c):
+ * held by the organisation, and, with IT's connections, each card linked to its system's
+ * per-employee connection, the Linear app recorded through it as `linearIdentity` records one.
  *
  * @param harness - A harness whose `DAY0_CREDENTIAL_KEY` is stubbed.
- * @param options - Whether IT's Slack configuration connection exists (and so created the app),
- *   whose employee Leo is, and who holds his identities' rows: his owner, as an issuer before
- *   v0.14.0 stored them, or the organisation, as the wave 11 common rules have every issuer
- *   store a per-employee identity's tokens (`holder: 'organisation'` under the reserved key).
+ * @param options - Whether IT's connections exist (Slack's configuration connection, which created
+ *   the Slack app, and Linear's per-employee one, which recorded the Linear app), whose employee
+ *   Leo is, and who holds his identities' rows: the organisation (the default), as every issuer
+ *   stores a per-employee identity's tokens (`holder: 'organisation'` under the reserved key), or
+ *   his owner, as an issuer before v0.14.0 stored them, when no organisation connection issued
+ *   his Linear app.
  */
 export async function seedIssuedIdentities(
   harness: TestConvex<typeof schema>,
@@ -87,7 +145,8 @@ export async function seedIssuedIdentities(
   },
 ): Promise<IssuedIdentities> {
   const owner = options.owner ?? 'owner';
-  const heldUnder = options.heldBy === 'organisation' ? ORGANISATION_OWNER_KEY : owner;
+  const heldBy = options.heldBy ?? 'organisation';
+  const heldUnder = heldBy === 'organisation' ? ORGANISATION_OWNER_KEY : owner;
   let connectionId: Id<'organisationConnections'> | undefined;
   if (options.connection) {
     const configuration = await sealed(
@@ -124,10 +183,20 @@ export async function seedIssuedIdentities(
   const token = await sealed(harness, heldUnder, LEO_BOT_TOKEN, 'Slack bot token', {
     issuedBy: { ...app, grant: 'oauth-install', clientSecretCredentialId: secret },
   });
+  const linearApp = await linearAppThroughConnection(harness, {
+    linked: options.connection && heldBy === 'organisation',
+  });
   const linearIssuer = {
     system: 'linear',
     grant: 'authorisation-code' as const,
-    clientId: 'lin-1',
+    clientId: LEO_LINEAR_CLIENT_ID,
+    ...(linearApp === undefined
+      ? {}
+      : {
+          organisationConnectionId: linearApp.connectionId,
+          appId: LEO_LINEAR_CLIENT_ID,
+          clientSecretCredentialId: linearApp.secret,
+        }),
   };
   const refresh = await sealed(harness, heldUnder, LEO_LINEAR_REFRESH, 'Linear refresh token', {
     issuedBy: linearIssuer,
@@ -181,12 +250,40 @@ export async function seedIssuedIdentities(
       class: 'kanban',
       credentialId: access,
       credentialKind: 'oauth',
-      actsAs: { kind: 'own-app', label: 'Leo' },
+      ...(linearApp === undefined
+        ? { actsAs: { kind: 'own-app' as const, label: 'Leo' } }
+        : {
+            actsAs: {
+              kind: 'own-app' as const,
+              label: 'Leo',
+              providerIdentityId: LEO_LINEAR_APP_USER,
+            },
+            providerIdentityId: LEO_LINEAR_APP_USER,
+            organisationConnectionId: linearApp.connectionId,
+            provisioning: {
+              appId: LEO_LINEAR_CLIENT_ID,
+              appName: 'Leo',
+              clientId: LEO_LINEAR_CLIENT_ID,
+              clientSecretCredentialId: linearApp.secret,
+              installUrl: 'https://linear.app/oauth/authorize',
+              redirectUrl: 'http://localhost:3000/api/oauth/linear',
+              scopes: ['read', 'write', 'app:assignable'],
+              createdAt: 1,
+              installedAt: 2,
+            },
+          }),
     });
     return {
       agentId,
       slack: { surfaceId: slackSurface, token, secret },
-      linear: { surfaceId: linearSurface, access, refresh },
+      linear: {
+        surfaceId: linearSurface,
+        access,
+        refresh,
+        ...(linearApp === undefined
+          ? {}
+          : { secret: linearApp.secret, connectionId: linearApp.connectionId }),
+      },
       ...(connectionId !== undefined ? { connectionId } : {}),
     };
   });
