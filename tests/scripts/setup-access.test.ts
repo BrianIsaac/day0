@@ -387,6 +387,28 @@ describe('setup: the access verb', (): void => {
     expect(printed).toContain('https://linear.app/settings/api/applications/new?manifest=');
   });
 
+  it('prints an employee’s own Linear app’s form, pre-filled with its name and no client credentials (R41V-R5)', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'linear', '--employee', 'Leo'])).toBe(0);
+    const printed = bed.bed.output.join('\n');
+    const link = /https:\/\/linear\.app\/settings\/api\/applications\/new\?manifest=\S+/.exec(
+      printed,
+    )?.[0];
+    expect(link).toBeDefined();
+    const manifest = JSON.parse(new URL(link ?? '').searchParams.get('manifest') ?? '');
+    expect(manifest.oauth).toMatchObject({
+      client_name: 'Leo (Day0)',
+      grant_types: ['authorization_code'],
+    });
+    expect(printed).not.toContain('"client_credentials"');
+  });
+
+  it('refuses an employee’s name for Slack, whose employees’ apps Day0 creates itself', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'slack', '--employee', 'Leo'])).toBe(1);
+    expect(bed.bed.output.join('\n')).toContain("Day0 creates each employee's Slack app itself");
+  });
+
   it("corrects a connection's recorded redirect and scopes to what Day0 returns to and the kit's list, revoking nothing (M12 e)", async (): Promise<void> => {
     const bed = accessBed({ connected: ['slack'] });
     expect(await bed.run(['access', '--correct', 'slack'])).toBe(0);

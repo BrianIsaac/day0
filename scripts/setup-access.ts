@@ -74,6 +74,11 @@ export interface AccessFlags {
   /** Print one system's manifest and stop. */
   readonly printManifest?: string;
   /**
+   * With `printManifest` for Linear, the employee whose own app's form to print (per-employee mode):
+   * its name, `<employee> (Day0)`, and no client credentials (R41V-R5).
+   */
+  readonly employee?: string;
+  /**
    * Correct the redirect and the scopes one system's connection records to what Day0 returns to
    * and the kit's list, and stop (the wave 11 review's M12 e): a kit system's key or an MCP
    * server's https address.
@@ -393,20 +398,32 @@ function originOf(values: Readonly<Record<string, string>>): string {
 /** Print one system's manifest: the Slack template the issuer builds from, or Linear's app and its link. */
 function printManifest(
   system: string,
+  employee: string | undefined,
   values: Readonly<Record<string, string>>,
   io: AccessIo,
 ): number {
   if (system === 'slack') {
+    if (employee !== undefined) {
+      io.log(
+        "Day0 creates each employee's Slack app itself through the organisation's connection; " +
+          '--print-manifest slack alone prints the template it fills in.',
+      );
+      return 1;
+    }
     io.log(slackKitManifestTemplate());
     return 0;
   }
   if (system === 'linear') {
     try {
-      const manifest = linearKitManifest({
-        appName: 'Day0',
-        publicUrl: values[PUBLIC_URL_VAR] ?? '',
-        mode: 'shared',
-      });
+      const manifest = linearKitManifest(
+        employee === undefined
+          ? { appName: 'Day0', publicUrl: values[PUBLIC_URL_VAR] ?? '', mode: 'shared' }
+          : {
+              appName: `${employee.trim()} (Day0)`,
+              publicUrl: values[PUBLIC_URL_VAR] ?? '',
+              mode: 'per-employee',
+            },
+      );
       io.log(JSON.stringify(manifest, null, 2));
       io.log(
         `\nCreate it in Linear from this link (an administrator, signed in):\n${linearManifestUrl(manifest)}`,
@@ -693,7 +710,7 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
   const envPath = join(io.cwd, ENV_FILE);
   const values = readEnvValues(envPath);
   if (options.access.printManifest !== undefined) {
-    return printManifest(options.access.printManifest, values, io);
+    return printManifest(options.access.printManifest, options.access.employee, values, io);
   }
   if (options.access.correct !== undefined) {
     return await correctConnection(options.access.correct, values, io);
