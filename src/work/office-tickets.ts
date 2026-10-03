@@ -21,6 +21,15 @@ export const FALLBACK_TICKET_PREFIX = 'TICKET';
 /** The source category of an item that came from the ticket queue. */
 const TICKET_QUEUE = 'ticket-queue';
 
+/**
+ * Where the mock office files a new employee's action item: a ticket on its ticket queue, so
+ * every visitor's first queue has a ticket run (decision D2 (b), a product call, flagged).
+ */
+export const TICKET_QUEUE_FILING = {
+  sourceCategory: TICKET_QUEUE,
+  sourceSystem: 'ticket',
+} as const;
+
 /** A ticket key the office numbers: a prefix of letters and digits, a dash, a number. */
 const NUMBERED_KEY = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/;
 
@@ -57,6 +66,22 @@ export interface GroundedTicketWork<T extends TicketGroundingItem> {
 export function isTicketWork(item: TicketGroundingItem): boolean {
   return (
     item.sourceCategory === TICKET_QUEUE ||
+    skillShapeFor(item, [], 'mock').surfaceClass === 'kanban'
+  );
+}
+
+/**
+ * Whether an item is filed as a ticket on the ticket queue, so its run works the ticket: it came
+ * from the queue and its source system is a ticket system. An item from the queue on another
+ * system (a Slack ask filed there) runs as that system's work, and no ticket closes.
+ *
+ * @param item - The drafted item.
+ */
+export function filedOnTicketQueue(
+  item: Pick<TicketGroundingItem, 'sourceCategory' | 'sourceSystem' | 'title' | 'contentSummary'>,
+): boolean {
+  return (
+    item.sourceCategory === TICKET_QUEUE &&
     skillShapeFor(item, [], 'mock').surfaceClass === 'kanban'
   );
 }

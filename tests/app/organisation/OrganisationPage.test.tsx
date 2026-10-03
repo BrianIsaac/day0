@@ -308,6 +308,17 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     });
   });
 
+  it("names the reason the record's alone where the revoke ends no card (the second pass's design reader)", async (): Promise<void> => {
+    asAdministrator();
+    backend.queries['organisationConnections:cardsOn'] = { cards: 0, atLeast: false };
+    mount(<OrganisationPage zone="UTC" />);
+    await settle();
+    await open('Revoke');
+    expect(text(dialog())).toContain('The reason for the record');
+    expect(text(dialog())).toContain('No card shows it.');
+    expect(text(dialog())).not.toContain('The reason each card will show');
+  });
+
   it('holds Revoke where more cards use the connection than one revoke ends, which the backend refuses', async (): Promise<void> => {
     asAdministrator();
     backend.queries['organisationConnections:cardsOn'] = { cards: 1000, atLeast: true };
@@ -345,6 +356,8 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     await settle();
     await open('Give it a new secret');
     expect(text(dialog())).toContain('No card is affected');
+    // Slack's auth.revoke ends the old token alone (the round review's m17).
+    expect(text(dialog())).toContain("Slack cannot end that token's refresh token");
     const [secret, refresh] = [...dialog().querySelectorAll<HTMLInputElement>('input')];
     expect(secret?.type).toBe('password');
     expect(refresh?.type).toBe('password');

@@ -103,6 +103,8 @@ export interface AccessOptions {
   readonly dryRun: boolean;
   /** Answers read from stdin by `./setup.sh install`, which reads it once for both halves. */
   readonly answers?: ReadonlyMap<string, string>;
+  /** Run by `./setup.sh install`, whose check counts a backend dial that did not run as a gap. */
+  readonly install?: boolean;
 }
 
 /** A child process's status and output, as the setup's runner returns it. */
@@ -461,6 +463,7 @@ interface RecordedRegistration {
   readonly mode?: OrganisationConnectionMode;
   readonly redirectUrl?: string;
   readonly scopes?: readonly string[];
+  readonly clientCredentialsScopes?: readonly string[];
 }
 
 /**
@@ -523,7 +526,27 @@ async function correctConnection(
     if (scopes !== undefined) {
       io.log(`${name}: the recorded scopes are now ${scopes.join(', ')}.`);
     }
-    io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+    const lacking = (mode?.clientCredentialsScopes ?? []).filter(
+      (scope) => !(row.clientCredentialsScopes ?? []).includes(scope),
+    );
+    if (lacking.length === 0) {
+      io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+      return 0;
+    }
+    // A fixed client-credentials set is not IT's registration: a token requested with another set
+    // revokes every token of the app (L2), so no correction reaches it (the round review's m6).
+    io.log(
+      `${name}: the shared app token was landed with ` +
+        `${row.clientCredentialsScopes?.join(', ') || 'no scope'}, without ${lacking.join(', ')}.`,
+    );
+    io.log(
+      `A correction cannot add them: ${name} revokes every token of the app when one is requested ` +
+        'with another set.',
+    );
+    io.log(
+      'Revoke the connection on the organisation page, then land it again with ./setup.sh access. ' +
+        'Every card on it ends. pnpm check:access reports the gap until then.',
+    );
     return 0;
   } catch (err) {
     io.log(`Nothing was corrected: ${errorMessage(err)}`);
@@ -809,6 +832,16 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
     return 1;
   }
 
+  if (options.install === true && resolved.named.length === 0) {
+    // An install that connects nothing would end "passed every check" with every card's system
+    // unconnected (the wave 11 review's m20).
+    io.log(
+      'The install has no system to connect: the documentation names none the kit knows. Name ' +
+        "them with --systems (slack, linear, or an MCP server's https address), then run the " +
+        'install again.',
+    );
+    return 1;
+  }
   io.log(
     resolved.named.length === 0
       ? 'The documentation names no system the kit knows; name them with --systems.'
@@ -899,7 +932,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
 
   io.log(`\n${CHECK_ACCESS.join(' ')}    (check every connection)`);
   const [command, ...args] = CHECK_ACCESS;
-  const checked = io.run(command, args, { inherit: true });
+  const checked = io.run(command, [...args, ...(options.install === true ? ['--install'] : [])], {
+    inherit: true,
+  });
   const status = checked.status ?? 1;
   writeRecord(io, options, values, origin, resolved, recorded, status);
   return status;

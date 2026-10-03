@@ -440,7 +440,10 @@ export function RegisteredSkillsPanel({
               return (
                 <li
                   key={s._id}
-                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
+                  // A waiting work card links here, to the row's Retry (D3); `SkillsView` lands it.
+                  id={`skill-${s._id}`}
+                  tabIndex={-1}
+                  className="scroll-mt-24 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
                 >
                   {/* A traceback's caret line has no break opportunity: without
                       min-w-0 the column keeps its full width and pushes Retry

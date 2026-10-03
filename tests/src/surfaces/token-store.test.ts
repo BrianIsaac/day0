@@ -6,7 +6,11 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { IssuedTokens } from '../../../src/surfaces/mcp-oauth';
 import { sealForOwner } from '../../../src/lib/credential-crypto';
-import { LIVE_TOKEN_LEASE_POLLS, REFRESH_LEASE_MS } from '../../../src/surfaces/refresh-lease';
+import {
+  LIVE_TOKEN_LEASE_POLLS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
+  REFRESH_LEASE_MS,
+} from '../../../src/surfaces/refresh-lease';
 import {
   accessTokenFor,
   heldFromRows,
@@ -337,6 +341,60 @@ describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
     await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
     // Two claims, each waiting at most the live token's bound, never the whole lease.
     expect(slept).toBeLessThanOrEqual(2 * LIVE_TOKEN_LEASE_POLLS);
+  });
+
+  it("waits five seconds in all behind a dead holder's lease while the stored token lives, the claims sharing one budget (the round review's m7)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 30_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let slept = 0;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      sleep: async (): Promise<void> => {
+        slept += 1;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    // It does wait for a live holder's exchange, and no longer than five seconds in all.
+    expect(slept).toBeGreaterThanOrEqual(LIVE_TOKEN_POLLS_PER_CLAIM);
+    expect(slept).toBeLessThanOrEqual(LIVE_TOKEN_LEASE_POLLS);
+  });
+
+  it("never hands back a stored token that died while the read waited behind another holder's lease (the round review's m8)", async (): Promise<void> => {
+    // Three seconds left, and the holder died: its lease never ends while the reader waits.
+    const pair = pairFor({ expiresAt: NOW + 3_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let clock = NOW;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      now: (): number => clock,
+      sleep: async (ms: number): Promise<void> => {
+        clock += ms;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
+  });
+
+  it("never hands back a stored token that died while its refresh was refused (the round review's m8)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 3_000 });
+    const keeper = memoryKeeper(pair);
+    let clock = NOW;
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      // The exchange takes longer than the token has left, then fails.
+      clock += 30_000;
+      throw new Error('fetch failed');
+    });
+    const deps: TokenStoreDeps = { ...storeDeps(keeper, refresher), now: (): number => clock };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
   });
 
   it('ends its own lease when the exchange cannot be made, so the next refresh need not wait', async (): Promise<void> => {

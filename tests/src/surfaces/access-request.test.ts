@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessRequestReason,
+  issuerServesSystem,
   servedByIssuer,
   draftAccessRequest,
   isOrganisationSystemKey,
@@ -170,10 +171,27 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     ).toBeUndefined();
     // With no connection either: nothing IT could land for Notion would be acted through.
     expect(accessRequestReason(notionCard, null)).toBeUndefined();
-    expect(servedByIssuer('notion')).toBe(false);
-    expect(servedByIssuer('slack')).toBe(true);
-    expect(servedByIssuer('linear')).toBe(true);
-    expect(servedByIssuer('mcp:docs.acme.test')).toBe(true);
+    expect(issuerServesSystem('notion')).toBe(false);
+    expect(issuerServesSystem('slack')).toBe(true);
+    expect(issuerServesSystem('linear')).toBe(true);
+    expect(issuerServesSystem('mcp:docs.acme.test')).toBe(true);
+  });
+
+  it("covers a card by the connection's kind and system, so a static key IT landed for a system an issuer serves never strands it (D6, the round review's m11)", (): void => {
+    expect(servedByIssuer({ system: 'slack', kind: 'slack-configuration' })).toBe(true);
+    expect(servedByIssuer({ system: 'linear', kind: 'oauth-app' })).toBe(true);
+    expect(servedByIssuer({ system: 'mcp:docs.acme.test', kind: 'mcp-client' })).toBe(true);
+    expect(servedByIssuer({ system: 'linear', kind: 'static-key' })).toBe(false);
+    expect(servedByIssuer({ system: 'slack', kind: 'service-account' })).toBe(false);
+    expect(servedByIssuer({ system: 'mcp:docs.acme.test', kind: 'static-key' })).toBe(false);
+    expect(servedByIssuer({ system: 'notion', kind: 'oauth-app' })).toBe(false);
+    for (const mode of ['shared', 'per-employee'] as const) {
+      for (const kind of ['static-key', 'service-account'] as const) {
+        expect(accessRequestReason(linearCard, { ...linear, kind, mode }), `${kind} ${mode}`).toBe(
+          undefined,
+        );
+      }
+    }
   });
 
   it('asks when the system has no connection, or a per-employee one IT must install', (): void => {

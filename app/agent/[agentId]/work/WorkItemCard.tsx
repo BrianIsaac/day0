@@ -35,7 +35,12 @@ import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from '.
 import { ManagerFeedbackNote, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
 import { TicketNowLine } from './TicketNowLine';
-import { type ItemVerdict, ProgressSection, VerdictSection } from './VerdictSection';
+import {
+  type ItemVerdict,
+  ProgressSection,
+  type RefusedSkill,
+  VerdictSection,
+} from './VerdictSection';
 import {
   colleagueHolding,
   decisionAttribution,
@@ -152,6 +157,7 @@ export function WorkItemCard({
   onResendDecision,
   onDismiss,
   servedByLoop = false,
+  refusedSkill,
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
@@ -175,6 +181,8 @@ export function WorkItemCard({
   onDismiss?: () => Promise<unknown>;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
   servedByLoop?: boolean;
+  /** The skill the item waits on, when its draft failed Day0's check (D3). */
+  refusedSkill?: RefusedSkill;
 }) {
   const now = useNow();
   const zone = useAgentZone();
@@ -320,7 +328,13 @@ export function WorkItemCard({
           <p className="text-sm text-[var(--color-fg)]">{waiting}</p>
         </ItemSection>
       ) : (
-        <VerdictSection item={item} verdict={verdict} surfaces={surfaces} now={now} />
+        <VerdictSection
+          item={item}
+          verdict={verdict}
+          surfaces={surfaces}
+          now={now}
+          {...(refusedSkill === undefined ? {} : { refusedSkill })}
+        />
       )}
       {skipped && verdictReason ? (
         <SkippedSection

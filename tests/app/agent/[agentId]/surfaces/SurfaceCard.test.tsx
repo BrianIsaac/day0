@@ -9,6 +9,7 @@ import {
   type SurfaceCardContext,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
 import { AgentZoneContext } from '../../../../../app/components/time';
+import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import type { OrganisationSystem } from '../../../../../app/agent/[agentId]/surfaces/card-words';
 import { withListedIdentity } from './fakes/listed-identity';
 
@@ -265,6 +266,8 @@ function organisation(
       fields.system,
       {
         displayName: fields.system.charAt(0).toUpperCase() + fields.system.slice(1),
+        // The kind an issuer acts through for the system, else a static key (D6).
+        kind: issuerKindFor(fields.system) ?? 'static-key',
         mode: 'per-employee',
         status: 'active',
         connectedAt: Date.UTC(2026, 9, 1, 9),
@@ -599,7 +602,37 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(chip(markup)).not.toBe('Waiting on IT');
     expect(markup).not.toContain('Ask IT how Maya should reach it.');
     expect(markup).toContain(
-      'IT connected Notion for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.',
+      'IT connected Notion for the organisation in a way Day0 cannot act through, so this card takes a key of its own.',
+    );
+    expect(markup).toMatch(/<input[^>]*type="password"/);
+  });
+
+  it("takes the card's own key where IT landed a static key for Linear, which no issuer of Day0's acts through (D6, a product call)", (): void => {
+    const markup = render(
+      listed({
+        displayName: 'Linear',
+        endpoint: 'https://api.linear.app/graphql',
+        path: 'documented-api',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 80 * DAY,
+        request: {
+          credential: { found: 'location', label: 'Linear API key', location: 'IT / Keys' },
+        },
+        credentialLocation: 'IT / Keys',
+      }),
+      {
+        organisation: organisation({
+          system: 'linear',
+          displayName: 'Linear',
+          kind: 'static-key',
+          mode: 'shared',
+        }),
+      },
+    );
+    expect(chip(markup)).not.toBe('Waiting on IT');
+    expect(markup).toContain(
+      'IT connected Linear for the organisation in a way Day0 cannot act through, so this card takes a key of its own.',
     );
     expect(markup).toMatch(/<input[^>]*type="password"/);
   });

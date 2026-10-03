@@ -161,13 +161,29 @@ export function revokeLines(
 ): string[] {
   const system = systemDisplayName(view.system);
   const revoked = `what Day0 obtained through it is revoked at ${system}.`;
+  // More cards than one revoke ends: the revoke is refused, so nothing after the count happens.
+  if (counted?.atLeast === true) return [endedCardsLine(view.displayName, revoked, counted)];
   return [
     endedCardsLine(view.displayName, revoked, counted),
-    'No card on any other system changes. Each manager sees the reason on the card.',
+    // Where the count says no card ends, no manager sees a reason (the round review's m17).
+    revokeEndsNoCard(counted)
+      ? 'No card on any other system changes.'
+      : 'No card on any other system changes. Each manager sees the reason on the card.',
     // Slack's `auth.revoke` ends the configuration token alone (R41V-10).
     ...(view.kind === 'slack-configuration' ? [SLACK_REFRESH_TOKEN_LINE] : []),
     'IT can connect it again with ./setup.sh access.',
   ];
+}
+
+/**
+ * Whether the count says a revoke ends no card, so no manager reads its reason on a card (the
+ * round review's m17): none is connected through it, or more are than one revoke ends, which the
+ * revoke refuses. Unknown until the count answers.
+ *
+ * @param counted - How many cards it ends, once `cardsOn` has answered.
+ */
+export function revokeEndsNoCard(counted: CardsOnConnection | undefined): boolean {
+  return counted !== undefined && (counted.cards === 0 || counted.atLeast);
 }
 
 /**
@@ -200,9 +216,27 @@ function endedCardsLine(
     : `${counted.cards} employee cards connected through it end now, each with your reason, and ${revoked}`;
 }
 
-/** What a rotation does, said before the administrator gives the new secret. */
-export const ROTATE_NOTE =
-  'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.';
+/**
+ * What a rotation of Slack's configuration connection cannot do, said before the new secret is
+ * given: Day0 revokes the old configuration token, whose refresh token Slack offers no call to end
+ * (R41V-10), as {@link SLACK_REFRESH_TOKEN_LINE} says for a revoke.
+ */
+export const SLACK_ROTATE_REFRESH_TOKEN_LINE =
+  "Slack cannot end that token's refresh token, so IT then deletes its row under " +
+  '"Your App Configuration Tokens" on api.slack.com, signed in as the account that generated it.';
+
+/**
+ * What a rotation does, said before the administrator gives the new secret: for Slack's
+ * configuration connection, that the old token's refresh token outlives the rotation (the round
+ * review's m17).
+ *
+ * @param view - The connection.
+ */
+export function rotateNote(view: Pick<ConnectionView, 'kind'>): string {
+  return view.kind === 'slack-configuration'
+    ? `No card is affected. Day0 seals the new secret, switches to it and revokes the old configuration token. ${SLACK_ROTATE_REFRESH_TOKEN_LINE}`
+    : 'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.';
+}
 
 /**
  * One ledger line in the record's words (the contract's renderer, so the page and the audit

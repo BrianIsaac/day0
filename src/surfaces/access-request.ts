@@ -130,20 +130,47 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
   return undefined;
 }
 
-/** The systems an issuer of Day0's acts through an organisation connection for. */
-const ISSUER_SYSTEMS: ReadonlySet<string> = new Set(['slack', 'linear']);
+/** The connection kind an issuer of Day0's acts through, by the named system it serves. */
+const ISSUER_KINDS: Readonly<Record<string, OrganisationConnectionKind>> = {
+  slack: 'slack-configuration',
+  linear: 'oauth-app',
+};
 
 /**
- * Whether an issuer of Day0's acts through the organisation's connection for a system: Slack's own
- * apps, Linear's app, and an MCP server's client. Any other system's connection (a shared key, a
- * service account) is recorded and acted through by nothing, so it covers no card: the card takes
- * a key of its own meanwhile (11-AC's item 8: a product call, flagged). Keyed on the system, as the
- * card's own prediction is, since a manager's summary carries no connection kind.
+ * The kind an issuer of Day0's acts through for a system, or undefined where none serves it.
  *
  * @param system - The system key (`organisationSystemOf`).
  */
-export function servedByIssuer(system: string): boolean {
-  return ISSUER_SYSTEMS.has(system) || system.startsWith(MCP_SYSTEM_PREFIX);
+export function issuerKindFor(system: string): OrganisationConnectionKind | undefined {
+  return system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp-client' : ISSUER_KINDS[system];
+}
+
+/**
+ * Whether an issuer of Day0's serves a system at all: Slack's own apps, Linear's app, and an MCP
+ * server's client. A card on any other system asks IT for nothing and takes a key of its own
+ * (11-AC's item 8: a product call, flagged).
+ *
+ * @param system - The system key (`organisationSystemOf`).
+ */
+export function issuerServesSystem(system: string): boolean {
+  return issuerKindFor(system) !== undefined;
+}
+
+/**
+ * Whether an issuer of Day0's acts through an organisation connection, so the connection covers
+ * the cards of its system: its kind is the one the issuer for its system acts through (Slack's
+ * configuration token, Linear's OAuth app, an MCP server's client). A static key or a service
+ * account landed for any system is recorded and acted through by nothing, so it covers no card and
+ * the card takes a key of its own (decision D6 (b), a product call, flagged; the round review's
+ * m11).
+ *
+ * @param connection - The connection's system and kind.
+ */
+export function servedByIssuer(
+  connection: Readonly<{ system: string; kind: OrganisationConnectionKind }>,
+): boolean {
+  const kind = issuerKindFor(connection.system);
+  return kind !== undefined && kind === connection.kind;
 }
 
 /**
@@ -214,8 +241,11 @@ export function accessRequestReason(
   if (system === undefined) return undefined;
   if (card.managerApprovedAt === undefined || card.credentialId !== undefined) return undefined;
   // A system no issuer acts through asks IT for nothing, connected or not: the card takes a key.
-  if (!servedByIssuer(system)) return undefined;
+  if (!issuerServesSystem(system)) return undefined;
   if (connection === null) return 'no-connection';
+  // A connection no issuer acts through (a static key IT landed for Linear) covers nothing, and
+  // the card takes a key of its own rather than asking IT for an install it cannot use (D6).
+  if (!servedByIssuer(connection)) return undefined;
   if (neededScopes?.some((scope: string): boolean => !connection.scopes.includes(scope))) {
     return 'scope-widening';
   }

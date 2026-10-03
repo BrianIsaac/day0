@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
@@ -43,6 +43,9 @@ export function SkillsView() {
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
+  );
+  useSkillAnchor(
+    failedSkills !== undefined && unverifiedSkills !== undefined && pendingRevisions !== undefined,
   );
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
@@ -110,4 +113,38 @@ export function SkillsView() {
       />
     </Columns>
   );
+}
+
+/**
+ * Bring the skill a work card's link named into view (D3): `/agent/<id>/skills#skill-<id>` lands
+ * on the failed skill's row, and focus goes to it, so a keyboard or screen-reader user starts at
+ * its Retry. The rows arrive after the page, so the browser's own jump to the fragment finds
+ * nothing; a later change of the fragment lands the same way.
+ *
+ * @param ready - Whether the lists the row is drawn from have answered.
+ */
+function useSkillAnchor(ready: boolean): void {
+  // Counts the fragment's changes, so each one lands again.
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    const changed = (): void => {
+      if (window.location.hash.startsWith('#skill-')) setChanges((count) => count + 1);
+    };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+  useEffect(() => {
+    if (!ready || !window.location.hash.startsWith('#skill-')) return;
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      // Not a fragment this page wrote (a malformed escape): nothing to land on.
+      return;
+    }
+    const row = document.getElementById(id);
+    if (!row) return;
+    row.scrollIntoView({ block: 'start' });
+    row.focus({ preventScroll: true });
+  }, [ready, changes]);
 }

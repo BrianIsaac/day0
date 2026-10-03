@@ -7005,6 +7005,51 @@ describe('work.needsYou', (): void => {
     expect(inbox.waitingByEmployee.find((row) => row.agentId === mira)?.waiting).toBe(1);
   });
 
+  it("lists no card as ready to connect through a connection no issuer of Day0's acts through: a static key for Linear, or any key for a system no issuer serves (D6, the round review's m11)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      const card = {
+        agentId: mira,
+        class: 'kanban',
+        verdict: 'ungranted' as const,
+        reason: 'credential not in the docs; location not documented',
+        whereFound: [],
+        path: 'documented-api' as const,
+        managerApprovedAt: 2,
+        credentialLanded: false,
+        accessRequest: { reason: 'no-connection' as const, scopes: ['read'], draftedAt: 3 },
+        createdAt: 1,
+      };
+      await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'linear',
+        displayName: 'Linear',
+        endpoint: 'https://api.linear.app/graphql',
+      });
+      await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'notion',
+        displayName: 'Notion',
+        endpoint: 'https://api.notion.com/v1',
+      });
+      for (const system of ['linear', 'notion']) {
+        await ctx.db.insert('organisationConnections', {
+          system,
+          displayName: system,
+          kind: 'static-key',
+          mode: 'shared',
+          scopes: ['read'],
+          registeredBy: { via: 'setup-cli', at: 50 },
+          status: 'active',
+          createdAt: 50,
+        });
+      }
+    });
+
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
   it('lists no card the manager disconnected, nor one whose access ended, though IT answered its request (join 12, the second pass)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

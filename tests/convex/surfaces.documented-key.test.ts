@@ -156,6 +156,28 @@ describe('surfaces.propose: a key found in the documentation (B1, decision 1 (a)
     expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
   });
 
+  it("binds the documented key where IT landed a static key for Linear, which no issuer acts through (D6, the round review's m11)", async (): Promise<void> => {
+    const seeded = await seed('none');
+    await seeded.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'static-key',
+        mode: 'shared',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
+
+    await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded));
+
+    const card = await readCard(seeded);
+    expect(card.credentialId).toBe(seeded.wikiKey);
+    expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
   it('binds the documented key where the connection needs IT’s attention, which covers nothing', async (): Promise<void> => {
     const seeded = await seed('needs-attention');
 

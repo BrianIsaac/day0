@@ -25,6 +25,16 @@ const GONE_ERRORS: Readonly<Record<SlackRevocationMethod, ReadonlySet<string>>> 
   'apps.uninstall': new Set(),
 };
 
+/**
+ * The `auth.revoke` errors that say Slack itself ended the token. A token Slack does not know
+ * (`invalid_auth`) or whose account is inactive is gone as well, but Day0 cannot tell it from a
+ * value Slack never issued, so the ledger says it under its own word (the round review's m3).
+ */
+export const SLACK_ENDED_TOKEN_ERRORS: ReadonlySet<string> = new Set([
+  'token_revoked',
+  'token_expired',
+]);
+
 /** The errors Slack documents for a failure on its own side or a limit, which a later attempt may pass. */
 const RETRY_ERRORS: ReadonlySet<string> = new Set([
   'ratelimited',
@@ -107,19 +117,26 @@ export function slackTokenCheck(token: string): RevocationRequest {
 }
 
 /**
- * Read Slack's answer to `auth.test`: the token still works only when Slack says `ok`; any other
- * answer, or none, leaves the revoke's own answer standing.
+ * What Slack's `auth.test` said of a token after a revoke: it still works, it has ended, or the
+ * check could not be made (a limit, Slack's own failure, a word Day0 does not know), which is never
+ * read as an ended token (the round review's m2).
+ */
+export type SlackTokenCheck = 'works' | 'ended' | 'unchecked';
+
+/**
+ * Read Slack's answer to `auth.test`: the token works only when Slack says `ok`, and has ended only
+ * when Slack names one of the words `auth.revoke` reads as a token already gone; any other answer
+ * is a check that was not made.
  *
  * @param status - The HTTP status.
  * @param body - The parsed JSON body, or the raw text when it was not JSON.
  */
-export function slackTokenStillWorks(status: number, body: unknown): boolean {
-  return (
-    status < 400 &&
-    typeof body === 'object' &&
-    body !== null &&
-    (body as { ok?: unknown }).ok === true
-  );
+export function readSlackTokenCheck(status: number, body: unknown): SlackTokenCheck {
+  const payload =
+    typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : undefined;
+  if (payload?.ok === true && status < 400) return 'works';
+  const error = typeof payload?.error === 'string' ? payload.error : undefined;
+  return error !== undefined && GONE_ERRORS['auth.revoke'].has(error) ? 'ended' : 'unchecked';
 }
 
 /** Whether an HTTP status says the failure was the vendor's side or a limit. */

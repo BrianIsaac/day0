@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
+import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   accessStanding,
@@ -140,6 +141,8 @@ function connected(
 ): OrganisationSystem {
   return {
     displayName: fields.system,
+    // The kind an issuer acts through for the system, else a static key (D6).
+    kind: issuerKindFor(fields.system) ?? 'static-key',
     mode: 'per-employee',
     status: 'active',
     connectedAt: Date.UTC(2026, 9, 1, 9),

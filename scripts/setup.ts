@@ -5315,6 +5315,7 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     {
       access: options.access ?? {},
       dryRun: options.dryRun,
+      install: true,
       ...(answers === undefined ? {} : { answers }),
     },
     io,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FALLBACK_TICKET_PREFIX,
+  filedOnTicketQueue,
   groundTicketWork,
   isTicketWork,
   type TicketGroundingItem,
@@ -34,6 +35,14 @@ describe('isTicketWork', (): void => {
     expect(isTicketWork(item({ sourceCategory: 'social-mention', sourceSystem: 'social' }))).toBe(
       false,
     );
+  });
+});
+
+describe('filedOnTicketQueue (D2)', (): void => {
+  it('takes only a ticket on the ticket queue, never a Slack ask filed there or a ticket from elsewhere', (): void => {
+    expect(filedOnTicketQueue(item())).toBe(true);
+    expect(filedOnTicketQueue(item({ sourceSystem: 'slack' }))).toBe(false);
+    expect(filedOnTicketQueue(item({ sourceCategory: 'inbox' }))).toBe(false);
   });
 });
 

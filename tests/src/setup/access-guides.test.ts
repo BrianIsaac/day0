@@ -127,6 +127,22 @@ describe('the access recipes', (): void => {
     expect(readme.match(/docs\/running\/install\.md/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
+  it("has the runbook's failure table cure each gap by its cause, as pnpm check:access words it (the round review's m6)", (): void => {
+    const table = page('docs/running/install.md').split('## When a check fails')[1] ?? '';
+    const rows = table
+      .split('\n## ')[0]
+      ?.split('\n')
+      .filter((line) => line.startsWith('| `'));
+    const row = (start: string): string | undefined =>
+      rows?.find((line) => line.startsWith(`| ${start}`));
+    expect(row('`scopes` GAP, missing a scope')).toContain('--correct');
+    expect(row('`scopes` GAP, landed without')).toContain('land it again');
+    expect(row('`scopes` GAP, landed without')).not.toContain('--correct');
+    expect(row('`identity` GAP, no issuer')).toContain('land it again');
+    expect(row('`reach` GAP')).toContain('SSL_CERT_FILE');
+    expect(row('`reach` WARN')).toContain('./setup.sh resume');
+  });
+
   it('carries no em dash', (): void => {
     for (const path of [
       'docs/running/install.md',

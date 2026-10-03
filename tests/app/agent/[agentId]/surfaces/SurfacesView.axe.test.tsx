@@ -30,11 +30,19 @@ vi.mock('convex/react', () => ({
 
 import { SurfacesView } from '../../../../../app/agent/[agentId]/surfaces/SurfacesView';
 import { withListedIdentity, type ListingContext } from './fakes/listed-identity';
+import type { OrganisationConnectionKind } from '../../../../../src/surfaces/access-identity';
 
 /** What the listing reads beside each row, from the same fixtures the tab's queries answer. */
 function listingContext(queries: Record<string, unknown>): ListingContext {
   const summary = queries['organisationConnections:summaryForManager'] as
-    | { systems: { system: string; mode: 'shared' | 'per-employee'; status: 'active' }[] }
+    | {
+        systems: {
+          system: string;
+          kind: OrganisationConnectionKind;
+          mode: 'shared' | 'per-employee';
+          status: 'active';
+        }[];
+      }
     | undefined;
   const credentials = (queries['credentials:summaryForOwner'] ?? []) as {
     _id: string;
@@ -375,6 +383,7 @@ const ACCESS: Record<string, unknown> = {
       {
         system: 'mcp:docs.acme.test',
         displayName: 'Acme docs',
+        kind: 'mcp-client',
         mode: 'per-employee',
         status: 'active',
         connectedAt: NOW - 2 * DAY,
@@ -382,6 +391,7 @@ const ACCESS: Record<string, unknown> = {
       {
         system: 'slack',
         displayName: 'Slack',
+        kind: 'slack-configuration',
         mode: 'per-employee',
         status: 'active',
         connectedAt: NOW - 2 * DAY,

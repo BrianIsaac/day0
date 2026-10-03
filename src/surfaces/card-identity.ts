@@ -1,4 +1,9 @@
-import type { ActsAs, ActsAsKind, OrganisationConnectionMode } from './access-identity';
+import type {
+  ActsAs,
+  ActsAsKind,
+  OrganisationConnectionKind,
+  OrganisationConnectionMode,
+} from './access-identity';
 import { MCP_SYSTEM_PREFIX, organisationSystemOf, servedByIssuer } from './access-request';
 import {
   presentProvisioning,
@@ -44,6 +49,8 @@ export interface IdentityCard {
 export interface IdentityConnection {
   /** The system's key, as `organisationSystemOf` reads it off a card. */
   readonly system: string;
+  /** What IT registered: only a kind an issuer of Day0's acts through covers a card (D6). */
+  readonly kind: OrganisationConnectionKind;
   readonly mode: OrganisationConnectionMode;
   readonly status: 'active' | 'needs-attention' | 'revoked';
 }
@@ -94,7 +101,7 @@ function coveringConnection(
   return connection !== undefined &&
     connection.status === 'active' &&
     connection.system === organisationSystemOf(card) &&
-    servedByIssuer(connection.system)
+    servedByIssuer(connection)
     ? connection
     : undefined;
 }

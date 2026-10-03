@@ -88,6 +88,50 @@ describe('loading is not the same as empty (P3-13)', (): void => {
   });
 });
 
+describe("a card waiting on a skill whose draft failed Day0's check (D3)", (): void => {
+  it('tells only the card waiting on that skill, and links it to its Retry', (): void => {
+    const waiting = (id: string, skillId: string): Doc<'workItems'> =>
+      ({
+        _id: id,
+        _creationTime: 1,
+        agentId: 'a1',
+        title: `Close out ticket ${id}`,
+        state: 'needs-skill',
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: id,
+        contentSummary: 'Priya: "Please close it."',
+        contentRefs: [],
+        verdict: { decision: 'needs-skill', reason: 'smoke test failed' },
+        proposedSkillId: skillId,
+        createdAt: 1,
+      }) as unknown as Doc<'workItems'>;
+    const queue = renderToStaticMarkup(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={[waiting('w1', 'skill-failed'), waiting('w2', 'skill-proposed')]}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved={true}
+        autonomousActions={false}
+        surfaceMode="mock"
+        refusedSkills={
+          new Map([
+            [
+              'skill-failed',
+              { skillId: 'skill-failed', name: 'kanban-comment-and-close', retryable: true },
+            ],
+          ])
+        }
+      />,
+    );
+    expect(queue.match(/Retry it on the Skills tab/g)).toHaveLength(1);
+    expect(queue).toContain('href="/agent/a1/skills#skill-skill-failed"');
+    expect(queue).toContain('holds the proposal');
+  });
+});
+
 describe('the order the queue lists its items in', (): void => {
   it('lists a deferred row with the rows that wait on the manager, as the roster counts it', (): void => {
     const order = sortedForQueue([

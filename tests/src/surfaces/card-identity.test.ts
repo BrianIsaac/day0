@@ -12,7 +12,14 @@ const DOCS_MCP = { endpoint: 'https://docs.acme.test/mcp', path: 'mcp' } as cons
 
 /** A connection IT landed for a system, active unless the test says otherwise. */
 function connection(fields: Partial<IdentityConnection> & Pick<IdentityConnection, 'system'>) {
-  return { mode: 'per-employee' as const, status: 'active' as const, ...fields };
+  // The kind an issuer of Day0's acts through for the system, unless a test names another.
+  const kind =
+    fields.system === 'slack'
+      ? ('slack-configuration' as const)
+      : fields.system.startsWith('mcp:')
+        ? ('mcp-client' as const)
+        : ('oauth-app' as const);
+  return { mode: 'per-employee' as const, status: 'active' as const, kind, ...fields };
 }
 
 describe("a card that lost its credential names no landed identity (the wave 11 review's M8)", (): void => {
@@ -126,10 +133,20 @@ describe("a connection no issuer of Day0's acts through (11-AC's item 8)", (): v
     expect(
       cardIdentity(
         notion,
-        { system: 'notion', mode: 'shared', status: 'active' },
+        { system: 'notion', kind: 'static-key', mode: 'shared', status: 'active' },
         {
           selfProvisions: false,
         },
+      ),
+    ).toEqual({ kind: 'shared-key', planned: true });
+  });
+
+  it("covers no card where IT landed a static key for a system an issuer serves (D6, the round review's m11)", (): void => {
+    expect(
+      cardIdentity(
+        LINEAR,
+        { system: 'linear', kind: 'static-key', mode: 'shared', status: 'active' },
+        { selfProvisions: false },
       ),
     ).toEqual({ kind: 'shared-key', planned: true });
   });

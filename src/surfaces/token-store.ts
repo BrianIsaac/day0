@@ -14,7 +14,8 @@ import type { IssuedTokens } from './mcp-oauth';
 import { safeFailureMessage } from './redact';
 import {
   awaitLeaseHolder,
-  LIVE_TOKEN_LEASE_POLLS,
+  LEASE_CLAIMS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
   RefreshInProgress,
   sleepFor,
 } from './refresh-lease';
@@ -39,12 +40,6 @@ const ROTATION_WAIT_MS = 200;
 
 /** How many times it waits. */
 const ROTATION_WAITS = 3;
-
-/**
- * How many times a refresh asks for the lease: once, and once more after the holder it waited for
- * let the lease end without a rotation. A third holder in that time answers {@link RefreshInProgress}.
- */
-const LEASE_CLAIMS = 2;
 
 /** The credential an authorisation landed, as the native store is told to keep it. */
 export interface LandTokens {
@@ -393,7 +388,7 @@ export interface NativeTokenStoreDeps {
 export interface RefreshOptions {
   /**
    * The caller's stored token still lives: behind another refresh's lease the refresh waits only
-   * {@link LIVE_TOKEN_LEASE_POLLS} reads at each claim, and after its last claim hands the stored
+   * `LIVE_TOKEN_LEASE_POLLS` reads in all, and after its last claim hands the stored
    * token back rather than waiting out a lease whose holder may have died.
    */
   readonly storedTokenLives?: boolean;
@@ -484,13 +479,17 @@ export async function refreshHeld(
             sleep: deps.sleep ?? sleepFor,
           },
           { generation: held.generation, until: claim.until },
-          options.storedTokenLives === true ? LIVE_TOKEN_LEASE_POLLS : undefined,
+          options.storedTokenLives === true ? LIVE_TOKEN_POLLS_PER_CLAIM : undefined,
         );
         if (waited === 'moved') {
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
         }
         if (claims === LEASE_CLAIMS) {
-          if (options.storedTokenLives !== true) throw new RefreshInProgress();
+          // The stored token's life is read again after the wait: one that died meanwhile is
+          // never handed back (the round review's m8).
+          if (options.storedTokenLives !== true || (held.expiresAt ?? 0) <= deps.now()) {
+            throw new RefreshInProgress();
+          }
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
         }
         break;
@@ -608,14 +607,16 @@ export async function nativeAccessToken(
   if (!held || !refresher || (held.expiresAt ?? 0) - deps.now() > refresher.readRefreshMarginMs) {
     return await deps.keeper.accessToken(ctx, credentialId);
   }
-  const alive = (held.expiresAt ?? 0) > deps.now();
+  // Read again after the refresh, which may wait on a lease or an exchange for longer than the
+  // stored token has left: a token that died meanwhile is never sent (the round review's m8).
+  const alive = (): boolean => (held.expiresAt ?? 0) > deps.now();
   const words = wordsOf(refresher);
   let outcome: RefreshOutcome;
   try {
-    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive });
+    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive() });
   } catch (error) {
     const reason = words.reason(error);
-    if (!alive) throw words.unreachableWhenExpired(reason);
+    if (!alive()) throw words.unreachableWhenExpired(reason);
     log.warn(`${refresher.name} read-time refresh failed; the stored token still lives`, {
       credentialId,
       reason,
@@ -623,7 +624,7 @@ export async function nativeAccessToken(
     return await deps.keeper.accessToken(ctx, credentialId);
   }
   if (outcome.ok) return outcome.accessToken;
-  if (alive) {
+  if (alive()) {
     log.warn(`${refresher.name} read-time refresh refused; the stored token still lives`, {
       credentialId,
       reason: outcome.refusal,

@@ -1,3 +1,5 @@
+/** @vitest-environment jsdom */
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,12 +16,66 @@ vi.mock('convex/react', () => ({
 
 import { SkillsView } from '../../../../../app/agent/[agentId]/skills/SkillsView';
 import { asEmployee } from '../../../../fixtures/dom/employee';
+import { mount } from '../../../../fixtures/dom/press';
 
 afterEach((): void => {
   backend.queries = {};
 });
 
 describe('SkillsView', () => {
+  it("lands a work card's link on the failed skill's row, in view and focused, once the lists answer (D3)", () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:awaitingVerification': [],
+      'skillControls:pendingRevisions': [],
+      'skills:verificationFailed': [
+        {
+          _id: 'skill-9',
+          name: 'kanban-comment-and-close',
+          state: 'failed',
+          body: '',
+          description: 'Close a ticket.',
+          authoringAttempts: 1,
+          verificationLog: 'smoke test failed',
+        },
+      ],
+    };
+    window.location.hash = '#skill-skill-9';
+    const scrolled: string[] = [];
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element): void {
+      scrolled.push(this.id);
+    };
+    try {
+      const view = mount(asEmployee(<SkillsView />));
+      expect(scrolled).toEqual(['skill-skill-9']);
+      expect(document.activeElement?.id).toBe('skill-skill-9');
+      view.unmount();
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+      window.location.hash = '';
+    }
+  });
+
+  it('draws the tab when the fragment is not one it wrote, a malformed escape included', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:awaitingVerification': [],
+      'skillControls:pendingRevisions': [],
+      'skills:verificationFailed': [],
+    };
+    window.location.hash = '#skill-%E0%A4%A';
+    try {
+      const view = mount(asEmployee(<SkillsView />));
+      expect(view.container.textContent).toContain('How a skill is made');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
   it('sets the proposed and the registered skills beside how a skill is made, as drawn', () => {
     backend.queries = {
       'skills:proposed': [],

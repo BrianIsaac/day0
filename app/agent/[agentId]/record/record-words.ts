@@ -237,13 +237,22 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     const which = unkept
       ? 'a configuration token Slack issued to a renewal that finished after the connection was revoked'
       : token;
+    // Slack's auth.test could not be asked afterwards whether the token still works (m2).
+    const notChecked =
+      p.unchecked === true
+        ? ', though Slack could not be asked afterwards whether it still works'
+        : '';
     switch (p.outcome) {
       case 'done':
         return unkept
-          ? `Day0 revoked ${which}, which it kept nowhere; ${rowAdvice}`
-          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use; ${rowAdvice}`;
+          ? `Day0 revoked ${which}, which it kept nowhere${notChecked}; ${rowAdvice}`
+          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use${notChecked}; ${rowAdvice}`;
       case 'already-revoked':
-        return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}; ${
+        return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}${notChecked}; ${
+          unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
+        }, and ${rowAdvice}`;
+      case 'unrecognised':
+        return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}. Day0 cannot tell whether Slack had ended it or never knew it; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
         }, and ${rowAdvice}`;
       case 'failed':
@@ -265,6 +274,7 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
       return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
     case 'failed':
     case 'already-revoked':
+    case 'unrecognised':
     case undefined:
       return `Day0 could not renew ${token}${because(p.reason)}`;
     default: {

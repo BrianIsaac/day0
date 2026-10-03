@@ -3,15 +3,28 @@ import { describe, expect, it } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import {
   ProgressSection,
+  refusedSkillsOf,
   VerdictSection,
   type ItemVerdict,
+  type RefusedSkill,
 } from '../../../../../app/agent/[agentId]/work/VerdictSection';
 import { AT, DRAWN, SURFACES } from '../../../../fixtures/work/drawn-states';
 
-function verdict(state: Doc<'workItems'>['state'], value: ItemVerdict, fields = {}): string {
+function verdict(
+  state: Doc<'workItems'>['state'],
+  value: ItemVerdict,
+  fields = {},
+  refusedSkill?: RefusedSkill,
+): string {
   const item = { ...DRAWN.planPending, state, verdict: value, ...fields } as Doc<'workItems'>;
   return renderToStaticMarkup(
-    <VerdictSection item={item} verdict={value} surfaces={SURFACES} now={AT} />,
+    <VerdictSection
+      item={item}
+      verdict={value}
+      surfaces={SURFACES}
+      now={AT}
+      {...(refusedSkill === undefined ? {} : { refusedSkill })}
+    />,
   );
 }
 
@@ -101,5 +114,62 @@ describe("a working item's progress", (): void => {
     expect(renderToStaticMarkup(<ProgressSection item={DRAWN.landed} autonomous={false} />)).toBe(
       '',
     );
+  });
+});
+
+describe("an item whose skill's draft failed Day0's check (D3 (b), a product call)", (): void => {
+  const waiting: ItemVerdict = {
+    decision: 'needs-skill',
+    reason: 'the authored skill is not a reusable procedure: it names REVOPS-204',
+  };
+
+  it('says the draft failed its check, that nothing retries it on its own, and links to its Retry', (): void => {
+    const markup = verdict(
+      'needs-skill',
+      waiting,
+      {},
+      {
+        skillId: 'skill-1',
+        name: 'kanban-comment-and-close',
+        retryable: true,
+      },
+    );
+    expect(markup).toContain(
+      'Waiting on a skill</span>: kanban-comment-and-close. Its draft failed Day0&#x27;s check, and Day0 will not try again until you ask: ',
+    );
+    expect(markup).toMatch(
+      /<a [^>]*aria-label="Retry kanban-comment-and-close on the Skills tab"[^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>Retry it on the Skills tab<\/a>\./,
+    );
+    expect(markup).not.toContain('holds the proposal');
+  });
+
+  it('says Retry is spent after the last attempt, and links to the skill on the Skills tab', (): void => {
+    const markup = verdict(
+      'needs-skill',
+      waiting,
+      {},
+      {
+        skillId: 'skill-1',
+        name: 'kanban-comment-and-close',
+        retryable: false,
+      },
+    );
+    expect(markup).toContain('Its draft failed Day0&#x27;s check on every attempt. Giving up, ');
+    expect(markup).toMatch(
+      /<a [^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>on the Skills tab<\/a>, ends the skill and cancels this work\./,
+    );
+  });
+
+  it('reads the failed skills by id, with whether Retry is still offered', (): void => {
+    const refused = refusedSkillsOf([
+      { _id: 'skill-1', name: 'kanban-comment-and-close', state: 'failed', authoringAttempts: 1 },
+      { _id: 'skill-2', name: 'chat-thread-reply', state: 'failed', authoringAttempts: 3 },
+    ]);
+    expect(refused.get('skill-1')).toEqual({
+      skillId: 'skill-1',
+      name: 'kanban-comment-and-close',
+      retryable: true,
+    });
+    expect(refused.get('skill-2')?.retryable).toBe(false);
   });
 });

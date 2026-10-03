@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -105,7 +105,7 @@ function installBed(
 function checkOrder(bed: Harness): string[] {
   return bed.commands
     .map((call) => [call.command, ...call.args].join(' '))
-    .map((line) => /^pnpm (?:run )?(check:[a-z-]+|build)$/.exec(line)?.[1])
+    .map((line) => /^pnpm (?:run )?(check:[a-z-]+|build)(?: --install)?$/.exec(line)?.[1])
     .filter((name): name is string => name !== undefined);
 }
 
@@ -130,6 +130,29 @@ describe('setup: the install verb', (): void => {
     expect(printed).not.toContain(CLIENT_SECRET);
     expect(printed).not.toContain(CONFIGURATION_TOKEN);
     expect(printed).toContain('The install passed every check');
+  });
+
+  it("asks check:access to stop the install on a backend dial that did not run (the round review's m10)", async (): Promise<void> => {
+    const bed = installBed();
+    expect(await bed.run(INSTALL)).toBe(0);
+    expect(
+      bed.bed.commands
+        .map((call) => [call.command, ...call.args].join(' '))
+        .filter((line) => line.includes('check:access')),
+    ).toEqual(['pnpm run check:access --install']);
+  });
+
+  it("stops at access when the documentation names no system and --systems names none, rather than pass with nothing connected (the wave 11 review's m20)", async (): Promise<void> => {
+    const bed = installBed();
+    rmSync(join(bed.bed.directory, 'docs-local', 'slack.md'));
+    expect(await bed.run(INSTALL)).toBe(1);
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      "The install has no system to connect: the documentation names none the kit knows. Name them with --systems (slack, linear, or an MCP server's https address), then run the install again.",
+    );
+    expect(said).toContain('The install stopped at access');
+    expect(said).not.toContain('The install passed every check');
+    expect(bed.landed).toEqual([]);
   });
 
   it('stops at the first failing check, says which, and runs nothing after it', async (): Promise<void> => {

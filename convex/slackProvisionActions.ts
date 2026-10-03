@@ -45,6 +45,8 @@ import { slackInstallUrl } from '../src/surfaces/slack-manifest';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import {
   awaitLeaseHolder,
+  LEASE_CLAIMS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
   RefreshInProgress,
   sleepFor,
   type LeasedRow,
@@ -314,13 +316,9 @@ function sealedForOrganisation(value: string): { ciphertext: string; iv: string;
 /** What one rotation came to: the new token, written; or the pair moved on and is read again. */
 type RotationOutcome =
   | { readonly kind: 'rotated'; readonly token: string }
-  | { readonly kind: 'moved' };
-
-/**
- * How many times a rotation asks for the refresh lease: once, and once more after the holder it
- * waited for let the lease end without a rotation.
- */
-const LEASE_CLAIMS = 2;
+  | { readonly kind: 'moved' }
+  /** The held token still lives behind a lease its holder never ended: it is used as it is. */
+  | { readonly kind: 'stored' };
 
 /** The lease a rotation holds: the refresh token's row of the claimed snapshot and the lease's end. */
 type ConfigurationLease = Extract<RefreshClaim, { kind: 'claimed' }>;
@@ -330,7 +328,13 @@ type ConfigurationLease = Extract<RefreshClaim, { kind: 'claimed' }>;
  * renewals never present one refresh token to Slack: a rotation that finds the lease held waits
  * for its holder, and answers `moved` once the holder's pair is written for the caller to read.
  *
- * @returns The lease, or `moved` when the pair moved on, was revoked, or was written meanwhile.
+ * A use whose held token still lives waits `LIVE_TOKEN_LEASE_POLLS` reads in all, and then
+ * uses that token rather than waiting out a lease whose holder may have died (the round review's
+ * m7); a scheduled renewal waits the whole lease.
+ *
+ * @param options.storedTokenLives - Whether the held configuration token still lives.
+ * @returns The lease; `moved` when the pair moved on, was revoked, or was written meanwhile;
+ *   `stored` when the held token still lives after the bounded wait.
  * @throws RefreshInProgress when other renewals held the lease throughout; Error when the
  *   configuration token has no live refresh token.
  */
@@ -338,7 +342,8 @@ async function claimConfigurationLease(
   ctx: ActionCtx,
   held: HeldConfigurationRows,
   dependencies: ProvisionDependencies,
-): Promise<ConfigurationLease | { readonly kind: 'moved' }> {
+  options: { readonly storedTokenLives: boolean },
+): Promise<ConfigurationLease | { readonly kind: 'moved' } | { readonly kind: 'stored' }> {
   const generation = held.secret.generation ?? 0;
   for (let claims = 1; ; claims += 1) {
     const claim: RefreshClaim = await ctx.runMutation(internal.refreshLease.claim, {
@@ -369,9 +374,16 @@ async function claimConfigurationLease(
             sleep: dependencies.sleep,
           },
           { generation, until: claim.until },
+          options.storedTokenLives ? LIVE_TOKEN_POLLS_PER_CLAIM : undefined,
         );
         if (waited === 'moved') return { kind: 'moved' };
-        if (claims === LEASE_CLAIMS) throw new RefreshInProgress();
+        if (claims === LEASE_CLAIMS) {
+          // Read again after the wait: a token that died meanwhile is never used.
+          if (options.storedTokenLives && (held.secret.expiresAt ?? 0) > dependencies.now()) {
+            return { kind: 'stored' };
+          }
+          throw new RefreshInProgress();
+        }
         break;
       }
       default: {
@@ -397,11 +409,12 @@ async function rotateConfiguration(
   ctx: ActionCtx,
   held: HeldConfigurationRows,
   dependencies: ProvisionDependencies,
+  options: { readonly storedTokenLives: boolean } = { storedTokenLives: false },
 ): Promise<RotationOutcome> {
   if (held.refresh === null)
     throw new Error('The organisation holds no refresh token to rotate with.');
-  const lease = await claimConfigurationLease(ctx, held, dependencies);
-  if (lease.kind === 'moved') return lease;
+  const lease = await claimConfigurationLease(ctx, held, dependencies, options);
+  if (lease.kind === 'moved' || lease.kind === 'stored') return lease;
   try {
     return await rotateUnderLease(ctx, held, openHeld(lease.refresh), dependencies);
   } finally {
@@ -523,9 +536,17 @@ async function currentConfiguration(
     if (renewal === 'use') {
       return { connection: held.connection, token: openHeld(held.secret), rotated: false };
     }
-    const outcome = await rotateConfiguration(ctx, held, dependencies);
+    // A token Slack refused is never used again; one inside its renew margin still works.
+    const storedTokenLives =
+      !options.rotate &&
+      held.secret.expiresAt !== undefined &&
+      held.secret.expiresAt > dependencies.now();
+    const outcome = await rotateConfiguration(ctx, held, dependencies, { storedTokenLives });
     if (outcome.kind === 'rotated') {
       return { connection: held.connection, token: outcome.token, rotated: true };
+    }
+    if (outcome.kind === 'stored') {
+      return { connection: held.connection, token: openHeld(held.secret), rotated: false };
     }
   }
   throw new Error(

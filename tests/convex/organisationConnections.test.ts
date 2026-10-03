@@ -731,6 +731,7 @@ describe('what the organisation page and a manager read', (): void => {
         {
           system: 'linear',
           displayName: 'Linear',
+          kind: 'oauth-app',
           mode: 'shared',
           status: 'active',
           connectedAt: expect.any(Number),

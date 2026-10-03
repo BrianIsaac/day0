@@ -1874,7 +1874,8 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
       messaging: true,
     });
 
-    vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+    // The release scheduled at the claim runs at its bound (the round review's m9).
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(11 * 60 * 1000));
     expect(
       await owner.query(api.accessRequests.forCard, { surfaceId: linearId }),
     ).not.toHaveProperty('messaging');
@@ -1882,6 +1883,78 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
+  it("releases a claimed DM that never reached Slack at its bound by a write, so an open card stops saying it is being sent (the round review's m9)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'copied',
+    });
+    await harness.mutation(internal.accessRequests.claimMessage, {
+      surfaceId: linearId,
+      draftedAt: drafted.draftedAt ?? 0,
+    });
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(10 * 60 * 1000));
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(linearId));
+    expect(surface?.accessRequest).not.toHaveProperty('messagedAt');
+  });
+
+  it('offers the DM again for a claim made before the upgrade, which no release was scheduled for (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'copied' });
+    // As v0.14.0 left a claim whose action died: `messagedAt` eleven minutes old, nothing queued.
+    await harness.run(async (ctx) => {
+      const card = await ctx.db.get(linearId);
+      if (card?.accessRequest === undefined) throw new Error('no drafted request');
+      await ctx.db.patch(linearId, {
+        accessRequest: { ...card.accessRequest, messagedAt: Date.now() - 11 * 60 * 1000 },
+      });
+    });
+
+    expect(
+      await owner.query(api.accessRequests.forCard, { surfaceId: linearId }),
+    ).not.toHaveProperty('messaging');
+  });
+
+  it("never lets the release scheduled at one claim end a later claim (the round review's m9)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'copied',
+    });
+    const claim = { surfaceId: linearId, draftedAt: drafted.draftedAt ?? 0 };
+    await harness.mutation(internal.accessRequests.claimMessage, claim);
+    // Slack refused the first send at once, and the manager asked again two minutes later.
+    await harness.mutation(internal.accessRequests.releaseMessage, claim);
+    vi.advanceTimersByTime(2 * 60 * 1000);
+    await harness.mutation(internal.accessRequests.claimMessage, claim);
+    const second = (await harness.run(async (ctx) => await ctx.db.get(linearId)))?.accessRequest
+      ?.messagedAt;
+
+    // Past the first claim's bound, and inside the second's.
+    vi.advanceTimersByTime(8 * 60 * 1000 + 1);
+    await harness.finishInProgressScheduledFunctions();
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(linearId));
+    expect(surface?.accessRequest?.messagedAt).toBe(second);
   });
 
   it('lets the manager ask again once a DM Slack refused is released', async (): Promise<void> => {

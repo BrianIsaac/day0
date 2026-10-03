@@ -3,7 +3,7 @@
  * `pnpm check:access`: the live check of the organisation's connections, run with the customer's
  * IT after `./setup.sh access` (the access plan, section 4.8; B13).
  *
- *   pnpm check:access [env file] [--system <key>] [--report]
+ *   pnpm check:access [env file] [--system <key>] [--report] [--install]
  *
  * For the deployment, whether it names its administrators (B8). For each connection IT landed
  * (active, or needing IT's attention; a revoked one is history): its status; the redirect URI it
@@ -670,6 +670,15 @@ export function backendAddressOf(row: ConnectionRow, values: Values): URL | unde
 /** curl's words for a certificate the container does not trust, whose cure is trust, not a route. */
 const UNTRUSTED_CERTIFICATE = /SSL certificate|certificate verify|self[- ]signed|local issuer/i;
 
+/** How a run of the check reads what it could not ask. */
+export interface AccessCheckOptions {
+  /**
+   * Run by `./setup.sh install`: a backend dial that did not run is a gap, so an install never
+   * passes with the backend container never asked (the round review's m10).
+   */
+  readonly install?: boolean;
+}
+
 /**
  * Whether the backend container itself reaches the connection's vendor (the wave 11 review's
  * section 11, item 4; AI9): every other check here asks from this machine, which says nothing of
@@ -679,6 +688,7 @@ async function reachCheck(
   row: ConnectionRow,
   values: Values,
   probes: VendorProbes,
+  options: AccessCheckOptions,
 ): Promise<AccessCheck> {
   const address = backendAddressOf(row, values);
   if (address === undefined) {
@@ -711,10 +721,11 @@ async function reachCheck(
               'out (the proxy or firewall in front of the backend), then run the check again.'),
       );
     case 'unknown':
+      // The install never passes with the backend unasked (the round review's m10).
       return check(
         row.system,
         'reach',
-        'warn',
+        options.install === true ? 'gap' : 'warn',
         `Not asked from the backend container: ${dial.detail}. Start it (\`./setup.sh resume\`) ` +
           'and run the check again.',
       );
@@ -747,6 +758,7 @@ export async function accessChecks(
   rows: readonly ConnectionRow[],
   values: Values,
   probes: VendorProbes,
+  options: AccessCheckOptions = {},
 ): Promise<AccessCheck[]> {
   const checks: AccessCheck[] = [administratorsCheck(values)];
   for (const row of rows) {
@@ -754,7 +766,7 @@ export async function accessChecks(
       ...merged([
         ...connectionChecks(row, values),
         ...(await liveChecks(row, values, probes)),
-        await reachCheck(row, values, probes),
+        await reachCheck(row, values, probes, options),
       ]),
     );
   }
@@ -932,6 +944,7 @@ interface CheckArguments {
   readonly envFile: string;
   readonly system?: string;
   readonly report: boolean;
+  readonly install: boolean;
 }
 
 function parseArguments(argv: readonly string[]): CheckArguments {
@@ -947,6 +960,7 @@ function parseArguments(argv: readonly string[]): CheckArguments {
     envFile: positional[0] ?? '.env.local',
     ...(system === undefined ? {} : { system }),
     report: argv.includes('--report'),
+    install: argv.includes('--install'),
   };
 }
 
@@ -981,14 +995,19 @@ export async function main(argv: readonly string[]): Promise<number> {
     console.error(errorMessage(err));
     return 1;
   }
-  const checks = await accessChecks(rows, values, {
-    fetch,
-    slackApiBase,
-    openSecret: async (credentialId: string): Promise<string> =>
-      await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
-    fromBackend: async (address: URL): Promise<ModelDial> =>
-      dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
-  });
+  const checks = await accessChecks(
+    rows,
+    values,
+    {
+      fetch,
+      slackApiBase,
+      openSecret: async (credentialId: string): Promise<string> =>
+        await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
+      fromBackend: async (address: URL): Promise<ModelDial> =>
+        dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
+    },
+    { install: args.install },
+  );
   console.log(`The organisation's connections, read from ${args.envFile}:`);
   if (rows.length === 0) {
     console.log(

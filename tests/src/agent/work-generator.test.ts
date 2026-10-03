@@ -72,11 +72,21 @@ const UNTIED_READ = drafted(
   'Where is the onboarding guide kept?',
   'Aman asked: "Where is it?"',
 );
-const ACTION = drafted(
+/** The action item as the mock office files it: a ticket on the ticket queue (D2). */
+const ACTION = {
+  ...drafted('action', 'Close out the routine tickets this week', 'Priya: "Please close them."'),
+  sourceCategory: 'ticket-queue',
+  sourceSystem: 'ticket',
+  externalId: 'ticket-action',
+};
+/** The same action drafted as a Slack ask, which left a visitor's first queue with no ticket run. */
+const SLACK_ACTION = drafted(
   'action',
   'Close out the routine tickets this week',
   'Priya: "Please close them."',
 );
+/** Bed 2's Ned: the action on the ticket queue, but a Slack item, which runs as a Slack reply. */
+const SLACK_ACTION_ON_THE_QUEUE = { ...SLACK_ACTION, sourceCategory: 'ticket-queue' };
 /** The review's out-of-scope item: its own words name the role it lies outside. */
 const SAYS_OUT_OF_SCOPE = drafted(
   'out-of-scope',
@@ -211,5 +221,55 @@ describe('the in-scope items the generator drafts (round 0141 R-D item 1, the se
   it('no longer asks the model to make the mismatch of the out-of-scope item clear', (): void => {
     expect(WORK_GEN_SYSTEM).not.toMatch(/make the mismatch clear/i);
     expect(WORK_GEN_SYSTEM).toContain('the item itself never says so');
+  });
+});
+
+describe("the role's words the in-scope items use (D2, the bed walk)", (): void => {
+  it("names the role's words in the first draft's brief for the read and action items too, since the scope rule skips an item that shares none", async (): Promise<void> => {
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(prompts[0]).toContain(
+      'The read-and-answer item and the action item each use at least one of these words from the role and its duties, as the sender would: pipeline, hygiene, sales, team, close, routine, tickets, queue.',
+    );
+  });
+});
+
+describe('the action item the mock office files on its ticket queue (D2 (b), a product call)', (): void => {
+  it('tells the generator the action item is a new ticket on the ticket queue, never another surface', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      '2. Action item - a new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket".',
+    );
+    expect(WORK_GEN_SYSTEM).not.toContain('pick whichever surface best fits');
+  });
+
+  it.each([
+    { name: 'a Slack ask', action: SLACK_ACTION },
+    { name: 'a Slack item on the ticket queue', action: SLACK_ACTION_ON_THE_QUEUE },
+  ])(
+    'asks again when the action item is $name, not a ticket on the queue',
+    async ({ action }): Promise<void> => {
+      drafts.push([READ, action, PLAIN_OUT_OF_SCOPE], [READ, ACTION, PLAIN_OUT_OF_SCOPE]);
+      const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain(
+        'The action item in your last draft is not a ticket on the ticket queue: file it there, with sourceCategory "ticket-queue" and sourceSystem "ticket".',
+      );
+      expect(items[1]).toMatchObject({ sourceCategory: 'ticket-queue', sourceSystem: 'ticket' });
+    },
+  );
+
+  it('files the action item on the ticket queue itself when every draft puts it elsewhere, keeping its words and no channel to act on', async (): Promise<void> => {
+    const inChannel = { ...SLACK_ACTION, contentRefs: ['channel://revops-asks'] };
+    for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+      drafts.push([READ, inChannel, PLAIN_OUT_OF_SCOPE]);
+    }
+    const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(prompts).toHaveLength(GENERATION_ATTEMPTS);
+    expect(items[1]).toMatchObject({
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'ticket',
+      title: 'Close out the routine tickets this week',
+      contentSummary: 'Priya: "Please close them."',
+      contentRefs: [],
+    });
   });
 });

@@ -3871,6 +3871,37 @@ describe('the re-check triggers on a surface (10-C, A13)', (): void => {
     expect(await eventTypes(harness)).toContain('skill.recheck-due');
   });
 
+  it("reads a reinstall of the same app as no move where one side names no vendor user, and another app's name as one (the round review's m12)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, onLinear } = await connectedCardWithSkills();
+    const { stampRecheckOnIdentityMove } = await import('../../convex/surfaces');
+    const land = async (next: {
+      kind: 'own-app';
+      label: string;
+      providerIdentityId?: string;
+    }): Promise<void> =>
+      await harness.run(async (ctx) => {
+        const card = await ctx.db.get(surfaceId);
+        if (card === null) throw new Error('The card is gone.');
+        await stampRecheckOnIdentityMove(ctx, card, next, 200);
+      });
+    // Installed before its bot user was read: the card names no vendor user.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { actsAs: { kind: 'own-app', label: 'Leo (Day0)' } });
+    });
+
+    await land({ kind: 'own-app', label: 'Leo (Day0)', providerIdentityId: 'U0LEOBOT' });
+    expect(await chip(harness, onLinear)).toEqual({
+      recheckDueAt: undefined,
+      recheckReason: undefined,
+    });
+
+    await land({ kind: 'own-app', label: 'Ned (Day0)', providerIdentityId: 'U0NEDBOT' });
+    expect((await chip(harness, onLinear)).recheckReason).toBe(
+      'its connection to linear now acts as another identity',
+    );
+  });
+
   it('a reconnection stamps Re-check due on the surface’s skills, and a re-probe of a live connection does not', async (): Promise<void> => {
     useSurfaceMode('real');
     const { harness, surfaceId, probe, onLinear, elsewhere } = await connectedCardWithSkills();
