@@ -642,8 +642,7 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
     const advice =
       "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
       '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
-    const notChecked =
-      "not checked: Slack's auth.test could not be asked whether the token still works";
+    const notChecked = 'though Slack could not be asked afterwards whether it still works';
     expect(revoked({ outcome: 'done' })).toBe(
       "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
         `once it was taken out of use, ${notChecked}; ${advice}`,
@@ -672,7 +671,7 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
       '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
     expect(revoked({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' })).toBe(
       "Slack did not recognise the organisation's Slack configuration token when Day0 asked to " +
-        'revoke it: Slack answered invalid_auth, so Day0 cannot tell whether Slack had ended it ' +
+        'revoke it: Slack answered invalid_auth. Day0 cannot tell whether Slack had ended it ' +
         `or never knew it; Day0 deleted its copy, and ${advice}`,
     );
   });

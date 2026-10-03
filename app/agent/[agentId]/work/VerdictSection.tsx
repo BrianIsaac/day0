@@ -129,19 +129,23 @@ export function VerdictSection({
           <Lead>Waiting on a skill</Lead>: {refusedSkill.name}.{' '}
           {refusedSkill.retryable ? (
             <>
-              Its draft failed Day0&apos;s check, and nothing tries it again on its own:{' '}
-              <Link href={href} className="text-[var(--color-accent)] underline underline-offset-4">
+              Its draft failed Day0&apos;s check, and Day0 will not try again until you ask:{' '}
+              <Link
+                href={href}
+                aria-label={`Retry ${refusedSkill.name} on the Skills tab`}
+                className="text-[var(--color-accent)] underline underline-offset-4"
+              >
                 Retry it on the Skills tab
               </Link>
               .
             </>
           ) : (
             <>
-              Its draft failed Day0&apos;s check on every attempt:{' '}
+              Its draft failed Day0&apos;s check on every attempt. Giving up,{' '}
               <Link href={href} className="text-[var(--color-accent)] underline underline-offset-4">
-                The Skills tab
-              </Link>{' '}
-              offers Give up.
+                on the Skills tab
+              </Link>
+              , ends the skill and cancels this work.
             </>
           )}
         </Note>

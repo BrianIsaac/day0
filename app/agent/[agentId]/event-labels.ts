@@ -153,7 +153,7 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       : `an employee's ${name} app not created${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
-    const notChecked = payload.unchecked === true ? ', not checked' : '';
+    const notChecked = payload.unchecked === true ? ', not confirmed afterwards' : '';
     switch (payload.outcome) {
       case 'done':
         return `${name} configuration token revoked at ${name}${notChecked}`;

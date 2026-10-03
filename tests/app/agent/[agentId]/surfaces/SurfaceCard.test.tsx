@@ -602,7 +602,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(chip(markup)).not.toBe('Waiting on IT');
     expect(markup).not.toContain('Ask IT how Maya should reach it.');
     expect(markup).toContain(
-      'IT connected Notion for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.',
+      'IT connected Notion for the organisation in a way Day0 cannot act through, so this card takes a key of its own.',
     );
     expect(markup).toMatch(/<input[^>]*type="password"/);
   });
@@ -632,7 +632,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(chip(markup)).not.toBe('Waiting on IT');
     expect(markup).toContain(
-      'IT connected Linear for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.',
+      'IT connected Linear for the organisation in a way Day0 cannot act through, so this card takes a key of its own.',
     );
     expect(markup).toMatch(/<input[^>]*type="password"/);
   });

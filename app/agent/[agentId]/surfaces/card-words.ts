@@ -494,7 +494,7 @@ export function itsReasonWords(reason: string): string {
  * @param system - The connection's name.
  */
 export function unservedConnectionWords(system: string): string {
-  return `IT connected ${system} for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.`;
+  return `IT connected ${system} for the organisation in a way Day0 cannot act through, so this card takes a key of its own.`;
 }
 
 /**

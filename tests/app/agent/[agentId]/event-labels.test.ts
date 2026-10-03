@@ -295,13 +295,13 @@ describe('the live feed labels', (): void => {
         type: 'organisation.configuration-used',
         payload: { ...used, method: 'auth.revoke', outcome: 'done', unchecked: true },
       }),
-    ).toBe('Slack configuration token revoked at Slack, not checked');
+    ).toBe('Slack configuration token revoked at Slack, not confirmed afterwards');
     expect(
       eventLabel({
         type: 'organisation.configuration-used',
         payload: { ...used, method: 'auth.revoke', outcome: 'already-revoked', unchecked: true },
       }),
-    ).toBe('Slack configuration token had already ended at Slack, not checked');
+    ).toBe('Slack configuration token had already ended at Slack, not confirmed afterwards');
     expect(
       eventLabel({
         type: 'organisation.configuration-used',

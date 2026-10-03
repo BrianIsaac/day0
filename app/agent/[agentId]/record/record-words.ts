@@ -240,7 +240,7 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     // Slack's auth.test could not be asked afterwards whether the token still works (m2).
     const notChecked =
       p.unchecked === true
-        ? ", not checked: Slack's auth.test could not be asked whether the token still works"
+        ? ', though Slack could not be asked afterwards whether it still works'
         : '';
     switch (p.outcome) {
       case 'done':
@@ -252,7 +252,7 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
         }, and ${rowAdvice}`;
       case 'unrecognised':
-        return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}, so Day0 cannot tell whether Slack had ended it or never knew it; ${
+        return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}. Day0 cannot tell whether Slack had ended it or never knew it; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
         }, and ${rowAdvice}`;
       case 'failed':

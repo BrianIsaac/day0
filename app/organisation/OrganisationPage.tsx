@@ -21,6 +21,7 @@ import {
   modeWords,
   ORGANISATION_REFUSED,
   registeredWords,
+  revokeEndsNoCard,
   revokeLines,
   rotateNote,
   secretWords,
@@ -255,6 +256,8 @@ function RevokeDialog({
   const change = useChange(keep);
   const [reason, setReason] = useState('');
   const [first, ...rest] = revokeLines(connection, counted ?? undefined);
+  // Where no card ends, the reason is the record's alone (the second pass's design reader).
+  const noneEnds = revokeEndsNoCard(counted ?? undefined);
   // More cards than one revoke ends is refused by the backend, so Revoke is held (the design pass).
   const ready = reason.trim() !== '' && !change.busy && counted?.atLeast !== true;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
@@ -291,7 +294,10 @@ function RevokeDialog({
         </p>
       ))}
       <form className="grid gap-4" onSubmit={submit}>
-        <Field label="The reason each card will show" hint="Managers read it on their cards.">
+        <Field
+          label={noneEnds ? 'The reason for the record' : 'The reason each card will show'}
+          hint={noneEnds ? 'No card shows it.' : 'Managers read it on their cards.'}
+        >
           {(control) => (
             <input
               {...control}

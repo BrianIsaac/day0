@@ -135,10 +135,10 @@ describe("an item whose skill's draft failed Day0's check (D3 (b), a product cal
       },
     );
     expect(markup).toContain(
-      'Waiting on a skill</span>: kanban-comment-and-close. Its draft failed Day0&#x27;s check, and nothing tries it again on its own: ',
+      'Waiting on a skill</span>: kanban-comment-and-close. Its draft failed Day0&#x27;s check, and Day0 will not try again until you ask: ',
     );
     expect(markup).toMatch(
-      /<a [^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>Retry it on the Skills tab<\/a>\./,
+      /<a [^>]*aria-label="Retry kanban-comment-and-close on the Skills tab"[^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>Retry it on the Skills tab<\/a>\./,
     );
     expect(markup).not.toContain('holds the proposal');
   });
@@ -154,9 +154,9 @@ describe("an item whose skill's draft failed Day0's check (D3 (b), a product cal
         retryable: false,
       },
     );
-    expect(markup).toContain('Its draft failed Day0&#x27;s check on every attempt: ');
+    expect(markup).toContain('Its draft failed Day0&#x27;s check on every attempt. Giving up, ');
     expect(markup).toMatch(
-      /<a [^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>The Skills tab<\/a> offers Give up\./,
+      /<a [^>]*href="\/agent\/a-mira\/skills#skill-skill-1"[^>]*>on the Skills tab<\/a>, ends the skill and cancels this work\./,
     );
   });
 
