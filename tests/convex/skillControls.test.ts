@@ -124,9 +124,11 @@ async function seedOffice(harness: Harness): Promise<Office> {
       verifiedAt: 1,
       createdAt: 1,
     });
+    // Keyed on the owner, as every insert writes a holder row (K-m3).
     const holder = async (agentId: Id<'agents'>): Promise<Id<'skills'>> =>
       await ctx.db.insert('skills', {
         agentId,
+        ownerKey: 'owner',
         name: NAME,
         description: 'Ticket comment-and-close.',
         body: BODY,

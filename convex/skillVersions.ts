@@ -128,15 +128,31 @@ export async function newerVersionToRecheck(
 }
 
 /**
+ * The owner key a `skills` row of an employee is written with (K-m3, R-S): the employee's owner,
+ * or nothing for an employee with no owner. Every insert of a row spreads it in.
+ *
+ * @param db - The inserting transaction's database.
+ * @param agentId - The employee the row is for.
+ */
+export async function skillOwnerKeyOf(
+  db: DatabaseReader,
+  agentId: Id<'agents'>,
+): Promise<{ readonly ownerKey?: string }> {
+  const owner = (await db.get(agentId))?.userId;
+  return owner === undefined ? {} : { ownerKey: owner };
+}
+
+/**
  * Every row that holds a version on an employee of the version's owner: the owner boundary on a
- * version's holders is drawn in the read itself (the wave 10 review K-m3), so no caller reaches a
- * row of another owner that points at the version, whether or not it compares the owner again.
+ * version's holders is drawn in the read itself (the wave 10 review K-m3), by `by_owner_version`,
+ * which leads with the owner key every row is written with and a handover's move rewrites, so no
+ * caller reaches a row of another owner that points at the version. The read is not cut short,
+ * since a withdrawal must reach every holder; a version's rows are its owner's employees' rows of
+ * one skill name.
  *
  * @remarks
- * `skills` carries no owner, so no index leads with one: the rows are read by `by_version` and
- * the owner compared on each row's employee. The read is not cut short, since a withdrawal must
- * reach every holder; a version's rows are its owner's employees' rows of one skill name. An
- * index leading with the owner needs an owner key on `skills` (recorded for the next schema step).
+ * A row written before the key is not a holder until the `skills-owner-key` pass keys it; the
+ * upgrade runs the pass straight after the push.
  *
  * @param db - A query's or a mutation's database.
  * @param versionId - The version.
@@ -148,12 +164,12 @@ export async function holdersOf(
 ): Promise<Doc<'skills'>[]> {
   const version = await db.get(versionId);
   if (version === null) return [];
-  const rows = await db
+  return await db
     .query('skills')
-    .withIndex('by_version', (q) => q.eq('versionId', versionId))
+    .withIndex('by_owner_version', (q) =>
+      q.eq('ownerKey', version.userId).eq('versionId', versionId),
+    )
     .collect();
-  const employees = await Promise.all(rows.map(async (row) => await db.get(row.agentId)));
-  return rows.filter((_row, index) => employees[index]?.userId === version.userId);
 }
 
 /**
@@ -510,6 +526,8 @@ export async function copyVersionsForMove(
     .collect();
   const copies = new Map<Id<'skillVersions'>, Id<'skillVersions'> | null>();
   for (const row of rows) {
+    // Every row is the new owner's from here on, so the holder reads lead with the new key.
+    await ctx.db.patch(row._id, { ownerKey: toOwnerKey });
     // An offer is the old owner's library speaking, not something the employee holds: it goes,
     // and an adoption under way goes with it (the wave 10 review, B1).
     if (row.offeredVersionId !== undefined) {

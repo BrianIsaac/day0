@@ -4,6 +4,7 @@ import type { MutationCtx } from './_generated/server';
 import { appendEvent } from './eventLog';
 import { requeueBehindRegisteredSkill } from './work';
 import { recordOffer } from './skillAdoption';
+import { skillOwnerKeyOf } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
 import { surfaceSlug } from '../src/surfaces/slug';
@@ -172,6 +173,7 @@ export async function proposeInTransaction(
   // is connected, and its scopes are the surface's read and write pair.
   const id = await ctx.db.insert('skills', {
     agentId: args.agentId,
+    ...(await skillOwnerKeyOf(ctx.db, args.agentId)),
     name: args.name,
     description: args.description,
     body: '',
