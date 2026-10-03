@@ -473,6 +473,7 @@ export function SurfaceCard({
               : undefined
           }
           move={move}
+          connectionRevoked={surface.connectionRevoked === true}
         />
         {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
             approved card, as the action refuses one before. */}

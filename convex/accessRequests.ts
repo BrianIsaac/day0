@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import { internal } from './_generated/api';
 import { appendEvent, eventsOfType } from './eventLog';
-import { activeConnectionFor } from './organisationConnectionReads';
+import { activeConnectionFor, systemConnectionRevoked } from './organisationConnectionReads';
 import { assertOwnsAgent } from './ownership';
 import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
@@ -77,6 +77,7 @@ async function currentRequest(
   const reason = accessRequestReason(surface, connection);
   if (reason === undefined) return null;
   const publicUrl = process.env.DAY0_PUBLIC_URL;
+  const connectionRevoked = connection === null && (await systemConnectionRevoked(ctx, system));
   const draft = draftAccessRequest({
     card: surface,
     connection,
@@ -84,6 +85,7 @@ async function currentRequest(
     employeeName: agent.name,
     zone: agentZone(agent),
     ...(publicUrl ? { publicUrl } : {}),
+    ...(connectionRevoked ? { connectionRevoked } : {}),
   });
   return { draft, connection };
 }

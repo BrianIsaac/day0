@@ -397,3 +397,56 @@ describe("a pending authorisation on a listed card (11-AC's cockpit item 7)", ()
     expect(JSON.stringify(listed)).not.toContain('nonce-1');
   });
 });
+
+describe('a card an administrator ended by revoking its connection (the pre-tag second pass)', (): void => {
+  it('says so on the listed card once it holds no credential, and nothing on a card on a live connection', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, revokedCard, liveCard } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const connection = (status: 'active' | 'revoked', system: string) =>
+        ctx.db.insert('organisationConnections', {
+          system,
+          displayName: system,
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: [],
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status,
+          createdAt: 1,
+          ...(status === 'revoked' ? { revokedAt: 2, statusReason: 'moving' } : {}),
+        });
+      const card = (slug: string, organisationConnectionId: Id<'organisationConnections'>) =>
+        ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'approved',
+          whereFound: [],
+          managerApprovedAt: 1,
+          credentialLanded: false,
+          organisationConnectionId,
+          reason: 'moving',
+          createdAt: 1,
+        });
+      return {
+        agentId,
+        revokedCard: await card('linear', await connection('revoked', 'linear')),
+        liveCard: await card('github', await connection('active', 'github')),
+      };
+    });
+
+    const cards = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(cards.find((card) => card._id === revokedCard)?.connectionRevoked).toBe(true);
+    expect(cards.find((card) => card._id === liveCard)?.connectionRevoked).toBeUndefined();
+  });
+});

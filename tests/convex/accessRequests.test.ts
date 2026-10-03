@@ -283,6 +283,27 @@ describe('a request after the system was connected and revoked again (11-AO revi
     await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     expect(await requestEvents(harness, agentId)).toHaveLength(2);
   });
+
+  it('says IT revoked the connection, never that the system is not connected yet (the pre-tag second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await connectLinear(harness);
+    const connection = await harness.query(internal.organisationConnections.activeFor, {
+      system: 'linear',
+    });
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connection!._id,
+      reason: 'the app was removed',
+    });
+
+    const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
+
+    expect(shown?.text).toContain(
+      'IT revoked the organisation’s Linear connection: an administrator connects it again, and every employee’s card then uses that connection.',
+    );
+    expect(shown?.text).not.toContain('not connected for the organisation yet');
+  });
 });
 
 describe('the card after a draft (11-AO re-review)', (): void => {

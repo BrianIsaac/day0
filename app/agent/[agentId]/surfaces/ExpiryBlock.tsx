@@ -61,6 +61,10 @@ export type ExpirySurface = Pick<
   '_id' | 'displayName' | 'verdict' | 'expiresAt' | 'accessSetBy' | 'reason'
 >;
 
+/** What brings back a card an administrator ended by revoking its connection, in place of Renew. */
+export const REVOKED_CONNECTION_NOTE =
+  'IT revoked the organisation’s connection this card used, so renewing brings nothing back: it connects again once IT connects the system again.';
+
 /**
  * The card's expiry block (Q5, U3, K): when access ends, in the employee's zone, who set the
  * date, and the one control that renews it for a chosen period from today (`surfaces.setAccessDays`),
@@ -80,6 +84,8 @@ export type ExpirySurface = Pick<
  *   what the renewal needs.
  * @param endedNote - What the end did beyond the card, said while the access has ended.
  * @param move - The move off a pasted key, where the card offers one.
+ * @param connectionRevoked - The card's organisation connection was revoked by an administrator,
+ *   which ended it: no renewal is offered, since none brings it back, and the block says what does.
  * @returns The block, or nothing for a card whose access has not started.
  */
 export function ExpiryBlock({
@@ -88,12 +94,14 @@ export function ExpiryBlock({
   onSetDays,
   endedNote,
   move,
+  connectionRevoked = false,
 }: {
   surface: ExpirySurface;
   now: number;
   onSetDays: (days: number) => Promise<Renewed>;
   endedNote?: string;
   move?: MoveOffer;
+  connectionRevoked?: boolean;
 }) {
   const zone = useAgentZone();
   const periodId = useId();
@@ -155,35 +163,39 @@ export function ExpiryBlock({
               : EXPIRY_RULE}
         </p>
       </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1.5">
-          <label htmlFor={periodId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
-            Access period
-          </label>
-          <select
-            id={periodId}
-            value={days}
+      {connectionRevoked ? (
+        <p className="text-sm text-[var(--color-warn)]">{REVOKED_CONNECTION_NOTE}</p>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="grid gap-1.5">
+            <label htmlFor={periodId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
+              Access period
+            </label>
+            <select
+              id={periodId}
+              value={days}
+              disabled={busy}
+              onChange={(event) => setDays(Number(event.target.value))}
+              className={`${INPUT_CLASS} w-auto`}
+            >
+              {ACCESS_PERIODS.map((period) => (
+                <option key={period} value={period}>
+                  {period} days
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            ref={control}
+            size="small"
+            variant={standing.kind === 'running' ? 'secondary' : 'primary'}
             disabled={busy}
-            onChange={(event) => setDays(Number(event.target.value))}
-            className={`${INPUT_CLASS} w-auto`}
+            onClick={renew}
           >
-            {ACCESS_PERIODS.map((period) => (
-              <option key={period} value={period}>
-                {period} days
-              </option>
-            ))}
-          </select>
+            {busy ? 'Renewing…' : `Renew for ${days} days`}
+          </Button>
         </div>
-        <Button
-          ref={control}
-          size="small"
-          variant={standing.kind === 'running' ? 'secondary' : 'primary'}
-          disabled={busy}
-          onClick={renew}
-        >
-          {busy ? 'Renewing…' : `Renew for ${days} days`}
-        </Button>
-      </div>
+      )}
       <StatusRegion outcome={outcome} />
       {standing.kind === 'ended' && endedNote !== undefined ? (
         <p className="text-sm text-[var(--color-warn)]">{endedNote}</p>

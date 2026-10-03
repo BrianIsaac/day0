@@ -57,7 +57,7 @@ import {
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { organisationSystemOf } from '../src/surfaces/access-request';
-import { activeConnectionFor } from './organisationConnectionReads';
+import { activeConnectionFor, revokedConnectionsAmong } from './organisationConnectionReads';
 import {
   listedCardIdentity,
   type CardIdentity,
@@ -268,6 +268,11 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
   readonly scopeChange?: string;
   /** The latest re-join a Slack renewal made for the card (11-AC's item 5; `latestRejoins`). */
   readonly lastRejoin?: LastRejoin;
+  /**
+   * True on a card holding no credential whose organisation connection an administrator revoked:
+   * renewing it brings nothing back until IT connects the system again (the pre-tag second pass).
+   */
+  readonly connectionRevoked?: true;
 }
 
 /**
@@ -405,6 +410,12 @@ export const listForAgent = query({
       .take(CARD_SURFACE_LIMIT);
     const identities = await identitiesOf(ctx, surfaces);
     const rejoins = await latestRejoins(ctx, args.agentId);
+    const revoked = await revokedConnectionsAmong(
+      ctx,
+      surfaces.flatMap((surface) =>
+        surface.organisationConnectionId === undefined ? [] : [surface.organisationConnectionId],
+      ),
+    );
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
@@ -426,6 +437,10 @@ export const listForAgent = query({
       const identity = identities.get(surface._id);
       if (identity === undefined) throw new Error('A listed card has no identity read.');
       const rejoin = rejoins.get(surface._id);
+      const connectionRevoked =
+        surface.credentialId === undefined &&
+        surface.organisationConnectionId !== undefined &&
+        revoked.has(surface.organisationConnectionId);
       const { pendingAuthorisation, ...card } = listed;
       return {
         ...card,
@@ -441,6 +456,7 @@ export const listForAgent = query({
         ...(refused === undefined ? {} : { approvalRefusal: refused }),
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
+        ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
       };
     });
   },

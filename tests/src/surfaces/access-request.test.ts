@@ -283,6 +283,14 @@ describe('the access request’s words, the same wherever they are shown', (): v
     zone: 'UTC',
   };
 
+  it('says IT revoked the system’s connection where it did, never that it is not connected yet (the pre-tag second pass)', (): void => {
+    const draft = draftAccessRequest({ ...base, connectionRevoked: true });
+    expect(draft.text).toContain(
+      'IT revoked the organisation’s Linear connection: an administrator connects it again, and every employee’s card then uses that connection.',
+    );
+    expect(draft.text).not.toContain('not connected for the organisation yet');
+  });
+
   it('carries the system, the scopes, the evidence, the length and how IT connects it', (): void => {
     const draft = draftAccessRequest({ ...base, publicUrl: 'https://day0.acme.test/' });
     expect(draft).toMatchObject({
