@@ -636,7 +636,8 @@ describe("the issuer's metadata recorded at the start (R-S; 11-AM's cockpit item
     await harness.run(async (ctx) => {
       const surface = await ctx.db.get(surfaceId);
       if (!surface?.pendingAuthorisation) throw new Error('no pending authorisation');
-      const { issuerMetadata: _recorded, ...older } = surface.pendingAuthorisation;
+      const older = { ...surface.pendingAuthorisation };
+      delete older.issuerMetadata;
       await ctx.db.patch(surfaceId, { pendingAuthorisation: older });
     });
     const watched = await watchMetadata();
