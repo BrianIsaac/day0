@@ -893,9 +893,10 @@ describe('skillVersions: the owner key on every holder row (K-m3, R-S)', (): voi
     }
   });
 
-  it("reads a version's holders by the owner key alone: a row keyed for another owner, or not keyed yet, is not one", async (): Promise<void> => {
+  it("reads a version's holders by the owner key: a row keyed for another owner is not one, and a row not keyed yet is one only of the owner's employee", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    const tomas = await employee(harness, 'Tomas', 'rival');
     const keyed = await claimedSkill(harness, priya, { ownerKey: 'owner' });
     await register(harness, keyed, BODY_ONE);
     const [version] = await versionsOf(harness);
@@ -910,16 +911,17 @@ describe('skillVersions: the owner key on every holder row (K-m3, R-S)', (): voi
         createdAt: 2,
       };
       return {
-        // Written before the field, until the skills-owner-key pass keys it.
+        // Written before the field: between the push and the skills-owner-key pass, a withdrawal
+        // must still reach it (the second pass's M2).
         unkeyed: await ctx.db.insert('skills', { ...holder, agentId: mateo }),
+        rivalUnkeyed: await ctx.db.insert('skills', { ...holder, agentId: tomas }),
         rival: await ctx.db.insert('skills', { ...holder, agentId: mateo, ownerKey: 'rival' }),
       };
     });
 
     const holders = await harness.run(async (ctx) => await holdersOf(ctx.db, version._id));
 
-    expect(holders.map((row) => row._id)).toEqual([keyed.skillId]);
-    expect(holders.map((row) => row._id)).not.toContain(rows.unkeyed);
+    expect(holders.map((row) => row._id).sort()).toEqual([keyed.skillId, rows.unkeyed].sort());
   });
 
   it("rewrites every row of a moving employee to the new owner's key", async (): Promise<void> => {
