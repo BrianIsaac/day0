@@ -262,12 +262,18 @@ export const forCard = query({
  * the one DM to the manager (`managerChannelActions.sendAccessRequest`), for a request drafted now
  * or drafted before by a Copy or an Email it. A request already drafted with the same reason and
  * scopes keeps its words and its record line; a DM already sent or being sent is not sent again
- * (11-AC's item 2: product call, flagged). Public, owner-guarded (`assertOwnsAgent`).
+ * (11-AC's item 2: product call, flagged). A draft that names no way it was sent, from a page
+ * loaded before the upgrade, is read as copied. Public, owner-guarded (`assertOwnsAgent`).
  *
  * @throws ConvexError with {@link NO_ACCESS_REQUEST} for a card that asks IT for nothing.
  */
 export const draft = mutation({
-  args: { surfaceId: v.id('surfaces'), via: sentViaValidator },
+  args: {
+    surfaceId: v.id('surfaces'),
+    // Optional for one release: a tab open across the upgrade to 0.15.0 sends none, and is read
+    // as a Copy (the round review's m14). Required again in the release after.
+    via: v.optional(sentViaValidator),
+  },
   returns: accessRequestViewValidator,
   handler: async (ctx, args): Promise<AccessRequestView> => {
     const { surface, agent } = await ownedCard(ctx, args.surfaceId);

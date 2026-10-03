@@ -210,6 +210,20 @@ describe('drafting and sending the access request', (): void => {
     });
   });
 
+  it("takes a draft from a tab open across the upgrade, which names no way it was sent, as copied (the round review's m14)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+
+    expect(drafted.draftedAt).toEqual(expect.any(Number));
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.filter((job) => job.name.includes('sendAccessRequest'))).toEqual([]);
+  });
+
   it('puts the same words in the export as on the card', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
