@@ -3035,9 +3035,22 @@ export const disconnect = mutation({
 export const CONNECTION_CARD_LIMIT = 1_000;
 
 /**
+ * Whether a card linked to an organisation connection still holds access through it, so a revoke
+ * of the connection ends it: it holds a credential or stands connected. A card its manager already
+ * disconnected keeps its link and its own reason, and is neither counted nor ended again (the
+ * round review's m24).
+ *
+ * @param card - A card linked to the connection.
+ */
+export function holdsAccessThroughConnection(card: Doc<'surfaces'>): boolean {
+  return card.credentialId !== undefined || card.verdict === 'connected';
+}
+
+/**
  * End every card on an organisation connection the administrator revoked (11-AR for 11-AO's
- * revoke; the access plan, section 8, cross-unit test 3): each card linked to it is disconnected
- * with the administrator's reason, what Day0 obtained through it revoked at the vendor, and no
+ * revoke; the access plan, section 8, cross-unit test 3): each card linked to it that still holds
+ * access through it ({@link holdsAccessThroughConnection}) is disconnected with the
+ * administrator's reason, what Day0 obtained through it revoked at the vendor, and no
  * card of any other connection is read. Called in the revoke's own transaction.
  *
  * @param ctx - The revoking transaction.
@@ -3064,7 +3077,8 @@ export async function endCardsOnConnection(
       `More than ${CONNECTION_CARD_LIMIT} connections use this organisation connection; revoke it again once some are removed.`,
     );
   }
-  for (const card of cards) {
+  const holding = cards.filter(holdsAccessThroughConnection);
+  for (const card of holding) {
     await disconnectInTransaction(
       ctx,
       card,
@@ -3072,7 +3086,7 @@ export async function endCardsOnConnection(
       input.now,
     );
   }
-  return cards.map((card) => card._id);
+  return holding.map((card) => card._id);
 }
 
 /** The most tools one approved list names; a provider's catalogue is a few dozen. */

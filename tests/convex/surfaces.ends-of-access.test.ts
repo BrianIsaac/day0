@@ -477,6 +477,34 @@ describe('an organisation connection revoked by the administrator (11-AR over 11
       expect.objectContaining({ end: 'organisation-revoked', outcome: 'token-revoked' }),
     ]);
   });
+
+  it("neither counts nor ends again a card its manager already disconnected, keeping the manager's reason (the round review's m24)", async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', ADMINISTRATOR_ADDRESS);
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    const connectionId = leo.connectionId;
+    if (connectionId === undefined) throw new Error('The fixture made no connection.');
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.disconnect, { surfaceId: leo.slack.surfaceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const before = await eventsOf(harness, leo.agentId, 'surface.disconnected');
+
+    await expect(
+      harness
+        .withIdentity(ADMINISTRATOR)
+        .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+    ).resolves.toEqual({ cards: 0, atLeast: false });
+    await harness.withIdentity(ADMINISTRATOR).mutation(api.organisationConnections.revoke, {
+      organisationConnectionId: connectionId,
+      reason: 'Revoked by IT.',
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(harness, leo.slack.surfaceId))?.reason).toBe('Disconnected by the manager.');
+    expect(await eventsOf(harness, leo.agentId, 'surface.disconnected')).toEqual(before);
+  });
 });
 
 describe("a shared card's end once a second employee holds the shared token (the wave 11 review's M7)", (): void => {

@@ -17,7 +17,11 @@ import { purgeCredential } from './credentials';
 import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
-import { CONNECTION_CARD_LIMIT, endCardsOnConnection } from './surfaces';
+import {
+  CONNECTION_CARD_LIMIT,
+  endCardsOnConnection,
+  holdsAccessThroughConnection,
+} from './surfaces';
 import { log } from '../src/lib/logger';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import {
@@ -917,7 +921,7 @@ export const revoke = mutation({
 
 /**
  * How many employee cards a revoke of the connection would end (11-AC's item 3), for the revoke's
- * confirmation: a count and nothing else, so no employee or card is named to an administrator (B8).
+ * confirmation, counting only cards that still hold access through it (the round review's m24): a count and nothing else, so no employee or card is named to an administrator (B8).
  * `atLeast` says the cards are more than one revoke ends (`CONNECTION_CARD_LIMIT`), which the
  * revoke refuses. Public, guarded by `assertAdministrator`; writes nothing.
  */
@@ -932,9 +936,10 @@ export const cardsOn = query({
         q.eq('organisationConnectionId', args.organisationConnectionId),
       )
       .take(CONNECTION_CARD_LIMIT + 1);
+    const holding = cards.filter(holdsAccessThroughConnection);
     return {
-      cards: Math.min(cards.length, CONNECTION_CARD_LIMIT),
-      atLeast: cards.length > CONNECTION_CARD_LIMIT,
+      cards: Math.min(holding.length, CONNECTION_CARD_LIMIT),
+      atLeast: holding.length > CONNECTION_CARD_LIMIT,
     };
   },
 });
