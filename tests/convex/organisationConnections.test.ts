@@ -310,7 +310,7 @@ describe("a confidential MCP client names its issuer (the wave 11 review's M12 f
     expect((await organisationRows(harness)).credentials).toEqual([]);
   });
 
-  it('lands a confidential client with its issuer, and a public client without one', async (): Promise<void> => {
+  it('lands a confidential client and a public client, each with its issuer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const ines = harness.withIdentity(INES);
     await ines.action(api.organisationConnections.land, {
@@ -322,8 +322,25 @@ describe("a confidential MCP client names its issuer (the wave 11 review's M12 f
       ...MCP,
       system: 'mcp:wiki.acme.test',
       displayName: 'Wiki',
+      issuer: 'https://auth.acme.test',
     });
     expect((await organisationRows(harness)).connections).toHaveLength(2);
+  });
+
+  it("refuses a public client with no issuer, which a manager's first authorisation would otherwise choose for everyone (the review's m4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    expect(
+      await refusalOf(
+        harness.withIdentity(INES).action(api.organisationConnections.land, {
+          ...MCP,
+          system: 'mcp:wiki.acme.test',
+          displayName: 'Wiki',
+        }),
+      ),
+    ).toBe(
+      "An MCP client connection needs the issuer of its authorisation server: every employee's authorisation goes to that server alone. The setup verb finds it from the server's own metadata when IT leaves it blank.",
+    );
+    expect((await organisationRows(harness)).connections).toEqual([]);
   });
 });
 

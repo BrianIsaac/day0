@@ -41,6 +41,7 @@ import {
 } from '../src/surfaces/access-kit';
 import { linearKitManifest, linearManifestUrl } from '../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../src/surfaces/access-kit/slack';
+import { discoverAuthorisation, type OauthFetch } from '../src/surfaces/mcp-oauth';
 import { adminTarget, deploymentAdmin, type DeploymentAdmin } from './lib/convex-admin';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import {
@@ -105,6 +106,8 @@ export interface AccessIo {
   log(line: string): void;
   /** The network seam the deployment's function API is called through; the global one by default. */
   readonly fetch?: typeof fetch;
+  /** The network seam an MCP server's metadata is read through at install; the global one by default. */
+  readonly vendorFetch?: OauthFetch;
   /** All of stdin, for `--secrets-stdin`. */
   readStdin?(): Promise<string>;
   /** The clock the install record is dated by. */
@@ -637,6 +640,34 @@ function recordedSignIn(
   };
 }
 
+/**
+ * An MCP landing with the issuer of its authorisation server: IT's, or, when IT left it blank, the
+ * one the server's own resource metadata names, read now with IT beside the verb and said, so the
+ * connection records IT's choice and never a manager's first authorisation (the wave 11 review's
+ * m4). Any other landing is returned as it is.
+ *
+ * @throws Error naming the server when its metadata names no authorisation server Day0 can read.
+ */
+async function withIssuer(landing: Landing, io: AccessIo): Promise<Landing> {
+  const given = typeof landing.issuer === 'string' ? landing.issuer.trim() : '';
+  if (!landing.system.startsWith('mcp:') || given !== '') return landing;
+  const server = String(landing.resource);
+  let issuer: string;
+  try {
+    const target = await discoverAuthorisation(io.vendorFetch ?? fetch, new URL(server));
+    issuer = target.server.issuer;
+  } catch (err) {
+    throw new Error(
+      `${server} names no authorisation server Day0 could read (${errorMessage(err)}). ` +
+        "Give its issuer: the prompt's issuer, or MCP_ISSUER on stdin.",
+    );
+  }
+  io.log(
+    `  The server names ${issuer} as its authorisation server; the connection records it as the issuer.`,
+  );
+  return { ...landing, issuer };
+}
+
 /** A landed (or kept) connection as the record names it. */
 function recordedConnection(
   landing: Landing,
@@ -775,7 +806,8 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
         `\n${one.recipe.system === 'mcp' ? 'An MCP server' : one.recipe.displayName}: ${one.mode.summary}`,
       );
       io.log(`  The recipe: ${one.recipe.guide}. ${one.mode.secretLifetime.words}`);
-      landings.push({ landing: landingOf(one, await answersFor(from, one), origin), planned: one });
+      const landing = landingOf(one, await answersFor(from, one), origin);
+      landings.push({ landing: await withIssuer(landing, io), planned: one });
     }
   } catch (err) {
     io.log(`Nothing was written: ${errorMessage(err)}`);

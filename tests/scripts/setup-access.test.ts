@@ -7,6 +7,8 @@ import { slackKitManifestTemplate } from '../../src/surfaces/access-kit/slack';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { buildSlackManifest } from '../../src/surfaces/slack-manifest';
 import { harness, type Harness, type HarnessOptions } from './setup-harness';
+import { createIssuer } from '../../fake-oidc/issuer.js';
+import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
 
 /** An installation with the company sign-in in place, as `./setup.sh sign-in` leaves it. */
 const SIGNED_IN = [
@@ -108,8 +110,16 @@ interface AccessBed {
   run(args: readonly string[], stdin?: string): Promise<number>;
 }
 
+/** A vendor seam that refuses every call: no test reaches a vendor it did not stand up. */
+const NO_VENDOR: OauthFetch = async (url: URL): Promise<Response> => {
+  throw new Error(`no vendor answers ${url.href} in a test`);
+};
+
 function accessBed(
-  options: HarnessOptions & { readonly connected?: readonly string[] } = {},
+  options: HarnessOptions & {
+    readonly connected?: readonly string[];
+    readonly vendorFetch?: OauthFetch;
+  } = {},
 ): AccessBed {
   const bed = harness({ envLocal: SIGNED_IN, ...options });
   documentation(bed.directory);
@@ -123,6 +133,7 @@ function accessBed(
       await runCommand(parseSetupArguments(['--mode', 'real', ...args]), {
         ...bed.io,
         fetch: api.fetch,
+        vendorFetch: options.vendorFetch ?? NO_VENDOR,
         readStdin: async (): Promise<string> => stdin,
       }),
   };
@@ -332,7 +343,9 @@ describe('setup: the access verb', (): void => {
     const stdin = [
       'MCP_MCP_ACME_COM_CLIENT_ID=acme-client',
       'MCP_MCP_ACME_COM_CLIENT_SECRET=acme-test-secret',
+      'MCP_MCP_ACME_COM_ISSUER=https://auth.acme.com',
       'MCP_CRM_ACME_COM_CLIENT_ID=crm-client',
+      'MCP_CRM_ACME_COM_ISSUER=https://id.crm.acme.com',
       '',
     ].join('\n');
     const status = await bed.run(
@@ -342,11 +355,59 @@ describe('setup: the access verb', (): void => {
     expect(status).toBe(0);
     const landed = bed.deployment.calls
       .filter((call) => call.path === 'organisationConnections:landFromSetup')
-      .map((call) => [call.args.system, call.args.clientId, call.args.secret ?? null]);
+      .map((call) => [
+        call.args.system,
+        call.args.clientId,
+        call.args.secret ?? null,
+        call.args.issuer,
+      ]);
     expect(landed).toEqual([
-      ['mcp:mcp.acme.com', 'acme-client', 'acme-test-secret'],
-      ['mcp:crm.acme.com', 'crm-client', null],
+      ['mcp:mcp.acme.com', 'acme-client', 'acme-test-secret', 'https://auth.acme.com'],
+      ['mcp:crm.acme.com', 'crm-client', null, 'https://id.crm.acme.com'],
     ]);
+  });
+
+  it("finds a public MCP client's issuer from the server's own metadata when IT leaves it blank, and says so (the review's m4)", async (): Promise<void> => {
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'docs-client', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const bed = accessBed({
+      vendorFetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        await issuer.handle(new Request(url, init)),
+    });
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\n',
+    );
+    expect(status).toBe(0);
+    const [landing] = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationConnections:landFromSetup',
+    );
+    expect(landing?.args).toMatchObject({
+      system: 'mcp:auth.acme.test',
+      clientId: 'docs-client',
+      issuer: 'https://auth.acme.test',
+    });
+    expect(bed.bed.output.join('\n')).toContain(
+      'The server names https://auth.acme.test as its authorisation server; the connection records it as the issuer.',
+    );
+  });
+
+  it('writes and lands nothing when the server names no authorisation server it can read', async (): Promise<void> => {
+    const bed = accessBed();
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\n',
+    );
+    expect(status).toBe(1);
+    expect(
+      bed.deployment.calls.filter((call) => call.path === 'organisationConnections:landFromSetup'),
+    ).toEqual([]);
+    expect(bed.bed.output.join('\n')).toContain(
+      'Nothing was written: https://auth.acme.test/mcp names no authorisation server Day0 could read',
+    );
   });
 
   it('prints the plan on a dry run, asks no secret, writes and lands nothing', async (): Promise<void> => {

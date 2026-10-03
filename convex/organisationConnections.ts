@@ -221,9 +221,13 @@ export function landingRefusal(landing: Landing): string | undefined {
       return 'An MCP client connection needs the client id IT registered.';
     }
     // With no issuer the secret could go to whichever server a resource names, so every card
-    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f).
-    if (landing.secret !== undefined && (landing.issuer ?? '').trim() === '') {
-      return "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone.";
+    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f). A
+    // public client names its server too, so no manager's first authorisation chooses it for
+    // every employee (the review's m4).
+    if ((landing.issuer ?? '').trim() === '') {
+      return landing.secret !== undefined
+        ? "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone."
+        : MCP_ISSUER_NEEDED;
     }
   } else if (mcpField) {
     return 'The issuer, the resource and the client registration belong to an MCP client only.';
@@ -232,6 +236,10 @@ export function landingRefusal(landing: Landing): string | undefined {
   }
   return undefined;
 }
+
+/** Why a public MCP client is not landed without its issuer (the review's m4). */
+export const MCP_ISSUER_NEEDED =
+  "An MCP client connection needs the issuer of its authorisation server: every employee's authorisation goes to that server alone. The setup verb finds it from the server's own metadata when IT leaves it blank.";
 
 /** Why a revoke's reason is not one, or undefined when it is. */
 function reasonRefusal(reason: string): string | undefined {

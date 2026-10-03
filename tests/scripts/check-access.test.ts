@@ -310,8 +310,14 @@ describe('check:access', (): void => {
     const narrower = await accessChecks([mcp], VALUES, metadata(['crm.write']));
     expect(only(narrower, 'mcp:mcp.acme.com', 'scopes')).toMatchObject({ status: 'gap' });
 
+    // Every card refuses a connection with no issuer since the review's m4, so the check calls it a
+    // gap with its cure, where it once noted that the first sign-in would discover one.
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
-    expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity').status).toBe('warn');
+    expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
+      status: 'gap',
+      detail:
+        "No issuer is recorded, so every employee's authorisation is refused: revoke the connection and land it again; the setup verb finds the issuer from the server's own metadata.",
+    });
   });
 
   it('requests no app-actor token for a connection that holds no scope set of its own (join 7)', async (): Promise<void> => {

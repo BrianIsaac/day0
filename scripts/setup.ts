@@ -91,6 +91,7 @@ import { generatedCodeState, restoreGeneratedCode } from './lib/generated-code';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
 import { parseAnswers, runAccess, type AccessFlags } from './setup-access';
+import type { OauthFetch } from '../src/surfaces/mcp-oauth';
 import { credentialKeyToAdopt, PROTECTED_PROJECTS, PROTECTED_VOLUMES } from './demo-bed';
 import {
   defaultModel,
@@ -381,6 +382,8 @@ export interface SetupIo {
   newestMigrationRelease?: string;
   /** The network seam the access verb calls the deployment through; the global `fetch` by default. */
   readonly fetch?: typeof fetch;
+  /** The network seam the access verb reads an MCP server's metadata through; the global one by default. */
+  readonly vendorFetch?: OauthFetch;
   /** All of stdin, for `--secrets-stdin`; a terminal on stdin is refused, a pipe or a file read whole. */
   readStdin?(): Promise<string>;
   /**

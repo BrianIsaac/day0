@@ -108,8 +108,9 @@ async function clearPending(
 
 /**
  * Record an authorisation the card's owner has started, replacing any earlier one, and what
- * discovery found on the organisation's connection: its issuer and resource where IT left them
- * unset, and the server's endpoints (11-AR's RFC 7009 revoker reads `revocation`). Schedules the
+ * discovery found at the issuer IT recorded on the organisation's connection: the resource where IT
+ * left it unset, and the server's endpoints (11-AR's RFC 7009 revoker reads `revocation`). The
+ * issuer itself is never written here: it is IT's (the wave 11 review's m4). Schedules the
  * clearing at the state's expiry. Internal, for `mcpOauthActions.startAuthorisation`, which has
  * checked the caller owns the employee; refuses when the employee changed hands since.
  */
@@ -139,11 +140,17 @@ export const recordPendingAuthorisation = internalMutation({
     const connectionId = args.pending.organisationConnectionId;
     const connection = connectionId ? await ctx.db.get(connectionId) : null;
     if (connection) {
-      const { issuer, resource, discoveredAt, ...endpoints } = args.discovered;
+      const { resource, discoveredAt, authorisation, token, revocation, registration } =
+        args.discovered;
       await ctx.db.patch(connection._id, {
-        issuer: connection.issuer ?? issuer,
         resource: connection.resource ?? resource,
-        authorisationEndpoints: { ...endpoints, discoveredAt },
+        authorisationEndpoints: {
+          authorisation,
+          token,
+          ...(revocation === undefined ? {} : { revocation }),
+          ...(registration === undefined ? {} : { registration }),
+          discoveredAt,
+        },
       });
     }
     await ctx.scheduler.runAt(

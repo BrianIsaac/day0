@@ -476,9 +476,10 @@ async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<Ac
       check(
         row.system,
         'identity',
-        'warn',
-        "No issuer was given: Day0 discovers the authorisation server from the server's own " +
-          'metadata at the first sign-in.',
+        'gap',
+        "No issuer is recorded, so every employee's authorisation is refused: revoke the " +
+          "connection and land it again; the setup verb finds the issuer from the server's own " +
+          'metadata.',
       ),
     ];
   }
