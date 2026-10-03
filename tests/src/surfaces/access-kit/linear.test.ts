@@ -55,6 +55,14 @@ describe('the Linear recipe', (): void => {
     ).toThrow(/https/);
   });
 
+  it('refuses plain http as Day0’s own rule, never as a rule Linear keeps (Linear’s form accepted an http callback, R41V-2)', (): void => {
+    expect(() =>
+      linearKitManifest({ appName: 'Day0', publicUrl: 'http://day0.acme.test', mode: 'shared' }),
+    ).toThrow(
+      'DAY0_PUBLIC_URL must be https: Day0 has Linear send its codes and tokens back to an https address only.',
+    );
+  });
+
   it('pre-fills Linear’s create form with the manifest itself', (): void => {
     const manifest = linearKitManifest({ appName: 'Day0', publicUrl: PUBLIC_URL, mode: 'shared' });
     const url = new URL(linearManifestUrl(manifest));

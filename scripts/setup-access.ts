@@ -384,7 +384,7 @@ function originOf(values: Readonly<Record<string, string>>): string {
   }
   if (url.protocol !== 'https:' && !isLoopback(url.origin)) {
     throw new AccessRefused(
-      `${PUBLIC_URL_VAR} must be https: every vendor refuses a plain-http redirect.`,
+      `${PUBLIC_URL_VAR} must be https: Day0 has every vendor send its codes and tokens back to an https address only.`,
     );
   }
   return url.origin;
