@@ -282,7 +282,10 @@ async function sharedToken(
     },
   );
   if (landed.ok) {
-    if (superseded !== undefined) await revokeUnkept(deps, { accessToken: superseded });
+    // Never the value just landed: a vendor that answered the same token again keeps it live.
+    if (superseded !== undefined && superseded !== issued.accessToken) {
+      await revokeUnkept(deps, { accessToken: superseded });
+    }
     return {
       credentialId: landed.credentialId,
       generation: landed.generation,
@@ -291,8 +294,8 @@ async function sharedToken(
   }
   if (landed.reason === 'stale') {
     // Another renewal wrote first; its token is as good as this one, which Day0 keeps nowhere, so
-    // it is revoked at Linear rather than left live for 30 days (the round review's m5).
-    await revokeUnkept(deps, issued);
+    // it is revoked at Linear rather than left live for 30 days (the round review's m5), unless it
+    // is the very value that renewal landed.
     const winner =
       landed.credentialId === undefined
         ? null
@@ -302,15 +305,18 @@ async function sharedToken(
     if (landed.credentialId === undefined || winner?.access.ciphertext === undefined) {
       // The app's secret was rotated while this token was requested (join 3): it may carry the
       // old secret, and the emptied row waits for a request made after the rotation.
+      await revokeUnkept(deps, issued);
       throw new LinearIssuerRefusal(
         'unavailable',
         "The organisation's Linear app was rotated while its token was renewed: the next read requests one with the new secret.",
       );
     }
+    const bearer = await valueOf(ctx, landed.credentialId);
+    if (bearer !== issued.accessToken) await revokeUnkept(deps, issued);
     return {
       credentialId: landed.credentialId,
       generation: winner?.access.generation ?? 0,
-      bearer: await valueOf(ctx, landed.credentialId),
+      bearer,
     };
   }
   // The connection was revoked while Linear issued the token: Day0 keeps it nowhere, so it is
