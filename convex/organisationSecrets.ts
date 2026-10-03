@@ -13,9 +13,13 @@ import { appendConnectionEvent } from './connectionEvents';
 import { ORGANISATION_HOLDER } from '../src/lib/organisation-key';
 import type { OrganisationConnectionKind } from '../src/surfaces/access-identity';
 import { readLinearAnswer, linearTokenRevocation } from '../src/surfaces/revokers/linear';
-import { readSlackAnswer, slackTokenRevocation } from '../src/surfaces/revokers/slack';
-import type { RevocationAnswer, RevocationRequest } from '../src/surfaces/revokers/types';
-import { safeFailureMessage } from '../src/surfaces/redact';
+import type { RevocationAnswer } from '../src/surfaces/revokers/types';
+import {
+  revokeSlackConfigurationToken,
+  sendRevocation,
+  slackRevocationOutcome,
+  type SlackRevocationAnswer,
+} from './sourceRevocationSend';
 
 /*
  * The end of an organisation secret a revoke or a rotation takes out of use (the wave 11 review's
@@ -38,9 +42,6 @@ const VENDOR_REVOKE_ATTEMPTS = 3;
 
 /** How long Day0 waits before asking the vendor again after a failure another attempt may pass. */
 const VENDOR_REVOKE_RETRY_MS = 60 * 60 * 1000;
-
-/** How long one call to the vendor may take. */
-const VENDOR_CALL_TIMEOUT_MS = 15_000;
 
 /** The longest reason a ledger line keeps. */
 const REASON_LIMIT = 300;
@@ -201,66 +202,6 @@ export const heldConfigurationToken = internalQuery({
   },
 });
 
-/** The body of Slack's answer, parsed when it is JSON. */
-async function bodyOf(response: Response): Promise<unknown> {
-  const text = await response.text();
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    // Not JSON: a proxy's or Slack's own error page, which the reader reads by its status.
-    return text;
-  }
-}
-
-/**
- * Send one revocation and read the vendor's answer by its reader; a redirect is never followed.
- *
- * @param vendor - The vendor's name, for the words when it cannot be reached.
- * @param read - The vendor's reader of a revocation answer.
- */
-async function sendRevocation(
-  request: RevocationRequest,
-  token: string,
-  vendor: string,
-  read: (status: number, body: unknown) => RevocationAnswer,
-): Promise<RevocationAnswer> {
-  let response: Response;
-  try {
-    response = await fetch(request.url, {
-      method: 'POST',
-      headers: request.headers,
-      body: request.body,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
-    });
-  } catch (error: unknown) {
-    return {
-      kind: 'retry',
-      words: safeFailureMessage(error, token, `Could not reach ${vendor}.`, REASON_LIMIT),
-    };
-  }
-  return read(response.status, await bodyOf(response));
-}
-
-/** A vendor's answer with any echo of the token taken out of its words. */
-function withoutToken(answer: RevocationAnswer, token: string): RevocationAnswer {
-  switch (answer.kind) {
-    case 'revoked':
-    case 'gone':
-      return answer;
-    case 'retry':
-    case 'refused':
-      return {
-        kind: answer.kind,
-        words: safeFailureMessage(new Error(answer.words), token, answer.words, REASON_LIMIT),
-      };
-    default: {
-      const unknown: never = answer;
-      throw new Error(`unhandled revocation answer ${String(unknown)}`);
-    }
-  }
-}
-
 /**
  * Open the held configuration token and ask Slack to revoke it.
  *
@@ -272,7 +213,7 @@ async function askSlack(
     readonly organisationConnectionId: Id<'organisationConnections'>;
     readonly configurationCredentialId: Id<'credentials'>;
   },
-): Promise<RevocationAnswer> {
+): Promise<SlackRevocationAnswer> {
   const held: Doc<'credentials'> | null = await ctx.runQuery(
     internal.organisationSecrets.heldConfigurationToken,
     {
@@ -293,10 +234,7 @@ async function askSlack(
     userId: held.userId,
     keyId: held.keyId,
   });
-  const answer = await sendRevocation(slackTokenRevocation(token), token, 'Slack', (status, body) =>
-    readSlackAnswer('auth.revoke', status, body),
-  );
-  return withoutToken(answer, token);
+  return await revokeSlackConfigurationToken(token);
 }
 
 /**
@@ -330,9 +268,7 @@ export const revokeAtSlack = internalAction({
     await ctx.runMutation(internal.organisationSecrets.finishSlackRevocation, {
       organisationConnectionId: args.organisationConnectionId,
       credentialIds: args.credentialIds,
-      ...(answer.kind === 'revoked' || answer.kind === 'gone'
-        ? { outcome: 'done' as const }
-        : { outcome: 'failed' as const, reason: answer.words }),
+      ...slackRevocationOutcome(answer),
     });
     return null;
   },
@@ -346,7 +282,7 @@ export const finishSlackRevocation = internalMutation({
   args: {
     organisationConnectionId: v.id('organisationConnections'),
     credentialIds: v.array(v.id('credentials')),
-    outcome: v.union(v.literal('done'), v.literal('failed')),
+    outcome: v.union(v.literal('done'), v.literal('already-revoked'), v.literal('failed')),
     reason: v.optional(v.string()),
   },
   returns: v.null(),
@@ -421,13 +357,12 @@ async function askLinear(
     userId: held.userId,
     keyId: held.keyId,
   });
-  const answer = await sendRevocation(
-    linearTokenRevocation(token, 'access_token'),
+  return await sendRevocation({
+    request: linearTokenRevocation(token, 'access_token'),
     token,
-    'Linear',
-    readLinearAnswer,
-  );
-  return withoutToken(answer, token);
+    vendor: 'Linear',
+    read: readLinearAnswer,
+  });
 }
 
 /**

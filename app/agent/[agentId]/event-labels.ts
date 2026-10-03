@@ -153,9 +153,20 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       : `an employee's ${name} app not created${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
-    return payload.outcome === 'done'
-      ? `${name} configuration token revoked at ${name}`
-      : `${name} configuration token not revoked at ${name}${because(payload.reason)}`;
+    switch (payload.outcome) {
+      case 'done':
+        return `${name} configuration token revoked at ${name}`;
+      case 'already-revoked':
+        return `${name} configuration token already revoked at ${name}`;
+      case 'failed':
+      case 'superseded':
+      case undefined:
+        return `${name} configuration token not revoked at ${name}${because(payload.reason)}`;
+      default: {
+        const unknown: never = payload.outcome;
+        return `${name} configuration token revocation: ${String(unknown)}`;
+      }
+    }
   }
   switch (payload.outcome) {
     case 'done':
@@ -163,6 +174,7 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
     case 'superseded':
       return `${name} configuration token renewed twice at once: the other renewal kept`;
     case 'failed':
+    case 'already-revoked':
     case undefined:
       return `${name} configuration token not renewed${because(payload.reason)}`;
     default: {

@@ -600,6 +600,32 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
   const subject = { name: 'Leo', connection: 'Slack' };
   const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
 
+  it("tells a revoke at Slack from a token Slack had already ended, and tells IT to delete the token's row, since Slack never ends its refresh token (R41V-10)", (): void => {
+    const revoked = (payload: Record<string, unknown>): string =>
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', ...payload },
+        },
+        subject,
+      );
+    const advice =
+      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
+      '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
+    expect(revoked({ outcome: 'done' })).toBe(
+      "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
+        `once it was taken out of use; ${advice}`,
+    );
+    expect(revoked({ outcome: 'already-revoked', reason: 'Slack answered token_revoked' })).toBe(
+      "The organisation's Slack configuration token was already revoked at Slack when Day0 " +
+        `asked: Slack answered token_revoked; Day0 deleted its copy, and ${advice}`,
+    );
+    expect(revoked({ outcome: 'failed', reason: 'Slack auth.revoke returned HTTP 503.' })).toBe(
+      "Revoking the organisation's Slack configuration token at Slack failed: Slack auth.revoke " +
+        `returned HTTP 503; Day0's copy was deleted, and ${advice}`,
+    );
+  });
+
   it("says each call on the organisation's ledger without naming an employee", (): void => {
     expect(
       recordWords(

@@ -226,9 +226,26 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
       : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
   }
   if (p.method === 'auth.revoke') {
-    return p.outcome === 'done'
-      ? `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use`
-      : `Revoking ${token} at Slack failed${because(p.reason)}; Day0's copy was deleted`;
+    // Slack's `auth.revoke` ends the token alone: its refresh token stays usable at Slack, and
+    // Slack offers no call that ends it (the real-vendor walk, R41V-10), so every line says what
+    // IT does.
+    const rowAdvice =
+      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
+      '"Your App Configuration Tokens" on api.slack.com if it is still listed';
+    switch (p.outcome) {
+      case 'done':
+        return `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use; ${rowAdvice}`;
+      case 'already-revoked':
+        return `${capitalised(token)} was already revoked at Slack when Day0 asked${because(p.reason)}; Day0 deleted its copy, and ${rowAdvice}`;
+      case 'failed':
+      case 'superseded':
+      case undefined:
+        return `Revoking ${token} at Slack failed${because(p.reason)}; Day0's copy was deleted, and ${rowAdvice}`;
+      default: {
+        const unknown: never = p.outcome;
+        return `Day0 asked Slack to revoke ${token}: ${String(unknown)}`;
+      }
+    }
   }
   switch (p.outcome) {
     case 'done':
@@ -236,6 +253,7 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     case 'superseded':
       return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
     case 'failed':
+    case 'already-revoked':
     case undefined:
       return `Day0 could not renew ${token}${because(p.reason)}`;
     default: {

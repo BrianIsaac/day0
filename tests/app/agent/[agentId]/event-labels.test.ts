@@ -275,6 +275,18 @@ describe('the live feed labels', (): void => {
     expect(
       eventLabel({
         type: 'organisation.configuration-used',
+        payload: { ...used, method: 'auth.revoke', outcome: 'done' },
+      }),
+    ).toBe('Slack configuration token revoked at Slack');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'auth.revoke', outcome: 'already-revoked' },
+      }),
+    ).toBe('Slack configuration token already revoked at Slack');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
         payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
       }),
     ).toBe("an employee's Slack app A123 created with the configuration token");
