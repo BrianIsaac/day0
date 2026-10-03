@@ -284,6 +284,8 @@ export const finishSlackRevocation = internalMutation({
     credentialIds: v.array(v.id('credentials')),
     outcome: v.union(v.literal('done'), v.literal('already-revoked'), v.literal('failed')),
     reason: v.optional(v.string()),
+    /** A token Slack issued that Day0 kept nowhere: no copy to delete. */
+    unkept: v.optional(v.literal(true)),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -306,6 +308,7 @@ export const finishSlackRevocation = internalMutation({
         method: 'auth.revoke',
         outcome: args.outcome,
         ...(args.reason !== undefined ? { reason: args.reason.slice(0, REASON_LIMIT) } : {}),
+        ...(args.unkept === true ? { unkept: true as const } : {}),
       },
       createdAt: now,
     });
@@ -365,6 +368,27 @@ async function askLinear(
   });
 }
 
+/** The ledger's outcome for Linear's answer to the shared token's revoke. */
+function sharedRevocationOutcome(
+  answer: RevocationAnswer,
+):
+  | { readonly outcome: 'token-revoked' | 'already-gone' }
+  | { readonly outcome: 'failed'; readonly reason: string } {
+  switch (answer.kind) {
+    case 'revoked':
+      return { outcome: 'token-revoked' };
+    case 'gone':
+      return { outcome: 'already-gone' };
+    case 'retry':
+    case 'refused':
+      return { outcome: 'failed', reason: answer.words };
+    default: {
+      const unknown: never = answer;
+      throw new Error(`unhandled revocation answer ${String(unknown)}`);
+    }
+  }
+}
+
 /**
  * Revoke a revoked shared Linear connection's app-actor token at Linear (`POST /oauth/revoke
  * {token}`, which needs no client authentication), asking again an hour later after a failure
@@ -394,11 +418,7 @@ export const revokeSharedAtLinear = internalAction({
       organisationConnectionId: args.organisationConnectionId,
       credentialId: args.credentialId,
       attempt: args.attempt,
-      ...(answer.kind === 'revoked'
-        ? { outcome: 'token-revoked' as const }
-        : answer.kind === 'gone'
-          ? { outcome: 'already-gone' as const }
-          : { outcome: 'failed' as const, reason: answer.words }),
+      ...sharedRevocationOutcome(answer),
     });
     return null;
   },

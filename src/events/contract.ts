@@ -988,6 +988,11 @@ export interface OrganisationConfigurationUsedPayload {
   readonly appId?: string;
   /** When the configuration token a rotation issued lapses. */
   readonly expiresAt?: number;
+  /**
+   * `auth.revoke` of a token Slack issued to a rotation that finished after its connection was
+   * revoked, which Day0 kept nowhere (R41V-10).
+   */
+  readonly unkept?: true;
 }
 
 /**

@@ -611,9 +611,34 @@ describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): v
 
     expect(callsOf(slack, 'auth.revoke').map((call) => call.bearer)).toEqual([current]);
     expect(slack.configuration.revoked.has(current)).toBe(true);
-    // Slack ended the token alone: its refresh token still rotates, which only IT can end.
-    expect(slack.configuration.revoked.has(slack.configuration.token)).toBe(true);
     expect(await revokeLines(harness)).toEqual([expect.objectContaining({ outcome: 'done' })]);
+    // Slack ended the token alone: its refresh token still rotates, which only IT can end.
+    const rotated = await slack.fetch('https://slack.com/api/tooling.tokens.rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ refresh_token: slack.configuration.refreshToken }).toString(),
+    });
+    expect(await rotated.json()).toMatchObject({ ok: true });
+  });
+
+  it('records a revoke Slack answered but did not carry out as failed, after asking Slack whether the token still works', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    // The walk's anomaly: the ledger said done, and the token Day0 held still worked at Slack.
+    slack.refusals.set('auth.revoke', 'token_revoked');
+
+    await revokeConnection(harness, connectionId);
+
+    expect(callsOf(slack, 'auth.test')).toHaveLength(1);
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({
+        outcome: 'failed',
+        reason:
+          'Slack answered token_revoked to auth.revoke, yet still accepted the token at auth.test',
+      }),
+    ]);
   });
 
   it('records a token Slack had already revoked as already revoked, never as revoked by Day0', async (): Promise<void> => {
@@ -645,7 +670,9 @@ describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): v
       });
     };
 
-    await expect(provision(harness, leo.surfaceId)).rejects.toThrow();
+    await expect(provision(harness, leo.surfaceId)).rejects.toThrow(
+      'the organisation has no active Slack connection',
+    );
     await settle(harness);
 
     expect(issued).toBe('xoxe.xoxp-1-cfg1');
@@ -653,6 +680,9 @@ describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): v
       expect.arrayContaining([LANDED_CONFIGURATION_TOKEN, issued]),
     );
     expect(slack.configuration.revoked.has(issued)).toBe(true);
+    expect(await revokeLines(harness)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ outcome: 'done', unkept: true })]),
+    );
     expect(JSON.stringify(await ledger(harness))).not.toContain('xoxe');
   });
 });

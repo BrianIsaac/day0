@@ -283,7 +283,7 @@ describe('the live feed labels', (): void => {
         type: 'organisation.configuration-used',
         payload: { ...used, method: 'auth.revoke', outcome: 'already-revoked' },
       }),
-    ).toBe('Slack configuration token already revoked at Slack');
+    ).toBe('Slack configuration token had already ended at Slack');
     expect(
       eventLabel({
         type: 'organisation.configuration-used',

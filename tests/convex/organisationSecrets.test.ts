@@ -11,7 +11,7 @@ import { ORGANISATION_SECRET_HOLD_MS } from '../../convex/organisationSecrets';
 import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
 import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
-import { SLACK_AUTH_REVOKE_OK } from '../fixtures/revokers';
+import { SLACK_AUTH_REVOKE_OK, SLACK_TOKEN_REVOKED } from '../fixtures/revokers';
 import {
   LINEAR_REVOKE_ALREADY_REVOKED,
   LINEAR_REVOKE_SUCCESS,
@@ -145,6 +145,7 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
   it("revokes a revoked connection's Slack configuration token at Slack and deletes both values of the pair", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    network.answer('/api/auth.test', { status: 200, body: SLACK_TOKEN_REVOKED });
     const connectionId = await harness
       .withIdentity(INES)
       .action(api.organisationConnections.land, SLACK);
@@ -152,9 +153,15 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     await revoke(harness, connectionId);
     await runDueNow(harness);
 
+    // The revoke, then Slack asked whether the token still works (R41V-10).
     expect(network.calls).toEqual([
       {
         url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: {},
+      },
+      {
+        url: 'https://slack.com/api/auth.test',
         authorization: `Bearer ${CONFIGURATION_TOKEN}`,
         form: {},
       },
@@ -177,6 +184,7 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
   it('revokes the old configuration token at Slack when IT rotates the pair, and keeps the new one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    network.answer('/api/auth.test', { status: 200, body: SLACK_TOKEN_REVOKED });
     const ines = harness.withIdentity(INES);
     const connectionId = await ines.action(api.organisationConnections.land, SLACK);
     const before = (await rows(harness)).credentials.map((row) => row._id);
@@ -191,6 +199,11 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
     expect(network.calls).toEqual([
       {
         url: 'https://slack.com/api/auth.revoke',
+        authorization: `Bearer ${CONFIGURATION_TOKEN}`,
+        form: {},
+      },
+      {
+        url: 'https://slack.com/api/auth.test',
         authorization: `Bearer ${CONFIGURATION_TOKEN}`,
         form: {},
       },
@@ -264,6 +277,29 @@ describe("ending an organisation secret a revoke or a rotation took out of use (
       expect(JSON.stringify(ledger)).not.toContain(SHARED_TOKEN);
     },
   );
+
+  it('asks Linear three times an hour apart for the shared token while it fails, then deletes it and says so', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    network.answer('/oauth/revoke', { status: 503, body: '' });
+    const connectionId = await harness
+      .withIdentity(INES)
+      .action(api.organisationConnections.land, LINEAR);
+    await sharedTokenOf(harness, connectionId);
+
+    await revoke(harness, connectionId);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await runDueNow(harness);
+      vi.advanceTimersByTime(60 * 60 * 1_000);
+    }
+    await runDueNow(harness);
+
+    expect(network.calls).toHaveLength(3);
+    const { credentials, ledger } = await rows(harness);
+    for (const row of credentials) expect(row.ciphertext).toBeUndefined();
+    expect(
+      ledger.find((line) => line.type === 'organisation.revoked-at-source')?.payload,
+    ).toMatchObject({ outcome: 'failed', attempt: 3, reason: 'Linear answered HTTP 503.' });
+  });
 
   it("keeps a revoked MCP client's secret for the card revocations that need it, and deletes it after 24 hours", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

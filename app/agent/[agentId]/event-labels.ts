@@ -157,7 +157,7 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       case 'done':
         return `${name} configuration token revoked at ${name}`;
       case 'already-revoked':
-        return `${name} configuration token already revoked at ${name}`;
+        return `${name} configuration token had already ended at ${name}`;
       case 'failed':
       case 'superseded':
       case undefined:

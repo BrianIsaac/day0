@@ -617,8 +617,12 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         `once it was taken out of use; ${advice}`,
     );
     expect(revoked({ outcome: 'already-revoked', reason: 'Slack answered token_revoked' })).toBe(
-      "The organisation's Slack configuration token was already revoked at Slack when Day0 " +
+      "The organisation's Slack configuration token had already ended at Slack when Day0 " +
         `asked: Slack answered token_revoked; Day0 deleted its copy, and ${advice}`,
+    );
+    expect(revoked({ outcome: 'done', unkept: true })).toBe(
+      'Day0 revoked a configuration token Slack issued to a renewal that finished after the ' +
+        `connection was revoked, which it kept nowhere; ${advice}`,
     );
     expect(revoked({ outcome: 'failed', reason: 'Slack auth.revoke returned HTTP 503.' })).toBe(
       "Revoking the organisation's Slack configuration token at Slack failed: Slack auth.revoke " +

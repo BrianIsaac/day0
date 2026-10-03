@@ -1,5 +1,11 @@
-import { readSlackAnswer, slackTokenRevocation } from '../src/surfaces/revokers/slack';
+import {
+  readSlackAnswer,
+  slackTokenCheck,
+  slackTokenRevocation,
+  slackTokenStillWorks,
+} from '../src/surfaces/revokers/slack';
 import type { RevocationAnswer, RevocationRequest } from '../src/surfaces/revokers/types';
+import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 /*
@@ -95,16 +101,41 @@ export type SlackRevocationAnswer =
   | { readonly kind: 'gone'; readonly error: string };
 
 /**
+ * Whether Slack still accepts a token (`auth.test`). A check that cannot be made answers false,
+ * so the revoke's own answer stands.
+ */
+async function stillWorks(token: string, transport: RevocationFetch): Promise<boolean> {
+  const check = slackTokenCheck(token);
+  try {
+    const response = await transport(check.url, {
+      method: 'POST',
+      headers: check.headers,
+      body: check.body,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
+    });
+    return slackTokenStillWorks(response.status, await bodyOf(response));
+  } catch (error: unknown) {
+    log.warn('slack auth.test after a revoke could not be made; the revoke stands as answered', {
+      reason: safeFailureMessage(error, token, 'no detail'),
+    });
+    return false;
+  }
+}
+
+/**
  * Ask Slack to revoke a configuration token (`auth.revoke`), which ends that token alone and never
  * its refresh token (the real-vendor walk, R41V-10), and read the answer, keeping Slack's word for
- * a token it had already ended.
+ * a token it had already ended. Slack's answer is then checked with `auth.test`: on the walk a
+ * token Day0 recorded as revoked still worked at Slack, so a token Slack still accepts is a failed
+ * revoke whatever `auth.revoke` answered.
  *
  * @param token - The configuration token, which is also the call's bearer.
  * @param transport - The transport; the platform's `fetch` by default.
  */
 export async function revokeSlackConfigurationToken(
   token: string,
-  transport?: RevocationFetch,
+  transport: RevocationFetch = fetch,
 ): Promise<SlackRevocationAnswer> {
   let said = 'that the token no longer works';
   const answer = await sendRevocation({
@@ -114,11 +145,19 @@ export async function revokeSlackConfigurationToken(
     read: (status: number, body: unknown): RevocationAnswer => {
       const error =
         typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined;
-      if (typeof error === 'string') said = error;
+      if (typeof error === 'string') said = safeFailureMessage(new Error(error), token, error);
       return readSlackAnswer('auth.revoke', status, body);
     },
-    ...(transport === undefined ? {} : { fetch: transport }),
+    fetch: transport,
   });
+  if (answer.kind !== 'revoked' && answer.kind !== 'gone') return answer;
+  if (await stillWorks(token, transport)) {
+    const answered = answer.kind === 'revoked' ? 'revoked' : said;
+    return {
+      kind: 'refused',
+      words: `Slack answered ${answered} to auth.revoke, yet still accepted the token at auth.test`,
+    };
+  }
   return answer.kind === 'gone' ? { kind: 'gone', error: said } : answer;
 }
 

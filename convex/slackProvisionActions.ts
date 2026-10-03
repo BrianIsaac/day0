@@ -482,6 +482,7 @@ async function revokeUnkept(
     organisationConnectionId: held.connection._id,
     credentialIds: [],
     ...slackRevocationOutcome(answer),
+    unkept: true,
   });
 }
 

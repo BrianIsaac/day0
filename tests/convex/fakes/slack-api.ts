@@ -229,6 +229,12 @@ async function respond(
         team: { id: 'T0W11AS' },
       });
     }
+    case 'auth.test':
+      // A live configuration token answers auth.test (the walk, R41V-10); a bot token below.
+      if (configurationAnswer(double, bearer) === undefined) {
+        return answer({ ok: true, user_id: 'U0SERVICE', team_id: 'T0W11AS' });
+      }
+      break;
     case 'auth.revoke': {
       if (bearer !== undefined && configuration.revoked.has(bearer)) {
         return answer({ ok: false, error: 'token_revoked' });
