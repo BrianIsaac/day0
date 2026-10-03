@@ -261,6 +261,9 @@ async function sharedToken(
       "The organisation's Linear connection holds no client id or secret.",
     );
   }
+  // The value a renewal in place replaces stays live at Linear for its 30 days unless revoked,
+  // and the connection's revoke ends only the value it holds then (the round review's m5).
+  const superseded = usable ? await valueOf(ctx, token._id) : undefined;
   const issued = await requestAppActorToken(
     deps.fetch,
     { clientId: connection.clientId, clientCredentialsScopes: connection.clientCredentialsScopes },
@@ -279,6 +282,7 @@ async function sharedToken(
     },
   );
   if (landed.ok) {
+    if (superseded !== undefined) await revokeUnkept(deps, { accessToken: superseded });
     return {
       credentialId: landed.credentialId,
       generation: landed.generation,
@@ -286,7 +290,9 @@ async function sharedToken(
     };
   }
   if (landed.reason === 'stale') {
-    // Another renewal wrote first; its token is as good as this one, which lapses unused.
+    // Another renewal wrote first; its token is as good as this one, which Day0 keeps nowhere, so
+    // it is revoked at Linear rather than left live for 30 days (the round review's m5).
+    await revokeUnkept(deps, issued);
     const winner =
       landed.credentialId === undefined
         ? null

@@ -441,6 +441,39 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(after.credentials.find((row) => row._id === tokenId)?.generation).toBe(1);
   });
 
+  it("revokes at Linear the value a renewal in place replaced, so the connection's revoke ends every value it held (the round review's m5)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const first = await bearerOf(harness, tokenId);
+
+    clock += 29.5 * DAY;
+    const renewed = await bearerOf(harness, tokenId);
+
+    expect(renewed).not.toBe(first);
+    expect(linear.live(renewed)).toBe(true);
+    expect(linear.live(first)).toBe(false);
+  });
+
+  it("revokes at Linear the token a renewal that lost the race requested, keeping the winner's live (the round review's m5)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const first = await bearerOf(harness, tokenId);
+
+    clock += 29.5 * DAY;
+    const [one, two] = await Promise.all([bearerOf(harness, tokenId), bearerOf(harness, tokenId)]);
+
+    expect(tokenRequests()).toHaveLength(3);
+    expect(one).toBe(two);
+    expect(linear.live(one)).toBe(true);
+    expect(linear.live(first)).toBe(false);
+    // The first value and the loser's token: every token Day0 does not hold is ended at Linear.
+    expect(linear.requests.filter((request) => request.path === '/oauth/revoke')).toHaveLength(2);
+  });
+
   it('answers a 401 with one new request, and a second refusal of the same token with its successor', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });
