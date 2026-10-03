@@ -20,6 +20,13 @@ export const LEASE_POLL_MS = 250;
 /** The most reads a waiter makes before it treats the lease as ended, whatever its clock says. */
 export const LEASE_POLLS = Math.ceil(REFRESH_LEASE_MS / LEASE_POLL_MS) + 1;
 
+/**
+ * The most reads a waiter makes while the token it holds still lives (five seconds): long enough
+ * for a live holder's exchange to land, short enough that a read behind a dead holder's lease
+ * uses the stored token rather than waiting out the lease.
+ */
+export const LIVE_TOKEN_LEASE_POLLS = 20;
+
 /** An access token's row as far as the lease reads it. */
 export interface LeasedRow {
   /** Absent on the row reads as 0. */
@@ -73,16 +80,18 @@ export interface LeaseWait {
 /**
  * Wait for the refresh that holds a row's lease: `moved` once its rotation lands (or the row is
  * gone), `free` once the lease ends without one (released by a holder that failed, or lapsed), so
- * the waiter may claim it itself. Bounded by {@link LEASE_POLLS} reads as well as by the clock.
+ * the waiter may claim it itself. Bounded by `polls` reads as well as by the clock.
  *
  * @param wait - How the waiter reads the row and sleeps.
  * @param lease - The generation the waiter read and the end of the lease it found.
+ * @param polls - The most reads; {@link LEASE_POLLS}, the whole lease, unless the caller says less.
  */
 export async function awaitLeaseHolder(
   wait: LeaseWait,
   lease: { readonly generation: number; readonly until: number },
+  polls: number = LEASE_POLLS,
 ): Promise<'moved' | 'free'> {
-  for (let poll = 0; poll < LEASE_POLLS; poll += 1) {
+  for (let poll = 0; poll < polls; poll += 1) {
     const row = await wait.read();
     if (row === null || (row.generation ?? 0) !== lease.generation) return 'moved';
     if (row.refreshingUntil !== lease.until || wait.now() >= lease.until) return 'free';

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { IssuedTokens } from '../../../src/surfaces/mcp-oauth';
-import { REFRESH_LEASE_MS } from '../../../src/surfaces/refresh-lease';
+import { LIVE_TOKEN_LEASE_POLLS, REFRESH_LEASE_MS } from '../../../src/surfaces/refresh-lease';
 import {
   accessTokenFor,
   heldFromRows,
@@ -303,6 +303,25 @@ describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
     };
     await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-after-refresh-0');
     expect(presented).toEqual(['refresh-0']);
+  });
+
+  it('hands back a token that still lives after a short wait when another refresh holds the lease', async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 30_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let slept = 0;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      // The holder died: its lease never ends while the reader waits.
+      sleep: async (): Promise<void> => {
+        slept += 1;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    // Two claims, each waiting at most the live token's bound, never the whole lease.
+    expect(slept).toBeLessThanOrEqual(2 * LIVE_TOKEN_LEASE_POLLS);
   });
 
   it('ends its own lease when the exchange cannot be made, so the next refresh need not wait', async (): Promise<void> => {

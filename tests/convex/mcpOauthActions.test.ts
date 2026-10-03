@@ -1015,6 +1015,24 @@ describe('refreshing with rotation', (): void => {
     expect(row).not.toHaveProperty('refreshingUntil');
   });
 
+  it('ends its lease when the refresh token it claimed cannot be opened, so the next refresh need not wait', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    await harness.run(async (ctx) => {
+      const access = await ctx.db.get(credentialId);
+      if (!access?.refreshCredentialId) throw new Error('no refresh token landed');
+      // Sealed for another owner than the row names, so the store refuses to open it.
+      await ctx.db.patch(access.refreshCredentialId, {
+        ...sealForOwner('refresh-elsewhere', { current: credentialKey }, 'someone-else'),
+      });
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    await harness.action(internal.mcpOauthActions.currentBearer, { credentialId });
+    const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    expect(row).not.toHaveProperty('refreshingUntil');
+  });
+
   it('records on the card’s record when the server refuses the refresh', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const credentialId = await landed(harness);

@@ -12,7 +12,12 @@ import type { ActsAs, TokenStore } from './access-identity';
 import { decryptCredential } from './credentials';
 import type { IssuedTokens } from './mcp-oauth';
 import { safeFailureMessage } from './redact';
-import { awaitLeaseHolder, RefreshInProgress, sleepFor } from './refresh-lease';
+import {
+  awaitLeaseHolder,
+  LIVE_TOKEN_LEASE_POLLS,
+  RefreshInProgress,
+  sleepFor,
+} from './refresh-lease';
 
 /*
  * The token store behind the access rungs (wave 11, 11-AT; the access plan, section 4.7; B15):
@@ -191,12 +196,20 @@ export function nativeTokenKeeper(keyring: () => CredentialKeyring): TokenKeeper
     claimRefreshToken: async (ctx, claim) => {
       const claimed = await ctx.runMutation(internal.refreshLease.claim, claim);
       switch (claimed.kind) {
-        case 'claimed':
-          return {
-            kind: 'claimed',
-            leaseUntil: claimed.leaseUntil,
-            presented: openRefreshToken(claimed.refresh, keyring()),
-          };
+        case 'claimed': {
+          let presented: string;
+          try {
+            presented = openRefreshToken(claimed.refresh, keyring());
+          } catch (error) {
+            // Nothing was presented: the lease is ended here, or the next refresh waits it out.
+            await ctx.runMutation(internal.refreshLease.release, {
+              credentialId: claim.credentialId,
+              leaseUntil: claimed.leaseUntil,
+            });
+            throw error;
+          }
+          return { kind: 'claimed', leaseUntil: claimed.leaseUntil, presented };
+        }
         case 'no-refresh-token':
           throw new Error('No live refresh token is held for this authorisation.');
         case 'moved':
@@ -355,6 +368,16 @@ export interface NativeTokenStoreDeps {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
+/** How a refresh treats another refresh's lease. */
+export interface RefreshOptions {
+  /**
+   * The caller's stored token still lives: behind another refresh's lease the refresh waits only
+   * {@link LIVE_TOKEN_LEASE_POLLS} reads at each claim, and after its last claim hands the stored
+   * token back rather than waiting out a lease whose holder may have died.
+   */
+  readonly storedTokenLives?: boolean;
+}
+
 /** What a refresh answers. */
 export type RefreshOutcome =
   | { readonly ok: true; readonly accessToken: string }
@@ -403,6 +426,7 @@ async function rotatedSince(
  * issuer's own where it has one ({@link TokenRefresher.rotate}), else the keeper's; refusals are
  * in the issuer's words.
  *
+ * @param options - Whether the caller's stored token still lives, which bounds a wait on a lease.
  * @throws a transport error, or the issuer's own, when the server cannot be reached or answers
  *   unusably; {@link RefreshInProgress} when other refreshes held the lease throughout; a refusal
  *   of the refresh by the server is the typed outcome instead.
@@ -412,6 +436,7 @@ export async function refreshHeld(
   held: HeldTokens,
   refresher: TokenRefresher,
   deps: NativeTokenStoreDeps,
+  options: RefreshOptions = {},
 ): Promise<RefreshOutcome> {
   const { keeper } = deps;
   const preparation = await refresher.prepare(ctx, held);
@@ -438,11 +463,15 @@ export async function refreshHeld(
             sleep: deps.sleep ?? sleepFor,
           },
           { generation: held.generation, until: claim.until },
+          options.storedTokenLives === true ? LIVE_TOKEN_LEASE_POLLS : undefined,
         );
         if (waited === 'moved') {
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
         }
-        if (claims === LEASE_CLAIMS) throw new RefreshInProgress();
+        if (claims === LEASE_CLAIMS) {
+          if (options.storedTokenLives !== true) throw new RefreshInProgress();
+          return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
+        }
         break;
       }
       default: {
@@ -557,7 +586,7 @@ export async function nativeAccessToken(
   const words = wordsOf(refresher);
   let outcome: RefreshOutcome;
   try {
-    outcome = await refreshHeld(ctx, held, refresher, deps);
+    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive });
   } catch (error) {
     const reason = words.reason(error);
     if (!alive) throw words.unreachableWhenExpired(reason);
