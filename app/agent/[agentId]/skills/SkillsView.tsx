@@ -135,7 +135,14 @@ function useSkillAnchor(ready: boolean): void {
   }, []);
   useEffect(() => {
     if (!ready || !window.location.hash.startsWith('#skill-')) return;
-    const row = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      // Not a fragment this page wrote (a malformed escape): nothing to land on.
+      return;
+    }
+    const row = document.getElementById(id);
     if (!row) return;
     row.scrollIntoView({ block: 'start' });
     row.focus({ preventScroll: true });

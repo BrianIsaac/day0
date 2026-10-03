@@ -58,6 +58,24 @@ describe('SkillsView', () => {
     }
   });
 
+  it('draws the tab when the fragment is not one it wrote, a malformed escape included', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:awaitingVerification': [],
+      'skillControls:pendingRevisions': [],
+      'skills:verificationFailed': [],
+    };
+    window.location.hash = '#skill-%E0%A4%A';
+    try {
+      const view = mount(asEmployee(<SkillsView />));
+      expect(view.container.textContent).toContain('How a skill is made');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
   it('sets the proposed and the registered skills beside how a skill is made, as drawn', () => {
     backend.queries = {
       'skills:proposed': [],
