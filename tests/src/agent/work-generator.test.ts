@@ -248,9 +248,10 @@ describe('the action item the mock office files on its ticket queue (D2 (b), a p
     },
   );
 
-  it('files the action item on the ticket queue itself when every draft puts it elsewhere, keeping its words', async (): Promise<void> => {
+  it('files the action item on the ticket queue itself when every draft puts it elsewhere, keeping its words and no channel to act on', async (): Promise<void> => {
+    const inChannel = { ...SLACK_ACTION, contentRefs: ['channel://revops-asks'] };
     for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
-      drafts.push([READ, SLACK_ACTION, PLAIN_OUT_OF_SCOPE]);
+      drafts.push([READ, inChannel, PLAIN_OUT_OF_SCOPE]);
     }
     const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
     expect(prompts).toHaveLength(GENERATION_ATTEMPTS);
@@ -259,6 +260,7 @@ describe('the action item the mock office files on its ticket queue (D2 (b), a p
       sourceSystem: 'ticket',
       title: 'Close out the routine tickets this week',
       contentSummary: 'Priya: "Please close them."',
+      contentRefs: [],
     });
   });
 });

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { log } from '../lib/logger';
 import type { Charter } from './charter';
-import { filedOnTicketQueue, TICKET_QUEUE_FILING } from '../work/office-tickets';
+import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -277,6 +277,11 @@ export async function generateWorkItemsFromCharter(
  */
 function onTheTicketQueue(item: DraftedWorkItem): DraftedWorkItem {
   return item.purpose === 'action' && !filedOnTicketQueue(item)
-    ? { ...item, ...TICKET_QUEUE_FILING }
+    ? {
+        ...item,
+        ...TICKET_QUEUE_FILING,
+        // A reference to where it was drafted (a channel, a sheet) is not the ticket's to act on.
+        contentRefs: item.contentRefs.filter((ref) => ref.startsWith(TICKET_REF_PREFIX)),
+      }
     : item;
 }
