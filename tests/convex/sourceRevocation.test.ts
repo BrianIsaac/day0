@@ -16,6 +16,7 @@ import { allConvexModules } from './all-modules';
 import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
 import type { AccessEnd } from '../../src/surfaces/access-identity';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import { LINEAR_REVOKE_ALREADY_REVOKED } from '../fixtures/real-vendor-walk-2026-10-03';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -252,6 +253,35 @@ describe('ending access at the vendor (11-AR; the access plan, section 4.4)', ()
     ]);
     expect((await rows(harness)).map((row) => row.ciphertext)).toEqual([undefined, undefined]);
   });
+
+  it.each(['disconnect', 'expiry', 'retire'] as const)(
+    'records a %s of an employee’s own Linear app as revoked when the pair’s second revoke meets "Token has already been revoked." (R41V-8)',
+    async (accessEnd): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const card = await employeeWithCard(harness);
+      const { access, refresh } = await organisationHeldLinearPair(harness);
+      // Linear, 3 October: the first revoke of the pair ends the whole grant, so the second meets it.
+      network.answer('/oauth/revoke', { status: 200, body: '' }, LINEAR_REVOKE_ALREADY_REVOKED);
+
+      await end(harness, card, [access, refresh], accessEnd);
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(network.calls).toHaveLength(2);
+      expect((await rows(harness)).map((row) => row.sourceRevocation?.state)).toEqual([
+        'done',
+        'done',
+      ]);
+      const recorded = await lines(harness, card.agentId);
+      expect(recorded).toEqual([
+        expect.objectContaining({
+          credentialId: access,
+          end: accessEnd,
+          outcome: 'token-revoked',
+        }),
+      ]);
+      expect(JSON.stringify(recorded)).not.toContain('already been revoked');
+    },
+  );
 
   it("never sends a pasted key to a vendor's revocation endpoint", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
