@@ -828,6 +828,15 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
     return 1;
   }
 
+  if (options.install === true && resolved.named.length === 0) {
+    // An install that connects nothing would end "passed every check" with every card's system
+    // unconnected (the wave 11 review's m20).
+    io.log(
+      "The install connects the organisation's systems, and the documentation names none the kit " +
+        "knows: name them with --systems (slack, linear, or an MCP server's https address).",
+    );
+    return 1;
+  }
   io.log(
     resolved.named.length === 0
       ? 'The documentation names no system the kit knows; name them with --systems.'

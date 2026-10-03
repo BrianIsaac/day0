@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -140,6 +140,19 @@ describe('setup: the install verb', (): void => {
         .map((call) => [call.command, ...call.args].join(' '))
         .filter((line) => line.includes('check:access')),
     ).toEqual(['pnpm run check:access --install']);
+  });
+
+  it("stops at access when the documentation names no system and --systems names none, rather than pass with nothing connected (the wave 11 review's m20)", async (): Promise<void> => {
+    const bed = installBed();
+    rmSync(join(bed.bed.directory, 'docs-local', 'slack.md'));
+    expect(await bed.run(INSTALL)).toBe(1);
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      "The install connects the organisation's systems, and the documentation names none the kit knows: name them with --systems (slack, linear, or an MCP server's https address).",
+    );
+    expect(said).toContain('The install stopped at access');
+    expect(said).not.toContain('The install passed every check');
+    expect(bed.landed).toEqual([]);
   });
 
   it('stops at the first failing check, says which, and runs nothing after it', async (): Promise<void> => {
