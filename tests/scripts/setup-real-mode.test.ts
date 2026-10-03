@@ -21,6 +21,7 @@ import {
   runSetup,
   sandboxChoice,
   sequenceSteps,
+  namesTheRedactor,
   serviceHealth,
   setupEnvUpdates,
   stepCommands,
@@ -767,6 +768,46 @@ describe('the redactor device check inside a run', (): void => {
     );
   });
 
+  it("waits for the redactor before dialling an endpoint that is the redactor itself, so a restore's fresh one is not refused (the pre-tag's item 10)", async (): Promise<void> => {
+    const h = harness({
+      services: ['backend', 'sandbox', 'redactor'],
+      redactorHealth: ['starting', 'starting', 'healthy'],
+    });
+    let healthy = false;
+    const original = h.io.run;
+    h.io.run = (command, args, options) => {
+      const joined = args.join(' ');
+      const answered = original(command, args, options);
+      if (joined.includes('ps -a --format json redactor')) {
+        healthy = answered.stdout.includes('"Health":"healthy"');
+      }
+      if (!args.includes('curl')) return answered;
+      // The redactor listens once compose reports it healthy, and not before.
+      return healthy
+        ? { status: 0, stdout: '404', stderr: '' }
+        : {
+            status: 7,
+            stdout: '000',
+            stderr:
+              'curl: (7) Failed to connect to redactor port 8000 after 0 ms: Could not connect to server\n',
+          };
+    };
+
+    const status = await runSetup(
+      realRoute({ route: 'endpoint', endpoint: 'http://redactor:8000/v1' }),
+      h.io,
+    );
+
+    expect(status).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).not.toContain('could not reach');
+    expect(printed).toContain('the backend container reached http://redactor:8000/v1 (HTTP 404)');
+    const lines = h.commands.map((call) => call.args.join(' '));
+    const firstHealthy = lines.findIndex((line) => line.includes('ps -a --format json redactor'));
+    expect(firstHealthy).toBeGreaterThan(-1);
+    expect(firstHealthy).toBeLessThan(lines.findIndex((line) => line.includes('curl')));
+  });
+
   it('gives up on a redactor that never turns healthy, without failing the setup', async (): Promise<void> => {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
@@ -775,6 +816,13 @@ describe('the redactor device check inside a run', (): void => {
     });
     expect(await runSetup(realRoute(), h.io)).toBe(0);
     expect(h.output.join('\n')).toContain('note: the redactor is starting');
+  });
+
+  it('knows an endpoint that is the redactor by its service name, and nothing else', (): void => {
+    expect(namesTheRedactor('http://redactor:8000/v1')).toBe(true);
+    expect(namesTheRedactor('http://10.1.2.3:8000/v1')).toBe(false);
+    expect(namesTheRedactor('https://api.featherless.ai/v1')).toBe(false);
+    expect(namesTheRedactor('not an address')).toBe(false);
   });
 
   it('reads compose’s json listing for one service', (): void => {
