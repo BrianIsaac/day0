@@ -400,6 +400,21 @@ describe('revoking a token Day0 will not keep', (): void => {
     ).toBe('unavailable');
   });
 
+  it('says Linear could not be reached when the answer to a revoke starts but its body never arrives (the second pass)', async (): Promise<void> => {
+    const hanging: LinearFetch = async (): Promise<Response> =>
+      new Response(
+        new ReadableStream({
+          pull(controller): void {
+            controller.error(new DOMException('The operation timed out', 'TimeoutError'));
+          },
+        }),
+        { status: 200 },
+      );
+    expect(
+      (await refusalOf(revokeLinearToken(hanging, 'lin_oauth_live', 'access_token'))).reason,
+    ).toBe('unavailable');
+  });
+
   it("takes a 400 as done only when Linear says the token was already revoked (the round review's m4)", async (): Promise<void> => {
     await expect(
       revokeLinearToken(

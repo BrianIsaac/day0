@@ -557,7 +557,17 @@ export async function revokeLinearToken(
     headers: request.headers,
     body: request.body,
   });
-  const answer = readLinearAnswer(response.status, await bodyOf(response));
+  let body: unknown;
+  try {
+    body = await bodyOf(response);
+  } catch (error) {
+    // An answer whose body never arrived is the transport's failure, as an unreachable Linear is.
+    throw new LinearIssuerRefusal(
+      'unavailable',
+      `${REFUSAL_LEADS.unavailable}: ${transportDetail(error)}.`,
+    );
+  }
+  const answer = readLinearAnswer(response.status, body);
   switch (answer.kind) {
     case 'revoked':
     case 'gone':
