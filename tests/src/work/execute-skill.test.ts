@@ -452,7 +452,9 @@ describe('executor output contract', (): void => {
         },
         contract,
       ),
-    ).toEqual(['prescribed originating-reference transition does not match the completed work']);
+    ).toEqual([
+      'prescribed originating-reference transition does not match the completed work: set status "blocked"',
+    ]);
   });
 
   it('collapses duplicate seeded procedure wording into one trail per effect', (): void => {
@@ -756,7 +758,7 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual([
-      'prescribed originating-reference transition does not match the completed work',
+      'prescribed originating-reference transition does not match the completed work: set status "done"',
     ]);
   });
 
@@ -984,6 +986,98 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([]);
   });
 
+  /** A run on a drafted ticket whose approved plan keeps the ticket open (the round 0141 bed walk). */
+  function heldOpenRun(
+    status: 'in-progress' | 'done',
+    steps: readonly string[] = [
+      'Comment on ticket REVOPS-204 with the request details.',
+      'Do not close the ticket until the laptop is ordered and provisioned.',
+    ],
+  ): string[] {
+    return mockActionContractIssues(
+      {
+        draft: 'Documented the request on REVOPS-204 and routed it to Ben for approval.',
+        notes: '',
+        needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'REVOPS-204',
+              status,
+              comment: 'Laptop request documented; waiting on Ben Ito to approve the order.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'ticket-new-laptop',
+        title: 'New laptop needed for incoming analyst starting Monday',
+        contentSummary: 'Nora filed this: "The new analyst starts Monday and needs a laptop."',
+        contentRefs: ['ticket://REVOPS-204'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Document the request on the ticket and route the order to Ben Ito for approval.',
+        steps: [...steps],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      },
+      ticketProcedureContract,
+    );
+  }
+
+  it('reads an approved plan that keeps the ticket open as partial work, so the run may hold the ticket', (): void => {
+    expect(heldOpenRun('in-progress')).toEqual([]);
+  });
+
+  it.each([
+    ['Leave the ticket open (do not close) since the request stays unresolved.'],
+    ['Keep REVOPS-204 open until Ben approves the order.'],
+  ])('reads "%s" as keeping the ticket open', (step): void => {
+    expect(heldOpenRun('in-progress', [step])).toEqual([]);
+  });
+
+  it.each([
+    ['Close REVOPS-204 as done and do not leave it open.'],
+    ['Do not close REVOPS-202, which another team owns; close REVOPS-204.'],
+    ['Keep the Slack thread open for replies, then close the ticket.'],
+  ])('does not read "%s" as keeping the ticket open', (step): void => {
+    expect(heldOpenRun('done', [step])).toEqual([]);
+  });
+
+  it('tells the repair the status the approved work calls for when the transition is wrong', (): void => {
+    expect(heldOpenRun('done')).toEqual([
+      'prescribed originating-reference transition does not match the partial work: set status "in-progress"',
+    ]);
+  });
+
+  it('tells the executor that a plan keeping the ticket open takes the partial status', (): void => {
+    const prompt = executorInstructions({
+      mode: 'mock',
+      autonomousActions: false,
+      skillBody: '# skill',
+      surfaces: [],
+      mockEnv: {
+        howToGuides: ticketGuides,
+        teamDocs: [],
+        spreadsheets: [],
+        slackChannels: [],
+        tweets: [],
+        tickets: [],
+      } as never,
+      now: 0,
+    });
+    expect(prompt).toContain(
+      'or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open)',
+    );
+  });
+
   it('derives ticket closure from a loaded procedure without depending on the seed slug', (): void => {
     const issues = mockActionContractIssues(
       {
@@ -1032,7 +1126,7 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual([
-      'prescribed originating-reference transition does not match the completed work',
+      'prescribed originating-reference transition does not match the completed work: set status "done"',
     ]);
   });
 

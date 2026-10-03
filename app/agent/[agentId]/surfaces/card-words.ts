@@ -272,16 +272,6 @@ export function identityChip(identity: Pick<CardIdentity, 'kind' | 'keyFrom'>): 
 }
 
 /**
- * The hosted office's "Acts as" words, the same on every mock surface: in mock mode nothing
- * leaves the office, and the employee is the office's own app in each of its systems.
- *
- * @param employee - The employee's name.
- */
-export function mockActsAsWords(employee: string): string {
-  return `${employee}, its own app in this office`;
-}
-
-/**
  * A day as the card names it: "1 October", in the zone given.
  *
  * @param ms - The instant.

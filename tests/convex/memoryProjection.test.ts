@@ -1,9 +1,14 @@
 import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+afterEach((): void => {
+  restoreSurfaceMode();
+});
 
 /** An employee of `owner` with an approved charter, a draft after it, and one of each row. */
 async function seedEmployee(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
@@ -116,6 +121,26 @@ describe('memoryProjection.forAgent', (): void => {
     expect(text).toContain('Documentation: RevOps runbooks');
     expect(text).not.toContain('Finance drive');
   });
+
+  it.each([
+    [
+      'mock',
+      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
+    ],
+    ['real', 'Connections: none yet'],
+  ] as const)(
+    'says in %s mode what the Surfaces tab says of the connections (round 0141 R-D item 3)',
+    async (mode, line): Promise<void> => {
+      useSurfaceMode(mode);
+      const { api } = await import('../../convex/_generated/api');
+      const harness = convexTest(schema, allConvexModules());
+      const agentId = await seedEmployee(harness);
+      const { text } = await harness
+        .withIdentity(managerIdentity('owner', { email: 'sam@revops.example' }))
+        .query(api.memoryProjection.forAgent, { agentId });
+      expect(text.split('\n')).toContain(line);
+    },
+  );
 
   it('refuses a caller who does not own the employee', async (): Promise<void> => {
     const { api } = await import('../../convex/_generated/api');

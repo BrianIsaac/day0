@@ -285,9 +285,18 @@ export function WorkQueue({
   // several times over. Each step's claim mutation refuses the duplicate, but
   // a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
+  // A step asked for again while its call is in flight is not dropped: the
+  // rows may have moved since that call read them (a slot freed while a queued
+  // item was being judged, which then stayed queued with nothing to ask again),
+  // so the loop looks once more when the call settles.
+  const missed = useRef(new Set<string>());
+  const [lookAgain, setLookAgain] = useState(0);
   const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
     const key = `${step}:${id}`;
-    if (inFlight.current.has(key)) return;
+    if (inFlight.current.has(key)) {
+      missed.current.add(key);
+      return;
+    }
     inFlight.current.add(key);
     call()
       // A step that fails on the row records the failure there, where the card
@@ -296,7 +305,10 @@ export function WorkQueue({
       // already holds) leaves nothing on the row and is dropped here; the
       // promise only holds the in-flight key.
       .catch((): void => undefined)
-      .finally(() => inFlight.current.delete(key));
+      .finally(() => {
+        inFlight.current.delete(key);
+        if (missed.current.delete(key)) setLookAgain((count) => count + 1);
+      });
   }, []);
 
   // Auto-progression, mock mode only: once charter is approved, evaluate every
@@ -309,7 +321,7 @@ export function WorkQueue({
     if (!drivesLoop || !charterApproved) return;
     const next = nextItemToEvaluate(workItems);
     if (next) once('evaluate', next._id, () => evaluate({ workItemId: next._id }));
-  }, [drivesLoop, charterApproved, workItems, evaluate, once]);
+  }, [drivesLoop, charterApproved, workItems, evaluate, once, lookAgain]);
 
   useEffect(() => {
     if (!drivesLoop) return;
@@ -321,7 +333,7 @@ export function WorkQueue({
         once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [drivesLoop, workItems, draftPlan, executePlan, once]);
+  }, [drivesLoop, workItems, draftPlan, executePlan, once, lookAgain]);
 
   return (
     <Card

@@ -439,7 +439,7 @@ function ticketClosureFromContract(
 function mockActionContract(contract: ProcedureContract): string {
   const closure = ticketClosureFromContract(contract);
   const ticketRule = closure
-    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}.`
+    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}, or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open).`
     : '  - For ticket-queue work, follow the candidate and loaded ticket procedure. Do not invent an originating-ticket status or audit requirement when both are silent.';
   return [
     '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
@@ -1559,10 +1559,38 @@ const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remai
 const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|remaining)\b/i;
 const HYPOTHETICAL_CLAUSE = /\b(?:if|unless)\b[^.!?\n]*(?:[.!?](?=\s|$)|\n|$)/gi;
 
+/**
+ * Whether an approved plan keeps the originating ticket open: it says not to close the ticket
+ * (or it, or the ticket by its key), or to leave or keep it open, a request routed to someone
+ * else's approval or declined on the ticket. Read from the plan alone, since only the plan
+ * decides what this run does to the ticket; on the bed such plans were held to full closure and
+ * the run stopped after the manager approved them. A negated keep ("do not leave it open") and
+ * another ticket or thread kept open are not this.
+ */
+function keepsTicketOpen(plannedWork: string, originSlug: string | undefined): boolean {
+  const ticket = [
+    String.raw`the\s+(?:originating\s+)?ticket`,
+    String.raw`this\s+ticket`,
+    'it',
+    ...(originSlug !== undefined ? [escapeRegExp(originSlug)] : []),
+  ].join('|');
+  const notClosed = new RegExp(
+    String.raw`\b(?:do\s+not|don't|not|never)\s+close\s+(?:${ticket})\b`,
+    'i',
+  );
+  const keptOpen = new RegExp(
+    String.raw`(?<!\b(?:not|never|no)\s+)\b(?:leave|keep)\s+(?:${ticket})\s+open\b`,
+    'i',
+  );
+  return notClosed.test(plannedWork) || keptOpen.test(plannedWork);
+}
+
 function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
   const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
   const assertedWork = approvedWork.replace(HYPOTHETICAL_CLAUSE, ' ');
-  return PARTIAL_WORK.test(assertedWork) && !NO_PARTIAL_WORK.test(assertedWork);
+  if (PARTIAL_WORK.test(assertedWork) && !NO_PARTIAL_WORK.test(assertedWork)) return true;
+  const plannedWork = [plan.summary, ...plan.steps].join('\n').replace(HYPOTHETICAL_CLAUSE, ' ');
+  return keepsTicketOpen(plannedWork, referencedDestination(candidate, 'ticket://'));
 }
 
 /**
@@ -2470,9 +2498,10 @@ export function mockActionContractIssues(
             expectedStatus,
         )
       ) {
+        // The status is named, so the one repair round knows what the approved work calls for.
         issues.push(
           trail.effect.destination.kind === 'originating-reference'
-            ? `prescribed originating-reference transition does not match the ${approvedWorkIsPartial(candidate, plan) ? 'partial' : 'completed'} work`
+            ? `prescribed originating-reference transition does not match the ${approvedWorkIsPartial(candidate, plan) ? 'partial' : 'completed'} work: set ${trail.effect.statusTransition.argument} "${expectedStatus}"`
             : 'prescribed trailing transition does not match the approved work',
         );
       }

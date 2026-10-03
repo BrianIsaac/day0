@@ -76,6 +76,16 @@ export interface NamedSystem {
   whereMentioned: string;
 }
 
+/**
+ * A system of the office the employee works in, by the name and class the charter lists it under
+ * when the manager names it. Only the hosted mock office has these; a real deployment's systems
+ * are whatever products the manager names.
+ */
+export interface OfficeSystem {
+  readonly name: string;
+  readonly class: SystemClass;
+}
+
 /** The employee's charter: the role, boundaries, goals, collaborators and systems the 1:1 produced, versioned. */
 export interface Charter {
   version: CharterVersion;
@@ -237,6 +247,8 @@ export interface SynthesiseCharterArgs {
   createdAt?: Date;
   /** The notes the manager sent earlier drafts back with, oldest first. */
   changeRequests?: readonly ChangeRequest[];
+  /** The office's own systems, in the hosted mock office only. */
+  office?: readonly OfficeSystem[];
 }
 
 /** The lines a draft sent back adds to the prompt: the note, then each rule struck on it. */
@@ -256,19 +268,39 @@ function changeRequestLines(request: ChangeRequest): string[] {
 export function userPrompt(
   answers: Record<DayOneTopic, string>,
   changeRequests: readonly ChangeRequest[] = [],
+  office: readonly OfficeSystem[] = [],
 ): string {
   const topics = DAY_ONE_TOPICS.map(
     (t) => `[${t}]\n${(answers[t] ?? '').trim() || '(no reply yet)'}\n`,
   ).join('\n');
   const changes = changeRequests.flatMap(changeRequestLines);
-  if (changes.length === 0) return topics;
   return [
     topics,
-    '[changes-requested]',
-    'The manager read an earlier draft and sent it back asking for these changes, oldest first.',
-    ...changes,
-    '',
+    ...(office.length > 0 ? officeLines(office) : []),
+    ...(changes.length > 0
+      ? [
+          '[changes-requested]',
+          'The manager read an earlier draft and sent it back asking for these changes, oldest first.',
+          ...changes,
+          '',
+        ]
+      : []),
   ].join('\n');
+}
+
+/**
+ * The office block of the prompt: the office's systems, each a system of its own however the
+ * manager words it, so a ticket queue the manager names is listed rather than read as a location.
+ */
+function officeLines(office: readonly OfficeSystem[]): string[] {
+  return [
+    '[office]',
+    `The employee works in a seeded office whose systems are: ${office
+      .map((system) => `${system.name} (${system.class})`)
+      .join('; ')}.`,
+    'Each is a system of its own however the manager words it. When the manager names one as a place where work is tracked or asks arrive, list it in namedSystems under that name and class.',
+    '',
+  ];
 }
 
 function ensureProvenance(items: EvidenceItem[]): EvidenceItem[] {
@@ -317,6 +349,18 @@ function canonicalSystemName(system: NamedSystem): string | undefined {
     return prefix || undefined;
   }
   return name;
+}
+
+/**
+ * The office's name for a row that names one of the office's own systems, by its name with or
+ * without a leading "the", in any case; undefined for any other row.
+ */
+function officeSystemName(
+  system: NamedSystem,
+  office: readonly OfficeSystem[],
+): string | undefined {
+  const named = system.name.trim().replace(/\s+/g, ' ').replace(/^the /i, '').toLowerCase();
+  return office.find((candidate) => candidate.name.toLowerCase() === named)?.name;
 }
 
 const DOMAIN_SUFFIX = /\.(?:app|com|io|dev|ai|co|net|org)$/i;
@@ -380,16 +424,21 @@ interface ProductRow {
  * Returns:
  *   One row per product in first-mentioned order with distinct evidence merged.
  */
-export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSystem[] {
+export function normaliseNamedSystems(
+  systems: readonly NamedSystem[],
+  office: readonly OfficeSystem[] = [],
+): NamedSystem[] {
+  const nameOf = (system: NamedSystem): string | undefined =>
+    officeSystemName(system, office) ?? canonicalSystemName(system);
   const canonicalRows = systems.flatMap(
     (system: NamedSystem): Array<{ system: NamedSystem; name: string }> => {
-      const name = canonicalSystemName(system);
+      const name = nameOf(system);
       return name ? [{ system, name }] : [];
     },
   );
   const rows: ProductRow[] = [];
   for (const system of systems) {
-    let name = canonicalSystemName(system);
+    let name = nameOf(system);
     if (!name && CHANNEL_LOCATION.test(system.name)) {
       name = canonicalRows.find(
         (row): boolean =>
@@ -440,7 +489,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     shortTermGoals: raw.shortTermGoals,
     proposedBoundaries: raw.proposedBoundaries,
     namedCollaborators: raw.namedCollaborators,
-    namedSystems: normaliseNamedSystems(raw.namedSystems),
+    namedSystems: normaliseNamedSystems(raw.namedSystems, args.office),
     priorityReading: raw.priorityReading,
     adjacentRoles: raw.adjacentRoles,
     approvalChain: {
@@ -551,7 +600,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
   const createdAt = (args.createdAt ?? new Date()).toISOString();
   const raw = await agentJson<RawCharterPayload>({
     agent: charterAgent,
-    user: userPrompt(args.answers, args.changeRequests),
+    user: userPrompt(args.answers, args.changeRequests, args.office),
     schema: charterSchema,
   });
   return assemble(raw, args, createdAt);

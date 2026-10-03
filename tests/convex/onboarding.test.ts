@@ -10,10 +10,17 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
+/** The charter the fake drafter returns, when a test gives one, and the prompts it was sent. */
+const drafter = vi.hoisted(() => ({ reply: undefined as unknown, prompts: [] as string[] }));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (): Promise<never> => {
-    throw new Error('model unavailable in tests');
+  agentJson: async ({ agent, user }: { agent: { name: string }; user: string }) => {
+    if (agent.name !== 'day0-charter' || drafter.reply === undefined) {
+      throw new Error('model unavailable in tests');
+    }
+    drafter.prompts.push(user);
+    return drafter.reply;
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -41,6 +48,8 @@ vi.mock('../../src/agent/work-generator', () => ({
 
 afterEach((): void => {
   generator.extra = [];
+  drafter.reply = undefined;
+  drafter.prompts.length = 0;
   restoreSurfaceMode();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -288,5 +297,86 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
       harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }),
     ).resolves.toEqual({ workItemsGenerated: 0 });
     expect(await seedingFailures(harness)).toEqual([]);
+  });
+});
+
+describe('the mock office in the drafted charter (round 0141 R-D item 5)', (): void => {
+  /** A drafted charter that lists the ticket queue the manager named, as the model returns it. */
+  const DRAFT = {
+    whyThisHire: 'Pipeline data needs an owner.',
+    proposedFunction: 'Pipeline hygiene.',
+    evidence: [],
+    shortTermGoals: { day30: 'Close tickets.', day60: 'Keep the tracker.', day90: 'Own it.' },
+    proposedBoundaries: {
+      willDo: ['Close routine tickets.'],
+      willNotDo: [],
+      escalationTriggers: [],
+    },
+    namedCollaborators: [],
+    namedSystems: [
+      {
+        name: 'the ticket queue',
+        class: 'kanban',
+        whereMentioned: 'Work is tracked in the ticket queue.',
+      },
+      { name: 'Slack', class: 'chat', whereMentioned: 'Asks arrive in Slack.' },
+    ],
+    priorityReading: [],
+    adjacentRoles: [],
+    approvalChain: { boss: 'manager', confidence: 'high' },
+    openQuestions: [],
+    constraints: [],
+  };
+
+  const ANSWERS = Object.fromEntries(
+    [
+      'why-this-hire',
+      'role-and-goals',
+      'collaborators',
+      'reading',
+      'tools',
+      'immediate',
+      'open-questions',
+    ].map((topic): [string, string] => [topic, 'Work is tracked in the ticket queue.']),
+  );
+
+  /** Draft a charter for a fresh employee under the mode the test set, and read its systems back. */
+  async function draftedSystems(): Promise<string[]> {
+    drafter.reply = DRAFT;
+    const { api: modeApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Wren',
+          userId: 'owner',
+          state: 'deployed',
+          createdAt: 1,
+        }),
+    );
+    const { charterId } = await harness
+      .withIdentity(managerIdentity())
+      .action(modeApi.onboarding.synthesiseFromAnswers, {
+        agentId,
+        bossLabel: 'Sam',
+        answers: ANSWERS,
+      });
+    const charter = await harness.run(async (ctx) => await ctx.db.get(charterId as Id<'charters'>));
+    return ((charter?.body as { namedSystems?: Array<{ name: string }> }).namedSystems ?? []).map(
+      (system) => system.name,
+    );
+  }
+
+  it("lists the office's ticket queue among the systems named, told the office's systems", async (): Promise<void> => {
+    useSurfaceMode('mock');
+    expect(await draftedSystems()).toEqual(['Ticket queue', 'Slack']);
+    expect(drafter.prompts.at(-1)).toContain('Ticket queue (kanban)');
+  });
+
+  it("leaves a real deployment's drafter as it was: a queue is a location, and no office is described", async (): Promise<void> => {
+    useSurfaceMode('real');
+    expect(await draftedSystems()).toEqual(['Slack']);
+    expect(drafter.prompts.at(-1)).not.toContain('[office]');
   });
 });

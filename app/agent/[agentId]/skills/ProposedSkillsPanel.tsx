@@ -290,6 +290,8 @@ export function ProposedSkillsPanel({
                       size="small"
                       disabled={Boolean(refusal) || change.busy}
                       title={refusal}
+                      // Named by its skill, as Reject is: two proposals' Approves are told apart.
+                      aria-label={`Approve · author and verify ${s.name}`}
                       onClick={() => onApprove(s)}
                     >
                       Approve · author and verify

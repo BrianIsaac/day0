@@ -3,6 +3,7 @@ import { query, type QueryCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { agentZone } from '../src/lib/zone';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import {
   projectKnowledge,
   type KnowledgeProjection,
@@ -87,6 +88,7 @@ async function projectionInput(ctx: QueryCtx, agent: Doc<'agents'>): Promise<Pro
       ...(surface.expiresAt !== undefined ? { expiresAt: surface.expiresAt } : {}),
     })),
     documentation,
+    office: SURFACE_MODE === 'real' ? 'real' : 'mock',
   };
 }
 

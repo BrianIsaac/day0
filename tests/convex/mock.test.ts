@@ -218,3 +218,49 @@ describe('a mirror written for an employee that no longer reads its source (tran
     expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([]);
   });
 });
+
+describe('openTicketsForDraftedWork', (): void => {
+  it("opens the office's next ticket for a drafted ticket item and returns the batch naming it", async (): Promise<void> => {
+    const { openTicketsForDraftedWork } = await import('../../convex/mock');
+    const harness = convexTest(schema, allConvexModules());
+    const result = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'office test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('mockTickets', {
+        agentId,
+        slug: 'REVOPS-203',
+        title: 'Seeded',
+        body: 'Seeded.',
+        status: 'open',
+        comments: [],
+        updatedAt: 1,
+      });
+      const items = await openTicketsForDraftedWork(ctx, agentId, [
+        {
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'ticket',
+          title: 'New laptop needed for the analyst starting Monday',
+          contentSummary: 'Nora filed it.',
+          contentRefs: [],
+        },
+      ]);
+      const tickets = await ctx.db
+        .query('mockTickets')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+        .collect();
+      return { refs: items.map((item) => item.contentRefs), tickets };
+    });
+    expect(result.refs).toEqual([['ticket://REVOPS-204']]);
+    expect(
+      result.tickets.map((ticket) => [ticket.slug, ticket.title, ticket.status]).sort(),
+    ).toEqual([
+      ['REVOPS-203', 'Seeded', 'open'],
+      ['REVOPS-204', 'New laptop needed for the analyst starting Monday', 'open'],
+    ]);
+  });
+});

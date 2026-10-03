@@ -144,6 +144,40 @@ function tokenise(text: string): Set<string> {
 }
 
 /**
+ * Every token the candidate shares with the charter's role or its willDo
+ * clauses, as the lexical eligibility rule reads them. The mock work
+ * generator asks again for an out-of-scope item that shares any, since this
+ * rule would take it for the role's work.
+ *
+ * @param candidate - The item's title and summary.
+ * @param charter - The approved charter.
+ * @returns The shared tokens in charter order, empty when there are none.
+ */
+export function sharedCharterWords(
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
+  charter: Charter,
+): string[] {
+  const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
+  return charterWords(charter).filter((token) => bodyTokens.has(token));
+}
+
+/**
+ * The words the lexical eligibility rule reads from the charter: every word of four letters or
+ * more in its role and its willDo clauses, stop words left out, in charter order.
+ *
+ * @param charter - The approved charter.
+ */
+export function charterWords(charter: Charter): string[] {
+  const charterTokens = new Set<string>();
+  for (const w of tokenise(charter.proposedFunction)) charterTokens.add(w);
+  for (const clause of charter.proposedBoundaries.willDo ?? []) {
+    for (const w of tokenise(clause)) charterTokens.add(w);
+  }
+  for (const stop of STOP_WORDS) charterTokens.delete(stop);
+  return [...charterTokens];
+}
+
+/**
  * The lexical eligibility rule: one token the candidate shares with the
  * charter's role or its willDo clauses.
  *
@@ -154,18 +188,11 @@ function tokenise(text: string): Set<string> {
  * Returns:
  *   The first shared token in charter order, or undefined when there is none.
  */
-export function charterOverlap(candidate: WorkCandidate, charter: Charter): string | undefined {
-  const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
-  const charterTokens = new Set<string>();
-  for (const w of tokenise(charter.proposedFunction)) charterTokens.add(w);
-  for (const clause of charter.proposedBoundaries.willDo ?? []) {
-    for (const w of tokenise(clause)) charterTokens.add(w);
-  }
-  for (const stop of STOP_WORDS) charterTokens.delete(stop);
-  for (const t of charterTokens) {
-    if (bodyTokens.has(t)) return t;
-  }
-  return undefined;
+export function charterOverlap(
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
+  charter: Charter,
+): string | undefined {
+  return sharedCharterWords(candidate, charter)[0];
 }
 
 const NAME_CHARACTER = 'A-Za-z0-9_-';

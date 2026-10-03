@@ -14,6 +14,7 @@ import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
+import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
 import {
   HANDOVER_IN_PROGRESS_REASON,
@@ -942,11 +943,13 @@ export const seedItem = internalMutation({
 });
 
 /**
- * Seed every item the mock generator made for an approved charter, and the
- * `work.charter-derived` event, in one transaction. Internal; the charter's
- * seeding calls it. All or nothing, so a retry after a failure never adds a
- * second, different batch beside a partial first: the generator is a model
- * call and the seed dedups on external ids only (U9 D4).
+ * Seed every item the mock generator made for an approved charter, the
+ * tickets the office opens for them, and the `work.charter-derived` event, in
+ * one transaction. Internal; the charter's seeding calls it. All or nothing,
+ * so a retry after a failure never adds a second, different batch beside a
+ * partial first: the generator is a model call and the seed dedups on
+ * external ids only (U9 D4). Every item from the ticket queue names a ticket
+ * the office holds once it is seeded (`openTicketsForDraftedWork`, M10).
  *
  * @returns How many items were seeded.
  */
@@ -957,7 +960,8 @@ export const seedCharterDerived = internalMutation({
     items: v.array(v.object(workItemSeedFields)),
   },
   handler: async (ctx, args): Promise<number> => {
-    for (const item of args.items) {
+    const items = await openTicketsForDraftedWork(ctx, args.agentId, args.items);
+    for (const item of items) {
       await seedItemInTransaction(ctx, { agentId: args.agentId, ...item });
     }
     await appendEvent(ctx, {
@@ -2576,6 +2580,29 @@ async function verdictCharter(
 }
 
 /**
+ * Whether a queue verdict repeats the row's standing one: queued for the same reason, and judged
+ * under the charter its last evaluation named. A judgement under a newer approved charter is a
+ * new one, so the record names the rules that decided it (Q14).
+ */
+async function repeatsQueuedJudgement(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  effective: { decision: string; [key: string]: unknown },
+  evaluatedCharterId: Id<'charters'> | undefined,
+): Promise<boolean> {
+  const standing = row.verdict as { decision?: unknown; reason?: unknown } | undefined;
+  if (standing?.decision !== 'queue' || standing.reason !== effective.reason) return false;
+  const [charter, recent] = await Promise.all([
+    verdictCharter(ctx, row.agentId, evaluatedCharterId),
+    eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH),
+  ]);
+  const last = recent.find(
+    (event) => (event.payload as { workItemId?: unknown }).workItemId === row._id,
+  );
+  return (last?.payload as { charterId?: unknown } | undefined)?.charterId === charter?._id;
+}
+
+/**
  * The newest charter rows a verdict looks through for an approved one: drafts
  * sent back and redrafted stack above it only a few deep.
  */
@@ -2667,6 +2694,33 @@ export async function applyVerdict(
         superseded: effective,
       };
     }
+  }
+
+  // A queued row judged again with no slot free is the same judgement, not a new one: the mock
+  // loop asks after every change to the queue, and the record says it once (the redeploy walk
+  // saw "queued behind its open work" twice). Only the evaluation step's own marks are cleared.
+  // Real mode is left as it was: its loop never judges a queued row while no slot is free.
+  if (
+    SURFACE_MODE !== 'real' &&
+    row.state === 'discovered' &&
+    effective.decision === 'queue' &&
+    (await repeatsQueuedJudgement(ctx, row, effective, evaluatedCharterId))
+  ) {
+    if (
+      row.evaluationClaimedAt !== undefined ||
+      row.evaluationAttempts !== undefined ||
+      row.evaluationUnavailableAt !== undefined ||
+      row.evaluationUnavailableCause !== undefined
+    ) {
+      await ctx.db.patch(workItemId, {
+        evaluationClaimedAt: undefined,
+        evaluationAttempts: undefined,
+        evaluationUnavailableAt: undefined,
+        evaluationUnavailableCause: undefined,
+      });
+    }
+    await scheduleNextStep(ctx, { ...row, verdict: effective });
+    return effective;
   }
 
   const decision = effective.decision;

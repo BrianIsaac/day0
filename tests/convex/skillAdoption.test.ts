@@ -518,6 +518,83 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     expect(card).not.toHaveProperty('refusal');
   });
 
+  /** Register the shape for an employee as its authoring run would, and return the version. */
+  async function registerFor(
+    harness: Harness,
+    agentId: Id<'agents'>,
+  ): Promise<Id<'skillVersions'>> {
+    const claimed = await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('events', {
+        agentId,
+        type: 'skill.authoring-claimed',
+        payload: {},
+        createdAt: 1,
+      });
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: NAME,
+        description: 'Ticket comment-and-close on a kanban surface.',
+        body: '',
+        sourceType: 'agent-authored',
+        state: 'authoring',
+        requiredScopes: ['ticket:write'],
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        authoringRunId: runId,
+        authoringClaimedAt: 1,
+        createdAt: 1,
+      });
+      return { skillId, runId };
+    });
+    await expect(
+      harness.mutation(internal.skills.completeRegistration, {
+        ...claimed,
+        body: BODY,
+        verificationLog: 'ok: true',
+        smokeTest: SMOKE,
+        harnessTools: ['save_comment'],
+      }),
+    ).resolves.toEqual({ registered: true });
+    const registered = await row(harness, claimed.skillId);
+    if (registered.versionId === undefined) throw new Error('no version recorded');
+    return registered.versionId;
+  }
+
+  it("offers a plain proposal the version a colleague registers after it (the 11-FD cockpit's item 2)", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    const sol = await employee(harness, 'Sol', {
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+    });
+    const plain = await propose(harness, sol);
+    expect((await row(harness, plain)).offeredVersionId).toBeUndefined();
+
+    const registered = await registerFor(harness, wren);
+
+    expect((await row(harness, plain)).offeredVersionId).toBe(registered);
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: sol,
+    });
+    expect(card).toMatchObject({ skillId: plain, state: 'offered', authorName: 'Wren' });
+    expect(
+      (await eventsOf(harness, 'skill.adoption-offered')).map((event) => event.agentId),
+    ).toEqual([sol]);
+  });
+
+  it("offers nothing to another owner's proposal or to the author's own", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    const stranger = await employee(harness, 'Kai', { owner: 'someone-else' });
+    const theirs = await propose(harness, stranger);
+
+    await registerFor(harness, wren);
+
+    expect((await row(harness, theirs)).offeredVersionId).toBeUndefined();
+    expect(await eventsOf(harness, 'skill.adoption-offered')).toEqual([]);
+  });
+
   it('asks the charter alone in mock mode for a proposal that kept no shape, so its offer is refused', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
