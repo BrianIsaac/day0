@@ -172,13 +172,17 @@ function viewOf(
           ...(request.copiedAt === undefined ? {} : { copiedAt: request.copiedAt }),
           ...(request.emailedAt === undefined ? {} : { emailedAt: request.emailedAt }),
           // The claim of the DM writes `messagedAt`; Slack's timestamp says it went out, and a
-          // claim with none is on its way until the release scheduled at the claim ends it, a
-          // write, so the query runs again (the round review's m9).
+          // claim with none is on its way while it stands. The release scheduled at the claim
+          // ends it by a write, so the query runs again at the bound (the round review's m9); the
+          // bound read here covers a claim made before the upgrade, which no release was
+          // scheduled for (the second pass).
           ...(request.messagedAt === undefined
             ? {}
             : request.messageProviderTs !== undefined
               ? { messagedAt: request.messagedAt }
-              : { messaging: true }),
+              : messageClaimed(request, Date.now())
+                ? { messaging: true }
+                : {}),
         }),
   };
 }

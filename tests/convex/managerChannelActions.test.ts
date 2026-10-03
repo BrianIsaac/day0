@@ -1907,6 +1907,28 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     expect(surface?.accessRequest).not.toHaveProperty('messagedAt');
   });
 
+  it('offers the DM again for a claim made before the upgrade, which no release was scheduled for (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'copied' });
+    // As v0.14.0 left a claim whose action died: `messagedAt` eleven minutes old, nothing queued.
+    await harness.run(async (ctx) => {
+      const card = await ctx.db.get(linearId);
+      if (card?.accessRequest === undefined) throw new Error('no drafted request');
+      await ctx.db.patch(linearId, {
+        accessRequest: { ...card.accessRequest, messagedAt: Date.now() - 11 * 60 * 1000 },
+      });
+    });
+
+    expect(
+      await owner.query(api.accessRequests.forCard, { surfaceId: linearId }),
+    ).not.toHaveProperty('messaging');
+  });
+
   it("never lets the release scheduled at one claim end a later claim (the round review's m9)", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
