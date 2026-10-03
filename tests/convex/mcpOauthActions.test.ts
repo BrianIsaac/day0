@@ -555,6 +555,98 @@ describe('completing an authorisation', (): void => {
   });
 });
 
+describe("the issuer's metadata recorded at the start (R-S; 11-AM's cockpit item 3)", (): void => {
+  /** Whether a request reads an authorisation server's metadata document. */
+  const readsServerMetadata = (url: URL): boolean =>
+    url.pathname.includes('oauth-authorization-server') ||
+    url.pathname.includes('openid-configuration');
+
+  /**
+   * The deployment's fetch from here on: every request to the server, its metadata reads counted
+   * and the metadata document rewritten as the test says.
+   */
+  async function watchMetadata(
+    rewrite: (document: Record<string, unknown>) => Record<string, unknown> = (document) =>
+      document,
+  ): Promise<{ readonly reads: () => number }> {
+    let reads = 0;
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (url: URL, init: RequestInit): Promise<Response> => {
+        const answer = await server.handle(new Request(url, init));
+        if (!readsServerMetadata(url) || !answer.ok) return answer;
+        reads += 1;
+        return Response.json(rewrite((await answer.json()) as Record<string, unknown>));
+      },
+      now: () => clock,
+    });
+    return { reads: (): number => reads };
+  }
+
+  it('records with the pending authorisation whether the issuer sends iss, its token endpoint and how it takes a client', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const { surface } = await read(harness, surfaceId);
+    expect(surface.pendingAuthorisation?.issuerMetadata).toEqual({
+      issParameterSupported: true,
+      tokenEndpoint: `${ISSUER}/token`,
+      tokenEndpointAuthMethods: expect.arrayContaining(['client_secret_basic']),
+    });
+  });
+
+  it('completes on what the start recorded, never fetching the metadata again', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness, { confidential: { issuer: ISSUER } });
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    const watched = await watchMetadata();
+
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    expect(watched.reads()).toBe(0);
+    expect(await adminState()).toMatchObject({ codeExchanges: 1 });
+  });
+
+  it('holds the response to the iss parameter the start was told of, though the metadata stops advertising it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    await watchMetadata((document) => ({
+      ...document,
+      authorization_response_iss_parameter_supported: false,
+    }));
+    const back = await consent(started.authoriseUrl);
+    back.searchParams.delete('iss');
+
+    const outcome = await complete(harness, back);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toContain('did not say who answered');
+    expect(await adminState()).toMatchObject({ codeExchanges: 0 });
+  });
+
+  it('fetches the metadata again for an authorisation started before the field', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seed(harness);
+    const started = await start(harness, surfaceId);
+    if (!started.ok) throw new Error(started.reason);
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db.get(surfaceId);
+      if (!surface?.pendingAuthorisation) throw new Error('no pending authorisation');
+      const { issuerMetadata: _recorded, ...older } = surface.pendingAuthorisation;
+      await ctx.db.patch(surfaceId, { pendingAuthorisation: older });
+    });
+    const watched = await watchMetadata();
+
+    expect((await complete(harness, await consent(started.authoriseUrl))).ok).toBe(true);
+
+    expect(watched.reads()).toBeGreaterThan(0);
+  });
+});
+
 describe('cancelling and expiring', (): void => {
   it('clears a pending authorisation on the owner’s cancel', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
