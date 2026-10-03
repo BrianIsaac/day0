@@ -235,7 +235,7 @@ describe('orientation data boundary', (): void => {
     ).toBe(false);
   });
 
-  it('returns all agent surfaces to the deployment-local intake sweep', async (): Promise<void> => {
+  it("returns only the deployment's chat surfaces to the minute-by-minute decision poll", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentIds = await harness.run(
       async (ctx): Promise<Id<'agents'>[]> =>
@@ -266,12 +266,6 @@ describe('orientation data boundary', (): void => {
             ],
           }),
       ),
-    );
-
-    const surfaces = await harness.query(internal.orientationData.surfacesForIntake, {});
-    expect(surfaces.map((surface): string => surface.slug).sort()).toEqual(['linear', 'slack']);
-    expect(new Set(surfaces.map((surface): Id<'agents'> => surface.agentId))).toEqual(
-      new Set(agentIds),
     );
 
     // The manager decision poll runs every minute against a surface set that

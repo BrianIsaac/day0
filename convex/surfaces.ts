@@ -1109,59 +1109,6 @@ export const attachCredential = internalMutation({
 });
 
 /**
- * Record the dedicated app this employee just registered for itself.
- *
- * The app and its install link are stored together with the single-use nonce
- * that binds the link to this surface, so provisioning again simply replaces
- * the link and invalidates the previous one.
- *
- * Internal, for `slackProvisionActions`. Refuses a client secret that is not the employee's
- * current owner's (`assertCredentialOfOwner`).
- *
- * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
- */
-export const recordProvisionedApp = internalMutation({
-  args: {
-    surfaceId: v.id('surfaces'),
-    appId: v.string(),
-    appName: v.string(),
-    clientId: v.string(),
-    clientSecretCredentialId: v.id('credentials'),
-    installUrl: v.string(),
-    redirectUrl: v.string(),
-    scopes: v.array(v.string()),
-    stateNonce: v.string(),
-    stateExpiresAt: v.number(),
-    now: v.number(),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
-    await assertCredentialOfOwner(ctx.db, surface.agentId, args.clientSecretCredentialId);
-    await ctx.db.patch(surface._id, {
-      provisioning: {
-        appId: args.appId,
-        appName: args.appName,
-        clientId: args.clientId,
-        clientSecretCredentialId: args.clientSecretCredentialId,
-        installUrl: args.installUrl,
-        redirectUrl: args.redirectUrl,
-        scopes: args.scopes,
-        createdAt: args.now,
-        stateNonce: args.stateNonce,
-        stateExpiresAt: args.stateExpiresAt,
-      },
-    });
-    await appendEvent(ctx, {
-      agentId: surface.agentId,
-      type: 'surface.app-provisioned',
-      payload: { surfaceId: surface._id, appId: args.appId, appName: args.appName },
-      createdAt: args.now,
-    });
-  },
-});
-
-/**
  * Consume the install link's single-use nonce.
  *
  * This runs before the code is exchanged, so a redirect replayed from a

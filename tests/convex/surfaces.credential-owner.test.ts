@@ -213,28 +213,6 @@ describe('the three credential writers after a handover (M5)', (): void => {
     expect((await readSurface(harness, slack)).credentialId).toBe(newOwners);
   });
 
-  it('recordProvisionedApp refuses a client secret stored for the old owner and records no app', async (): Promise<void> => {
-    const { harness, slack, oldOwners } = await seedMoved();
-
-    await expect(
-      harness.mutation(internal.surfaces.recordProvisionedApp, {
-        surfaceId: slack,
-        appId: 'A123',
-        appName: 'Maya (Day0)',
-        clientId: '111.222',
-        clientSecretCredentialId: oldOwners,
-        installUrl: 'https://slack.com/oauth/v2/authorize',
-        redirectUrl: 'https://day0.example.test/api/oauth/slack',
-        scopes: ['chat:write'],
-        stateNonce: 'nonce',
-        stateExpiresAt: 1_000,
-        now: 5,
-      }),
-    ).rejects.toMatchObject({ data: CREDENTIAL_NOT_THE_OWNERS });
-
-    expect((await readSurface(harness, slack)).provisioning).toBeUndefined();
-  });
-
   it('recordInstalledApp refuses a bot token stored for the old owner and binds nothing', async (): Promise<void> => {
     const { harness, slack, oldOwners } = await seedMoved();
 
