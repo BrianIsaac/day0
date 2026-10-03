@@ -24,8 +24,11 @@ the connection and in the install record:
 **Shared.** A Linear workspace administrator (installing an app as the app
 actor needs administrator permissions) creates one OAuth application from the
 manifest below: open the link `./setup.sh access --print-manifest linear`
-prints while signed in to Linear, check that **Client credentials** is
-enabled on the form (the manifest enables it), and create the app. Linear
+prints while signed in to Linear. The link pre-fills the form's name,
+developer, developer URL, callback URL and grant types from the manifest
+printed above it. Check each field against that manifest, tick **Client
+credentials** if the form shows it off, leave webhooks off, type the
+manifest's description if the form asks for one, and create the app. Linear
 shows its **client id** and **client secret**.
 
 **Per employee.** When an employee's Linear card asks for access, its manager
@@ -41,8 +44,9 @@ employee's app first:
 
 prints the employee's own app's manifest, named `<employee name> (Day0)`,
 authorisation code only (no client credentials), and the link that pre-fills
-Linear's create form with it. A Linear administrator opens the link signed in
-to Linear and creates the app. An administrator then opens the request's link
+Linear's create form with its fields. A Linear administrator opens the link
+signed in to Linear, checks the form against the manifest (**Client
+credentials** stays off), and creates the app. An administrator then opens the request's link
 to the organisation page, records the app's client id and client secret there,
 and presses **Record the app and install it**: Day0 opens Linear for a Linear
 administrator to install it with `actor=app`. The card asks IT for nothing
@@ -51,7 +55,9 @@ minutes) whenever the employee's app needs installing again.
 
 ## 2. The manifest or the form
 
-Linear's app manifests pre-fill the create form; no API creates an app. For a
+No API creates a Linear app: IT creates it in Linear's form, which the printed
+link pre-fills with the manifest's fields (Linear refuses a manifest passed
+whole in a link: "The app manifest provided in the URL is not valid"). For a
 shared app on an install whose `DAY0_PUBLIC_URL` is `https://day0.acme.example`,
 the manifest is:
 

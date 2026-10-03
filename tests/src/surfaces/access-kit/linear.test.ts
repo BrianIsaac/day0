@@ -6,8 +6,14 @@ import {
   LINEAR_REDIRECT_PATH,
   linearAuthoriseUrl,
   linearKitManifest,
-  linearManifestUrl,
+  linearCreateFormUrl,
 } from '../../../../src/surfaces/access-kit/linear';
+import {
+  LINEAR_MANIFEST_LINK_REFUSED,
+  LINEAR_OWN_APP_NAME,
+  LINEAR_PREFILLED_FORM_LINK,
+  REWALK_PUBLIC_URL,
+} from '../../../fixtures/real-vendor-rewalk-2026-10-03';
 
 const PUBLIC_URL = 'https://day0.acme.test';
 
@@ -63,11 +69,49 @@ describe('the Linear recipe', (): void => {
     );
   });
 
-  it('pre-fills Linear’s create form with the manifest itself', (): void => {
+  it('pre-fills Linear’s create form with the manifest’s own fields', (): void => {
     const manifest = linearKitManifest({ appName: 'Day0', publicUrl: PUBLIC_URL, mode: 'shared' });
-    const url = new URL(linearManifestUrl(manifest));
+    const url = new URL(linearCreateFormUrl(manifest));
     expect(`${url.origin}${url.pathname}`).toBe('https://linear.app/settings/api/applications/new');
-    expect(JSON.parse(url.searchParams.get('manifest') ?? '')).toEqual(manifest);
+    expect(url.searchParams.get('oauth.client_name')).toBe(manifest.oauth.client_name);
+    expect(url.searchParams.get('oauth.client_uri')).toBe(manifest.oauth.client_uri);
+    expect(url.searchParams.getAll('oauth.redirect_uris')).toEqual(manifest.oauth.redirect_uris);
+    expect(url.searchParams.getAll('oauth.grant_types')).toEqual(manifest.oauth.grant_types);
+    expect(url.searchParams.get('developer.name')).toBe(manifest.developer.name);
+    expect(url.searchParams.get('distribution')).toBe(manifest.distribution);
+  });
+
+  it(`pre-fills an employee’s app’s form field by field as the re-walk’s link did, never with a manifest Linear refuses ("${LINEAR_MANIFEST_LINK_REFUSED}", R41X-2)`, (): void => {
+    const manifest = linearKitManifest({
+      appName: LINEAR_OWN_APP_NAME,
+      publicUrl: REWALK_PUBLIC_URL,
+      mode: 'per-employee',
+    });
+    const link = linearCreateFormUrl(manifest);
+    const built = new URL(link);
+    const walked = new URL(LINEAR_PREFILLED_FORM_LINK);
+    expect(`${built.origin}${built.pathname}`).toBe(`${walked.origin}${walked.pathname}`);
+    expect([...built.searchParams]).toEqual([...walked.searchParams]);
+    expect(built.searchParams.has('manifest')).toBe(false);
+    // A space as the walk's link wrote it, never `+`.
+    expect(link).toContain('oauth.client_name=Leo%20(Day0)');
+  });
+
+  it('pre-fills the shared app’s form in the same shape, with client credentials as a second grant type (R41X-2)', (): void => {
+    const manifest = linearKitManifest({
+      appName: 'Day0',
+      publicUrl: REWALK_PUBLIC_URL,
+      mode: 'shared',
+    });
+    const built = new URL(linearCreateFormUrl(manifest));
+    const walked = new URL(LINEAR_PREFILLED_FORM_LINK);
+    walked.searchParams.set('oauth.client_name', 'Day0');
+    walked.searchParams.append('oauth.grant_types', 'client_credentials');
+    expect([...built.searchParams]).toEqual([...walked.searchParams]);
+    expect(built.searchParams.getAll('oauth.grant_types')).toEqual([
+      'authorization_code',
+      'client_credentials',
+    ]);
   });
 
   it('authorises an employee’s app as the app actor with the scopes and redirect the manifest declares', (): void => {
