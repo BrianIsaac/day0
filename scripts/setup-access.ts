@@ -641,17 +641,28 @@ function recordedSignIn(
 }
 
 /**
- * An MCP landing with the issuer of its authorisation server: IT's, or, when IT left it blank, the
- * one the server's own resource metadata names, read now with IT beside the verb and said, so the
- * connection records IT's choice and never a manager's first authorisation (the wave 11 review's
- * m4). Any other landing is returned as it is.
+ * An MCP landing with the issuer of its authorisation server: IT's, or, for a public client IT left
+ * it blank for, the one the server's own resource metadata names, read now with IT beside the verb
+ * and said, so the connection records IT's choice and never a manager's first authorisation (the
+ * wave 11 review's m4). A confidential client's issuer is never read from the server. Any other
+ * landing is returned as it is.
  *
- * @throws Error naming the server when its metadata names no authorisation server Day0 can read.
+ * @throws Error naming the server when a confidential client has no issuer, or when the metadata
+ *   names no authorisation server Day0 can read.
  */
 async function withIssuer(landing: Landing, io: AccessIo): Promise<Landing> {
   const given = typeof landing.issuer === 'string' ? landing.issuer.trim() : '';
   if (!landing.system.startsWith('mcp:') || given !== '') return landing;
   const server = String(landing.resource);
+  // A client secret goes to the server IT registered the client with, never to whichever one
+  // the resource names (M12 f): only a public client's issuer is read from the server.
+  if (landing.secret !== undefined) {
+    throw new Error(
+      `${server} has a client secret and no issuer: give the issuer of the authorisation server ` +
+        "IT registered the client with (the prompt's issuer, or MCP_ISSUER on stdin); Day0 sends " +
+        'the secret to that server alone.',
+    );
+  }
   let issuer: string;
   try {
     const target = await discoverAuthorisation(io.vendorFetch ?? fetch, new URL(server));

@@ -395,6 +395,29 @@ describe('setup: the access verb', (): void => {
     );
   });
 
+  it("never reads a confidential client's issuer from the server: IT names it, or nothing is landed (the code pass's M1)", async (): Promise<void> => {
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'docs-client', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const bed = accessBed({
+      vendorFetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        await issuer.handle(new Request(url, init)),
+    });
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\nMCP_CLIENT_SECRET=docs-test-secret\n',
+    );
+    expect(status).toBe(1);
+    expect(
+      bed.deployment.calls.filter((call) => call.path === 'organisationConnections:landFromSetup'),
+    ).toEqual([]);
+    expect(bed.bed.output.join('\n')).toContain(
+      "Nothing was written: https://auth.acme.test/mcp has a client secret and no issuer: give the issuer of the authorisation server IT registered the client with (the prompt's issuer, or MCP_ISSUER on stdin); Day0 sends the secret to that server alone.",
+    );
+  });
+
   it('writes and lands nothing when the server names no authorisation server it can read', async (): Promise<void> => {
     const bed = accessBed();
     const status = await bed.run(
