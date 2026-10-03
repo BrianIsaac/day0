@@ -25,7 +25,7 @@ export const LEASE_POLLS = Math.ceil(REFRESH_LEASE_MS / LEASE_POLL_MS) + 1;
  * for a live holder's exchange to land, short enough that a read behind a dead holder's lease
  * uses the stored token rather than waiting out the lease.
  */
-export const LIVE_TOKEN_LEASE_POLLS = 20;
+export const LIVE_TOKEN_LEASE_POLLS = Math.ceil(5_000 / LEASE_POLL_MS);
 
 /** An access token's row as far as the lease reads it. */
 export interface LeasedRow {

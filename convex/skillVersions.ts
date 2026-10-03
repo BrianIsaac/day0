@@ -142,6 +142,18 @@ export async function skillOwnerKeyOf(
   return owner === undefined ? {} : { ownerKey: owner };
 }
 
+/** The rows of one version under one owner key, or under none (`undefined`), by `by_owner_version`. */
+async function rowsKeyedBy(
+  db: DatabaseReader,
+  ownerKey: string | undefined,
+  versionId: Id<'skillVersions'>,
+): Promise<Doc<'skills'>[]> {
+  return await db
+    .query('skills')
+    .withIndex('by_owner_version', (q) => q.eq('ownerKey', ownerKey).eq('versionId', versionId))
+    .collect();
+}
+
 /**
  * Every row that holds a version on an employee of the version's owner: the owner boundary on a
  * version's holders is drawn in the read itself (the wave 10 review K-m3), by `by_owner_version`,
@@ -153,8 +165,8 @@ export async function skillOwnerKeyOf(
  * @remarks
  * A row written before the key, until the `skills-owner-key` pass keys it (the window between the
  * push and the pass), is read by the same index under no key and kept only when its employee is
- * the version owner's, so a withdrawal in that window still reaches it. Once the pass has run
- * there is no such row and no employee is read.
+ * the version owner's, so a withdrawal in that window still reaches it. Once the pass has run no
+ * such row of an owned employee is left, and only those, if any, are read with their employee.
  *
  * @param db - A query's or a mutation's database.
  * @param versionId - The version.
@@ -166,23 +178,14 @@ export async function holdersOf(
 ): Promise<Doc<'skills'>[]> {
   const version = await db.get(versionId);
   if (version === null) return [];
-  const [keyed, unkeyed] = await Promise.all(
-    [version.userId, undefined].map(
-      async (ownerKey) =>
-        await db
-          .query('skills')
-          .withIndex('by_owner_version', (q) =>
-            q.eq('ownerKey', ownerKey).eq('versionId', versionId),
-          )
-          .collect(),
-    ),
-  );
-  const employees = await Promise.all(
-    (unkeyed ?? []).map(async (row) => await db.get(row.agentId)),
-  );
+  const [keyed, unkeyed] = await Promise.all([
+    rowsKeyedBy(db, version.userId, versionId),
+    rowsKeyedBy(db, undefined, versionId),
+  ]);
+  const employees = await Promise.all(unkeyed.map(async (row) => await db.get(row.agentId)));
   return [
-    ...(keyed ?? []),
-    ...(unkeyed ?? []).filter((_row, index) => employees[index]?.userId === version.userId),
+    ...keyed,
+    ...unkeyed.filter((_row, index) => employees[index]?.userId === version.userId),
   ];
 }
 
