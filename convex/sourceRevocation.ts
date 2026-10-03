@@ -411,7 +411,11 @@ export async function plannedAtSource(
     readonly kept: readonly Doc<'credentials'>[];
   },
   end: AccessEnd,
-): Promise<{ readonly system: string; readonly outcome: PlannedOutcome } | null> {
+): Promise<{
+  readonly system: string;
+  readonly outcome: PlannedOutcome;
+  readonly reason?: string;
+} | null> {
   const sorted = sortRows(card.ended);
   if (sorted.revocable.length > 0) {
     const primary = primaryOf(sorted.revocable);
@@ -424,15 +428,22 @@ export async function plannedAtSource(
         : {}),
     });
     const [preferred] = plan.kind === 'call' ? plan.calls : [];
-    return {
-      system: primary.issuedBy.system,
-      outcome:
-        plan.kind === 'none' ? plan.outcome : preferred ? callOutcome(preferred) : 'not-supported',
-    };
+    // A plan that calls no vendor says why in its own words, which the dialog repeats: "Day0 holds
+    // no configuration token to delete the app; delete it in Slack's app settings." (R41V-11).
+    return plan.kind === 'none'
+      ? { system: primary.issuedBy.system, outcome: plan.outcome, reason: plan.words }
+      : {
+          system: primary.issuedBy.system,
+          outcome: preferred ? callOutcome(preferred) : 'not-supported',
+        };
   }
   const line = cardLine(sorted, card.surfaceName);
   if (line !== null && line.outcome !== 'shared' && line.outcome !== 'pasted-key') {
-    return { system: line.system, outcome: plannedOf(line.outcome) };
+    return {
+      system: line.system,
+      outcome: plannedOf(line.outcome),
+      ...(line.reason === undefined ? {} : { reason: line.reason }),
+    };
   }
   const organisation = [...card.ended, ...card.kept].find(sharedByOrganisation);
   if (organisation !== undefined) {

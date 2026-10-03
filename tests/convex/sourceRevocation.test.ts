@@ -8,9 +8,11 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   endAccessAtSource,
+  NO_VALUE_WORDS,
   plannedAtSource,
   SOURCE_REVOCATION_ATTEMPT_OFFSETS_MS,
   SOURCE_REVOCATION_KEEP_MS,
+  TOKEN_STORE_WORDS,
 } from '../../convex/sourceRevocation';
 import { allConvexModules } from './all-modules';
 import { stubVendorNetwork, type VendorNetwork } from './fakes/vendor-revocation';
@@ -577,9 +579,33 @@ describe('what the hold anchors, and the rows it cannot hold', (): void => {
     });
     expect(planned).toEqual([
       { system: 'linear', outcome: 'token-revoked' },
-      { system: 'linear', outcome: 'not-supported' },
-      { system: 'linear', outcome: 'failed' },
+      { system: 'linear', outcome: 'not-supported', reason: TOKEN_STORE_WORDS },
+      { system: 'linear', outcome: 'failed', reason: NO_VALUE_WORDS },
     ]);
+  });
+});
+
+describe("the retire dialog's words for what stays at the vendor (R41V-11)", (): void => {
+  it("gives the plan's own words where Day0 holds no configuration token to delete the employee's Slack app", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // The walk's Wren: the app's client secret, after the connection whose token made the app was revoked.
+    const secret = await stored(harness, 'w11ar-client-secret', {
+      issuedBy: { system: 'slack', grant: 'app-created', appId: 'A0WREN', clientId: '1234.5' },
+    });
+    const planned = await harness.run(async (ctx) => {
+      const row = (await ctx.db.get(secret))!;
+      return await plannedAtSource(
+        ctx.db,
+        { surfaceName: 'Slack', ended: [row], kept: [] },
+        'retire',
+      );
+    });
+    expect(planned).toEqual({
+      system: 'slack',
+      outcome: 'not-supported',
+      reason:
+        "Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
+    });
   });
 });
 

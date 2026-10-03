@@ -102,7 +102,10 @@ function outcomeLine(outcome: PreviewOutcome, name: string): string | undefined 
     case 'shared':
       return `${access}: ends for ${name} only; the app your employees share is not revoked at ${system}.`;
     case 'not-supported':
-      return `${access}: ${system} offers no way to revoke it, so Day0 deletes its copy.`;
+      // The plan's own words where it gives them: what stays at the vendor for IT (R41V-11).
+      return outcome.reason !== undefined
+        ? `${access}: ${outcome.reason}`
+        : `${access}: ${system} offers no way to revoke it, so Day0 deletes its copy.`;
     case 'failed':
       return `${access}: Day0 can no longer revoke it at ${system}, so revoke it there.`;
     case 'not-at-vendor':

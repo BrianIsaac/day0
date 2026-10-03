@@ -149,6 +149,23 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
     ]);
   });
 
+  it("says in the plan's own words what stays at the vendor for IT, never that the vendor cannot revoke it (R41V-11)", (): void => {
+    expect(
+      revokedLines(
+        preview([
+          {
+            ...outcome('Slack', 'slack', 'not-supported'),
+            reason:
+              "Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
+          },
+        ]),
+        'Wren',
+      ),
+    ).toEqual([
+      "Wren's Slack access: Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
+    ]);
+  });
+
   it('keeps the pasted-key sentence for the keys someone pasted, and says nothing here of a kept key', (): void => {
     expect(
       revokedLines(
