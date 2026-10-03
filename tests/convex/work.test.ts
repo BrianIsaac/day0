@@ -8108,3 +8108,90 @@ describe('the mock office holds every ticket its charter-derived work names (M10
     expect(refs.get('ticket-second')).toEqual(['ticket://REVOPS-205']);
   });
 });
+
+describe('a queued item judged again with no slot free (round 0141 R-D item 5)', (): void => {
+  /** An employee at its cold-start cap, with one more discovered item. */
+  async function seedAtCap(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    waiting: Id<'workItems'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Wren',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const item = {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+      };
+      await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'held',
+        title: 'Please review the team wiki before touching the queue',
+        state: 'plan-pending',
+      });
+      const waiting = await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'REVOPS-203',
+        title: 'Add Friday standup closed-won deals to Q4 Revenue Tracker',
+        state: 'discovered',
+      });
+      return { agentId, waiting };
+    });
+  }
+
+  /** The decisions of the item's evaluation lines on the record, oldest first. */
+  async function judged(harness: Harness, workItemId: Id<'workItems'>): Promise<string[]> {
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    return events
+      .filter(
+        (event) =>
+          event.type === 'work.evaluated' &&
+          (event.payload as { workItemId?: string }).workItemId === workItemId,
+      )
+      .map((event) => (event.payload as { decision: string }).decision);
+  }
+
+  it('writes the queued judgement on the record once, however often the mock loop asks again', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { applyVerdict } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const { waiting } = await seedAtCap(harness);
+    for (let ask = 0; ask < 3; ask += 1) {
+      await harness.run(async (ctx) => {
+        await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
+      });
+    }
+    expect(await judged(harness, waiting)).toEqual(['queue']);
+    const row = await harness.run(async (ctx) => await ctx.db.get(waiting));
+    expect(row).toMatchObject({ state: 'discovered', verdict: { decision: 'queue' } });
+  });
+
+  it('still writes the claim once a slot frees', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { applyVerdict } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, waiting } = await seedAtCap(harness);
+    await harness.run(async (ctx) => {
+      await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
+    });
+    await harness.run(async (ctx) => {
+      const held = await ctx.db
+        .query('workItems')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'plan-pending'))
+        .unique();
+      if (!held) throw new Error('held item missing');
+      await ctx.db.patch(held._id, { state: 'completed' });
+      await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
+    });
+    expect(await judged(harness, waiting)).toEqual(['queue', 'claim']);
+  });
+});

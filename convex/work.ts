@@ -2673,6 +2673,31 @@ export async function applyVerdict(
     }
   }
 
+  // A queued row judged again with no slot free is the same judgement, not a new one: the mock
+  // loop asks after every change to the queue, and the record says it once (the redeploy walk
+  // saw "queued behind its open work" twice). Only the evaluation step's own marks are cleared.
+  if (
+    row.state === 'discovered' &&
+    (row.verdict as { decision?: unknown } | undefined)?.decision === 'queue' &&
+    effective.decision === 'queue'
+  ) {
+    if (
+      row.evaluationClaimedAt !== undefined ||
+      row.evaluationAttempts !== undefined ||
+      row.evaluationUnavailableAt !== undefined ||
+      row.evaluationUnavailableCause !== undefined
+    ) {
+      await ctx.db.patch(workItemId, {
+        evaluationClaimedAt: undefined,
+        evaluationAttempts: undefined,
+        evaluationUnavailableAt: undefined,
+        evaluationUnavailableCause: undefined,
+      });
+    }
+    await scheduleNextStep(ctx, { ...row, verdict: effective });
+    return effective;
+  }
+
   const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
