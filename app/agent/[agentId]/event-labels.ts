@@ -463,6 +463,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'credential.superseded': (payload) => {
     const label = text(payload.label);
     const page = text(payload.page);
+    // A page swap re-bound the cards to the value the page states now (N23).
+    const rebound = payload.reboundSurfaceIds?.length
+      ? counted(payload.reboundSurfaceIds.length, 'card')
+      : undefined;
+    if (rebound) {
+      return `credential${label ? ` "${label}"` : ''} replaced in the documentation${page ? ` (${page})` : ''}; the new value bound on ${rebound} and checked again`;
+    }
     const cards = counted(payload.surfaceIds?.length, 'card');
     return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
   },

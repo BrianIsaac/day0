@@ -35,6 +35,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { credentialPageRef } from '../src/docs/credential-ref';
+import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import {
   FINISHING_CURSOR,
   finishingCursor,
@@ -1545,9 +1546,43 @@ export const finishSync = internalMutation({
   },
 });
 
+/** The verdicts of a card a swapped-out credential held that a re-bind sends back to its probe. */
+const REBOUND_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
+  'connected',
+  'approved',
+  'listed-dead',
+  'ungranted',
+]);
+
+/** What a re-bound card says until its probe has checked the page's new value. */
+const REBOUND_REASON =
+  'The documentation now states a new value under the same label. Day0 bound it to this card and checks it before the card connects again.';
+
 /**
- * Supersede one page-derived credential no page of its source states any more,
- * and send every surface bound to it back to landing a credential.
+ * The live row of the same page and label that takes over from a page credential a sync
+ * superseded (N23; the wave 3.5 review's M15): the label resolver orientation binds a
+ * `<credential: label, stored>` marker with (`credentials.pageRowsByLabel`), oldest first, less
+ * the superseded row itself. Undefined when the page states no live value under that label.
+ */
+async function replacementFor(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+): Promise<Doc<'credentials'> | undefined> {
+  if (typeof credential.source === 'string') return undefined;
+  const rows: Doc<'credentials'>[] = await ctx.runQuery(internal.credentials.pageRowsByLabel, {
+    userId: credential.userId,
+    sourceId: credential.source.sourceId,
+    pageRef: credentialPageRef(credential.source.ref),
+    label: credential.label,
+  });
+  return rows.find((row) => row._id !== credential._id && row.ciphertext !== undefined);
+}
+
+/**
+ * Supersede one page-derived credential no page of its source states any more. A page swap (the
+ * page states a new value under the same label, which this sync stored) re-binds every surface
+ * the old row held to the new one and probes each it approved at once, as a hand landing does
+ * (N23); a surface whose page states no such value goes back to landing a credential.
  */
 async function supersedeCredential(
   ctx: MutationCtx,
@@ -1568,7 +1603,12 @@ async function supersedeCredential(
     .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
     .take(1_001);
   if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
-  await recordSuperseded(ctx, credential, surfaces);
+  const replacement = surfaces.length === 0 ? undefined : await replacementFor(ctx, credential);
+  await recordSuperseded(ctx, credential, surfaces, replacement !== undefined);
+  if (replacement !== undefined) {
+    for (const surface of surfaces) await rebindSurface(ctx, surface, replacement);
+    return;
+  }
   for (const surface of surfaces) {
     const request = surface.request as { credential?: Record<string, unknown> } | undefined;
     const location =
@@ -1613,14 +1653,61 @@ async function supersedeCredential(
 }
 
 /**
+ * Bind a card a swapped-out page credential held to the row that took over from it, as a hand
+ * landing binds a pasted one (`surfaces.attachCredential`): the card keeps its approval and its
+ * approved tools, forgets what the old value's probe learned, and an approved card is probed with
+ * the new value at once. The probe generation moves on, so a probe that opened the old value
+ * cannot connect the card.
+ */
+async function rebindSurface(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  replacement: Doc<'credentials'>,
+): Promise<void> {
+  const probe = surface.managerApprovedAt !== undefined && REBOUND_VERDICTS.has(surface.verdict);
+  await ctx.db.patch(surface._id, {
+    credentialId: replacement._id,
+    credentialKind: replacement.kind,
+    credentialLanded: false,
+    // Whom the card acts as is the new row's, named by its label; the old value's identity is
+    // not carried over, as the probe learns the new one.
+    actsAs: actsAsAtUpgrade(
+      { ...surface, providerIdentityId: undefined },
+      { kind: replacement.kind, label: replacement.label },
+    ),
+    verdict: probe ? 'approved' : surface.verdict,
+    reason: REBOUND_REASON,
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
+    toolAllowlist: undefined,
+    withheldTools: undefined,
+    toolArguments: undefined,
+    lastVerifiedAt: undefined,
+    providerIdentityId: undefined,
+    providerWorkspaceId: undefined,
+    managerDmChannelId: undefined,
+    managerUserId: undefined,
+    managerName: undefined,
+    channelsNotJoined: undefined,
+  });
+  if (probe) {
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: surface._id,
+    });
+  }
+}
+
+/**
  * Tell every agent whose card was bound to a superseded page credential, one
- * event each through the contract, naming the page and never the value. A
- * credential no card was bound to reaches no agent's feed.
+ * event each through the contract, naming the page and never the value: the
+ * cards sent back to landing a credential, or those re-bound to the value the
+ * page states now. A credential no card was bound to reaches no agent's feed.
  */
 async function recordSuperseded(
   ctx: MutationCtx,
   credential: Doc<'credentials'>,
   surfaces: readonly Doc<'surfaces'>[],
+  rebound: boolean,
 ): Promise<void> {
   if (typeof credential.source === 'string') return;
   const byAgent = new Map<Id<'agents'>, Id<'surfaces'>[]>();
@@ -1637,7 +1724,8 @@ async function recordSuperseded(
         label: credential.label,
         sourceId: credential.source.sourceId,
         page: credentialPageRef(credential.source.ref),
-        surfaceIds,
+        surfaceIds: rebound ? [] : surfaceIds,
+        ...(rebound ? { reboundSurfaceIds: surfaceIds } : {}),
       },
       createdAt: now,
     });

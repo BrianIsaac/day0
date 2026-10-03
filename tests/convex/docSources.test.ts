@@ -1421,6 +1421,170 @@ it('tells each agent whose card lost a swapped-out credential, naming the page a
   expect(await superseded()).toHaveLength(1);
 });
 
+describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
+  const OLD_REF = 'runbooks/linear.md#credential=0123456789abcdef0123456789abcdef';
+  const NEW_REF = 'runbooks/linear.md#credential=fedcba9876543210fedcba9876543210';
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  /** A page credential of the source, as a sync stored it. */
+  const pageRow = (
+    sourceId: Id<'docSources'>,
+    ref: string,
+    fields: Partial<Doc<'credentials'>> = {},
+  ): Omit<Doc<'credentials'>, '_id' | '_creationTime'> => ({
+    userId: 'owner',
+    kind: 'value',
+    label: 'Linear service token',
+    source: { sourceId, ref },
+    ciphertext: 'sealed',
+    iv: 'iv',
+    createdAt: 1,
+    ...fields,
+  });
+
+  /** A connected card holding a credential, approved by its manager. */
+  const card = (
+    agentId: Id<'agents'>,
+    slug: string,
+    credentialId: Id<'credentials'>,
+    fields: Partial<Doc<'surfaces'>> = {},
+  ): Omit<Doc<'surfaces'>, '_id' | '_creationTime'> => ({
+    agentId,
+    slug,
+    displayName: 'Linear',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialId,
+    credentialKind: 'value',
+    credentialLanded: true,
+    whereFound: [],
+    createdAt: 1,
+    request: {
+      credential: { found: 'value', method: 'api-key', evidenceRef: 'runbooks/linear.md' },
+    },
+    managerApprovedAt: 2,
+    probeGeneration: 4,
+    lastVerifiedAt: 5,
+    toolAllowlist: ['save_comment'],
+    providerIdentityId: 'old-identity',
+    ...fields,
+  });
+
+  /** One sync that lists the page and states only the new value on it. */
+  async function syncNewValue(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['runbooks/linear.md'],
+      credentialRefs: [NEW_REF],
+      pageCount: 1,
+      redactionCount: 1,
+    });
+  }
+
+  it('re-binds a card the swapped-out value held to the live row of the same label on the page, and checks it at once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const { oldId, newId, surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      // The new value the page now states under the same label, stored by this sync's batch.
+      const newId = await ctx.db.insert(
+        'credentials',
+        pageRow(sourceId, NEW_REF, { createdAt: 9 }),
+      );
+      const surfaceId = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
+      return { oldId, newId, surfaceId };
+    });
+
+    await syncNewValue(harness, sourceId);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(oldId))).toMatchObject({
+      status: 'superseded',
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      credentialId: newId,
+      credentialKind: 'value',
+      credentialLanded: false,
+      verdict: 'approved',
+      managerApprovedAt: 2,
+      probeGeneration: 5,
+      request: { credential: { found: 'value', method: 'api-key' } },
+    });
+    expect(surface?.lastVerifiedAt).toBeUndefined();
+    expect(surface?.toolAllowlist).toBeUndefined();
+    expect(surface?.providerIdentityId).toBeUndefined();
+    // The re-bound card is probed with the new value at once, as a hand landing is.
+    const probes = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (job) => job.name.includes('probeInternal') && job.state.kind === 'pending',
+      ),
+    );
+    expect(probes.map((job) => job.args[0])).toEqual([{ surfaceId }]);
+    // The record says the value moved, and the card is not among those sent back to landing.
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) =>
+            q.eq('agentId', agentId).eq('type', 'credential.superseded'),
+          )
+          .collect(),
+    );
+    expect(events.map((event) => event.payload)).toEqual([
+      {
+        credentialId: oldId,
+        label: 'Linear service token',
+        sourceId,
+        page: 'runbooks/linear.md',
+        surfaceIds: [],
+        reboundSurfaceIds: [surfaceId],
+      },
+    ]);
+  });
+
+  it('sends a card back to landing only where the page holds no live row of the same label', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const { oldId, surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      // The new value carries another label, and a same-label row is revoked or suspect.
+      await ctx.db.insert('credentials', pageRow(sourceId, NEW_REF, { label: 'Linear webhook' }));
+      await ctx.db.insert(
+        'credentials',
+        pageRow(sourceId, 'runbooks/linear.md#credential=11111111111111111111111111111111', {
+          revokedAt: 3,
+        }),
+      );
+      await ctx.db.insert(
+        'credentials',
+        pageRow(sourceId, 'runbooks/linear.md#credential=22222222222222222222222222222222', {
+          status: 'suspect',
+        }),
+      );
+      const surfaceId = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
+      return { oldId, surfaceId };
+    });
+
+    await syncNewValue(harness, sourceId);
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'ungranted', credentialLanded: false });
+    expect(surface?.credentialId).toBeUndefined();
+    expect(await harness.run(async (ctx) => await ctx.db.get(oldId))).toMatchObject({
+      status: 'superseded',
+    });
+  });
+});
+
 describe('superseded page credentials that have aged out (C2 D2 (a))', (): void => {
   const DAY = 24 * 60 * 60 * 1000;
   const NOW = Date.UTC(2026, 9, 28);

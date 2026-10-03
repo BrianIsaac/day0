@@ -741,6 +741,11 @@ export interface CredentialSupersededPayload {
   readonly page: string;
   /** This agent's surfaces it was bound to, each sent back to landing a credential. */
   readonly surfaceIds: readonly SurfaceId[];
+  /**
+   * This agent's surfaces it was bound to that the page swap re-bound to the value the page
+   * states now under the same label, each checked again (N23; 12-S3). Absent on rows before it.
+   */
+  readonly reboundSurfaceIds?: readonly SurfaceId[];
 }
 
 /** The payload of `surface.reoriented`: orientation the manager's re-run placed for one surface. */

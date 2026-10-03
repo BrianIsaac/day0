@@ -414,6 +414,34 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says which credential left the documentation, and a page swap that bound the new value (N23; 12-S3)', (): void => {
+    const payload = {
+      credentialId: 'c1',
+      label: 'linear service token',
+      sourceId: 'd1',
+      page: 'runbooks/linear.md',
+    };
+    expect(
+      recordWords(
+        { type: 'credential.superseded', payload: { ...payload, surfaceIds: ['s1', 's2'] } },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The credential \u201clinear service token\u201d is no longer in the documentation (runbooks/linear.md); land one again on 2 cards.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'credential.superseded',
+          payload: { ...payload, surfaceIds: [], reboundSurfaceIds: ['s1'] },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The documentation replaced the credential \u201clinear service token\u201d (runbooks/linear.md); Day0 bound its new value on 1 card and checks it again.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(

@@ -398,6 +398,24 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('says a page swap bound the new value on the cards the old one held (N23; 12-S3)', (): void => {
+    expect(
+      eventLabel({
+        type: 'credential.superseded',
+        payload: {
+          credentialId: 'c1',
+          label: 'linear service token',
+          sourceId: 'd1',
+          page: 'runbooks/linear.md',
+          surfaceIds: [],
+          reboundSurfaceIds: ['s1'],
+        },
+      }),
+    ).toBe(
+      'credential "linear service token" replaced in the documentation (runbooks/linear.md); the new value bound on 1 card and checked again',
+    );
+  });
+
   it('says whether a failed run stopped, and names the slugs of an ambiguous charter match', (): void => {
     expect(
       eventLabel({
