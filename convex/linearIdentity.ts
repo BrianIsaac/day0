@@ -12,6 +12,7 @@ import { appendEvent } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { pendingAuthorisationValidator } from './schema';
 import { endAccessAtSource } from './sourceRevocation';
+import { stampRecheckOnIdentityMove } from './surfaces';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import type { ActsAs } from '../src/surfaces/access-identity';
 import { organisationSystemOf } from '../src/surfaces/access-request';
@@ -385,6 +386,7 @@ export const connectSharedCard = internalMutation({
       label: connection.displayName,
       providerIdentityId: args.appUser.id,
     };
+    await stampRecheckOnIdentityMove(ctx, surface, actsAs, args.now);
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       // The OAuth token it is; the card's `shared-app` identity makes every write through it name
@@ -632,6 +634,7 @@ export const landEmployeeTokens = internalMutation({
       label: app.appName,
       providerIdentityId: args.appUser.id,
     };
+    await stampRecheckOnIdentityMove(ctx, surface, actsAs, args.now);
     await ctx.db.patch(surface._id, {
       credentialId,
       credentialKind: 'oauth',

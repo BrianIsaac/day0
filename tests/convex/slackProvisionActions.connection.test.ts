@@ -530,6 +530,53 @@ describe("an employee's own app through the organisation's connection (B9)", ():
   });
 });
 
+describe("the move off a pasted bot token onto the employee's own app (R41V-7)", (): void => {
+  it("puts the employee's skills on the connected card due a re-check, since it now acts as another identity", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    const pasted = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Slack bot token',
+      plaintext: 'xoxb-1234567890-pasted',
+      source: 'entered',
+    });
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(maya.surfaceId, {
+        verdict: 'connected',
+        credentialId: pasted,
+        credentialKind: 'value',
+        credentialLanded: true,
+        actsAs: {
+          kind: 'shared-key',
+          label: 'a key someone pasted',
+          providerIdentityId: 'U0SHARED',
+        },
+      });
+      return await ctx.db.insert('skills', {
+        agentId: maya.agentId,
+        name: 'chat-thread-reply',
+        description: 'Reply in the thread',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'slack',
+        registeredAt: 1,
+        createdAt: 1,
+      });
+    });
+
+    await install(harness, await provision(harness, maya.surfaceId));
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill).toMatchObject({
+      recheckDueAt: expect.any(Number),
+      recheckReason: 'its connection to slack now acts as another identity',
+    });
+  });
+});
+
 describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): void => {
   /** Revoke the connection from the setup verb and run the call at Slack it schedules. */
   async function revokeConnection(
