@@ -104,7 +104,7 @@ function outcomeLine(outcome: PreviewOutcome, name: string): string | undefined 
     case 'not-supported':
       // The plan's own words where it gives them: what stays at the vendor for IT (R41V-11).
       return outcome.reason !== undefined
-        ? `${access}: ${outcome.reason}`
+        ? `${access}: ends in Day0. ${outcome.reason}`
         : `${access}: ${system} offers no way to revoke it, so Day0 deletes its copy.`;
     case 'failed':
       return `${access}: Day0 can no longer revoke it at ${system}, so revoke it there.`;

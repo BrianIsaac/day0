@@ -162,7 +162,7 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
         'Wren',
       ),
     ).toEqual([
-      "Wren's Slack access: Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
+      "Wren's Slack access: ends in Day0. Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
     ]);
   });
 
