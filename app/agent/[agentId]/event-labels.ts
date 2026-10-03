@@ -153,11 +153,12 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       : `an employee's ${name} app not created${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
+    const notChecked = payload.unchecked === true ? ', not checked' : '';
     switch (payload.outcome) {
       case 'done':
-        return `${name} configuration token revoked at ${name}`;
+        return `${name} configuration token revoked at ${name}${notChecked}`;
       case 'already-revoked':
-        return `${name} configuration token had already ended at ${name}`;
+        return `${name} configuration token had already ended at ${name}${notChecked}`;
       case 'failed':
       case 'superseded':
       case undefined:

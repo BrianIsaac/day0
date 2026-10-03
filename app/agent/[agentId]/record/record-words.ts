@@ -237,13 +237,18 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     const which = unkept
       ? 'a configuration token Slack issued to a renewal that finished after the connection was revoked'
       : token;
+    // Slack's auth.test could not be asked afterwards whether the token still works (m2).
+    const notChecked =
+      p.unchecked === true
+        ? ", not checked: Slack's auth.test could not be asked whether the token still works"
+        : '';
     switch (p.outcome) {
       case 'done':
         return unkept
-          ? `Day0 revoked ${which}, which it kept nowhere; ${rowAdvice}`
-          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use; ${rowAdvice}`;
+          ? `Day0 revoked ${which}, which it kept nowhere${notChecked}; ${rowAdvice}`
+          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use${notChecked}; ${rowAdvice}`;
       case 'already-revoked':
-        return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}; ${
+        return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}${notChecked}; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
         }, and ${rowAdvice}`;
       case 'failed':

@@ -1,8 +1,9 @@
 import {
   readSlackAnswer,
+  readSlackTokenCheck,
   slackTokenCheck,
   slackTokenRevocation,
-  slackTokenStillWorks,
+  type SlackTokenCheck,
 } from '../src/surfaces/revokers/slack';
 import type { RevocationAnswer, RevocationRequest } from '../src/surfaces/revokers/types';
 import { log } from '../src/lib/logger';
@@ -100,16 +101,23 @@ export async function sendRevocation(input: {
   return withoutToken(input.read(status, body), input.token);
 }
 
-/** Slack's answer to `auth.revoke`, with Slack's own word when it found the token already gone. */
+/**
+ * Slack's answer to `auth.revoke`, with Slack's own word when it found the token already gone, and
+ * `unchecked` when `auth.test` could not be asked afterwards whether the token still works.
+ */
 export type SlackRevocationAnswer =
-  | Exclude<RevocationAnswer, { readonly kind: 'gone' }>
-  | { readonly kind: 'gone'; readonly error: string };
+  | Exclude<RevocationAnswer, { readonly kind: 'revoked' | 'gone' }>
+  | { readonly kind: 'revoked'; readonly unchecked?: true }
+  | { readonly kind: 'gone'; readonly error: string; readonly unchecked?: true };
 
 /**
- * Whether Slack still accepts a token (`auth.test`). A check that cannot be made answers false,
- * so the revoke's own answer stands.
+ * Ask Slack's `auth.test` whether a token still works after a revoke. A check that cannot be made
+ * answers `unchecked`, never that the token has ended.
  */
-async function stillWorks(token: string, transport: RevocationFetch): Promise<boolean> {
+async function checkAfterRevoke(
+  token: string,
+  transport: RevocationFetch,
+): Promise<SlackTokenCheck> {
   const check = slackTokenCheck(token);
   try {
     const response = await transport(check.url, {
@@ -119,12 +127,12 @@ async function stillWorks(token: string, transport: RevocationFetch): Promise<bo
       redirect: 'manual',
       signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
-    return slackTokenStillWorks(response.status, await bodyOf(response));
+    return readSlackTokenCheck(response.status, await bodyOf(response));
   } catch (error: unknown) {
-    log.warn('slack auth.test after a revoke could not be made; the revoke stands as answered', {
+    log.warn('slack auth.test after a revoke could not be made; the ledger says not checked', {
       reason: safeFailureMessage(error, token, 'no detail'),
     });
-    return false;
+    return 'unchecked';
   }
 }
 
@@ -133,7 +141,8 @@ async function stillWorks(token: string, transport: RevocationFetch): Promise<bo
  * its refresh token (the real-vendor walk, R41V-10), and read the answer, keeping Slack's word for
  * a token it had already ended. Slack's answer is then checked with `auth.test`: on the walk a
  * token Day0 recorded as revoked still worked at Slack, so a token Slack still accepts is a failed
- * revoke whatever `auth.revoke` answered.
+ * revoke whatever `auth.revoke` answered, and one the check could not be asked about is said to be
+ * unchecked.
  *
  * @param token - The configuration token, which is also the call's bearer.
  * @param transport - The transport; the platform's `fetch` by default.
@@ -156,33 +165,43 @@ export async function revokeSlackConfigurationToken(
     fetch: transport,
   });
   if (answer.kind !== 'revoked' && answer.kind !== 'gone') return answer;
-  if (await stillWorks(token, transport)) {
+  const check = await checkAfterRevoke(token, transport);
+  if (check === 'works') {
     const answered = answer.kind === 'revoked' ? 'revoked' : said;
     return {
       kind: 'refused',
       words: `Slack answered ${answered} to auth.revoke, yet still accepted the token at auth.test`,
     };
   }
-  return answer.kind === 'gone' ? { kind: 'gone', error: said } : answer;
+  const unchecked = check === 'unchecked' ? { unchecked: true as const } : {};
+  return answer.kind === 'gone'
+    ? { kind: 'gone', error: said, ...unchecked }
+    : { kind: 'revoked', ...unchecked };
 }
 
 /**
  * The ledger's outcome for Slack's answer to `auth.revoke`: a token Slack revoked now is `done`,
  * one it had already ended (`token_revoked`, `invalid_auth` and the like) `already-revoked` with
- * Slack's word, so the ledger tells a revoke from a no-op (R41V-10); anything else `failed`.
+ * Slack's word, so the ledger tells a revoke from a no-op (R41V-10); anything else `failed`. Each
+ * of the first two carries `unchecked` when `auth.test` could not be asked afterwards.
  *
  * @param answer - Slack's answer, from {@link revokeSlackConfigurationToken}.
  */
 export function slackRevocationOutcome(
   answer: SlackRevocationAnswer,
 ):
-  | { readonly outcome: 'done' }
-  | { readonly outcome: 'already-revoked' | 'failed'; readonly reason: string } {
+  | { readonly outcome: 'done'; readonly unchecked?: true }
+  | { readonly outcome: 'already-revoked'; readonly reason: string; readonly unchecked?: true }
+  | { readonly outcome: 'failed'; readonly reason: string } {
+  const unchecked =
+    answer.kind !== 'retry' && answer.kind !== 'refused' && answer.unchecked === true
+      ? { unchecked: true as const }
+      : {};
   switch (answer.kind) {
     case 'revoked':
-      return { outcome: 'done' };
+      return { outcome: 'done', ...unchecked };
     case 'gone':
-      return { outcome: 'already-revoked', reason: `Slack answered ${answer.error}` };
+      return { outcome: 'already-revoked', reason: `Slack answered ${answer.error}`, ...unchecked };
     case 'retry':
     case 'refused':
       return { outcome: 'failed', reason: answer.words };

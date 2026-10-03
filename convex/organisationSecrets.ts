@@ -286,6 +286,8 @@ export const finishSlackRevocation = internalMutation({
     reason: v.optional(v.string()),
     /** A token Slack issued that Day0 kept nowhere: no copy to delete. */
     unkept: v.optional(v.literal(true)),
+    /** Slack's `auth.test` could not be asked afterwards whether the token still works. */
+    unchecked: v.optional(v.literal(true)),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -309,6 +311,7 @@ export const finishSlackRevocation = internalMutation({
         outcome: args.outcome,
         ...(args.reason !== undefined ? { reason: args.reason.slice(0, REASON_LIMIT) } : {}),
         ...(args.unkept === true ? { unkept: true as const } : {}),
+        ...(args.unchecked === true ? { unchecked: true as const } : {}),
       },
       createdAt: now,
     });

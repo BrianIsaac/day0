@@ -630,6 +630,34 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
     );
   });
 
+  it("says a revoke Slack's auth.test could not check was not checked (the round review's m2)", (): void => {
+    const revoked = (payload: Record<string, unknown>): string =>
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', unchecked: true, ...payload },
+        },
+        subject,
+      );
+    const advice =
+      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
+      '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
+    const notChecked =
+      "not checked: Slack's auth.test could not be asked whether the token still works";
+    expect(revoked({ outcome: 'done' })).toBe(
+      "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
+        `once it was taken out of use, ${notChecked}; ${advice}`,
+    );
+    expect(revoked({ outcome: 'already-revoked', reason: 'Slack answered token_revoked' })).toBe(
+      "The organisation's Slack configuration token had already ended at Slack when Day0 " +
+        `asked: Slack answered token_revoked, ${notChecked}; Day0 deleted its copy, and ${advice}`,
+    );
+    expect(revoked({ outcome: 'done', unkept: true })).toBe(
+      'Day0 revoked a configuration token Slack issued to a renewal that finished after the ' +
+        `connection was revoked, which it kept nowhere, ${notChecked}; ${advice}`,
+    );
+  });
+
   it("says each call on the organisation's ledger without naming an employee", (): void => {
     expect(
       recordWords(

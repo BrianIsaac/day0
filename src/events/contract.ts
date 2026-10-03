@@ -993,6 +993,12 @@ export interface OrganisationConfigurationUsedPayload {
    * revoked, which Day0 kept nowhere (R41V-10).
    */
   readonly unkept?: true;
+  /**
+   * `auth.revoke` answered done or already ended, and Slack's `auth.test` could not be asked
+   * afterwards whether the token still works (a limit, Slack's own failure, no answer): the line
+   * says the revoke was not checked (the round review's m2).
+   */
+  readonly unchecked?: true;
 }
 
 /**

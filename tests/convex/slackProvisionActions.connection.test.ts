@@ -626,6 +626,21 @@ describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): v
     expect(await rotated.json()).toMatchObject({ ok: true });
   });
 
+  it("says on the ledger that a revoke was not checked when Slack's auth.test could not be asked (the round review's m2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    slack.refusals.set('auth.test', 'ratelimited');
+
+    await revokeConnection(harness, connectionId);
+
+    expect(callsOf(slack, 'auth.test')).toHaveLength(1);
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({ outcome: 'done', unchecked: true }),
+    ]);
+  });
+
   it('records a revoke Slack answered but did not carry out as failed, after asking Slack whether the token still works', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const connectionId = await landSlack(harness);

@@ -127,11 +127,36 @@ describe('revokeSlackConfigurationToken (R41V-10)', (): void => {
     });
   });
 
-  it('lets the revoke stand when the check cannot be made', async (): Promise<void> => {
+  it("lets the revoke stand when the check cannot be made, and says it was not checked (the round review's m2)", async (): Promise<void> => {
     const answer = await revokeSlackConfigurationToken(TOKEN, async (input: string | URL) => {
       if (String(input).endsWith('/auth.test')) throw new Error('fetch failed');
       return Response.json(SLACK_CONFIGURATION_REVOKED.body);
     });
-    expect(answer).toEqual({ kind: 'revoked' });
+    expect(answer).toEqual({ kind: 'revoked', unchecked: true });
+    expect(slackRevocationOutcome(answer)).toEqual({ outcome: 'done', unchecked: true });
   });
+
+  it.each([
+    { name: 'a limit', check: { status: 429, body: { ok: false, error: 'ratelimited' } } },
+    { name: "Slack's own failure", check: { status: 503, body: '<html>busy</html>' } },
+    {
+      name: 'a word it does not know',
+      check: { status: 200, body: { ok: false, error: 'fatal_error' } },
+    },
+  ])(
+    "never reads $name at auth.test as a token that no longer works (the round review's m2)",
+    async ({ check }): Promise<void> => {
+      const { transport } = slackAnswering({
+        'auth.revoke': SLACK_CONFIGURATION_ALREADY_REVOKED,
+        'auth.test': check,
+      });
+      const answer = await revokeSlackConfigurationToken(TOKEN, transport);
+      expect(answer).toEqual({ kind: 'gone', error: 'token_revoked', unchecked: true });
+      expect(slackRevocationOutcome(answer)).toEqual({
+        outcome: 'already-revoked',
+        reason: 'Slack answered token_revoked',
+        unchecked: true,
+      });
+    },
+  );
 });
