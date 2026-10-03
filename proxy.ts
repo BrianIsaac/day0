@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import { deploymentClerkAddresses } from '@/lib/clerk-addresses';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
 import { CUSTOMER_SESSION_COOKIE, joinCookie, openSession } from '@/lib/customer-session';
 import { CUSTOMER_SIGN_IN, profileMismatch } from '@/lib/customer-sign-in';
@@ -59,23 +60,48 @@ const isPublicRoute = createRouteMatcher([
 
 const isApiRoute = createRouteMatcher(['/api/(.*)']);
 
-const clerkProxy = clerkMiddleware(async (auth, req) => {
-  const hasClerkKey = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!hasClerkKey || isPublicRoute(req)) return;
+/**
+ * Whether the App Router sent the request from a page already open: a prefetch of a link, or a
+ * client-side navigation, as opposed to a full page load or a server action.
+ */
+function isRouterFetch(req: NextRequest): boolean {
+  return req.headers.get('rsc') === '1' && !req.headers.has('next-action');
+}
 
-  // `auth.protect()` answers a signed-out fetch with a 404 page, which the
-  // browser client cannot tell apart from a deleted endpoint. API callers
-  // get a 401 so they know to send the user through sign-in.
-  if (isApiRoute(req)) {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
+const { signInUrl, signUpUrl } = deploymentClerkAddresses();
+
+const clerkProxy = clerkMiddleware(
+  async (auth, req) => {
+    const hasClerkKey = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    if (!hasClerkKey || isPublicRoute(req)) return;
+
+    // `auth.protect()` answers a signed-out fetch with a 404 page, which the
+    // browser client cannot tell apart from a deleted endpoint. API callers
+    // get a 401 so they know to send the user through sign-in.
+    if (isApiRoute(req)) {
+      const { userId } = await auth();
+      if (!userId) {
+        return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
+      }
+      return;
     }
-    return;
-  }
 
-  await auth.protect();
-});
+    // A prefetch or a client-side navigation carries no fresh session while the page's token
+    // is being renewed, and a redirect to the sign-in would be kept as that link's page (the
+    // v0.14.0 redeploy saw a signed-in home's prefetch sent to the Account Portal). It is
+    // answered with no page instead: the router then loads the address whole when the link is
+    // followed, and that load signs in, renews the session or reaches the sign-in page.
+    if (isRouterFetch(req)) {
+      const { userId } = await auth();
+      if (!userId) {
+        return new NextResponse(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+      }
+    }
+
+    await auth.protect();
+  },
+  { signInUrl, signUpUrl },
+);
 
 /**
  * The three routes that are meant to be reached from off this machine even in
