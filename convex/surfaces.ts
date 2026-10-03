@@ -56,7 +56,7 @@ import {
   slackClientSecretIssuer,
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
-import { organisationSystemOf } from '../src/surfaces/access-request';
+import { organisationSystemOf, servedByIssuer } from '../src/surfaces/access-request';
 import { activeConnectionFor, revokedConnectionsAmong } from './organisationConnectionReads';
 import {
   listedCardIdentity,
@@ -817,7 +817,14 @@ async function documentedKeyBinding(
   const unbound = { credentialId: undefined, credentialKind: undefined, actsAs: undefined };
   if (proposal.credentialId === undefined || proposal.credentialKind === undefined) return unbound;
   const system = organisationSystemOf({ endpoint: proposal.endpoint, path: proposal.path });
-  if (system !== undefined && (await activeConnectionFor({ db }, system)) !== null) return unbound;
+  // Only a connection an issuer acts through covers the card (11-AC's item 8).
+  if (
+    system !== undefined &&
+    servedByIssuer(system) &&
+    (await activeConnectionFor({ db }, system)) !== null
+  ) {
+    return unbound;
+  }
   const credential = await db.get(proposal.credentialId);
   return {
     credentialId: proposal.credentialId,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessRequestReason,
+  servedByIssuer,
   draftAccessRequest,
   isOrganisationSystemKey,
   mcpSystemKey,
@@ -154,6 +155,24 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     mode: 'shared' as const,
     scopes: ['read', 'write'],
   };
+
+  it("asks IT nothing where its connection is one no issuer of Day0's acts through: the card takes a key (11-AC's item 8)", (): void => {
+    const notionCard = {
+      ...linearCard,
+      slug: 'notion',
+      displayName: 'Notion',
+      endpoint: 'https://api.notion.com/v1',
+    };
+    const notion = { ...linear, system: 'notion', kind: 'static-key' as const };
+    expect(accessRequestReason(notionCard, notion)).toBeUndefined();
+    expect(
+      accessRequestReason(notionCard, { ...notion, mode: 'per-employee' as const }),
+    ).toBeUndefined();
+    expect(servedByIssuer('notion')).toBe(false);
+    expect(servedByIssuer('slack')).toBe(true);
+    expect(servedByIssuer('linear')).toBe(true);
+    expect(servedByIssuer('mcp:docs.acme.test')).toBe(true);
+  });
 
   it('asks when the system has no connection, or a per-employee one IT must install', (): void => {
     expect(accessRequestReason(linearCard, null)).toBe('no-connection');

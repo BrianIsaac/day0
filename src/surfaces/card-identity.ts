@@ -1,5 +1,5 @@
 import type { ActsAs, ActsAsKind, OrganisationConnectionMode } from './access-identity';
-import { MCP_SYSTEM_PREFIX, organisationSystemOf } from './access-request';
+import { MCP_SYSTEM_PREFIX, organisationSystemOf, servedByIssuer } from './access-request';
 import {
   presentProvisioning,
   type CredentialOwnerSummary,
@@ -90,9 +90,11 @@ function coveringConnection(
   card: IdentityCard,
   connection: IdentityConnection | undefined,
 ): IdentityConnection | undefined {
+  // A connection no issuer acts through covers nothing (11-AC's item 8): the card takes a key.
   return connection !== undefined &&
     connection.status === 'active' &&
-    connection.system === organisationSystemOf(card)
+    connection.system === organisationSystemOf(card) &&
+    servedByIssuer(connection.system)
     ? connection
     : undefined;
 }

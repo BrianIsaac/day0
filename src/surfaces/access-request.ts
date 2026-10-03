@@ -130,6 +130,22 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
   return undefined;
 }
 
+/** The systems an issuer of Day0's acts through an organisation connection for. */
+const ISSUER_SYSTEMS: ReadonlySet<string> = new Set(['slack', 'linear']);
+
+/**
+ * Whether an issuer of Day0's acts through the organisation's connection for a system: Slack's own
+ * apps, Linear's app, and an MCP server's client. Any other system's connection (a shared key, a
+ * service account) is recorded and acted through by nothing, so it covers no card: the card takes
+ * a key of its own meanwhile (11-AC's item 8: a product call, flagged). Keyed on the system, as the
+ * card's own prediction is, since a manager's summary carries no connection kind.
+ *
+ * @param system - The system key (`organisationSystemOf`).
+ */
+export function servedByIssuer(system: string): boolean {
+  return ISSUER_SYSTEMS.has(system) || system.startsWith(MCP_SYSTEM_PREFIX);
+}
+
 /**
  * Why a card refuses a pasted credential: its system has an active organisation connection, so
  * the card's credential comes from that connection, never from a paste (the access plan,
@@ -194,9 +210,12 @@ export function accessRequestReason(
   connection: AccessRequestConnection | null,
   neededScopes?: readonly string[],
 ): AccessRequestReason | undefined {
-  if (organisationSystemOf(card) === undefined) return undefined;
+  const system = organisationSystemOf(card);
+  if (system === undefined) return undefined;
   if (card.managerApprovedAt === undefined || card.credentialId !== undefined) return undefined;
   if (connection === null) return 'no-connection';
+  // A connection nothing acts through asks IT for nothing: the card takes a key of its own.
+  if (!servedByIssuer(system)) return undefined;
   if (neededScopes?.some((scope: string): boolean => !connection.scopes.includes(scope))) {
     return 'scope-widening';
   }

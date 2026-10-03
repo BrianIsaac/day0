@@ -114,3 +114,23 @@ describe('whom a listed card acts as, answered once for the card (cockpit item 1
     ).toEqual({ identity: { kind: 'shared-key', planned: true } });
   });
 });
+
+describe("a connection no issuer of Day0's acts through (11-AC's item 8)", (): void => {
+  it('covers no card: the card plans to act as the key it takes, not as an app IT never gave it', (): void => {
+    const notion = {
+      slug: 'notion',
+      displayName: 'Notion',
+      path: 'documented-api',
+      endpoint: 'https://api.notion.com/v1',
+    };
+    expect(
+      cardIdentity(
+        notion,
+        { system: 'notion', mode: 'shared', status: 'active' },
+        {
+          selfProvisions: false,
+        },
+      ),
+    ).toEqual({ kind: 'shared-key', planned: true });
+  });
+});

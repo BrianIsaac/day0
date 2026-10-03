@@ -59,7 +59,11 @@ import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
-import { organisationConnectedRefusal, organisationSystemOf } from '../src/surfaces/access-request';
+import {
+  organisationConnectedRefusal,
+  organisationSystemOf,
+  servedByIssuer,
+} from '../src/surfaces/access-request';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
 import {
@@ -1738,8 +1742,10 @@ export const landCredential = action({
     const refusal = credentialLandingRefusal(context.surface, plaintext);
     if (refusal) throw new ConvexError(refusal);
     const system = organisationSystemOf(context.surface);
+    // Only a connection an issuer acts through refuses a paste: any other covers nothing, and the
+    // card takes a key of its own meanwhile (11-AC's item 8).
     const connection =
-      system === undefined
+      system === undefined || !servedByIssuer(system)
         ? null
         : await ctx.runQuery(internal.organisationConnections.activeFor, { system });
     if (connection !== null)

@@ -18,7 +18,7 @@ import {
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { scopeFieldsFor } from '@/surfaces/intake-scope';
-import { organisationSystemOf } from '@/surfaces/access-request';
+import { organisationSystemOf, servedByIssuer } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
@@ -37,6 +37,7 @@ import {
   moveOfferWords,
   noWayOnWords,
   slackChannelsGoWords,
+  unservedConnectionWords,
   identityChip,
   reachedWords,
   rejoinWords,
@@ -287,8 +288,12 @@ export function SurfaceCard({
   const proposal = request ? <ProposalFacts request={request} surface={surface} /> : null;
   const system = organisationSystemOf(surface);
   const connection = system === undefined ? undefined : context.organisation.get(system);
-  // Only an active connection covers the card: `landCredential` refuses a paste while one is.
-  const covering = connection?.status === 'active' ? connection : undefined;
+  // Only an active connection an issuer acts through covers the card: `landCredential` refuses a
+  // paste while one is. Another the card cannot use, and it takes a key of its own (11-AC's item 8).
+  const active = connection?.status === 'active' ? connection : undefined;
+  const covering =
+    active !== undefined && system !== undefined && servedByIssuer(system) ? active : undefined;
+  const unserved = active !== undefined && covering === undefined ? active : undefined;
   const slack = system === 'slack';
   const provisioningPresentation = presentProvisioning({
     credential: request?.credential,
@@ -499,6 +504,11 @@ export function SurfaceCard({
             error={failed('connect')}
             onConnect={actions.connect}
           />
+        ) : null}
+        {unserved !== undefined && approvedAccess && surface.credentialId === undefined ? (
+          <p className="text-sm text-[var(--color-fg-2)]">
+            {unservedConnectionWords(unserved.displayName)}
+          </p>
         ) : null}
         {noWayOn && covering !== undefined ? (
           <p className="text-sm text-[var(--color-warn)]">

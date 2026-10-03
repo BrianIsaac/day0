@@ -467,6 +467,17 @@ export function documentedKeyUnusedWords(employee: string): string {
 }
 
 /**
+ * What a card says where IT connected its system in a way no issuer of Day0's acts through (a
+ * shared key, a service account): the card takes a key of its own meanwhile (11-AC's item 8, a
+ * product call, flagged).
+ *
+ * @param system - The connection's name.
+ */
+export function unservedConnectionWords(system: string): string {
+  return `IT connected ${system} for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.`;
+}
+
+/**
  * What a card says when IT's connection covers its system and nothing on the card can use it: no
  * issuer runs for the system, no request is asked and no key may be pasted while it is active
  * (finding 14, for the cockpit). A product call, flagged.

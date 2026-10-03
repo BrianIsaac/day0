@@ -576,7 +576,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup.match(/re-joins (its|the) public channels/g)).toHaveLength(1);
   });
 
-  it('says a covered card with no way on that it waits on IT, rather than asking for a credential nobody can paste (second pass)', (): void => {
+  it("takes the card's own key where IT connected a system no issuer of Day0's acts through, and says why (11-AC's item 8, a product call)", (): void => {
     const markup = render(
       listed({
         displayName: 'Notion',
@@ -585,13 +585,23 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         verdict: 'approved',
         managerApprovedAt: NOW - DAY,
         expiresAt: NOW + 80 * DAY,
+        request: {
+          credential: {
+            found: 'location',
+            label: 'Notion integration token',
+            location: 'IT / Integrations',
+          },
+        },
+        credentialLocation: 'IT / Integrations',
       }),
       { organisation: organisation({ system: 'notion', displayName: 'Notion', mode: 'shared' }) },
     );
-    expect(chip(markup)).toBe('Waiting on IT');
+    expect(chip(markup)).not.toBe('Waiting on IT');
+    expect(markup).not.toContain('Ask IT how Maya should reach it.');
     expect(markup).toContain(
-      'IT connected Notion for the organisation in a way this card cannot use for Maya. Ask IT how Maya should reach it.',
+      'IT connected Notion for the organisation, and Day0 cannot act through that connection yet: this card takes a key of its own meanwhile.',
     );
+    expect(markup).toMatch(/<input[^>]*type="password"/);
   });
 
   it('names an installed Slack app once, in the Acts as row, and asks IT nothing on an ended card (second pass)', (): void => {
