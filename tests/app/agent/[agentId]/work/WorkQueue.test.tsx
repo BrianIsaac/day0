@@ -21,6 +21,8 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a query answers, by function name; undefined (loading) otherwise. */
   queries: {} as Record<string, unknown>,
+  /** A call that waits, by function name, until the test lets it settle. */
+  held: {} as Record<string, Promise<void>>,
 }));
 
 vi.mock('convex/react', () => {
@@ -29,6 +31,7 @@ vi.mock('convex/react', () => {
     async (args?: unknown): Promise<unknown> => {
       const name = getFunctionName(reference as never);
       backend.calls.push({ name, args });
+      await backend.held[name];
       const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
       return backend.results[name];
@@ -281,6 +284,78 @@ describe('the queue gliding its cards to their new places (second review x8)', (
       { id: 'item-w-b', from: 'translateY(100px)' },
       { id: 'item-w-a', from: 'translateY(-100px)' },
     ]);
+    view.unmount();
+  });
+});
+
+describe("the mock office's own loop (round 0141 R-D item 1, the bed walk)", (): void => {
+  afterEach((): void => {
+    backend.calls.length = 0;
+    backend.held = {};
+    backend.results = {};
+  });
+
+  /** A work item row with the given id, state and verdict. */
+  function item(id: string, state: string, verdict?: unknown): Doc<'workItems'> {
+    return {
+      _id: id,
+      _creationTime: 1,
+      agentId: 'a1',
+      state,
+      title: id,
+      sourceSystem: 'ticket',
+      sourceCategory: 'ticket-queue',
+      externalId: id,
+      contentSummary: 's',
+      contentRefs: [],
+      observedAt: 1,
+      createdAt: 1,
+      ...(verdict !== undefined ? { verdict } : {}),
+    } as unknown as Doc<'workItems'>;
+  }
+
+  function queue(items: Doc<'workItems'>[]) {
+    return (
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={items}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={1}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="mock"
+      />
+    );
+  }
+
+  const evaluations = (): number =>
+    backend.calls.filter((call) => call.name === 'workActions:evaluateWorkItem').length;
+
+  it('asks again for a queued item when its slot freed while that item was being judged', async (): Promise<void> => {
+    let release = (): void => undefined;
+    backend.held = {
+      'workActions:evaluateWorkItem': new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    };
+    backend.results = { 'workActions:evaluateWorkItem': { decision: 'queue' } };
+    const queued = item('w-ticket', 'discovered', { decision: 'queue' });
+    const view = mount(queue([queued, item('w-docs', 'actions-pending')]));
+    await settle();
+    expect(evaluations()).toBe(1);
+
+    // The docs item finishes while the ticket item's judgement is still under way.
+    act((): void => view.root.render(queue([queued, item('w-docs', 'completed')])));
+    await settle();
+    expect(evaluations()).toBe(1);
+
+    backend.held = {};
+    await act(async (): Promise<void> => {
+      release();
+    });
+    await settle();
+    expect(evaluations()).toBe(2);
     view.unmount();
   });
 });
