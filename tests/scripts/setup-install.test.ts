@@ -148,7 +148,7 @@ describe('setup: the install verb', (): void => {
     expect(await bed.run(INSTALL)).toBe(1);
     const said = bed.bed.output.join('\n');
     expect(said).toContain(
-      "The install connects the organisation's systems, and the documentation names none the kit knows: name them with --systems (slack, linear, or an MCP server's https address).",
+      "The install has no system to connect: the documentation names none the kit knows. Name them with --systems (slack, linear, or an MCP server's https address), then run the install again.",
     );
     expect(said).toContain('The install stopped at access');
     expect(said).not.toContain('The install passed every check');

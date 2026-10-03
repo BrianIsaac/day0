@@ -582,10 +582,11 @@ describe('setup: the access verb', (): void => {
     const said = bed.bed.output.join('\n');
     expect(said).not.toContain('to see it pass');
     expect(said).toContain(
-      "Linear: the shared app token's set was landed as read, write, without app:assignable, " +
-        'and a correction cannot change it, since Linear revokes every token of the app when one ' +
-        'is requested with another set: revoke the connection on the organisation page, then land ' +
-        'it again with ./setup.sh access. pnpm check:access reports the gap until then.',
+      'Linear: the shared app token was landed with read, write, without app:assignable.\n' +
+        'A correction cannot add them: Linear revokes every token of the app when one is ' +
+        'requested with another set.\n' +
+        'Revoke the connection on the organisation page, then land it again with ./setup.sh ' +
+        'access. Every card on it ends. pnpm check:access reports the gap until then.',
     );
   });
 

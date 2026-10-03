@@ -536,13 +536,17 @@ async function correctConnection(
     // A fixed client-credentials set is not IT's registration: a token requested with another set
     // revokes every token of the app (L2), so no correction reaches it (the round review's m6).
     io.log(
-      `${name}: the shared app token's set was landed as ` +
-        `${row.clientCredentialsScopes?.join(', ') || 'no scope'}, without ${lacking.join(', ')}, ` +
-        `and a correction cannot change it, since ${name} revokes every token of the app when one ` +
-        'is requested with another set: revoke the connection on the organisation page, then ' +
-        'land it again with ./setup.sh access. pnpm check:access reports the gap until then.',
+      `${name}: the shared app token was landed with ` +
+        `${row.clientCredentialsScopes?.join(', ') || 'no scope'}, without ${lacking.join(', ')}.`,
     );
-    io.log('No secret changed and no card ended.');
+    io.log(
+      `A correction cannot add them: ${name} revokes every token of the app when one is requested ` +
+        'with another set.',
+    );
+    io.log(
+      'Revoke the connection on the organisation page, then land it again with ./setup.sh access. ' +
+        'Every card on it ends. pnpm check:access reports the gap until then.',
+    );
     return 0;
   } catch (err) {
     io.log(`Nothing was corrected: ${errorMessage(err)}`);
@@ -832,8 +836,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
     // An install that connects nothing would end "passed every check" with every card's system
     // unconnected (the wave 11 review's m20).
     io.log(
-      "The install connects the organisation's systems, and the documentation names none the kit " +
-        "knows: name them with --systems (slack, linear, or an MCP server's https address).",
+      'The install has no system to connect: the documentation names none the kit knows. Name ' +
+        "them with --systems (slack, linear, or an MCP server's https address), then run the " +
+        'install again.',
     );
     return 1;
   }
