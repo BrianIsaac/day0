@@ -1560,19 +1560,37 @@ const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|
 const HYPOTHETICAL_CLAUSE = /\b(?:if|unless)\b[^.!?\n]*(?:[.!?](?=\s|$)|\n|$)/gi;
 
 /**
- * An approved plan that keeps the originating ticket open: it says not to close it, or to leave or
- * keep it open (a request routed to someone else's approval, or declined on the ticket). Read from
- * the plan alone, since only the plan decides what this run does to the ticket; on the bed such
- * plans were held to full closure and the run stopped after the manager approved them.
+ * Whether an approved plan keeps the originating ticket open: it says not to close the ticket
+ * (or it, or the ticket by its key), or to leave or keep it open, a request routed to someone
+ * else's approval or declined on the ticket. Read from the plan alone, since only the plan
+ * decides what this run does to the ticket; on the bed such plans were held to full closure and
+ * the run stopped after the manager approved them. A negated keep ("do not leave it open") and
+ * another ticket or thread kept open are not this.
  */
-const HELD_OPEN = /\b(?:do\s+not|don't|not)\s+close\b|\b(?:leave|keep)\b[^.!?\n]{0,40}?\bopen\b/i;
+function keepsTicketOpen(plannedWork: string, originSlug: string | undefined): boolean {
+  const ticket = [
+    String.raw`the\s+(?:originating\s+)?ticket`,
+    String.raw`this\s+ticket`,
+    'it',
+    ...(originSlug !== undefined ? [escapeRegExp(originSlug)] : []),
+  ].join('|');
+  const notClosed = new RegExp(
+    String.raw`\b(?:do\s+not|don't|not|never)\s+close\s+(?:${ticket})\b`,
+    'i',
+  );
+  const keptOpen = new RegExp(
+    String.raw`(?<!\b(?:not|never|no)\s+)\b(?:leave|keep)\s+(?:${ticket})\s+open\b`,
+    'i',
+  );
+  return notClosed.test(plannedWork) || keptOpen.test(plannedWork);
+}
 
 function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
   const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
   const assertedWork = approvedWork.replace(HYPOTHETICAL_CLAUSE, ' ');
   if (PARTIAL_WORK.test(assertedWork) && !NO_PARTIAL_WORK.test(assertedWork)) return true;
   const plannedWork = [plan.summary, ...plan.steps].join('\n').replace(HYPOTHETICAL_CLAUSE, ' ');
-  return HELD_OPEN.test(plannedWork);
+  return keepsTicketOpen(plannedWork, referencedDestination(candidate, 'ticket://'));
 }
 
 /**
