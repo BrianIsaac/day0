@@ -255,7 +255,8 @@ function RevokeDialog({
   const change = useChange(keep);
   const [reason, setReason] = useState('');
   const [first, ...rest] = revokeLines(connection, counted ?? undefined);
-  const ready = reason.trim() !== '' && !change.busy;
+  // More cards than one revoke ends is refused by the backend, so Revoke is held (the design pass).
+  const ready = reason.trim() !== '' && !change.busy && counted?.atLeast !== true;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!ready) return;

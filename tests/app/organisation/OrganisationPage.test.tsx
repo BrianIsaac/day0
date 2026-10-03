@@ -308,6 +308,21 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     });
   });
 
+  it('holds Revoke where more cards use the connection than one revoke ends, which the backend refuses', async (): Promise<void> => {
+    asAdministrator();
+    backend.queries['organisationConnections:cardsOn'] = { cards: 1000, atLeast: true };
+    mount(<OrganisationPage zone="UTC" />);
+    await settle();
+    await open('Revoke');
+    const reason = dialog().querySelector<HTMLInputElement>('input');
+    if (!reason) throw new Error('no reason field');
+    typeInto(reason, 'Moving to a new workspace');
+    const revoke = [...dialog().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Revoke Slack',
+    );
+    expect(revoke?.disabled).toBe(true);
+  });
+
   it('says a refused revoke inside the dialog and keeps it open', async (): Promise<void> => {
     asAdministrator();
     backend.refusals['organisationConnections:revoke'] = 'The connection is already revoked.';

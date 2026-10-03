@@ -406,7 +406,7 @@ export function rejoinWords(
   }
   const parts = [
     ...(rejoin.joined.length > 0
-      ? [`${employee} re-joined ${channelList(rejoin.joined)} itself`]
+      ? [`${employee} rejoined ${channelList(rejoin.joined)} itself`]
       : []),
     ...(rejoin.needsPerson.length > 0
       ? [
@@ -417,8 +417,10 @@ export function rejoinWords(
       : []),
   ];
   if (parts.length === 0) return undefined;
-  const said = rejoin.reason === undefined ? '' : ` Slack said: ${rejoin.reason}.`;
-  return `After the renewal ${parts.join('; ')}.${said}`;
+  // Slack's words keep their own full stop, never a second one.
+  const said =
+    rejoin.reason === undefined ? '' : ` Slack said: ${rejoin.reason.replace(/[.\s]+$/, '')}.`;
+  return `After the renewal, ${parts.join('; ')}.${said}`;
 }
 
 /**

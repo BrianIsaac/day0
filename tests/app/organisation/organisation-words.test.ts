@@ -98,7 +98,7 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
       '3 employee cards connected through it end now, each with your reason, and what Day0 obtained through it is revoked at Slack.',
     );
     expect(revokeLines(view(), { cards: 1, atLeast: false })[0]).toBe(
-      '1 employee card connected through it ends now, with your reason, and what Day0 obtained through it is revoked at Slack.',
+      'One employee card connected through it ends now, with your reason, and what Day0 obtained through it is revoked at Slack.',
     );
     expect(revokeLines(view(), { cards: 0, atLeast: false })[0]).toBe(
       'No employee card is connected through it, so none ends; what Day0 obtained through it is revoked at Slack.',

@@ -368,7 +368,7 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 
   it('says what the bot re-joined itself and which channels need a person to add it', (): void => {
     expect(rejoinWords(AFTER, 'Leo', 10)).toBe(
-      'After the renewal Leo re-joined #revops itself; #revops-leads needs someone in it to add Leo.',
+      'After the renewal, Leo rejoined #revops itself; #revops-leads needs someone in it to add Leo.',
     );
     expect(
       rejoinWords(
@@ -377,7 +377,7 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
         10,
       ),
     ).toBe(
-      'After the renewal Leo re-joined #revops and #sales itself; #leads and #finance need someone in each to add Leo.',
+      'After the renewal, Leo rejoined #revops and #sales itself; #leads and #finance need someone in each to add Leo.',
     );
     expect(
       rejoinWords(
@@ -386,7 +386,7 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
         10,
       ),
     ).toBe(
-      'After the renewal #leads needs someone in it to add Leo. Slack said: restricted_action.',
+      'After the renewal, #leads needs someone in it to add Leo. Slack said: restricted_action.',
     );
   });
 

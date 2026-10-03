@@ -302,7 +302,7 @@ function reasonLine(
   switch (reason) {
     case 'no-connection':
       return connectionRevoked
-        ? `IT revoked the organisation’s ${system} connection: an administrator connects it again, and every employee’s card then uses that connection.`
+        ? `The organisation’s ${system} connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.`
         : `${system} is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.`;
     case 'install-needed':
       return `${system} is connected for each employee, and ${employee}’s own app needs an administrator to install it.`;

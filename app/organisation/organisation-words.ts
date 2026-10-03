@@ -184,7 +184,7 @@ function endedCardsLine(
     return `No employee card is connected through it, so none ends; ${revoked}`;
   }
   return counted.cards === 1
-    ? `1 employee card connected through it ends now, with your reason, and ${revoked}`
+    ? `One employee card connected through it ends now, with your reason, and ${revoked}`
     : `${counted.cards} employee cards connected through it end now, each with your reason, and ${revoked}`;
 }
 

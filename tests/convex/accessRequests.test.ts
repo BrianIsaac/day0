@@ -300,7 +300,7 @@ describe('a request after the system was connected and revoked again (11-AO revi
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
 
     expect(shown?.text).toContain(
-      'IT revoked the organisation’s Linear connection: an administrator connects it again, and every employee’s card then uses that connection.',
+      'The organisation’s Linear connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.',
     );
     expect(shown?.text).not.toContain('not connected for the organisation yet');
   });

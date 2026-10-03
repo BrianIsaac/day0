@@ -664,7 +664,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       installRedirectConfigured: true,
     });
     expect(markup).toContain(
-      'After the renewal Maya re-joined #revops itself; #revops-leads needs someone in it to add Maya.',
+      'After the renewal, Maya rejoined #revops itself; #revops-leads needs someone in it to add Maya.',
     );
     const ended = render(listed({ ...renewed, credentialId: undefined }), {
       organisation: organisation({ system: 'slack' }),
