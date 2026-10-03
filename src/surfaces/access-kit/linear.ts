@@ -4,12 +4,13 @@ import type { AccessRecipe } from './types';
 
 /*
  * Linear in the access kit (the access plan, section 4.10; L1 to L3, read 1 October 2026): IT
- * creates an OAuth app in Linear's settings from the manifest below (Linear's app manifests
- * pre-fill the create form; no API creates an app). In `shared` mode one app serves every
- * employee through client-credentials tokens, app-actor tokens valid 30 days, with a fixed scope
- * set (L2: a request with other scopes revokes and replaces the app's tokens). In `per-employee`
- * mode each employee has its own app, since Linear documents one app user per app per workspace
- * (L1), installed with `actor=app` by a Linear administrator from the access request's link.
+ * creates an OAuth app in Linear's settings from the manifest below, through a link that
+ * pre-fills the create form with the manifest's fields (no API creates an app). In `shared` mode
+ * one app serves every employee through client-credentials tokens, app-actor tokens valid 30
+ * days, with a fixed scope set (L2: a request with other scopes revokes and replaces the app's
+ * tokens). In `per-employee` mode each employee has its own app, since Linear documents one app
+ * user per app per workspace (L1), installed with `actor=app` by a Linear administrator from the
+ * access request's link.
  */
 
 /** The path Linear's authorisation returns to (11-AL's route, `app/api/oauth/linear`). */
@@ -47,7 +48,7 @@ const LINEAR_MISSING_SCOPE_WORDS: Readonly<Record<string, string>> = {
     'unassigned tickets',
 };
 
-/** Linear's create-application page, which a manifest pre-fills. */
+/** Linear's create-application page, which its dotted query fields pre-fill. */
 const CREATE_APPLICATION_URL = 'https://linear.app/settings/api/applications/new';
 
 /** Linear's authorisation endpoint. */
@@ -59,6 +60,16 @@ const MANIFEST_SCHEMA = 'https://linear.app/.well-known/oauth-app-manifest.schem
 /** A Linear app's name: 2 to 80 characters, never naming Linear itself. */
 const CLIENT_NAME_MIN = 2;
 const CLIENT_NAME_MAX = 80;
+
+/**
+ * The name of an employee's own Linear app, `<employee> (Day0)`: the manifest's `client_name`, and
+ * the name Linear then gives the app on its consent and in `viewer` (the re-walk, R41X-3).
+ *
+ * @param employee - The employee's name, as its card shows it.
+ */
+export function linearEmployeeAppName(employee: string): string {
+  return `${employee.trim()} (Day0)`;
+}
 
 /** An OAuth app manifest as Linear's schema 1.0.0 reads it: the fields Day0 sets. */
 export interface LinearAppManifest {
@@ -121,14 +132,28 @@ export function linearKitManifest(input: {
 }
 
 /**
- * The link that opens Linear's create-application form pre-filled with a manifest.
+ * The link that opens Linear's create-application form pre-filled with a manifest's fields, in
+ * Linear's dotted query form (`oauth.client_name=...`). Linear refuses a `?manifest=` link ("The
+ * app manifest provided in the URL is not valid", the re-walk, R41X-2), and the dotted form
+ * pre-filled an employee's app's form on real Linear. Each value is percent-encoded whole
+ * (`encodeURIComponent`): a space is `%20` as in that link, never `+`, and an origin's `:` and `/`
+ * are escaped too, where that link left the origin bare; both decode to the same fields. A list
+ * repeats its field, as the shared app's second grant type does. The description and the webhook
+ * setting are not in the link: the form is checked against the printed manifest.
  *
  * @param manifest - The manifest, from {@link linearKitManifest}.
  */
-export function linearManifestUrl(manifest: LinearAppManifest): string {
-  const url = new URL(CREATE_APPLICATION_URL);
-  url.searchParams.set('manifest', JSON.stringify(manifest));
-  return url.toString();
+export function linearCreateFormUrl(manifest: LinearAppManifest): string {
+  const fields: ReadonlyArray<readonly [name: string, value: string]> = [
+    ['distribution', manifest.distribution],
+    ['developer.name', manifest.developer.name],
+    ['oauth.client_name', manifest.oauth.client_name],
+    ['oauth.client_uri', manifest.oauth.client_uri],
+    ...manifest.oauth.redirect_uris.map((uri) => ['oauth.redirect_uris', uri] as const),
+    ...manifest.oauth.grant_types.map((grant) => ['oauth.grant_types', grant] as const),
+  ];
+  const query = fields.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&');
+  return `${CREATE_APPLICATION_URL}?${query}`;
 }
 
 /**

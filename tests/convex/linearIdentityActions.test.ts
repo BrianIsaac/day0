@@ -14,6 +14,7 @@ import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
 import { throughTimers } from './fakes/fake-clock';
+import { LINEAR_OWN_APP_NAME } from '../fixtures/real-vendor-rewalk-2026-10-03';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -55,7 +56,7 @@ beforeEach(async (): Promise<void> => {
         clientId: LEO_CLIENT,
         clientSecret: LEO_SECRET,
         clientCredentials: false,
-        appUser: { id: 'app-user-day0-leo', name: 'Day0 Leo' },
+        appUser: { id: 'app-user-day0-leo', name: 'Leo (Day0)' },
         redirectUris: [REDIRECT],
       },
       {
@@ -855,9 +856,9 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(surface).toMatchObject({
       credentialKind: 'oauth',
       organisationConnectionId: connectionId,
-      actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-day0-leo' },
+      actsAs: { kind: 'own-app', label: 'Leo (Day0)', providerIdentityId: 'app-user-day0-leo' },
       providerIdentityId: 'app-user-day0-leo',
-      provisioning: { appName: 'Day0 Leo', clientId: LEO_CLIENT, redirectUrl: REDIRECT },
+      provisioning: { appName: 'Leo (Day0)', clientId: LEO_CLIENT, redirectUrl: REDIRECT },
     });
     expect(surface.pendingAuthorisation).toBeUndefined();
     expect(secret).toMatchObject({
@@ -889,6 +890,18 @@ describe("per-employee mode: the employee's own app", (): void => {
       ]),
     );
     expect(linear.live(await bearerOf(harness, access!._id))).toBe(true);
+  });
+
+  it('names an employee’s own app as Linear does and the kit’s manifest does, on the record and the card (R41X-3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+
+    const { surface, events } = await read(harness, surfaceIds[0]!);
+    const provisioned = events.find((event) => event.type === 'surface.app-provisioned');
+    expect((provisioned?.payload as { appName?: string }).appName).toBe(LINEAR_OWN_APP_NAME);
+    expect(surface.actsAs?.label).toBe(LINEAR_OWN_APP_NAME);
+    expect(surface.provisioning?.appName).toBe(LINEAR_OWN_APP_NAME);
   });
 
   it("schedules the token's refresh for its last minutes, and nothing fires it sooner (the review's M11 a)", async (): Promise<void> => {
@@ -1104,7 +1117,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     });
     expect((await read(harness, surfaceIds[0]!)).surface.actsAs).toMatchObject({
       kind: 'own-app',
-      label: 'Day0 Leo',
+      label: 'Leo (Day0)',
     });
   });
 
@@ -1234,6 +1247,63 @@ describe("per-employee mode: the employee's own app", (): void => {
           .filter((event) => event.type === 'credential.revoked-at-source')
           .map((event) => event.payload),
       ).toEqual([expect.objectContaining({ credentialId: first, outcome: 'token-revoked' })]);
+    });
+  });
+
+  it('installs again from one Connect on a card Linear refused to renew, ending the refused pair as a Disconnect does (R41X-4)', async (): Promise<void> => {
+    // The refused pair's revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const surfaceId = surfaceIds[0]!;
+    await installLeo(harness, surfaceId);
+    const refused = (await read(harness, surfaceId)).surface;
+    // A Linear administrator's "Revoke access" in Linear's settings, then the card as its check
+    // leaves it (`recordProbeFailure`): not granted, still holding the refused pair.
+    linear.revokeAppTokens(LEO_CLIENT);
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(surfaceId, {
+          verdict: 'ungranted',
+          reason: 'Linear refused to renew the token: Refresh token revoked.',
+          credentialLanded: false,
+        }),
+    );
+
+    const started = await connect(harness, surfaceId);
+    if (!started.ok || !('authoriseUrl' in started)) throw new Error('no installation started');
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const { surface, credentials } = await read(harness, surfaceId);
+    expect(surface.credentialId).not.toBe(refused.credentialId);
+    expect(credentials.find((row) => row._id === refused.credentialId)).toMatchObject({
+      revokedAt: clock,
+      sourceRevocation: { end: 'disconnect' },
+    });
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceId);
+      expect(
+        events
+          .filter((event) => event.type === 'credential.revoked-at-source')
+          .map((event) => event.payload),
+      ).toEqual([
+        expect.objectContaining({
+          credentialId: refused.credentialId,
+          end: 'disconnect',
+          outcome: 'already-gone',
+        }),
+      ]);
     });
   });
 

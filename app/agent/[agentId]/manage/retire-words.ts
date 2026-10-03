@@ -98,7 +98,11 @@ function outcomeLine(outcome: PreviewOutcome, name: string): string | undefined 
     case 'app-uninstalled':
       return `${name}'s ${system} app: uninstalled from ${system}.`;
     case 'token-revoked':
-      return `${access}: revoked at ${system}.`;
+      // A Linear token Day0 revokes per employee is its own app's (the shared app's says
+      // `shared`), and no call deletes a Linear app, so the app stays for IT (R41X-5).
+      return outcome.system === 'linear'
+        ? `${access}: revoked at ${system}. ${name}'s own ${system} app stays in ${system}'s settings for IT to delete.`
+        : `${access}: revoked at ${system}.`;
     case 'shared':
       return `${access}: ends for ${name} only; the app your employees share is not revoked at ${system}.`;
     case 'not-supported':

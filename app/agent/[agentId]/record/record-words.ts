@@ -227,11 +227,12 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
   }
   if (p.method === 'auth.revoke') {
     // Slack's `auth.revoke` ends the token alone: its refresh token stays usable at Slack, and
-    // Slack offers no call that ends it (the real-vendor walk, R41V-10), so every line says what
-    // IT does.
-    const rowAdvice =
-      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
-      '"Your App Configuration Tokens" on api.slack.com if it is still listed';
+    // nothing ends it but its lapse, not even the row's Delete on api.slack.com, which is not
+    // listed after a revoke anyway (R41V-10, R41X-8), so every line says what IT can do.
+    const refreshAdvice =
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed';
     // A token a renewal was issued after the connection's revoke was kept nowhere: no copy.
     const unkept = p.unkept === true;
     const which = unkept
@@ -245,22 +246,22 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     switch (p.outcome) {
       case 'done':
         return unkept
-          ? `Day0 revoked ${which}, which it kept nowhere${notChecked}; ${rowAdvice}`
-          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use${notChecked}; ${rowAdvice}`;
+          ? `Day0 revoked ${which}, which it kept nowhere${notChecked}; ${refreshAdvice}`
+          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use${notChecked}; ${refreshAdvice}`;
       case 'already-revoked':
         return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}${notChecked}; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
-        }, and ${rowAdvice}`;
+        }, and ${refreshAdvice}`;
       case 'unrecognised':
         return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}. Day0 cannot tell whether Slack had ended it or never knew it; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
-        }, and ${rowAdvice}`;
+        }, and ${refreshAdvice}`;
       case 'failed':
       case 'superseded':
       case undefined:
         return `Revoking ${which} at Slack failed${because(p.reason)}; ${
           unkept ? 'Day0 kept no copy' : "Day0's copy was deleted"
-        }, and ${rowAdvice}`;
+        }, and ${refreshAdvice}`;
       default: {
         const unknown: never = p.outcome;
         return `Day0 asked Slack to revoke ${token}: ${String(unknown)}`;

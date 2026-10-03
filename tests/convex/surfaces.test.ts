@@ -2682,6 +2682,49 @@ describe('a connected surface and its last skip reason', (): void => {
   });
 });
 
+describe("a card's skip reason once its check has run (R41X-4)", (): void => {
+  it("clears a poll's skip that waits on the card's next check once that check has failed, so the card says the check's own words", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<GenericId<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'refused renewal',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        managerApprovedAt: 2,
+        // The re-walk's card after Linear's 400 "Refresh token revoked" and before its check.
+        intakeSkipReason:
+          "intake failed: Linear refused the token Day0 holds for this card, so nothing was read; the card's next check says whether the connection still works.",
+        credentialLanded: true,
+        probeGeneration: 1,
+        createdAt: 1,
+      });
+    });
+    const reason = 'Linear refused to renew the token: Refresh token revoked.';
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: 1,
+      verdict: 'ungranted',
+      reason,
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.verdict).toBe('ungranted');
+    expect(surface?.reason).toBe(reason);
+    expect(surface?.intakeSkipReason).toBeUndefined();
+  });
+});
+
 describe('access expiry (Q5)', (): void => {
   const DAY = 24 * 60 * 60 * 1_000;
   const PROPOSED_AT = Date.UTC(2026, 8, 1);

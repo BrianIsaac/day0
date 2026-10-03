@@ -11,6 +11,10 @@ import {
   secretWords,
   type ConnectionView,
 } from '../../../app/organisation/organisation-words';
+import {
+  SLACK_ROTATE_AFTER_EVERY_END,
+  SLACK_ROW_DELETE_DIALOG,
+} from '../../fixtures/real-vendor-rewalk-2026-10-03';
 
 const AT = Date.UTC(2026, 9, 1, 9, 30);
 
@@ -96,13 +100,25 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
     ]);
   });
 
-  it("says before a Slack revoke that Slack cannot end the configuration token's refresh token, and what IT deletes (R41V-10)", (): void => {
+  it("says before a Slack revoke that nothing ends the configuration token's refresh token but its lapse, and what IT can do (R41V-10, R41X-8)", (): void => {
     expect(revokeLines(view())).toEqual([
       "Every employee's Slack card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at Slack.",
       'No card on any other system changes. Each manager sees the reason on the card.',
-      'Day0 revokes the configuration token at Slack, but Slack offers no call that ends its refresh token: once this is revoked, IT deletes the token\'s row under "Your App Configuration Tokens" on api.slack.com, signed in as the account that generated it.',
+      'Day0 revokes the configuration token at Slack, but nothing ends its refresh token, neither Day0 nor a Delete on api.slack.com: it ends only when it lapses. Until then whoever copied it while its row was listed under "Your App Configuration Tokens" can mint a new token with it, so keep the sign-in of the account that generated it closed.',
       'IT can connect it again with ./setup.sh access.',
     ]);
+  });
+
+  it("never tells IT that a click ends the configuration token's refresh token, which Slack still rotated after Day0's revoke and after the row's Delete (R41X-8)", (): void => {
+    // The row's Delete ends the access token it names and says nothing of the refresh token, and
+    // Slack's rotation with the refresh token still answered ok after both ends.
+    expect(SLACK_ROW_DELETE_DIALOG).not.toMatch(/refresh/i);
+    expect(SLACK_ROTATE_AFTER_EVERY_END.body).toEqual({ ok: true });
+    const said = [...revokeLines(view()), rotateNote(view())].join(' ');
+    expect(said).not.toMatch(/\bdelet\w* (the token's|its) row\b/);
+    expect(said).not.toMatch(/ends the pair/);
+    expect(said).toContain('it ends only when it lapses');
+    expect(said).toContain('keep the sign-in of the account that generated it closed');
   });
 
   it("says how many cards a revoke ends once the count is read, naming no employee (11-AC's item 3)", (): void => {
@@ -134,9 +150,10 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
   it("says before a Slack rotation that the old configuration token's refresh token outlives it, as the revoke does (the round review's m17)", (): void => {
     expect(rotateNote(view())).toBe(
       'No card is affected. Day0 seals the new secret, switches to it and revokes the old ' +
-        "configuration token. Slack cannot end that token's refresh token, so IT then deletes its " +
-        'row under "Your App Configuration Tokens" on api.slack.com, signed in as the account that ' +
-        'generated it.',
+        "configuration token. Nothing ends that token's refresh token, neither Day0 nor a Delete " +
+        'on api.slack.com: it ends only when it lapses. Until then whoever copied it while its ' +
+        'row was listed can mint a new token with it, so keep the sign-in of the account that ' +
+        'generated it closed.',
     );
     expect(rotateNote(view({ kind: 'oauth-app', system: 'linear', displayName: 'Linear' }))).toBe(
       'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.',

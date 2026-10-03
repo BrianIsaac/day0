@@ -757,6 +757,36 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).not.toContain('Move off the pasted key');
   });
 
+  it('offers Connect on an employee’s own Linear app card Linear refused to renew, which still holds the refused pair (R41X-4)', (): void => {
+    const refused = listed({
+      verdict: 'ungranted',
+      credentialLanded: false,
+      credentialId: 'cred-refused' as ListedSurface['credentialId'],
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 89 * DAY,
+      // The re-walk's card after Linear's 400 "Refresh token revoked" (row 3).
+      reason:
+        'Linear refused to renew the token: Linear refused the token or code it was shown: Refresh token revoked. Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card.',
+      actsAs: { kind: 'own-app', label: 'Leo (Day0)' },
+      provisioning: { appId: 'lin-client', appName: 'Leo (Day0)', clientId: 'lin-client' },
+    } as Partial<ListedSurface>);
+    const markup = render(
+      refused,
+      { organisation: organisation({ system: 'linear', mode: 'per-employee' }) },
+      { connect: (): void => undefined },
+    );
+    expect(markup).toMatch(/>Connect<\/button>/);
+    expect(chip(markup)).toBe('Not granted');
+    // Only an employee's own app installs again: through a shared connection Connect is not it.
+    expect(
+      render(
+        refused,
+        { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+        { connect: (): void => undefined },
+      ),
+    ).not.toMatch(/>Connect<\/button>/);
+  });
+
   it('says whom a disconnected pasted-key card will act as, not the key it no longer holds (code pass, m1)', (): void => {
     const markup = render(
       listed({

@@ -357,7 +357,7 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     await open('Give it a new secret');
     expect(text(dialog())).toContain('No card is affected');
     // Slack's auth.revoke ends the old token alone (the round review's m17).
-    expect(text(dialog())).toContain("Slack cannot end that token's refresh token");
+    expect(text(dialog())).toContain("Nothing ends that token's refresh token");
     const [secret, refresh] = [...dialog().querySelectorAll<HTMLInputElement>('input')];
     expect(secret?.type).toBe('password');
     expect(refresh?.type).toBe('password');

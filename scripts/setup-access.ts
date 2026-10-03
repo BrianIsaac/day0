@@ -47,7 +47,11 @@ import {
   type RecipeField,
   type RecipeMode,
 } from '../src/surfaces/access-kit';
-import { linearKitManifest, linearManifestUrl } from '../src/surfaces/access-kit/linear';
+import {
+  linearCreateFormUrl,
+  linearEmployeeAppName,
+  linearKitManifest,
+} from '../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../src/surfaces/access-kit/slack';
 import { discoverAuthorisation, type OauthFetch } from '../src/surfaces/mcp-oauth';
 import { adminTarget, deploymentAdmin, type DeploymentAdmin } from './lib/convex-admin';
@@ -438,14 +442,14 @@ function printManifest(
         employee === undefined
           ? { appName: 'Day0', publicUrl: values[PUBLIC_URL_VAR] ?? '', mode: 'shared' }
           : {
-              appName: `${employee.trim()} (Day0)`,
+              appName: linearEmployeeAppName(employee),
               publicUrl: values[PUBLIC_URL_VAR] ?? '',
               mode: 'per-employee',
             },
       );
       io.log(JSON.stringify(manifest, null, 2));
       io.log(
-        `\nCreate it in Linear from this link (an administrator, signed in):\n${linearManifestUrl(manifest)}`,
+        `\nCreate it in Linear from this link (an administrator, signed in), and check the form against the manifest above:\n${linearCreateFormUrl(manifest)}`,
       );
       return 0;
     } catch (err) {

@@ -541,8 +541,8 @@ export function renewalDueAt(expiresAt: number, now: number, lead: number): numb
 /**
  * Revoke one token Linear issued that Day0 will not keep (`POST /oauth/revoke` with `token` and
  * its `token_type_hint`, L3), so no grant is left live behind a refused landing. The answer is
- * read by Linear's revocation reader: a token Linear says it already revoked is done, and any
- * other refusal is one, never taken as revoked (the round review's m4).
+ * read by Linear's revocation reader: a token Linear says it already revoked, or does not know
+ * (R41X-1), is done, and any other refusal is one, never taken as revoked (the round review's m4).
  *
  * @throws LinearIssuerRefusal when Linear cannot be reached or refuses otherwise.
  */

@@ -502,22 +502,25 @@ describe('setup: the access verb', (): void => {
     expect(await bed.run(['access', '--print-manifest', 'linear'])).toBe(0);
     const printed = bed.bed.output.join('\n');
     expect(printed).toContain('"client_credentials"');
-    expect(printed).toContain('https://linear.app/settings/api/applications/new?manifest=');
+    // Linear's dotted query form, which pre-fills it; never a `?manifest=` link (R41X-2).
+    expect(printed).toContain(
+      'https://linear.app/settings/api/applications/new?distribution=private&developer.name=Day0&oauth.client_name=Day0&',
+    );
+    expect(printed).toContain(
+      'oauth.grant_types=authorization_code&oauth.grant_types=client_credentials',
+    );
+    expect(printed).not.toContain('?manifest=');
   });
 
   it('prints an employee’s own Linear app’s form, pre-filled with its name and no client credentials (R41V-R5)', async (): Promise<void> => {
     const bed = accessBed();
     expect(await bed.run(['access', '--print-manifest', 'linear', '--employee', 'Leo'])).toBe(0);
     const printed = bed.bed.output.join('\n');
-    const link = /https:\/\/linear\.app\/settings\/api\/applications\/new\?manifest=\S+/.exec(
-      printed,
-    )?.[0];
+    const link = /https:\/\/linear\.app\/settings\/api\/applications\/new\?\S+/.exec(printed)?.[0];
     expect(link).toBeDefined();
-    const manifest = JSON.parse(new URL(link ?? '').searchParams.get('manifest') ?? '');
-    expect(manifest.oauth).toMatchObject({
-      client_name: 'Leo (Day0)',
-      grant_types: ['authorization_code'],
-    });
+    const fields = new URL(link ?? '').searchParams;
+    expect(fields.get('oauth.client_name')).toBe('Leo (Day0)');
+    expect(fields.getAll('oauth.grant_types')).toEqual(['authorization_code']);
     expect(printed).not.toContain('"client_credentials"');
   });
 

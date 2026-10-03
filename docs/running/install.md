@@ -76,7 +76,14 @@ It runs, in order, and **stops at the first step that fails, naming it**:
 3. **The company sign-in** (`./setup.sh sign-in`): it asks for the tenant (or
    domain, or issuer), the client id, the client secret (hidden), the allowed
    domains and the public origin, writes them, pushes them, restarts the
-   backend and runs `pnpm check:setup`.
+   backend and runs `pnpm check:setup`. Where the identity provider's
+   certificate comes from a private certificate authority (a test issuer; a
+   customer's own issuer usually has a public one), this step stops with
+   "This machine cannot read
+   https://.../.well-known/openid-configuration:
+   UNABLE_TO_VERIFY_LEAF_SIGNATURE". Run the install with
+   `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, the same
+   trust step 6 needs for the proxy.
 4. **The organisation's systems** (`./setup.sh access`): it asks for the
    administrators, lists the systems the documentation names, and for each one
    the kit connects shows its recipe and records its mode (Slack and an MCP
@@ -153,7 +160,7 @@ connection landed that day.
 |---|---|
 | `./setup.sh sign-in --provider entra` | the company sign-in only, ending on `pnpm check:setup` |
 | `./setup.sh access` | the organisation's systems only, ending on `pnpm check:access` |
-| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form; `linear --employee <name>` an employee's own app's) |
+| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form with the manifest's fields; `linear --employee <name>` an employee's own app's) |
 | `./setup.sh access --dry-run` | lists the systems and what would be landed; writes nothing |
 | `./setup.sh access --correct <system>` | records the redirect Day0 returns to and the kit's scopes on a connection, after IT fixed them at the vendor; no secret changes and no card ends. A fixed set it cannot change is reported, not corrected |
 | `pnpm check:setup` | every setting, the sign-in block and the access block, without calling a vendor |

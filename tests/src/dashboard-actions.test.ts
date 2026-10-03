@@ -207,6 +207,11 @@ describe('dashboard exact-action gate', (): void => {
     ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }]);
   });
 
+  it('never calls a read a change: the headline counts reads and writes alike (the re-walk, row 8)', (): void => {
+    // Juno's held view: one read (`conversations.replies`) had landed, the write was held.
+    expect(landedHeadline([{ authority: 'standing' }])).not.toMatch(/\bchanges?\b/);
+  });
+
   it('names how many landed changes applied under the switch', (): void => {
     expect(
       landedHeadline([
@@ -214,18 +219,18 @@ describe('dashboard exact-action gate', (): void => {
         { authority: 'autonomous' },
         { authority: 'autonomous' },
       ]),
-    ).toBe('3 changes reached the work environment · 3 applied autonomously');
+    ).toBe('3 actions reached the work environment · 3 applied autonomously');
     expect(
       landedHeadline([
         { authority: 'standing' },
         { authority: 'manager' },
         { authority: 'autonomous' },
       ]),
-    ).toBe('3 changes reached the work environment · 1 applied autonomously');
+    ).toBe('3 actions reached the work environment · 1 applied autonomously');
     expect(landedHeadline([{ authority: 'manager' }])).toBe(
-      '1 change reached the work environment',
+      '1 action reached the work environment',
     );
-    expect(landedHeadline([{}, {}])).toBe('2 changes reached the work environment');
+    expect(landedHeadline([{}, {}])).toBe('2 actions reached the work environment');
   });
 
   it('explains a cancelled item from its recorded reason, else from what it was doing', (): void => {
