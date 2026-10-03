@@ -138,6 +138,15 @@ describe('the access recipes', (): void => {
     expect(readme.match(/docs\/running\/install\.md/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
+  it('says at the sign-in step, where the install first meets it, that an issuer certified by a private CA needs NODE_EXTRA_CA_CERTS (R41X-R5)', (): void => {
+    const install = page('docs/running/install.md').replace(/\s+/g, ' ');
+    const step3 =
+      install.split('3. **The company sign-in**')[1]?.split('4. **The organisation')[0] ?? '';
+    // The re-walk's run 1 stopped here, before step 6's proxy ever came up.
+    expect(step3).toContain('UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+    expect(step3).toContain('NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install');
+  });
+
   it("has the runbook's failure table cure each gap by its cause, as pnpm check:access words it (the round review's m6)", (): void => {
     const table = page('docs/running/install.md').split('## When a check fails')[1] ?? '';
     const rows = table

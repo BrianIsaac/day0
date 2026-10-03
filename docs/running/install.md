@@ -76,7 +76,14 @@ It runs, in order, and **stops at the first step that fails, naming it**:
 3. **The company sign-in** (`./setup.sh sign-in`): it asks for the tenant (or
    domain, or issuer), the client id, the client secret (hidden), the allowed
    domains and the public origin, writes them, pushes them, restarts the
-   backend and runs `pnpm check:setup`.
+   backend and runs `pnpm check:setup`. Where the identity provider's
+   certificate comes from a private certificate authority (a test issuer; a
+   customer's own issuer usually has a public one), this step stops with
+   "This machine cannot read
+   https://.../.well-known/openid-configuration:
+   UNABLE_TO_VERIFY_LEAF_SIGNATURE". Run the install with
+   `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, the same
+   trust step 6 needs for the proxy.
 4. **The organisation's systems** (`./setup.sh access`): it asks for the
    administrators, lists the systems the documentation names, and for each one
    the kit connects shows its recipe and records its mode (Slack and an MCP
