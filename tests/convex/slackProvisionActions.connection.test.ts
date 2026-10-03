@@ -400,6 +400,30 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     ]);
   });
 
+  it('presents the refresh token to Slack once when two provisionings rotate at once, under the refresh lease (R-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    const leo = await employee(harness, 'Leo');
+    // On the real timer: the second rotation sleeps on the first's lease between its reads.
+    vi.useRealTimers();
+
+    await Promise.all([provision(harness, maya.surfaceId), provision(harness, leo.surfaceId)]);
+
+    expect(callsOf(slack, 'tooling.tokens.rotate')).toEqual([
+      { method: 'tooling.tokens.rotate', form: { refresh_token: LANDED_REFRESH_TOKEN } },
+    ]);
+    expect(callsOf(slack, 'apps.manifest.create').map((call) => call.bearer)).toEqual([
+      slack.configuration.token,
+      slack.configuration.token,
+    ]);
+    const connection = await harness.run(async (ctx) => await ctx.db.get(connectionId));
+    expect(connection?.status).toBe('active');
+    const row = await configurationRow(harness, connectionId);
+    expect(row.generation).toBe(1);
+    expect(row).not.toHaveProperty('refreshingUntil');
+  });
+
   it("uses a token pasted on the card when the organisation's connection cannot renew its own, and revokes it after", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await landSlack(harness);

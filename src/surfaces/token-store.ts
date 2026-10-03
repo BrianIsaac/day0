@@ -12,13 +12,21 @@ import type { ActsAs, TokenStore } from './access-identity';
 import { decryptCredential } from './credentials';
 import type { IssuedTokens } from './mcp-oauth';
 import { safeFailureMessage } from './redact';
+import {
+  awaitLeaseHolder,
+  LIVE_TOKEN_LEASE_POLLS,
+  RefreshInProgress,
+  sleepFor,
+} from './refresh-lease';
 
 /*
  * The token store behind the access rungs (wave 11, 11-AT; the access plan, section 4.7; B15):
  * every rung asks it for a live access token and none of them ever reads a refresh token. Two
  * places keep tokens. The native store keeps them in `credentials` rows sealed for their owner,
  * refreshes them at read time and on a schedule, and writes a rotation only while the pair is at
- * the generation it read (11-AM's seam, moved here unchanged). Nango's free self-hosted edition
+ * the generation it read (11-AM's seam, moved here unchanged); a refresh presents the refresh token
+ * only under the row's refresh lease (R-S, `./refresh-lease.ts`), so two refreshes never present
+ * one token. Nango's free self-hosted edition
  * keeps the tokens of the API-rung providers Day0 has no native issuer for, and refreshes them
  * itself (gated on V-A4). A row's `tokenStore` says which.
  */
@@ -31,6 +39,12 @@ const ROTATION_WAIT_MS = 200;
 
 /** How many times it waits. */
 const ROTATION_WAITS = 3;
+
+/**
+ * How many times a refresh asks for the lease: once, and once more after the holder it waited for
+ * let the lease end without a rotation. A third holder in that time answers {@link RefreshInProgress}.
+ */
+const LEASE_CLAIMS = 2;
 
 /** The credential an authorisation landed, as the native store is told to keep it. */
 export interface LandTokens {
@@ -57,6 +71,8 @@ export interface HeldTokens {
   readonly connection: Doc<'organisationConnections'> | null;
   /** Where the token lives; absent reads as `native`, as on the row. */
   readonly tokenStore?: TokenStore;
+  /** The end of the refresh lease another refresh holds on the row, when one does. */
+  readonly refreshingUntil?: number;
 }
 
 /** A refresh's tokens, to be written only while the pair is still at `expectedGeneration`. */
@@ -75,6 +91,25 @@ export interface HeldTokenRows {
   readonly connection: Doc<'organisationConnections'> | null;
 }
 
+/** Which lease a refresh asks for: the access token's row at the generation it read. */
+export interface RefreshTokenClaim {
+  readonly credentialId: Id<'credentials'>;
+  readonly expectedGeneration: number;
+  readonly now: number;
+}
+
+/** What asking for the lease answers. */
+export type ClaimedRefreshToken =
+  | {
+      readonly kind: 'claimed';
+      /** The refresh token of the generation the claim read, to present once. */
+      readonly presented: string;
+      readonly leaseUntil: number;
+    }
+  | { readonly kind: 'moved' }
+  | { readonly kind: 'leased'; readonly until: number }
+  | { readonly kind: 'gone' };
+
 /** What a rotation's write answers. */
 export type RotationOutcome =
   | { readonly ok: true; readonly generation: number }
@@ -92,16 +127,21 @@ export interface TokenKeeper {
   /** The access token's value, recording its use; refused once it is revoked. */
   accessToken(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<string>;
   /**
-   * The paired refresh token's value while the pair is still at `expectedGeneration`, or null once
-   * a refresh has moved it on: a refresh exchanges only the token of the generation it read, never
-   * one a concurrent refresh has just written. Refused when there is none or it is revoked. Only
-   * the refresh itself calls it; no rung does.
+   * Take the refresh lease on the access token's row and the paired refresh token's value, in one
+   * transaction, while the pair is still at the generation the claim read and no other refresh
+   * holds the lease: a refresh exchanges only the token of the generation it read, and only one
+   * refresh presents it. Only the refresh itself calls it; no rung does.
+   *
+   * @returns `claimed` with the token and the lease's end; `moved` once a rotation moved the pair
+   *   on; `leased` with the end of another refresh's lease; `gone` when the access token is revoked.
+   * @throws Error when no live refresh token is paired with the access token.
    */
-  refreshToken(
+  claimRefreshToken(ctx: ActionCtx, claim: RefreshTokenClaim): Promise<ClaimedRefreshToken>;
+  /** End the lease a claim took, unless a rotation or another holder already has. */
+  releaseRefreshLease(
     ctx: ActionCtx,
-    credentialId: Id<'credentials'>,
-    expectedGeneration: number,
-  ): Promise<string | null>;
+    lease: { readonly credentialId: Id<'credentials'>; readonly leaseUntil: number },
+  ): Promise<void>;
   /** Write a refresh's tokens atomically, refusing a stale generation. */
   rotate(ctx: ActionCtx, rotation: RotateTokens): Promise<RotationOutcome>;
 }
@@ -119,6 +159,7 @@ export function heldFromRows(credentialId: Id<'credentials'>, rows: HeldTokenRow
       refresh !== null && refresh.revokedAt === undefined && refresh.ciphertext !== undefined,
     connection,
     tokenStore: access.tokenStore ?? 'native',
+    ...(access.refreshingUntil === undefined ? {} : { refreshingUntil: access.refreshingUntil }),
   };
 }
 
@@ -152,33 +193,34 @@ export function nativeTokenKeeper(keyring: () => CredentialKeyring): TokenKeeper
       return rows ? heldFromRows(credentialId, rows) : null;
     },
     accessToken: async (ctx, credentialId) => await decryptCredential(ctx, credentialId),
-    refreshToken: async (ctx, credentialId, expectedGeneration) => {
-      const rows: HeldTokenRows | null = await ctx.runQuery(internal.mcpOauth.heldTokens, {
-        credentialId,
-      });
-      if (rows && (rows.access.generation ?? 0) !== expectedGeneration) return null;
-      const refresh = rows?.refresh;
-      if (
-        !refresh ||
-        refresh.revokedAt !== undefined ||
-        refresh.status !== undefined ||
-        refresh.ciphertext === undefined ||
-        refresh.iv === undefined
-      ) {
-        throw new Error('No live refresh token is held for this authorisation.');
+    claimRefreshToken: async (ctx, claim) => {
+      const claimed = await ctx.runMutation(internal.refreshLease.claim, claim);
+      switch (claimed.kind) {
+        case 'claimed': {
+          let presented: string;
+          try {
+            presented = openRefreshToken(claimed.refresh, keyring());
+          } catch (error) {
+            // Nothing was presented: the lease is ended here, or the next refresh waits it out.
+            await releaseUnpresented(ctx, claim.credentialId, claimed.leaseUntil);
+            throw error;
+          }
+          return { kind: 'claimed', leaseUntil: claimed.leaseUntil, presented };
+        }
+        case 'no-refresh-token':
+          throw new Error('No live refresh token is held for this authorisation.');
+        case 'moved':
+        case 'leased':
+        case 'gone':
+          return claimed;
+        default: {
+          const unknown: never = claimed;
+          throw new Error(`unhandled lease claim ${String(unknown)}`);
+        }
       }
-      // Opened from the very snapshot the generation was read in: a second read could return the
-      // token a concurrent rotation has just written into the same row.
-      return openOwnedCredential(
-        {
-          ciphertext: refresh.ciphertext,
-          iv: refresh.iv,
-          userId: refresh.userId,
-          ...(refresh.keyId === undefined ? {} : { keyId: refresh.keyId }),
-        },
-        keyring(),
-        { allowUnbound: false },
-      );
+    },
+    releaseRefreshLease: async (ctx, lease) => {
+      await ctx.runMutation(internal.refreshLease.release, lease);
     },
     rotate: async (ctx, rotation) =>
       await ctx.runMutation(internal.mcpOauth.rotateTokens, {
@@ -194,6 +236,47 @@ export function nativeTokenKeeper(keyring: () => CredentialKeyring): TokenKeeper
         now: rotation.now,
       }),
   };
+}
+
+/**
+ * End a lease whose refresh token was never presented. A release that fails is logged, so the
+ * caller rethrows why the token could not be opened rather than the release's failure; the lease
+ * lapses by itself at its end.
+ */
+async function releaseUnpresented(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  leaseUntil: number,
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.refreshLease.release, { credentialId, leaseUntil });
+  } catch (error) {
+    log.warn('refresh lease not released after an unreadable refresh token; it lapses at its end', {
+      credentialId,
+      leaseUntil,
+      reason: safeFailureMessage(error, '', 'no detail'),
+    });
+  }
+}
+
+/**
+ * A refresh token's value, opened from the very snapshot the lease was claimed in: a second read
+ * could return the token a concurrent rotation has just written into the same row.
+ */
+function openRefreshToken(refresh: Doc<'credentials'>, keyring: CredentialKeyring): string {
+  if (refresh.ciphertext === undefined || refresh.iv === undefined) {
+    throw new Error('No live refresh token is held for this authorisation.');
+  }
+  return openOwnedCredential(
+    {
+      ciphertext: refresh.ciphertext,
+      iv: refresh.iv,
+      userId: refresh.userId,
+      ...(refresh.keyId === undefined ? {} : { keyId: refresh.keyId }),
+    },
+    keyring,
+    { allowUnbound: false },
+  );
 }
 
 /** The server refused to exchange the refresh token (not a transport failure). */
@@ -299,6 +382,18 @@ export interface NativeTokenStoreDeps {
   readonly keeper: TokenKeeper;
   readonly refreshers: readonly TokenRefresher[];
   readonly now: () => number;
+  /** How a refresh waiting for another's lease sleeps; the runtime's timer when absent. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+/** How a refresh treats another refresh's lease. */
+export interface RefreshOptions {
+  /**
+   * The caller's stored token still lives: behind another refresh's lease the refresh waits only
+   * {@link LIVE_TOKEN_LEASE_POLLS} reads at each claim, and after its last claim hands the stored
+   * token back rather than waiting out a lease whose holder may have died.
+   */
+  readonly storedTokenLives?: boolean;
 }
 
 /** What a refresh answers. */
@@ -339,34 +434,125 @@ async function rotatedSince(
 }
 
 /**
- * Refresh a held token with rotation: exchange the refresh token of the generation read, and write
- * the new pair only while the pair is still at that generation. A refresh that loses to a
- * concurrent one (the pair moved on before it read the token, its write refused as stale, or its
- * spent token refused) takes the winner's token; one whose credential was revoked meanwhile has
- * the issuer revoke what it was issued. The write is the issuer's own where it has one
- * ({@link TokenRefresher.rotate}), else the keeper's; refusals are in the issuer's words.
+ * Refresh a held token with rotation, under the row's refresh lease: take the lease and the refresh
+ * token of the generation read in one transaction, exchange it, and write the new pair only while
+ * the pair is still at that generation. A refresh that finds the lease held waits for its holder
+ * and takes the winner's token, so two refreshes never present one refresh token (R-S; the wave 11
+ * review's m11); one that finds the pair moved on takes the winner's token at once. A refresh whose
+ * spent token is refused after a rotation it did not see takes the winner's token; one whose
+ * credential was revoked meanwhile has the issuer revoke what it was issued. The write is the
+ * issuer's own where it has one ({@link TokenRefresher.rotate}), else the keeper's; refusals are
+ * in the issuer's words.
  *
+ * @param options - Whether the caller's stored token still lives, which bounds a wait on a lease.
  * @throws a transport error, or the issuer's own, when the server cannot be reached or answers
- *   unusably; a refusal of the refresh by the server is the typed outcome instead.
+ *   unusably; {@link RefreshInProgress} when other refreshes held the lease throughout; a refusal
+ *   of the refresh by the server is the typed outcome instead.
  */
 export async function refreshHeld(
   ctx: ActionCtx,
   held: HeldTokens,
   refresher: TokenRefresher,
   deps: NativeTokenStoreDeps,
+  options: RefreshOptions = {},
 ): Promise<RefreshOutcome> {
   const { keeper } = deps;
   const preparation = await refresher.prepare(ctx, held);
   if (!preparation.ok) return { ok: false, refusal: preparation.refusal };
-  // Read last, just before it is sent: the shorter the gap, the less a concurrent rotation can
-  // overtake it (a server that detects reuse revokes the whole grant).
-  const presented = await keeper.refreshToken(ctx, held.credentialId, held.generation);
-  if (presented === null) {
-    return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
+  for (let claims = 1; ; claims += 1) {
+    // Claimed last, just before the token is sent, so the lease is held no longer than the exchange.
+    const claim = await keeper.claimRefreshToken(ctx, {
+      credentialId: held.credentialId,
+      expectedGeneration: held.generation,
+      now: deps.now(),
+    });
+    switch (claim.kind) {
+      case 'claimed':
+        return await exchangeUnderLease(ctx, held, refresher, preparation.refresh, claim, deps);
+      case 'moved':
+        return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
+      case 'gone':
+        return { ok: false, refusal: wordsOf(refresher).revokedMeanwhile };
+      case 'leased': {
+        const waited = await awaitLeaseHolder(
+          {
+            read: async () => await keeper.read(ctx, held.credentialId),
+            now: deps.now,
+            sleep: deps.sleep ?? sleepFor,
+          },
+          { generation: held.generation, until: claim.until },
+          options.storedTokenLives === true ? LIVE_TOKEN_LEASE_POLLS : undefined,
+        );
+        if (waited === 'moved') {
+          return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
+        }
+        if (claims === LEASE_CLAIMS) {
+          if (options.storedTokenLives !== true) throw new RefreshInProgress();
+          return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
+        }
+        break;
+      }
+      default: {
+        const unknown: never = claim;
+        throw new Error(`unhandled lease claim ${String(unknown)}`);
+      }
+    }
   }
+}
+
+/**
+ * The exchange and the rotation-safe write a refresh makes once it holds the lease, the lease
+ * ended afterwards whatever came of them (a successful rotation has cleared it already).
+ */
+async function exchangeUnderLease(
+  ctx: ActionCtx,
+  held: HeldTokens,
+  refresher: TokenRefresher,
+  refresh: PreparedRefresh,
+  lease: Extract<ClaimedRefreshToken, { kind: 'claimed' }>,
+  deps: NativeTokenStoreDeps,
+): Promise<RefreshOutcome> {
+  try {
+    return await exchangeAndRotate(ctx, held, refresher, refresh, lease.presented, deps);
+  } finally {
+    await releaseLease(ctx, deps.keeper, refresher, {
+      credentialId: held.credentialId,
+      leaseUntil: lease.leaseUntil,
+    });
+  }
+}
+
+/** End a lease; a release that fails is logged, since the lease lapses by itself at its end. */
+async function releaseLease(
+  ctx: ActionCtx,
+  keeper: TokenKeeper,
+  refresher: TokenRefresher,
+  lease: { readonly credentialId: Id<'credentials'>; readonly leaseUntil: number },
+): Promise<void> {
+  try {
+    await keeper.releaseRefreshLease(ctx, lease);
+  } catch (error) {
+    log.warn(`${refresher.name} refresh lease not released; it lapses at its end`, {
+      credentialId: lease.credentialId,
+      leaseUntil: lease.leaseUntil,
+      reason: safeFailureMessage(error, '', 'no detail'),
+    });
+  }
+}
+
+/** Exchange the presented refresh token and write the new pair at the generation read. */
+async function exchangeAndRotate(
+  ctx: ActionCtx,
+  held: HeldTokens,
+  refresher: TokenRefresher,
+  refresh: PreparedRefresh,
+  presented: string,
+  deps: NativeTokenStoreDeps,
+): Promise<RefreshOutcome> {
+  const { keeper } = deps;
   let issued: IssuedTokens;
   try {
-    issued = await preparation.refresh.exchange(presented);
+    issued = await refresh.exchange(presented);
   } catch (error) {
     if (!(error instanceof TokenRefreshRefused)) throw error;
     if (await rotatedSince(ctx, held, keeper)) {
@@ -390,7 +576,7 @@ export async function refreshHeld(
     // grant at a server that revokes by family (RFC 7009 section 2.1), so it is left to lapse.
     return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
   }
-  await preparation.refresh.discard(presented, issued);
+  await refresh.discard(presented, issued);
   return { ok: false, refusal: wordsOf(refresher).revokedMeanwhile };
 }
 
@@ -418,7 +604,7 @@ export async function nativeAccessToken(
   const words = wordsOf(refresher);
   let outcome: RefreshOutcome;
   try {
-    outcome = await refreshHeld(ctx, held, refresher, deps);
+    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive });
   } catch (error) {
     const reason = words.reason(error);
     if (!alive) throw words.unreachableWhenExpired(reason);
@@ -522,7 +708,8 @@ export async function runScheduledRefresh(
   } catch (error) {
     const words = wordsOf(refresher);
     const reason = words.reason(error);
-    const retryable = refresher.retryable(error);
+    // Another refresh holding the lease throughout is no refusal: its own rotation queues the next.
+    const retryable = error instanceof RefreshInProgress || refresher.retryable(error);
     if (retryable && attempt < SCHEDULED_REFRESH_RETRIES) {
       log.warn(`${refresher.name} scheduled refresh failed`, {
         credentialId: scheduled.credentialId,

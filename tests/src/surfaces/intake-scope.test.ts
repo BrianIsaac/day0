@@ -5,6 +5,8 @@ import {
   channelDescriptions,
   emptyScopeReason,
   groundScopePicks,
+  keepsPageScan,
+  pageScanLine,
   presentIntakeScope,
   presentScopeDrift,
   roleScopeCandidates,
@@ -12,6 +14,7 @@ import {
   restatedScope,
   scopeFieldsFor,
   sentenceScopePicks,
+  upgradeScopeNote,
   type IntakeScope,
   type ScopeCandidate,
   type ScopeField,
@@ -960,5 +963,28 @@ describe('a channel named in prose written with no spaces (N8)', (): void => {
     expect(picked('Slack：在#revops接收请求')).toEqual(['revops']);
     expect(picked('Slack：在#营收运营接收请求')).toEqual([]);
     expect(picked('Slack: #revops-asks only')).toEqual([]);
+  });
+});
+
+describe('a card that keeps the page scan (R-S; the wave 11 review’s m5)', (): void => {
+  it('is a kanban card proposed before the approved scope, whatever its verdict since', (): void => {
+    for (const verdict of ['proposed', 'approved', 'connected', 'ungranted', 'listed-dead']) {
+      expect(keepsPageScan({ class: 'kanban', verdict }), verdict).toBe(true);
+    }
+  });
+
+  it('is not a card with a scope, a declared or absent card, or a card of another class', (): void => {
+    expect(keepsPageScan({ class: 'kanban', verdict: 'connected', intakeScope: {} })).toBe(false);
+    expect(keepsPageScan({ class: 'kanban', verdict: 'declared' })).toBe(false);
+    expect(keepsPageScan({ class: 'kanban', verdict: 'absent' })).toBe(false);
+    expect(keepsPageScan({ class: 'chat', verdict: 'connected' })).toBe(false);
+  });
+
+  it('says so on the card in one line, naming the system', (): void => {
+    const line = pageScanLine('Linear');
+    expect(line).toContain('Linear');
+    expect(line).toContain('page scan');
+    expect(line).not.toContain('\n');
+    expect(upgradeScopeNote('Linear')).toContain('at the upgrade');
   });
 });

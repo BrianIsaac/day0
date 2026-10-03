@@ -62,6 +62,7 @@ import {
   LOADING_SURFACES,
   SurfaceCards,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCards';
+import { pageScanLine } from '../../../../../src/surfaces/intake-scope';
 
 beforeEach((): void => {
   state.browserComponent = true;
@@ -254,6 +255,30 @@ describe('SurfaceCards and what each employee reads', (): void => {
     expect(markup).toContain('- Channels: #finance-close, #ops-requests');
     expect(markup).toContain('Kestrel Supply folder / finance/handbook.md');
     expect(markup).not.toContain('Changed since this card was proposed');
+  });
+
+  it('says in one line that a card older than the approved scope is read by the page scan, and only there (R-S)', (): void => {
+    state.surfaces = [
+      card({
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'connected',
+      }),
+      card({ slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api' }),
+      card({
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'declared',
+      }),
+    ];
+    const markup = render();
+    expect(markup.split(pageScanLine('Linear'))).toHaveLength(2);
+    expect(markup).not.toContain(pageScanLine('Slack'));
+    expect(markup).not.toContain(pageScanLine('Jira'));
   });
 
   it('says why an empty scope reads nothing, and names each dropped pick', (): void => {

@@ -1148,7 +1148,7 @@ function storedScope(scope: IntakeScope): StoredIntakeScope {
  * Returns:
  *   The scope for the card, or undefined for a surface that bears no work.
  */
-async function orientIntakeScope(
+export async function orientIntakeScope(
   surface: Doc<'surfaces'>,
   pages: readonly Doc<'docPages'>[],
   role: string | undefined,

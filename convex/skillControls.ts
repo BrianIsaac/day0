@@ -12,7 +12,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
-import { holdersOf, newerVersionToRecheck, STORED_COPY_CLEARED } from './skillVersions';
+import {
+  holdersOf,
+  newerVersionToRecheck,
+  skillOwnerKeyOf,
+  STORED_COPY_CLEARED,
+} from './skillVersions';
 import { applyVerdict, stopRunsInTransaction } from './work';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
@@ -578,10 +583,11 @@ async function withdrawVersion(
   const holders: SkillRevokedHolder[] = [];
   let returnedItems = 0;
   let stoppedRuns = 0;
+  // `holdersOf` reads by the owner key, so every holder is the version owner's employee's.
   for (const holder of await holdersOf(ctx.db, version._id)) {
     if (holder.state !== 'registered') continue;
     const employee = await ctx.db.get(holder.agentId);
-    if (employee === null || employee.userId !== version.userId) continue;
+    if (employee === null) continue;
     stoppedRuns += await stopRunsOf(ctx, holder);
     returnedItems += (await retireHolder(ctx, holder, { reason, how: 'withdrawn', now })).length;
     holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
@@ -811,6 +817,7 @@ export async function openRevision(ctx: MutationCtx, row: Doc<'skills'>): Promis
   const now = Date.now();
   const revisionId = await ctx.db.insert('skills', {
     agentId: row.agentId,
+    ...(await skillOwnerKeyOf(ctx.db, row.agentId)),
     name: row.name,
     description: row.description,
     body: '',

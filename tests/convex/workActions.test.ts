@@ -3806,7 +3806,11 @@ describe('executing an approved plan through the gate', (): void => {
         } as Doc<'organisationConnections'>,
       }),
       accessToken: async () => held.accessToken,
-      refreshToken: async () => held.refreshToken,
+      claimRefreshToken: async (_ctx, claim) =>
+        claim.expectedGeneration === held.generation
+          ? { kind: 'claimed', presented: held.refreshToken, leaseUntil: claim.now + 90_000 }
+          : { kind: 'moved' },
+      releaseRefreshLease: async (): Promise<void> => undefined,
       rotate: async (_ctx, rotation) => {
         if (rotation.expectedGeneration !== held.generation) return { ok: false, reason: 'stale' };
         held.generation += 1;

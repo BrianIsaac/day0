@@ -667,7 +667,7 @@ export type ClientAuthentication =
  * @throws McpOauthRefusal `client-authentication-unsupported` when the server offers neither.
  */
 export function clientAuthentication(
-  server: AuthorisationServerMetadata,
+  server: Pick<AuthorisationServerMetadata, 'tokenEndpointAuthMethods'>,
   secret: string | undefined,
 ): ClientAuthentication {
   if (secret === undefined) return { method: 'none' };

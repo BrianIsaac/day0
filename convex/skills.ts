@@ -19,7 +19,7 @@ import { grantScopeInTransaction } from './agents';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
-import { STORED_COPY_CLEARED } from './skillVersions';
+import { skillOwnerKeyOf, STORED_COPY_CLEARED } from './skillVersions';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import { openRevision } from './skillControls';
 import {
@@ -222,6 +222,7 @@ export const installBuiltin = internalMutation({
     if (existing) return existing._id;
     const id = await ctx.db.insert('skills', {
       agentId: args.agentId,
+      ...(await skillOwnerKeyOf(ctx.db, args.agentId)),
       name: args.name,
       description: args.description,
       body: args.body,

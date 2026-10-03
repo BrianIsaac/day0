@@ -813,6 +813,28 @@ describe("per-employee mode: the employee's own app", (): void => {
     ).toBe('token-rotation');
   });
 
+  it('presents the refresh token once when two reads refresh at once, under the refresh lease (R-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+
+    clock += DAY + 60_000;
+    // On the real timer: the second refresh sleeps on the first's lease between its reads.
+    vi.useRealTimers();
+    const [one, two] = await Promise.all([
+      bearerOf(harness, surface.credentialId!),
+      bearerOf(harness, surface.credentialId!),
+    ]);
+
+    expect(tokenRequests().map((request) => request.grant)).toEqual([
+      'authorization_code',
+      'refresh_token',
+    ]);
+    expect(one).toBe(two);
+    expect(linear.live(one)).toBe(true);
+  });
+
   it('ends the card with the reason when Linear refuses the refresh of an expired token', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
