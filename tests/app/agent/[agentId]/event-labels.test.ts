@@ -287,6 +287,12 @@ describe('the live feed labels', (): void => {
     expect(
       eventLabel({
         type: 'organisation.configuration-used',
+        payload: { ...used, method: 'auth.revoke', outcome: 'unrecognised' },
+      }),
+    ).toBe('Slack configuration token not recognised by Slack');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
         payload: { ...used, method: 'auth.revoke', outcome: 'done', unchecked: true },
       }),
     ).toBe('Slack configuration token revoked at Slack, not checked');

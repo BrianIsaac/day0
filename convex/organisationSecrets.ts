@@ -282,7 +282,12 @@ export const finishSlackRevocation = internalMutation({
   args: {
     organisationConnectionId: v.id('organisationConnections'),
     credentialIds: v.array(v.id('credentials')),
-    outcome: v.union(v.literal('done'), v.literal('already-revoked'), v.literal('failed')),
+    outcome: v.union(
+      v.literal('done'),
+      v.literal('already-revoked'),
+      v.literal('unrecognised'),
+      v.literal('failed'),
+    ),
     reason: v.optional(v.string()),
     /** A token Slack issued that Day0 kept nowhere: no copy to delete. */
     unkept: v.optional(v.literal(true)),

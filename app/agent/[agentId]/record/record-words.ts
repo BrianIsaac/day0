@@ -251,6 +251,10 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
         return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}${notChecked}; ${
           unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
         }, and ${rowAdvice}`;
+      case 'unrecognised':
+        return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}, so Day0 cannot tell whether Slack had ended it or never knew it; ${
+          unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
+        }, and ${rowAdvice}`;
       case 'failed':
       case 'superseded':
       case undefined:
@@ -270,6 +274,7 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
       return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
     case 'failed':
     case 'already-revoked':
+    case 'unrecognised':
     case undefined:
       return `Day0 could not renew ${token}${because(p.reason)}`;
     default: {

@@ -676,6 +676,21 @@ describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): v
     ]);
   });
 
+  it("records a token Slack does not know as not recognised, never as one Slack had ended (the round review's m3)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    // Bed 1: the fake was restarted, so the token Day0 holds is one Slack never issued.
+    slack.configuration.token = 'xoxe.xoxp-9999999999-zyxwvutsrq';
+
+    await revokeConnection(harness, connectionId);
+
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' }),
+    ]);
+  });
+
   it('revokes the token a rotation in flight was issued when the revoke lands before the rotation is written', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const connectionId = await landSlack(harness);

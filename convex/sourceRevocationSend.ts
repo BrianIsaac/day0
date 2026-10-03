@@ -1,6 +1,7 @@
 import {
   readSlackAnswer,
   readSlackTokenCheck,
+  SLACK_ENDED_TOKEN_ERRORS,
   slackTokenCheck,
   slackTokenRevocation,
   type SlackTokenCheck,
@@ -181,17 +182,21 @@ export async function revokeSlackConfigurationToken(
 
 /**
  * The ledger's outcome for Slack's answer to `auth.revoke`: a token Slack revoked now is `done`,
- * one it had already ended (`token_revoked`, `invalid_auth` and the like) `already-revoked` with
- * Slack's word, so the ledger tells a revoke from a no-op (R41V-10); anything else `failed`. Each
- * of the first two carries `unchecked` when `auth.test` could not be asked afterwards.
+ * one it had already ended (`token_revoked`, `token_expired`) `already-revoked` with Slack's word,
+ * so the ledger tells a revoke from a no-op (R41V-10); one Slack did not recognise (`invalid_auth`,
+ * `account_inactive`) `unrecognised` with Slack's word, so a wrong value Day0 held never reads as
+ * a token Slack ended (the round review's m3); anything else `failed`. Each but the last carries
+ * `unchecked` when `auth.test` could not be asked afterwards.
  *
  * @param answer - Slack's answer, from {@link revokeSlackConfigurationToken}.
  */
-export function slackRevocationOutcome(
-  answer: SlackRevocationAnswer,
-):
+export function slackRevocationOutcome(answer: SlackRevocationAnswer):
   | { readonly outcome: 'done'; readonly unchecked?: true }
-  | { readonly outcome: 'already-revoked'; readonly reason: string; readonly unchecked?: true }
+  | {
+      readonly outcome: 'already-revoked' | 'unrecognised';
+      readonly reason: string;
+      readonly unchecked?: true;
+    }
   | { readonly outcome: 'failed'; readonly reason: string } {
   const unchecked =
     answer.kind !== 'retry' && answer.kind !== 'refused' && answer.unchecked === true
@@ -201,7 +206,11 @@ export function slackRevocationOutcome(
     case 'revoked':
       return { outcome: 'done', ...unchecked };
     case 'gone':
-      return { outcome: 'already-revoked', reason: `Slack answered ${answer.error}`, ...unchecked };
+      return {
+        outcome: SLACK_ENDED_TOKEN_ERRORS.has(answer.error) ? 'already-revoked' : 'unrecognised',
+        reason: `Slack answered ${answer.error}`,
+        ...unchecked,
+      };
     case 'retry':
     case 'refused':
       return { outcome: 'failed', reason: answer.words };

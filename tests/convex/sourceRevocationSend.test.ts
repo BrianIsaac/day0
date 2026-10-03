@@ -114,6 +114,32 @@ describe('revokeSlackConfigurationToken (R41V-10)', (): void => {
     });
   });
 
+  it.each(['invalid_auth', 'account_inactive'])(
+    "records a token Slack answered %s for under its own word, never as one Slack had ended (the round review's m3)",
+    async (word): Promise<void> => {
+      const { transport } = slackAnswering({
+        'auth.revoke': { status: 200, body: { ok: false, error: word } },
+        'auth.test': { status: 200, body: { ok: false, error: word } },
+      });
+      const answer = await revokeSlackConfigurationToken(TOKEN, transport);
+      expect(slackRevocationOutcome(answer)).toEqual({
+        outcome: 'unrecognised',
+        reason: `Slack answered ${word}`,
+      });
+    },
+  );
+
+  it("keeps a token Slack answered token_expired for as already ended (the round review's m3)", async (): Promise<void> => {
+    const { transport } = slackAnswering({
+      'auth.revoke': { status: 200, body: { ok: false, error: 'token_expired' } },
+      'auth.test': { status: 200, body: { ok: false, error: 'token_expired' } },
+    });
+    expect(slackRevocationOutcome(await revokeSlackConfigurationToken(TOKEN, transport))).toEqual({
+      outcome: 'already-revoked',
+      reason: 'Slack answered token_expired',
+    });
+  });
+
   it('calls a revoke failed when Slack still accepts the token afterwards, whatever auth.revoke said', async (): Promise<void> => {
     const { transport } = slackAnswering({
       'auth.revoke': SLACK_CONFIGURATION_ALREADY_REVOKED,

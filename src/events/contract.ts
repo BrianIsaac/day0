@@ -979,9 +979,11 @@ export interface OrganisationConfigurationUsedPayload {
    * `done`; `failed` (Slack refused, or did not answer); `superseded` (a rotation that lost to a
    * concurrent one: Slack issued a pair Day0 did not keep, and the winner's is used);
    * `already-revoked` (`auth.revoke` met a token Slack had already ended, as a rotation or IT's
-   * deletion of its row ends it, R41V-10).
+   * deletion of its row ends it, R41V-10); `unrecognised` (`auth.revoke` met a token Slack does
+   * not know, `invalid_auth` or `account_inactive`, which Day0 cannot tell from a value Slack never
+   * issued, the round review's m3).
    */
-  readonly outcome: 'done' | 'failed' | 'superseded' | 'already-revoked';
+  readonly outcome: 'done' | 'failed' | 'superseded' | 'already-revoked' | 'unrecognised';
   /** Slack's words for a failure, or why a rotation was superseded. */
   readonly reason?: string;
   /** The app `apps.manifest.create` made. */

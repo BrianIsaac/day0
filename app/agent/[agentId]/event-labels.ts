@@ -159,6 +159,8 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
         return `${name} configuration token revoked at ${name}${notChecked}`;
       case 'already-revoked':
         return `${name} configuration token had already ended at ${name}${notChecked}`;
+      case 'unrecognised':
+        return `${name} configuration token not recognised by ${name}${notChecked}`;
       case 'failed':
       case 'superseded':
       case undefined:
@@ -176,6 +178,7 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
       return `${name} configuration token renewed twice at once: the other renewal kept`;
     case 'failed':
     case 'already-revoked':
+    case 'unrecognised':
     case undefined:
       return `${name} configuration token not renewed${because(payload.reason)}`;
     default: {

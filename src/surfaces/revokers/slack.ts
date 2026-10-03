@@ -25,6 +25,16 @@ const GONE_ERRORS: Readonly<Record<SlackRevocationMethod, ReadonlySet<string>>> 
   'apps.uninstall': new Set(),
 };
 
+/**
+ * The `auth.revoke` errors that say Slack itself ended the token. A token Slack does not know
+ * (`invalid_auth`) or whose account is inactive is gone as well, but Day0 cannot tell it from a
+ * value Slack never issued, so the ledger says it under its own word (the round review's m3).
+ */
+export const SLACK_ENDED_TOKEN_ERRORS: ReadonlySet<string> = new Set([
+  'token_revoked',
+  'token_expired',
+]);
+
 /** The errors Slack documents for a failure on its own side or a limit, which a later attempt may pass. */
 const RETRY_ERRORS: ReadonlySet<string> = new Set([
   'ratelimited',
