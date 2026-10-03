@@ -125,7 +125,7 @@ describe('memoryProjection.forAgent', (): void => {
   it.each([
     [
       'mock',
-      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social; acts as Mira, its own app in this office",
+      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
     ],
     ['real', 'Connections: none yet'],
   ] as const)(

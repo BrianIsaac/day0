@@ -180,12 +180,12 @@ function surfaceState(surface: ProjectedSurface, zone: string): string {
 }
 
 /**
- * The connections line: in the mock office, its systems and whom the employee acts as there, in
- * the Surfaces tab's words; elsewhere each surface and how far it has come.
+ * The connections line: in the mock office, its systems and whom the employee acts as there, as
+ * the Surfaces tab's "Acts as" row says it; elsewhere each surface and how far it has come.
  */
 function connectionsLine(input: ProjectionInput): string {
   if (input.office === 'mock') {
-    return `Connections: the mock office's ${mockOfficeSystemsPhrase()}; acts as ${mockActsAsWords(input.name)}`;
+    return `Connections: the mock office's ${mockOfficeSystemsPhrase()}. Acts as: ${mockActsAsWords(input.name)}`;
   }
   const surfaces = input.surfaces.map(
     (surface) => `${surface.displayName} (${surfaceState(surface, input.zone)})`,
