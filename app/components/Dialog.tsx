@@ -1,6 +1,15 @@
 'use client';
 
-import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import {
+  createContext,
+  useContext,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { keepTabInside, useModal } from './use-modal';
 
@@ -18,6 +27,10 @@ import { keepTabInside, useModal } from './use-modal';
  * @param onClose - Close it: Escape and a press on the dimmed page both ask, unless `busy`.
  * @param initialFocus - The element that takes focus on open; the first control when absent, so
  *   a dialog that asks for something destructive names its safe choice here.
+ * The body scrolls inside the panel, under the dimmed page's height; what a caller draws in a
+ * {@link DialogFooter} sits in a strip below the body that never scrolls, so a long dialog's
+ * answers stay in view at a phone's height (11-AC's item 13).
+ *
  * @param role - `alertdialog` for a confirmation that interrupts, `dialog` otherwise.
  * @param busy - Whether a change is in flight; the dialog cannot be dismissed until it settles.
  */
@@ -41,6 +54,8 @@ export function Dialog({
   const headingId = useId();
   const descriptionId = useId();
   const panel = useRef<HTMLDivElement>(null);
+  // The strip a DialogFooter draws into, once it is on the page.
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null);
 
   // Modal from mount to unmount: the page inert and still, focus in, and back where it came from.
   useModal({ panel, active: true, initialFocus });
@@ -77,19 +92,40 @@ export function Dialog({
         tabIndex={-1}
         data-dialog=""
         onKeyDown={onKeyDown}
-        className="grid w-[min(560px,100%)] max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto rounded-[14px] bg-[var(--color-card)] p-6 text-[var(--color-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)]"
+        className="flex w-[min(560px,100%)] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-[14px] bg-[var(--color-card)] text-[var(--color-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)]"
       >
-        <h2 id={headingId} className="text-lg font-semibold">
-          {title}
-        </h2>
-        {description !== undefined ? (
-          <p id={descriptionId} className="text-[15px] leading-relaxed text-[var(--color-fg-2)]">
-            {description}
-          </p>
-        ) : null}
-        {children}
+        <div data-dialog-body="" className="grid min-h-0 gap-4 overflow-y-auto p-6">
+          <h2 id={headingId} className="text-lg font-semibold">
+            {title}
+          </h2>
+          {description !== undefined ? (
+            <p id={descriptionId} className="text-[15px] leading-relaxed text-[var(--color-fg-2)]">
+              {description}
+            </p>
+          ) : null}
+          <FooterSlot.Provider value={footer}>{children}</FooterSlot.Provider>
+        </div>
+        <div
+          ref={setFooter}
+          data-dialog-footer=""
+          className="grid shrink-0 gap-3 border-t border-[var(--color-border)] px-6 py-4 empty:hidden"
+        />
       </div>
     </div>
   );
   return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
+}
+
+/** The strip below a dialog's body that its footer draws into; null outside a dialog. */
+const FooterSlot = createContext<HTMLDivElement | null>(null);
+
+/**
+ * A dialog's answers, drawn in the strip below its body that never scrolls, so they stay in view
+ * however long the body runs (11-AC's item 13). The controls stay the caller's, with its state; a
+ * submit button names its form (`form="<id>"`), since it is drawn outside it. Draws nothing
+ * outside a {@link Dialog}.
+ */
+export function DialogFooter({ children }: { children: ReactNode }) {
+  const slot = useContext(FooterSlot);
+  return slot === null ? null : createPortal(children, slot);
 }
