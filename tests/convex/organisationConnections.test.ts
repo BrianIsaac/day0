@@ -601,7 +601,9 @@ describe("Slack's configuration token is kept current from its landing (the revi
 
   it('queues nothing for a token landed without its refresh token, or for another system', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { refreshToken: _unused, ...withoutRefresh } = SLACK;
+    const withoutRefresh = Object.fromEntries(
+      Object.entries(SLACK).filter(([key]) => key !== 'refreshToken'),
+    ) as Landing;
     await harness.action(internal.organisationConnections.landFromSetup, withoutRefresh);
     await harness.action(internal.organisationConnections.landFromSetup, LINEAR);
 
