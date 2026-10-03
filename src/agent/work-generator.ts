@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
+import { log } from '../lib/logger';
 import type { Charter } from './charter';
+import { sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
 /**
@@ -17,6 +19,13 @@ import type { MockSurfaceSnapshot } from '../work/types';
  *   1. A docs-read item - handled by the builtin `see-internal-docs` skill
  *   2. An action item - triggers the propose-new-skill loop
  *   3. An out-of-scope item - evaluator skips it
+ *
+ * Mock mode judges scope on the item's own words (`sharedCharterWords`): one
+ * word of the role or its willDo clauses places an item in the job. So an
+ * out-of-scope item that shares one, typically a sentence comparing the
+ * request with the role, would be judged the role's work and wait on a skill.
+ * The generator asks again, naming the shared words, and leaves the item out
+ * if every draft still shares one.
  */
 
 export const WORK_GEN_SYSTEM = [
@@ -42,12 +51,20 @@ export const WORK_GEN_SYSTEM = [
   '  - The title and contentSummary are the request as its sender wrote it, and the manager reads them on the work card: never say how the request should be handled (no "skip this", "route this back", "out of scope") and never mention the agent, the evaluator or Day0.',
   '  - Titles are 8-14 words.',
   '  - sourceCategory is one of "ticket-queue", "inbox", or "social-mention".',
+  '  - purpose is "read-and-answer", "action" or "out-of-scope": which of the three items above it is.',
 ].join('\n');
+
+/** What each of the three drafted items is for, in the order the prompt lists them. */
+export const WORK_ITEM_PURPOSES = ['read-and-answer', 'action', 'out-of-scope'] as const;
+
+/** How many drafts the generator asks for before it leaves out an out-of-scope item that reads as the role's work. */
+export const GENERATION_ATTEMPTS = 3;
 
 export const workGenSchema = z.object({
   items: z
     .array(
       z.object({
+        purpose: z.enum(WORK_ITEM_PURPOSES),
         sourceCategory: z.string(),
         sourceSystem: z.string(),
         externalId: z.string(),
@@ -62,7 +79,11 @@ export const workGenSchema = z.object({
     .max(3),
 });
 
-export type GeneratedWorkItem = z.infer<typeof workGenSchema>['items'][number];
+/** One drafted item as the model returns it, its purpose included. */
+type DraftedWorkItem = z.infer<typeof workGenSchema>['items'][number];
+
+/** One generated work item as the office seeds it; its purpose stays with the generator. */
+export type GeneratedWorkItem = Omit<DraftedWorkItem, 'purpose'>;
 
 const workGeneratorAgent = makeAgent('day0-work-generator', WORK_GEN_SYSTEM);
 
@@ -106,23 +127,84 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
+/** An out-of-scope item that reads as the role's work, with the words that make it so. */
+interface RoleReading {
+  readonly item: DraftedWorkItem;
+  readonly words: readonly string[];
+}
+
+/** The out-of-scope items in a draft that share a word with the charter's role or willDo. */
+function readAsTheRole(items: readonly DraftedWorkItem[], charter: Charter): RoleReading[] {
+  return items
+    .filter((item) => item.purpose === 'out-of-scope')
+    .map((item) => ({ item, words: sharedCharterWords(item, charter) }))
+    .filter((reading) => reading.words.length > 0);
+}
+
+/** What the next draft is told about the last one's out-of-scope item. */
+function askAgain(readings: readonly RoleReading[]): string {
+  const words = [...new Set(readings.flatMap((reading) => reading.words))].join(', ');
+  return [
+    `The out-of-scope item in your last draft shares these words with the charter's role and duties, so it reads as this role's work: ${words}.`,
+    'Draft all three items again. The out-of-scope request uses none of those words and never compares itself with the role: it is only the request as its sender wrote it.',
+  ].join(' ');
+}
+
+function withoutPurpose(item: DraftedWorkItem): GeneratedWorkItem {
+  return {
+    sourceCategory: item.sourceCategory,
+    sourceSystem: item.sourceSystem,
+    externalId: item.externalId,
+    title: item.title,
+    contentSummary: item.contentSummary,
+    contentRefs: item.contentRefs,
+    priority: item.priority,
+    requesterLabel: item.requesterLabel,
+  };
+}
+
+/**
+ * Draft the three day-one work items for an approved charter, from the office the employee works
+ * in. An out-of-scope item that shares a word with the role is drafted again, up to
+ * `GENERATION_ATTEMPTS` drafts, and left out of the last one if it still does.
+ *
+ * @param charter - The approved charter; its struck clauses are never work.
+ * @param mockEnv - The employee's office, whose identifiers the items name.
+ * @returns The items to seed, without their purpose.
+ */
 export async function generateWorkItemsFromCharter(
   charter: Charter,
   mockEnv: MockSurfaceSnapshot,
 ): Promise<GeneratedWorkItem[]> {
-  const result = await agentJson<z.infer<typeof workGenSchema>>({
-    agent: workGeneratorAgent,
-    user: [
-      'Charter:',
-      // The clauses a strike took out are the record's, never work to generate from.
-      JSON.stringify({ ...charter, struckClauses: undefined }, null, 2),
-      '',
-      'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
-      renderMockSnapshot(mockEnv),
-      '',
-      'Generate the 3 day-one work items now.',
-    ].join('\n'),
-    schema: workGenSchema,
-  });
-  return result.items;
+  const brief = [
+    'Charter:',
+    // The clauses a strike took out are the record's, never work to generate from.
+    JSON.stringify({ ...charter, struckClauses: undefined }, null, 2),
+    '',
+    'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
+    renderMockSnapshot(mockEnv),
+    '',
+    'Generate the 3 day-one work items now.',
+  ].join('\n');
+  const ask = async (user: string): Promise<z.infer<typeof workGenSchema>> =>
+    await agentJson<z.infer<typeof workGenSchema>>({
+      agent: workGeneratorAgent,
+      user,
+      schema: workGenSchema,
+    });
+  let draft = await ask(brief);
+  for (let attempt = 1; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+    const readings = readAsTheRole(draft.items, charter);
+    if (readings.length === 0) return draft.items.map(withoutPurpose);
+    draft = await ask(`${brief}\n\n${askAgain(readings)}`);
+  }
+  const readings = readAsTheRole(draft.items, charter);
+  if (readings.length > 0) {
+    log.warn('mock work generator left out an out-of-scope item that reads as the role', {
+      attempts: GENERATION_ATTEMPTS,
+      words: readings.flatMap((reading) => reading.words),
+    });
+  }
+  const leftOut = new Set(readings.map((reading) => reading.item));
+  return draft.items.filter((item) => !leftOut.has(item)).map(withoutPurpose);
 }
