@@ -224,6 +224,15 @@ describe('the in-scope items the generator drafts (round 0141 R-D item 1, the se
   });
 });
 
+describe("the role's words the in-scope items use (D2, the bed walk)", (): void => {
+  it("names the role's words in the first draft's brief for the read and action items too, since the scope rule skips an item that shares none", async (): Promise<void> => {
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(prompts[0]).toContain(
+      'The read-and-answer item and the action item each use at least one of these words from the role and its duties, as the sender would: pipeline, hygiene, sales, team, close, routine, tickets, queue.',
+    );
+  });
+});
+
 describe('the action item the mock office files on its ticket queue (D2 (b), a product call)', (): void => {
   it('tells the generator the action item is a new ticket on the ticket queue, never another surface', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(

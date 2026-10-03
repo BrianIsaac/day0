@@ -231,8 +231,11 @@ export async function generateWorkItemsFromCharter(
     renderMockSnapshot(mockEnv),
     '',
     // Named up front: an item that shares one is judged the role's work, and a re-ask that names
-    // only the last draft's words let the next draft reach for another (the bed walk).
+    // only the last draft's words let the next draft reach for another (the bed walk). The in-scope
+    // items are told the same words, since an action ticket that shares none is skipped and the
+    // visitor's queue has no ticket run (D2, the pre-tag's bed walk).
     `The out-of-scope item uses none of these words from the role and its duties: ${charterWords(charter).join(', ')}.`,
+    `The read-and-answer item and the action item each use at least one of these words from the role and its duties, as the sender would: ${charterWords(charter).join(', ')}.`,
     '',
     'Generate the 3 day-one work items now.',
   ].join('\n');
