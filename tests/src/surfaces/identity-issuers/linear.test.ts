@@ -26,6 +26,7 @@ import {
   LINEAR_REFRESH_TOKEN_REVOKED,
   LINEAR_REVOKE_ALREADY_REVOKED,
 } from '../../../fixtures/real-vendor-walk-2026-10-03';
+import { LINEAR_REVOKE_TOKEN_NOT_FOUND } from '../../../fixtures/real-vendor-rewalk-2026-10-03';
 import {
   ARRAY_SCOPE_TOKEN,
   AUTHORISATION_CODE_TOKEN,
@@ -433,6 +434,18 @@ describe('revoking a token Day0 will not keep', (): void => {
     expect(refused.reason).toBe('malformed');
     expect(refused.message).toContain('invalid_request');
     expect(refused.message).not.toContain('lin_oauth_live');
+  });
+});
+
+describe("Linear's answer for a token it does not know (R41X-1)", (): void => {
+  it('takes 401 "Token not found" as done, since nothing is left to revoke', async (): Promise<void> => {
+    await expect(
+      revokeLinearToken(
+        answering(LINEAR_REVOKE_TOKEN_NOT_FOUND.status, LINEAR_REVOKE_TOKEN_NOT_FOUND.body).fetch,
+        'lin_oauth_forgotten',
+        'access_token',
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 

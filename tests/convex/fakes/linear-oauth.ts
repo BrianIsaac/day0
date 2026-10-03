@@ -11,6 +11,7 @@ import {
   LINEAR_REVOKE_ALREADY_REVOKED,
   LINEAR_REVOKE_SUCCESS,
 } from '../../fixtures/real-vendor-walk-2026-10-03';
+import { LINEAR_REVOKE_TOKEN_NOT_FOUND } from '../../fixtures/real-vendor-rewalk-2026-10-03';
 
 /*
  * A fake Linear for the issuer's tests (wave 11, 11-AL): the token endpoint for the three grants,
@@ -26,7 +27,8 @@ import {
  * - `viewer` names the app user a token acts as, and refuses a token it does not know;
  * - as real Linear answered the walk of 3 October 2026: a revoke of either token of a pair ends the
  *   whole grant, a token already revoked is answered "Token has already been revoked.", and a
- *   revoked refresh token is refused with "Refresh token revoked".
+ *   revoked refresh token is refused with "Refresh token revoked"; and as it answered the
+ *   re-walk, a revoke of a token it does not know is `401 {"error":"Token not found"}`.
  *
  * Its answers use the recorded and documented shapes under `tests/fixtures/linear/` and the walk's
  * answers in `tests/fixtures/real-vendor-walk-2026-10-03.ts`.
@@ -248,7 +250,9 @@ export function fakeLinear(apps: readonly FakeLinearApp[], now: () => number): F
       const form = new URLSearchParams(body);
       requests.push({ path: '/oauth/revoke' });
       const token = tokens.get(form.get('token') ?? '');
-      if (!token) return json(400, { error: 'invalid_token' });
+      if (!token) {
+        return json(LINEAR_REVOKE_TOKEN_NOT_FOUND.status, LINEAR_REVOKE_TOKEN_NOT_FOUND.body);
+      }
       if (token.revoked) {
         return json(LINEAR_REVOKE_ALREADY_REVOKED.status, LINEAR_REVOKE_ALREADY_REVOKED.body);
       }

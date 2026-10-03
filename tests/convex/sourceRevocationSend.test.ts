@@ -11,6 +11,7 @@ import {
   SLACK_CONFIGURATION_ALREADY_REVOKED,
   SLACK_CONFIGURATION_REVOKED,
 } from '../fixtures/real-vendor-walk-2026-10-03';
+import { LINEAR_REVOKE_TOKEN_NOT_FOUND } from '../fixtures/real-vendor-rewalk-2026-10-03';
 
 /** A configuration token in the tree's short shape. */
 const TOKEN = 'xoxe.xoxp-1234567890-abcdefghij';
@@ -50,6 +51,20 @@ describe('sendRevocation', (): void => {
     });
     expect(answer).toEqual({ kind: 'gone' });
     expect(seen.map((init) => init.redirect)).toEqual(['manual']);
+  });
+
+  it('reads Linear\'s 401 "Token not found" as already gone, so a card\'s end of a token Linear forgot is never recorded failed (R41X-1)', async (): Promise<void> => {
+    const answer = await sendRevocation({
+      request: linearTokenRevocation('lin_oauth_1', 'access_token'),
+      token: 'lin_oauth_1',
+      vendor: 'Linear',
+      read: readLinearAnswer,
+      fetch: async (): Promise<Response> =>
+        Response.json(LINEAR_REVOKE_TOKEN_NOT_FOUND.body, {
+          status: LINEAR_REVOKE_TOKEN_NOT_FOUND.status,
+        }),
+    });
+    expect(answer).toEqual({ kind: 'gone' });
   });
 
   it('asks again later when the vendor cannot be reached, and never repeats the token', async (): Promise<void> => {
