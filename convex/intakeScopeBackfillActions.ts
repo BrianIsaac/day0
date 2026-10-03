@@ -6,8 +6,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internalAction, type ActionCtx } from './_generated/server';
 import type { PageScanCards } from './intakeScopeBackfill';
 import {
+  forEachStoredPage,
   orientIntakeScope,
-  pagesForSystem,
   surfaceDocumentation,
   type IntakeScopeDraft,
   type IntakeScopeQuestion,
@@ -46,32 +46,35 @@ function upgradePick(system: string): (question: IntakeScopeQuestion) => Promise
   });
 }
 
-/** What a card's scope is read from: its employee's charter role and the pages naming its system. */
+/** What an employee's cards are scoped from: the charter's role and every page the employee reads. */
 interface ScopeReading {
   readonly role: string | undefined;
-  readonly pages: Doc<'docPages'>[];
+  readonly pages: readonly Doc<'docPages'>[];
 }
 
 /**
- * The reading for one employee and system, read once per page of the pass: an employee's cards
- * of one system share it, so the stored pages are not read again for each.
+ * Each employee's reading, read once per page of the pass however many of its cards the page
+ * holds: the charter's role, and every stored page of the employee's sources, read a bounded page
+ * at a time as orientation reads them. Which pages name a card's system is decided per card
+ * (`surfaceDocumentation`), so one read serves every system.
  */
-function scopeReadings(
-  ctx: ActionCtx,
-): (agentId: Id<'agents'>, system: string) => Promise<ScopeReading> {
-  const read = new Map<string, Promise<ScopeReading>>();
-  return async (agentId, system) => {
-    const key = `${agentId}\u0000${system}`;
-    const known = read.get(key);
+function scopeReadings(ctx: ActionCtx): (agentId: Id<'agents'>) => Promise<ScopeReading> {
+  const read = new Map<Id<'agents'>, Promise<ScopeReading>>();
+  return async (agentId) => {
+    const known = read.get(agentId);
     if (known !== undefined) return await known;
     const reading = (async (): Promise<ScopeReading> => {
-      const [charter, pages] = await Promise.all([
+      const [charter, sources] = await Promise.all([
         ctx.runQuery(internal.orientationData.charterForOrientation, { agentId }),
-        pagesForSystem(ctx, agentId, system),
+        ctx.runQuery(internal.docSources.sourcesForAgentInternal, { agentId }),
       ]);
+      const pages: Doc<'docPages'>[] = [];
+      await forEachStoredPage(ctx, sources, (page): void => {
+        pages.push(page);
+      });
       return { role: charter?.proposedFunction, pages };
     })();
-    read.set(key, reading);
+    read.set(agentId, reading);
     return await reading;
   };
 }
@@ -79,6 +82,9 @@ function scopeReadings(
 /**
  * The scope a card proposed before the field would be given today without a model, or undefined
  * when its pages and the manager's words tie no team or project to the role.
+ *
+ * @param card - The card that keeps the page scan.
+ * @param reading - Its employee's charter role and pages.
  */
 async function derivedScope(
   card: Doc<'surfaces'>,
@@ -113,7 +119,7 @@ export const backfillPage = internalAction({
     const readingFor = scopeReadings(ctx);
     let changed = 0;
     for (const card of page.cards) {
-      const scope = await derivedScope(card, await readingFor(card.agentId, card.displayName));
+      const scope = await derivedScope(card, await readingFor(card.agentId));
       if (scope === undefined) continue;
       const written: boolean = await ctx.runMutation(
         internal.intakeScopeBackfill.recordDerivedScope,

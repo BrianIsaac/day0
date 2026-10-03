@@ -1837,7 +1837,7 @@ function pageText(page: Pick<Doc<'docPages'>, 'title' | 'markdown'>): string {
  * @param agentId - The agent whose sources are read.
  * @param system - The system's display name.
  */
-export async function pagesForSystem(
+async function pagesForSystem(
   ctx: OrientationCtx,
   agentId: Id<'agents'>,
   system: string,
