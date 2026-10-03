@@ -3,6 +3,7 @@ import {
   isEventType,
   type EventPayloads,
   type EventType,
+  type WorkDecisionAcknowledgingPayload,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
@@ -79,6 +80,13 @@ function decidedFrom(via: unknown): string {
 function decisionNoun(kind: unknown): string {
   return kind === 'actions' ? 'held actions' : 'plan';
 }
+
+/** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
+const ACKNOWLEDGEMENT_LABELS: Readonly<Record<WorkDecisionAcknowledgingPayload['kind'], string>> = {
+  received: 'a decision reply acknowledged',
+  unknown: 'a reply with no open request answered',
+  replaced: 'a reply to a replaced request answered with the request that replaced it',
+};
 
 /** Why a row was sent back to be evaluated again, in words. */
 const REQUEUE_TRIGGER_WORDS: Readonly<Record<string, string>> = {
@@ -593,9 +601,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.decision-notifying': 'telling the manager what was decided',
   'work.decision-request-closing': 'marking the decided request in the manager DM',
   'work.decision-acknowledging': (payload) =>
-    payload.kind === 'unknown'
-      ? 'a reply with no open request answered'
-      : 'a decision reply acknowledged',
+    ACKNOWLEDGEMENT_LABELS[payload.kind ?? 'received'] ?? ACKNOWLEDGEMENT_LABELS.received,
   'work.decision-ignored': (payload) => `a chat reply ignored${because(payload.reason)}`,
   'work.decision-duplicate': 'a repeated decision reply ignored',
   'work.decision-batch-issued': (payload) =>

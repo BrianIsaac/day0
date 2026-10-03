@@ -368,6 +368,19 @@ describe('the live feed labels', (): void => {
     ).toBe('Linear shared app token revoked at Linear');
   });
 
+  it('labels each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      eventLabel({
+        type: 'work.decision-acknowledging',
+        payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+      });
+    expect(answered('received')).toBe('a decision reply acknowledged');
+    expect(answered('unknown')).toBe('a reply with no open request answered');
+    expect(answered('replaced')).toBe(
+      'a reply to a replaced request answered with the request that replaced it',
+    );
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({

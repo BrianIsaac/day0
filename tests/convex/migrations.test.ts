@@ -174,10 +174,11 @@ describe('the upgrade migrations', (): void => {
       'credentials-superseded-at',
       'decision-batches-settled',
     ];
-    // Re-pinned behind the skill library's two backfills (0.13.0), the acts-as and issued-by
-    // backfills (0.14.0), the owner key, intake scope and purge passes (0.15.0) and the sync runs'
-    // refs clearing (0.16.0), which follow.
-    expect(MIGRATION_NAMES.slice(-secondStep.length - 8, -8)).toEqual(secondStep);
+    // Re-pinned at 12-S3 to where the step starts rather than its distance from the end: every
+    // later release appends its passes behind it (0.13.0 to 0.16.0 so far), and they stay in order.
+    const start = MIGRATION_NAMES.indexOf('surfaces-withheld-tools');
+    expect(MIGRATION_NAMES.slice(start, start + secondStep.length)).toEqual(secondStep);
+    expect(MIGRATION_NAMES.indexOf('skills-library')).toBe(start + secondStep.length);
     const harness = limitedHarness();
     await runAll(harness);
     const status = await harness.query(internal.migrations.status, {});
@@ -2829,5 +2830,106 @@ describe('the sync runs refs clearing (12-S3, N10)', (): void => {
       expect(row?.refs, String(id)).toBeUndefined();
       expect(row?.pagesListed, String(id)).toBe(8_192);
     }
+  });
+});
+
+describe('the decision close record (12-W, N-3; 12-S3)', (): void => {
+  it('is registered at 0.16.0, after the sync runs refs clearing', (): void => {
+    expect(MIGRATIONS['work-decision-closed'].release).toBe('0.16.0');
+    expect(MIGRATION_NAMES.indexOf('work-decision-closed')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('sync-runs-refs'),
+    );
+  });
+
+  it('records every close edit claimed before the release as made, leaves every other row, and is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const decision = {
+      id: 'abc234',
+      kind: 'plan' as const,
+      requestedAt: 2,
+      channel: 'D0123',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: '1700000000.000100',
+      decidedAt: 3,
+      outcome: 'approved' as const,
+    };
+    const rows = await harness.run(async (ctx) => {
+      const row = (externalId: string, fields: Partial<Doc<'workItems'>> = {}) => ({
+        agentId: priya,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        externalId,
+        title: externalId,
+        contentSummary: externalId,
+        contentRefs: [],
+        state: 'completed' as const,
+        observedAt: 1,
+        createdAt: 1,
+        ...fields,
+      });
+      return {
+        claimed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-1', { decision: { ...decision, closeClaimedAt: 4 } }),
+        ),
+        failed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-2', {
+            decision: { ...decision, id: 'abc235', closeClaimedAt: 4, closeFailure: 'gone' },
+          }),
+        ),
+        unclaimed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-3', { decision: { ...decision, id: 'abc236' } }),
+        ),
+        none: await ctx.db.insert('workItems', row('REVOPS-4')),
+      };
+    });
+    const read = async (): Promise<Record<string, unknown>> =>
+      await harness.run(async (ctx) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(rows).map(async ([name, id]) => {
+              const found = (await ctx.db.get(id))?.decision;
+              return [
+                name,
+                found
+                  ? { closedAt: found.closedAt ?? null, failure: found.closeFailure ?? null }
+                  : null,
+              ];
+            }),
+          ),
+        ),
+      );
+    const recorded = {
+      claimed: { closedAt: 4, failure: null },
+      failed: { closedAt: null, failure: 'gone' },
+      unclaimed: { closedAt: null, failure: null },
+      none: null,
+    };
+
+    await runAll(harness);
+
+    expect(await read()).toEqual(recorded);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'work-decision-closed')).toMatchObject({
+      release: '0.16.0',
+      read: 4,
+      changed: 1,
+      completedAt: expect.any(Number),
+    });
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'work-decision-closed'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'work-decision-closed' }),
+    ).resolves.toMatchObject({ read: 4, changed: 0 });
+    expect(await read()).toEqual(recorded);
   });
 });

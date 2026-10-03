@@ -93,6 +93,7 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'sync-runs-refs',
+  'work-decision-closed',
 ] as const;
 
 /** One migration's name. */
@@ -158,7 +159,8 @@ const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 
 /**
  * The release of the work loop and supervision (wave 12): the schema step's narrowing of the
- * sync runs' page refs (12-S3, N10).
+ * sync runs' page refs (12-S3, N10), and the record of the decision close edits claimed before
+ * the edit kept its result (12-W's N-3 lease).
  */
 const SUPERVISION_RELEASE = '0.16.0';
 
@@ -295,6 +297,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SUPERVISION_RELEASE,
     does: 'clears the page refs each sync run of a release before 0.6.0 kept, carrying their count into the run’s pagesListed where it kept none; a run that did not complete loses its cursor too, so no sync resumes or finishes a listing it no longer carries and the next reads the source from page one',
     thenRemoves: 'the docSyncRuns.refs declaration',
+  },
+  'work-decision-closed': {
+    release: SUPERVISION_RELEASE,
+    does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
+    thenRemoves: 'nothing: the close records its result from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -670,6 +677,35 @@ async function clearRunRefs(ctx: MutationCtx, cursor: string | null): Promise<Mi
 }
 
 /**
+ * Record each decided request's close edit claimed before the close kept its result as made
+ * (12-W's N-3 lease; 12-S3): until this release a claim was the only trace of the edit, which the
+ * code then took as made, so no release ever sends it again. From this release the edit records
+ * `closedAt` or `closeFailure`, and a claim with neither is one a lease may find. A row with either,
+ * or with no claim, is left, so a second run changes nothing. A work item carries its run's output
+ * and plan, so the page is bounded by bytes.
+ */
+async function recordClaimedCloses(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<MigrationPage> {
+  const page = await ctx.db.query('workItems').paginate({ ...LARGE_ROWS_READ, cursor });
+  let changed = 0;
+  for (const row of page.page) {
+    const decision = row.decision;
+    if (
+      decision?.closeClaimedAt === undefined ||
+      decision.closedAt !== undefined ||
+      decision.closeFailure !== undefined
+    ) {
+      continue;
+    }
+    await ctx.db.patch(row._id, { decision: { ...decision, closedAt: decision.closeClaimedAt } });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Give each stored documentation page a listing row (D D2 (a)). A page of a
  * release before 0.6.0 was kept by its run's refs; from this release a finish
  * removes a page whose row an earlier listing stamped, so every page needs
@@ -912,6 +948,7 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'sync-runs-refs': clearRunRefs,
+  'work-decision-closed': recordClaimedCloses,
 };
 
 /** A migration's row, if it has started. */

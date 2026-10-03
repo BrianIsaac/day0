@@ -396,6 +396,24 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      recordWords(
+        {
+          type: 'work.decision-acknowledging',
+          payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+        },
+        { name: 'Mira', item: 'Refresh pipeline coverage view' },
+      );
+    expect(answered('received')).toBe(
+      'Mira acknowledged your reply for “Refresh pipeline coverage view”.',
+    );
+    expect(answered('unknown')).toBe('A reply with no open request was answered.');
+    expect(answered('replaced')).toBe(
+      'Mira answered your reply to a replaced request for “Refresh pipeline coverage view” with the request that replaced it.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(

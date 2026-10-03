@@ -328,6 +328,34 @@ describe('the declarations the next release retires (N10, Q D2)', (): void => {
     );
     expect(refused.allowed ? '' : refused.reason).toContain('(surfaces-single-approval)');
   });
+
+  it('pushes a v0.15.0 volume whose sync-runs-refs migration has not run, since this checkout still declares docSyncRuns.refs (12-S3)', (): void => {
+    expect(RETIRING_DECLARATIONS).toContainEqual({
+      declaration: 'docSyncRuns.refs',
+      migration: 'sync-runs-refs',
+      release: '0.16.0',
+    });
+    const releases = [...RELEASES, '0.5.0', '0.6.0', '0.15.0', '0.16.0'];
+    const cli = (args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        {
+          'convex data': 'agents\ndeploymentVersions\nmigrations\ndocSyncRuns\n',
+          'convex data deploymentVersions --limit 1 --format jsonl':
+            '{"release":"0.15.0","recordedAt":1}\n',
+          // Every migration of 0.15.0 and before finished; none of 0.16.0's has run yet.
+          'convex data migrations --limit 1000 --format jsonl': '',
+        }[args.join(' ')] ?? '',
+      stderr: '',
+    });
+    expect(
+      readReleaseVerdict(cli, {
+        release: '0.16.0',
+        releases,
+        newestMigrationRelease: '0.16.0',
+      }),
+    ).toMatchObject({ allowed: true, from: '0.15.0' });
+  });
 });
 
 describe('the migration report the upgrade prints', (): void => {

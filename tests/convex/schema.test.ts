@@ -1,9 +1,9 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Doc, Id } from '../../convex/_generated/dataModel';
+import type { DataModel, Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import type { WithoutSystemFields } from 'convex/server';
+import type { GenericMutationCtx, WithoutSystemFields } from 'convex/server';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -1152,6 +1152,424 @@ describe('the wave 12 schema step (12-S3, N10)', (): void => {
   /** The names of a table's indexes, as the push declares them. */
   const indexNames = (table: keyof typeof schema.tables): string[] =>
     schema.tables[table][' indexes']().map((index) => index.indexDescriptor);
+
+  /** An owned employee, the row every test below hangs its rows on. */
+  async function employee(ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> {
+    return await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Priya',
+      userId: 'owner',
+      state: 'active',
+      createdAt: 1,
+    });
+  }
+
+  /** A work item of the employee, with the fields a test gives it. */
+  const item = (
+    agentId: Id<'agents'>,
+    fields: Partial<WithoutSystemFields<Doc<'workItems'>>> = {},
+  ): WithoutSystemFields<Doc<'workItems'>> => ({
+    agentId,
+    sourceCategory: 'ticket',
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-1',
+    title: 'Close the renewal ticket',
+    contentSummary: 'Close it.',
+    contentRefs: [],
+    state: 'failed',
+    observedAt: 1,
+    createdAt: 1,
+    ...fields,
+  });
+
+  it('pauses an employee with who paused it, when and why, and keeps an older row unpaused (12-P)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const older = await employee(ctx);
+      const paused = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+        pausedAt: 2,
+        pausedBy: 'owner',
+        pauseReason: 'Quarter close',
+      });
+      return { older: await ctx.db.get(older), paused: await ctx.db.get(paused) };
+    });
+    expect(read.older).not.toHaveProperty('pausedAt');
+    expect(read.paused).toMatchObject({
+      pausedAt: 2,
+      pausedBy: 'owner',
+      pauseReason: 'Quarter close',
+    });
+  });
+
+  it("gives a work item its waiting stamp, its step's scheduled job and per-entry reconciliation answers; an older row keeps none (12-W)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const jobId = await ctx.scheduler.runAfter(60_000, internal.migrations.runPending, {});
+      const entry = {
+        phase: 'single' as const,
+        actionIndex: 0,
+        tool: 'linear.save_comment',
+        outcome: 'outcome-unknown' as const,
+      };
+      const older = await ctx.db.insert(
+        'workItems',
+        item(agentId, {
+          providerReconciliation: { actor: 'owner', confirmedAt: 3, entries: [entry] },
+        }),
+      );
+      const stamped = await ctx.db.insert(
+        'workItems',
+        item(agentId, {
+          externalId: 'REVOPS-2',
+          state: 'plan-pending',
+          waitingSince: 4,
+          stepJobId: jobId,
+          providerReconciliation: {
+            actor: 'owner',
+            confirmedAt: 3,
+            entries: [
+              { ...entry, answer: 'landed' },
+              { ...entry, actionIndex: 1, answer: 'not-sent' },
+            ],
+          },
+        }),
+      );
+      return { older: await ctx.db.get(older), stamped: await ctx.db.get(stamped), jobId };
+    });
+    expect(read.older).not.toHaveProperty('waitingSince');
+    expect(read.older?.providerReconciliation?.entries[0]).not.toHaveProperty('answer');
+    expect(read.stamped).toMatchObject({ waitingSince: 4, stepJobId: read.jobId });
+    expect(read.stamped?.providerReconciliation?.entries.map((row) => row.answer)).toEqual([
+      'landed',
+      'not-sent',
+    ]);
+  });
+
+  it('refuses a reconciliation answer the card does not offer', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const agentId = await employee(ctx);
+        await ctx.db.insert(
+          'workItems',
+          item(agentId, {
+            providerReconciliation: {
+              actor: 'owner',
+              confirmedAt: 3,
+              entries: [
+                {
+                  phase: 'single',
+                  actionIndex: 0,
+                  tool: 'linear.save_comment',
+                  outcome: 'outcome-unknown',
+                  answer: 'maybe' as 'landed',
+                },
+              ],
+            },
+          }),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("records a decision request's buttons and its close's result, and reads open claims by employee (12-W, 12-M)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const decision = {
+        id: 'abc234',
+        kind: 'plan' as const,
+        requestedAt: 2,
+        channel: 'D0123',
+        surfaceSlug: 'slack',
+        surfaceName: 'Slack',
+        ts: '1700000000.000100',
+        decidedAt: 3,
+        outcome: 'approved' as const,
+        withButtons: true,
+      };
+      const closing = await ctx.db.insert(
+        'workItems',
+        item(agentId, { decision: { ...decision, closeClaimedAt: 4 } }),
+      );
+      const closed = await ctx.db.insert(
+        'workItems',
+        item(agentId, {
+          externalId: 'REVOPS-2',
+          decision: { ...decision, id: 'abc235', closeClaimedAt: 4, closedAt: 5 },
+        }),
+      );
+      const failed = await ctx.db.insert(
+        'workItems',
+        item(agentId, {
+          externalId: 'REVOPS-3',
+          decision: {
+            ...decision,
+            id: 'abc236',
+            closeClaimedAt: 4,
+            closeFailure: 'message_not_found',
+          },
+        }),
+      );
+      const noticing = await ctx.db.insert(
+        'workItems',
+        item(agentId, {
+          externalId: 'REVOPS-4',
+          decision: { ...decision, id: 'abc237', duplicateNoticeClaimedAt: 6 },
+        }),
+      );
+      const openCloses = await ctx.db
+        .query('workItems')
+        .withIndex('by_agent_close_open', (q) =>
+          q
+            .eq('agentId', agentId)
+            .eq('decision.closedAt', undefined)
+            .eq('decision.closeFailure', undefined)
+            .gt('decision.closeClaimedAt', 0),
+        )
+        .collect();
+      const openNotices = await ctx.db
+        .query('workItems')
+        .withIndex('by_agent_duplicate_notice_open', (q) =>
+          q
+            .eq('agentId', agentId)
+            .eq('decision.duplicateNoticeTs', undefined)
+            .eq('decision.duplicateNoticeFailure', undefined)
+            .gt('decision.duplicateNoticeClaimedAt', 0),
+        )
+        .collect();
+      return {
+        closed: await ctx.db.get(closed),
+        failed: await ctx.db.get(failed),
+        openCloses: openCloses.map((row) => row._id),
+        openNotices: openNotices.map((row) => row._id),
+        closing,
+        noticing,
+      };
+    });
+    expect(read.closed?.decision).toMatchObject({ withButtons: true, closedAt: 5 });
+    expect(read.failed?.decision?.closeFailure).toBe('message_not_found');
+    expect(read.openCloses).toEqual([read.closing]);
+    expect(read.openNotices).toEqual([read.noticing]);
+  });
+
+  it('reads the unsent claims of manager notes and decision notices by employee, and takes a replaced notice (12-W, 12-M)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const workItemId = await ctx.db.insert('workItems', item(agentId));
+      const note = { agentId, workItemId, kind: 'landed' as const, text: 'Done.', createdAt: 1 };
+      const claimedNote = await ctx.db.insert('managerNotes', { ...note, claimedAt: 2 });
+      await ctx.db.insert('managerNotes', { ...note, claimedAt: 2, providerTs: '1.1' });
+      await ctx.db.insert('managerNotes', { ...note, claimedAt: 2, failure: 'not sent' });
+      await ctx.db.insert('managerNotes', { ...note, claimedAt: 2, discardedAt: 3 });
+      await ctx.db.insert('managerNotes', note);
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+      const notice = {
+        agentId,
+        surfaceId,
+        workItemId,
+        decisionId: 'abc234',
+        messageTs: '1.2',
+        kind: 'replaced' as const,
+        text: 'That request was replaced by abc235.',
+        createdAt: 1,
+      };
+      const claimedNotice = await ctx.db.insert('managerDecisionNotices', {
+        ...notice,
+        claimedAt: 2,
+      });
+      await ctx.db.insert('managerDecisionNotices', {
+        ...notice,
+        messageTs: '1.3',
+        claimedAt: 2,
+        providerTs: '1.4',
+      });
+      const notes = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_claim_open', (q) =>
+          q
+            .eq('agentId', agentId)
+            .eq('providerTs', undefined)
+            .eq('failure', undefined)
+            .eq('discardedAt', undefined)
+            .gt('claimedAt', 0),
+        )
+        .collect();
+      const notices = await ctx.db
+        .query('managerDecisionNotices')
+        .withIndex('by_agent_claim_open', (q) =>
+          q
+            .eq('agentId', agentId)
+            .eq('providerTs', undefined)
+            .eq('failure', undefined)
+            .gt('claimedAt', 0),
+        )
+        .collect();
+      return {
+        notes: notes.map((row) => row._id),
+        notices: notices.map((row) => row._id),
+        claimedNote,
+        claimedNotice,
+      };
+    });
+    expect(read.notes).toEqual([read.claimedNote]);
+    expect(read.notices).toEqual([read.claimedNotice]);
+  });
+
+  it("remembers a replaced decision request by its code, with the code that replaced it and its edit's claim (12-M, F2 D14)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const workItemId = await ctx.db.insert('workItems', item(agentId, { state: 'claimed' }));
+      const replaced = {
+        agentId,
+        workItemId,
+        decisionId: 'abc234',
+        kind: 'plan' as const,
+        surfaceSlug: 'slack',
+        channel: 'D0123',
+        replacedAt: 5,
+      };
+      const delivered = await ctx.db.insert('replacedDecisionRequests', {
+        ...replaced,
+        replacedBy: 'abc235',
+        ts: '1700000000.000100',
+        requestText: 'Approve the plan? Reply approve abc234.',
+        withButtons: true,
+        editClaimedAt: 6,
+      });
+      await ctx.db.insert('replacedDecisionRequests', {
+        ...replaced,
+        decisionId: 'abc233',
+        editClaimedAt: 6,
+        editedAt: 7,
+      });
+      const byCode = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', 'abc234'))
+        .unique();
+      const ofItem = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+        .collect();
+      const openEdits = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_edit_open', (q) =>
+          q
+            .eq('agentId', agentId)
+            .eq('editedAt', undefined)
+            .eq('editFailure', undefined)
+            .gt('editClaimedAt', 0),
+        )
+        .collect();
+      return {
+        byCode,
+        ofItem: ofItem.length,
+        openEdits: openEdits.map((row) => row._id),
+        delivered,
+      };
+    });
+    expect(read.byCode).toMatchObject({ replacedBy: 'abc235', withButtons: true });
+    expect(read.ofItem).toBe(2);
+    expect(read.openEdits).toEqual([read.delivered]);
+  });
+
+  it('gives a provisioned app its app-level token and a kept card its marker; an older card keeps neither (12-M, m16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const credential = {
+        userId: 'day0:organisation',
+        kind: 'oauth' as const,
+        label: 'Priya app client secret',
+        source: 'oauth' as const,
+        createdAt: 1,
+      };
+      const secret = await ctx.db.insert('credentials', credential);
+      const token = await ctx.db.insert('credentials', {
+        ...credential,
+        kind: 'value',
+        label: 'Priya app-level token',
+        source: 'entered',
+      });
+      const provisioning = {
+        appId: 'A0123',
+        appName: 'Day0 Priya',
+        clientId: '123.456',
+        clientSecretCredentialId: secret,
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'http://localhost:3000/api/oauth/slack',
+        scopes: ['chat:write'],
+        createdAt: 1,
+      };
+      const card = {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat' as const,
+        verdict: 'proposed' as const,
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('surfaces', { ...card, provisioning });
+      const recorded = await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'slack-2',
+        provisioning: { ...provisioning, appLevelTokenCredentialId: token },
+        keptIdentitySince: 8,
+      });
+      return { older: await ctx.db.get(older), recorded: await ctx.db.get(recorded), token };
+    });
+    expect(read.older?.provisioning).not.toHaveProperty('appLevelTokenCredentialId');
+    expect(read.older).not.toHaveProperty('keptIdentitySince');
+    expect(read.recorded?.provisioning?.appLevelTokenCredentialId).toBe(read.token);
+    expect(read.recorded?.keptIdentitySince).toBe(8);
+  });
+
+  it("gives a skill its waiting stamp, and reads an employee's events by when they happened (12-W)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const skill = await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        body: '',
+        sourceType: 'agent-authored',
+        state: 'proposed',
+        createdAt: 1,
+        waitingSince: 2,
+      });
+      for (const createdAt of [30, 10, 20]) {
+        await ctx.db.insert('events', { agentId, type: 'work.retry', payload: {}, createdAt });
+      }
+      const events = await ctx.db
+        .query('events')
+        .withIndex('by_agent_created', (q) => q.eq('agentId', agentId).gte('createdAt', 15))
+        .order('desc')
+        .collect();
+      return { skill: await ctx.db.get(skill), times: events.map((event) => event.createdAt) };
+    });
+    expect(read.skill?.waitingSince).toBe(2);
+    expect(read.times).toEqual([30, 20]);
+  });
 
   it('removes the two indexes nothing reads: agents.by_bossEmail and skills.by_version', (): void => {
     expect(indexNames('agents')).not.toContain('by_bossEmail');

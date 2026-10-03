@@ -1293,7 +1293,8 @@ export type WorkDecisionNotifyingPayload = DecisionNamed;
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
-  readonly kind: 'received' | 'unknown';
+  /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
+  readonly kind: 'received' | 'unknown' | 'replaced';
 }
 
 /** The payload of `work.decision-ignored`. */

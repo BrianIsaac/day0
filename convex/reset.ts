@@ -57,6 +57,7 @@ export const AGENT_KEYED_TABLES = [
   'externalClaims',
   'managerQuestions',
   'managerDecisionNotices',
+  'replacedDecisionRequests',
   'managerNotes',
   'corrections',
   'decisionBatches',
@@ -186,6 +187,13 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   managerDecisionNotices: (db, { agentId }, limit) =>
     upTo(
       db.query('managerDecisionNotices').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  replacedDecisionRequests: (db, { agentId }, limit) =>
+    upTo(
+      db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   managerNotes: (db, { agentId }, limit) =>
