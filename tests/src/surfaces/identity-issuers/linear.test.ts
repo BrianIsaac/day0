@@ -222,6 +222,34 @@ describe('the per-employee grants', (): void => {
     },
   );
 
+  it.each(
+    [200, 400].flatMap((status) =>
+      LINEAR_REFRESH_TOKEN_REVOKED.map(({ body }) => ({ status, body })),
+    ),
+  )(
+    'reads "Refresh token revoked" by its words whatever the status Linear sends it under (the round review\'s M1): %j',
+    ({ status, body }): void => {
+      let thrown: unknown;
+      try {
+        readTokenResponse(status, body, NOW);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(LinearIssuerRefusal);
+      expect((thrown as LinearIssuerRefusal).reason).toBe('token-refused');
+      expect(isAuthorityRefusal(thrown)).toBe(true);
+    },
+  );
+
+  it("reads an error a success carries by its words, not as an unreadable answer (the round review's M1)", (): void => {
+    expect(() => readTokenResponse(200, { error: 'invalid_grant' }, NOW)).toThrow(
+      expect.objectContaining({ reason: 'token-refused' }) as Error,
+    );
+    expect(() => readTokenResponse(200, { error: 'invalid_client' }, NOW)).toThrow(
+      expect.objectContaining({ reason: 'client-refused' }) as Error,
+    );
+  });
+
   it("says Linear's description only when it is one short printable line, else its error code (the review's m13)", (): void => {
     const words = (description: string): string => {
       try {

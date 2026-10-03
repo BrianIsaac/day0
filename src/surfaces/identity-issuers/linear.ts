@@ -318,8 +318,12 @@ export function readTokenResponse(status: number, body: unknown, now: number): L
   }
   const error = record === undefined ? undefined : stringField(record, 'error');
   const description = record === undefined ? undefined : stringField(record, 'error_description');
+  // An answer with no token is read by its words whatever its status: the walk quoted Linear's
+  // "Refresh token revoked" without its status, and a 2xx carrying it is still a revoked grant.
   const reason =
-    status >= 200 && status < 300 ? ('malformed' as const) : refusalOf(status, error, description);
+    status >= 200 && status < 300 && error === undefined && description === undefined
+      ? ('malformed' as const)
+      : refusalOf(status, error, description);
   const detail = shownDescription(description) ?? error ?? `HTTP ${status}`;
   throw new LinearIssuerRefusal(reason, `${REFUSAL_LEADS[reason]}: ${detail}.`, error);
 }
