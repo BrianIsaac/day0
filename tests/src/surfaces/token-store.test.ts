@@ -1,14 +1,24 @@
+import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
+import { getFunctionName } from 'convex/server';
 import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { IssuedTokens } from '../../../src/surfaces/mcp-oauth';
+import { sealForOwner } from '../../../src/lib/credential-crypto';
+import {
+  LIVE_TOKEN_LEASE_POLLS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
+  REFRESH_LEASE_MS,
+} from '../../../src/surfaces/refresh-lease';
 import {
   accessTokenFor,
   heldFromRows,
+  nativeTokenKeeper,
   runScheduledRefresh,
   SCHEDULED_REFRESH_RETRIES,
   TokenRefreshRefused,
+  type ClaimedRefreshToken,
   type HeldTokens,
   type RefreshWords,
   type RotateTokens,
@@ -32,9 +42,14 @@ interface KeptPair {
   expiresAt?: number;
   system: string;
   revoked: boolean;
+  /** The refresh lease on the row, as `credentials.refreshingUntil` holds it. */
+  refreshingUntil?: number;
 }
 
-/** A keeper over one in-memory pair that counts every read of the refresh token. */
+/**
+ * A keeper over one in-memory pair that counts every claim of the refresh token, and takes and
+ * clears the lease as the native keeper's mutations do.
+ */
 function memoryKeeper(pair: KeptPair): TokenKeeper & {
   readonly refreshReads: () => number;
   readonly rotations: RotateTokens[];
@@ -49,6 +64,7 @@ function memoryKeeper(pair: KeptPair): TokenKeeper & {
     issuedBy: { system: pair.system, grant: 'authorisation-code' },
     refreshable: pair.refresh !== null,
     connection: CONNECTION,
+    ...(pair.refreshingUntil === undefined ? {} : { refreshingUntil: pair.refreshingUntil }),
   });
   return {
     refreshReads: (): number => refreshReads,
@@ -59,16 +75,25 @@ function memoryKeeper(pair: KeptPair): TokenKeeper & {
       if (pair.revoked) throw new Error('Credential is unavailable.');
       return pair.access;
     },
-    refreshToken: async (_ctx, _id, expectedGeneration): Promise<string | null> => {
+    claimRefreshToken: async (_ctx, claim): Promise<ClaimedRefreshToken> => {
       refreshReads += 1;
-      if (pair.generation !== expectedGeneration) return null;
+      if (pair.revoked) return { kind: 'gone' };
+      if (pair.generation !== claim.expectedGeneration) return { kind: 'moved' };
+      if (pair.refreshingUntil !== undefined && pair.refreshingUntil > claim.now) {
+        return { kind: 'leased', until: pair.refreshingUntil };
+      }
       if (!pair.refresh) throw new Error('No live refresh token is held for this authorisation.');
-      return pair.refresh;
+      pair.refreshingUntil = claim.now + REFRESH_LEASE_MS;
+      return { kind: 'claimed', presented: pair.refresh, leaseUntil: pair.refreshingUntil };
+    },
+    releaseRefreshLease: async (_ctx, lease): Promise<void> => {
+      if (pair.refreshingUntil === lease.leaseUntil) pair.refreshingUntil = undefined;
     },
     rotate: async (_ctx, rotation): Promise<RotationOutcome> => {
       rotations.push(rotation);
       if (pair.revoked) return { ok: false, reason: 'gone' };
       if (pair.generation !== rotation.expectedGeneration) return { ok: false, reason: 'stale' };
+      pair.refreshingUntil = undefined;
       pair.generation += 1;
       pair.access = rotation.tokens.accessToken;
       pair.refresh = rotation.tokens.refreshToken ?? pair.refresh;
@@ -207,7 +232,7 @@ describe('the token store', (): void => {
   });
 
   it('reads a token no refresher issued exactly as stored, however close its expiry', async (): Promise<void> => {
-    const keeper = memoryKeeper(pairFor({ system: 'slack', expiresAt: NOW - 1 }));
+    const keeper = memoryKeeper(pairFor({ system: 'slack', expiresAt: NOW + 1 }));
     const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
       throw new Error('no exchange expected');
     });
@@ -215,6 +240,200 @@ describe('the token store', (): void => {
       'access-0',
     );
     expect(keeper.refreshReads()).toBe(0);
+  });
+
+  it('refuses a token past its expiry that nothing held can renew, rather than send it (the review’s m12)', async (): Promise<void> => {
+    const keeper = memoryKeeper(pairFor({ expiresAt: NOW - 1, refresh: null }));
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).rejects.toThrow(
+      'The token has expired and nothing Day0 holds can renew it. Authorise the card again.',
+    );
+    expect(keeper.refreshReads()).toBe(0);
+  });
+});
+
+describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
+  /** A turn of the event loop, so a concurrent refresh can move on while a waiter sleeps. */
+  const tick = async (): Promise<void> => {
+    await new Promise<void>((resolve): void => {
+      setImmediate(resolve);
+    });
+  };
+
+  it('presents the refresh token once when two refreshes run at once, and gives both the one new token', async (): Promise<void> => {
+    const pair = pairFor();
+    const keeper = memoryKeeper(pair);
+    const presented: string[] = [];
+    let openExchange = (): void => undefined;
+    const exchangeOpen = new Promise<void>((resolve): void => {
+      openExchange = resolve;
+    });
+    const refresher = scriptedRefresher(async (token): Promise<IssuedTokens> => {
+      presented.push(token);
+      await exchangeOpen;
+      return { accessToken: `access-after-${token}`, refreshToken: 'refresh-1' };
+    });
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      // The waiter's first sleep lets the holder's exchange answer.
+      sleep: async (): Promise<void> => {
+        openExchange();
+        await tick();
+      },
+    };
+    const both = await Promise.all([
+      accessTokenFor(ctx, CREDENTIAL, deps),
+      accessTokenFor(ctx, CREDENTIAL, deps),
+    ]);
+    expect(presented).toEqual(['refresh-0']);
+    expect(both).toEqual(['access-after-refresh-0', 'access-after-refresh-0']);
+    expect(keeper.rotations).toHaveLength(1);
+    expect(pair.refreshingUntil).toBeUndefined();
+  });
+
+  it('takes over a lease its holder left behind once the lease has lapsed', async (): Promise<void> => {
+    const pair = pairFor({ refreshingUntil: NOW - 1 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(
+      async (token): Promise<IssuedTokens> => ({ accessToken: `access-after-${token}` }),
+    );
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).resolves.toBe(
+      'access-after-refresh-0',
+    );
+    expect(pair.refreshingUntil).toBeUndefined();
+  });
+
+  it('waits for a holder that lets its lease end without a rotation, then takes the lease itself', async (): Promise<void> => {
+    const pair = pairFor({ refreshingUntil: NOW + 10_000 });
+    const keeper = memoryKeeper(pair);
+    const presented: string[] = [];
+    const refresher = scriptedRefresher(async (token): Promise<IssuedTokens> => {
+      presented.push(token);
+      return { accessToken: `access-after-${token}` };
+    });
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      sleep: async (): Promise<void> => {
+        // The holder's exchange failed and it released its lease.
+        pair.refreshingUntil = undefined;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-after-refresh-0');
+    expect(presented).toEqual(['refresh-0']);
+  });
+
+  it('hands back a token that still lives after a short wait when another refresh holds the lease', async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 30_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let slept = 0;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      // The holder died: its lease never ends while the reader waits.
+      sleep: async (): Promise<void> => {
+        slept += 1;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    // Two claims, each waiting at most the live token's bound, never the whole lease.
+    expect(slept).toBeLessThanOrEqual(2 * LIVE_TOKEN_LEASE_POLLS);
+  });
+
+  it("waits five seconds in all behind a dead holder's lease while the stored token lives, the claims sharing one budget (the round review's m7)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 30_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let slept = 0;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      sleep: async (): Promise<void> => {
+        slept += 1;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    // It does wait for a live holder's exchange, and no longer than five seconds in all.
+    expect(slept).toBeGreaterThanOrEqual(LIVE_TOKEN_POLLS_PER_CLAIM);
+    expect(slept).toBeLessThanOrEqual(LIVE_TOKEN_LEASE_POLLS);
+  });
+
+  it("never hands back a stored token that died while the read waited behind another holder's lease (the round review's m8)", async (): Promise<void> => {
+    // Three seconds left, and the holder died: its lease never ends while the reader waits.
+    const pair = pairFor({ expiresAt: NOW + 3_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let clock = NOW;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      now: (): number => clock,
+      sleep: async (ms: number): Promise<void> => {
+        clock += ms;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
+  });
+
+  it("never hands back a stored token that died while its refresh was refused (the round review's m8)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 3_000 });
+    const keeper = memoryKeeper(pair);
+    let clock = NOW;
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      // The exchange takes longer than the token has left, then fails.
+      clock += 30_000;
+      throw new Error('fetch failed');
+    });
+    const deps: TokenStoreDeps = { ...storeDeps(keeper, refresher), now: (): number => clock };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
+  });
+
+  it('ends its own lease when the exchange cannot be made, so the next refresh need not wait', async (): Promise<void> => {
+    const pair = pairFor();
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('fetch failed');
+    });
+    await expect(accessTokenFor(ctx, CREDENTIAL, storeDeps(keeper, refresher))).resolves.toBe(
+      'access-0',
+    );
+    expect(pair.refreshingUntil).toBeUndefined();
+  });
+
+  it('tries a scheduled refresh again when other refreshes held the lease throughout, and records nothing', async (): Promise<void> => {
+    const pair = pairFor({ refreshingUntil: NOW + 10_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    const retries: Array<[number, number]> = [];
+    await runScheduledRefresh(
+      ctx,
+      { credentialId: CREDENTIAL, generation: 0 },
+      {
+        ...storeDeps(keeper, refresher),
+        sleep: async (): Promise<void> => {
+          // Each holder's lease ends and another refresh takes the next.
+          pair.refreshingUntil = (pair.refreshingUntil ?? NOW) + 1;
+        },
+        retryAfter: async (delayMs, attempt): Promise<void> => {
+          retries.push([delayMs, attempt]);
+        },
+        recordRefusal: async (): Promise<void> => {
+          throw new Error('no refusal expected');
+        },
+      },
+    );
+    expect(retries).toEqual([[60_000, 1]]);
   });
 });
 
@@ -477,5 +696,37 @@ describe('every rung in the deployment reads its bearer through the token store'
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('the native keeper’s claim (R-S)', (): void => {
+  it('ends the lease and says why when the claimed refresh token cannot be opened, even if the release fails', async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    const refresh = {
+      _id: 'refresh-1',
+      userId: 'owner-1',
+      // Sealed for another owner than the row names, so the keeper refuses to open it.
+      ...sealForOwner('refresh-elsewhere', { current: key }, 'someone-else'),
+    } as unknown as Doc<'credentials'>;
+    const called: string[] = [];
+    const failingCtx = {
+      runMutation: async (reference: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as never);
+        called.push(name);
+        if (name === 'refreshLease:claim') {
+          return { kind: 'claimed', leaseUntil: NOW + REFRESH_LEASE_MS, refresh };
+        }
+        throw new Error('the backend could not be reached');
+      },
+    } as unknown as ActionCtx;
+    const keeper = nativeTokenKeeper(() => ({ current: key }));
+    const claimed = keeper.claimRefreshToken(failingCtx, {
+      credentialId: CREDENTIAL,
+      expectedGeneration: 0,
+      now: NOW,
+    });
+    await expect(claimed).rejects.toThrow('Credential decryption failed');
+    await expect(claimed).rejects.not.toThrow('the backend could not be reached');
+    expect(called).toEqual(['refreshLease:claim', 'refreshLease:release']);
   });
 });

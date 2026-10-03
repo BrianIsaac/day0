@@ -158,6 +158,20 @@ export const pendingAuthorisationValidator = v.object({
   redirectUrl: v.string(),
   organisationConnectionId: v.optional(v.id('organisationConnections')),
   startedAt: v.number(),
+  /**
+   * What the issuer's validated metadata said when the authorisation started (R-S), so the
+   * callback acts on the issuer the start was checked against without fetching the metadata again:
+   * whether it advertised `authorization_response_iss_parameter_supported` (RFC 9207), its token
+   * endpoint and the client authentication methods it takes there. Absent on an authorisation
+   * started before the field, whose callback reads the metadata again.
+   */
+  issuerMetadata: v.optional(
+    v.object({
+      issParameterSupported: v.boolean(),
+      tokenEndpoint: v.string(),
+      tokenEndpointAuthMethods: v.array(v.string()),
+    }),
+  ),
 });
 
 export default defineSchema({
@@ -289,6 +303,15 @@ export default defineSchema({
      * (11-AS, 11-AL, 11-AM; section 4.6). Absent reads as 0.
      */
     generation: v.optional(v.number()),
+    /**
+     * The refresh lease on an access token's row (the round after wave 11, R-S; the wave 11
+     * review's m11): until when one refresh holds the right to present the paired refresh token,
+     * taken in the transaction that reads the generation (`refreshLease.claim`). A second refresh
+     * waits for the holder's rotation instead of presenting the same token to a server with reuse
+     * detection; a lease left by an action that died lapses by itself at this time. Cleared by the
+     * rotation and by the holder's release. Absent means no refresh holds it.
+     */
+    refreshingUntil: v.optional(v.number()),
     /** Where the token lives (11-AT; B15): absent or `native` is this row, `nango` the service. */
     tokenStore: v.optional(v.union(...TOKEN_STORES.map((store) => v.literal(store)))),
     /**
@@ -625,8 +648,9 @@ export default defineSchema({
      * orientation from its own role's documented `Team:`, `Project:` and
      * `Channels:` lines, each value kept with the page line that states it,
      * and approved by the manager with the card. Absent on rows
-     * proposed before the field, which keep the page scan; present with no
-     * value means intake reads nothing, and `notes` says why. */
+     * proposed before the field that the `surfaces-intake-scope` pass (0.15.0)
+     * could not scope, which keep the page scan and say so on the card;
+     * present with no value means intake reads nothing, and `notes` says why. */
     intakeScope: v.optional(
       v.object({
         team: v.optional(
@@ -1379,11 +1403,20 @@ export default defineSchema({
     adoptedAt: v.optional(v.number()),
     /** The row a revision replaces at its registration; the replaced row runs until then. */
     revisionOf: v.optional(v.id('skills')),
+    /**
+     * The employee's owner key (`agents.userId`) when the row was written (the round after wave
+     * 11, R-S; the wave 10 review's K-m3): written at every insert, rewritten by a handover's move,
+     * filled on older rows by the `skills-owner-key` pass. Absent on a row of an employee with no
+     * owner, and on an older row until the pass has run.
+     */
+    ownerKey: v.optional(v.string()),
   })
     .index('by_agent_name', ['agentId', 'name'])
     .index('by_agent_state', ['agentId', 'state'])
     /** Every holder of a version: a withdrawal, a newer version's re-check stamp, a transfer. */
-    .index('by_version', ['versionId']),
+    .index('by_version', ['versionId'])
+    /** A version's holders among one owner's employees, the owner first (`holdersOf`, K-m3). */
+    .index('by_owner_version', ['ownerKey', 'versionId']),
 
   /**
    * The owner's skill library (K1): what a verified skill is, apart from which employee holds it.

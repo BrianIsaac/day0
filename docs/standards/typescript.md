@@ -200,7 +200,7 @@ Violates also: `tests/src/docs/system-discovery.test.ts:60` asserts the exact lo
 
 15.1 British spelling in comments, docstrings, commit messages, user-facing copy and documentation (`serialise`, `colour`, `behaviour`). US spelling only inside an identifier or string that mirrors an SDK or protocol. Follows: `src/work/autonomy.ts:29`.
 
-15.2 No emojis in code, comments, copy, commits or documentation. The one permitted occurrence is a unicode round-trip fixture where the emoji is data (`tests/src/lib/credential-crypto.test.ts:71`).
+15.2 No emojis in code, comments, copy, commits or documentation. The one permitted occurrence is a unicode round-trip fixture where the emoji is data (`tests/src/lib/credential-crypto.test.ts:71`). The same data exception covers text pinned byte for byte to recorded runs, so the em dashes 13.3 and 15.3 forbid stay where the runs were recorded with them: the mock author prompt in `convex/skillAuthorPrompt.ts` and the test that pins it, until the runs are recorded again (decision D4, 3 October 2026).
 
 15.3 No em dashes anywhere (13.3 for code; the same for documentation and commits).
 

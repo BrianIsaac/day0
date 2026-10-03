@@ -13,6 +13,7 @@ import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { intakeFailureWords } from '../src/surfaces/intake-failure-words';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../src/surfaces/mcp-address';
 import {
@@ -185,8 +186,14 @@ export interface IntakeRuntime {
    * once a handover moved it to another (U3-m2).
    */
   seed(candidate: IntakeSeed, startedUnder: string | null): Promise<void>;
-  /** Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits. */
-  withdraw(candidate: IntakeSeed & { leftQueue: string }): Promise<void>;
+  /**
+   * Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits,
+   * fenced by the owner the sweep read the employee under, as a seed is (FR-m4).
+   */
+  withdraw(
+    candidate: IntakeSeed & { leftQueue: string },
+    startedUnder: string | null,
+  ): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
   /** What the surface's manager DM has open; nothing open leaves it unread (Q13). */
   openDecisions(surfaceId: Id<'surfaces'>): Promise<OpenDecisions>;
@@ -2035,10 +2042,15 @@ export async function runIntakeSweep(
         // A candidate that failed to seed holds no place in the queue.
         waiting = queue.limit - admission.room - (mapped.length - seeded);
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
-          await runtime.withdraw({
-            ...seedOf(agentId, candidate, polledPage.trackers),
-            leftQueue,
-          });
+          try {
+            await runtime.withdraw(
+              { ...seedOf(agentId, candidate, polledPage.trackers), leftQueue },
+              agent.userId ?? null,
+            );
+          } catch (error) {
+            // A withdraw a handover refused holds the checkpoint as an unseeded item does.
+            unseeded.push({ what: candidate.externalId, error });
+          }
         }
         const holdCheckpoint =
           unseeded.length > 0
@@ -2060,10 +2072,17 @@ export async function runIntakeSweep(
         if (unseeded.length > 0) skipped += 1;
         else polled += 1;
       } catch (error) {
+        const own = safeIntakeError(error, credential);
+        // The card says what the failure means; the provider's own line stays in the log.
+        log.warn('intake poll failed', { surfaceId: surface._id, reason: own });
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          skipReason: `intake failed: ${safeIntakeError(error, credential)}`,
+          skipReason: `intake failed: ${intakeFailureWords({
+            system: surface.displayName,
+            error,
+            otherwise: () => own,
+          })}`,
         });
         skipped += 1;
       } finally {
@@ -2260,8 +2279,11 @@ export function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     seed: async (candidate: IntakeSeed, startedUnder: string | null): Promise<void> => {
       await ctx.runMutation(internal.intakeSeed.seedListedItem, { ...candidate, startedUnder });
     },
-    withdraw: async (candidate: IntakeSeed & { leftQueue: string }): Promise<void> => {
-      await ctx.runMutation(internal.work.withdrawListedItem, candidate);
+    withdraw: async (
+      candidate: IntakeSeed & { leftQueue: string },
+      startedUnder: string | null,
+    ): Promise<void> => {
+      await ctx.runMutation(internal.work.withdrawListedItem, { ...candidate, startedUnder });
     },
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
       await ctx.runMutation(internal.work.resolveChannelDecision, reply);

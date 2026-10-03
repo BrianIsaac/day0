@@ -62,6 +62,17 @@ export type ExpirySurface = Pick<
 >;
 
 /**
+ * What a card an administrator ended by revoking its connection says in place of its renewal: the
+ * approval's date stands, and nothing is read or sent until IT connects the system again (the
+ * design pass's major 1). Renewing brings nothing back, so none is offered.
+ *
+ * @param system - The card's system, as the card names it.
+ */
+export function revokedConnectionWords(system: string): string {
+  return `Nothing is read or sent through this card until IT connects ${system} again.`;
+}
+
+/**
  * The card's expiry block (Q5, U3, K): when access ends, in the employee's zone, who set the
  * date, and the one control that renews it for a chosen period from today (`surfaces.setAccessDays`),
  * which is also how an access that has ended comes back. A probe never moves the date and
@@ -80,6 +91,9 @@ export type ExpirySurface = Pick<
  *   what the renewal needs.
  * @param endedNote - What the end did beyond the card, said while the access has ended.
  * @param move - The move off a pasted key, where the card offers one.
+ * @param connectionRevoked - The card's organisation connection was revoked by an administrator,
+ *   which ended it: the block says until when it was approved and what brings it back, and offers
+ *   no renewal, since none would.
  * @returns The block, or nothing for a card whose access has not started.
  */
 export function ExpiryBlock({
@@ -88,12 +102,14 @@ export function ExpiryBlock({
   onSetDays,
   endedNote,
   move,
+  connectionRevoked = false,
 }: {
   surface: ExpirySurface;
   now: number;
   onSetDays: (days: number) => Promise<Renewed>;
   endedNote?: string;
   move?: MoveOffer;
+  connectionRevoked?: boolean;
 }) {
   const zone = useAgentZone();
   const periodId = useId();
@@ -139,51 +155,62 @@ export function ExpiryBlock({
   };
   return (
     <div className="grid gap-3">
-      <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
-        <p className="text-[13px] text-[var(--color-muted)]">
-          {standing.kind === 'ended' ? 'Access ended' : 'Access lasts until'}
-        </p>
-        <p
-          className={`text-sm ${standing.kind === 'running' ? 'text-[var(--color-fg-2)]' : 'text-[var(--color-warn)]'}`}
-        >
-          {end}
-          {setBy}.{' '}
-          {standing.kind === 'ended'
-            ? 'Nothing is read or sent through this card until you renew it.'
-            : standing.kind === 'ending'
-              ? 'After that, nothing is read or sent through this card until you renew it.'
-              : EXPIRY_RULE}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1.5">
-          <label htmlFor={periodId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
-            Access period
-          </label>
-          <select
-            id={periodId}
-            value={days}
-            disabled={busy}
-            onChange={(event) => setDays(Number(event.target.value))}
-            className={`${INPUT_CLASS} w-auto`}
-          >
-            {ACCESS_PERIODS.map((period) => (
-              <option key={period} value={period}>
-                {period} days
-              </option>
-            ))}
-          </select>
+      {connectionRevoked ? (
+        <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+          <p className="text-[13px] text-[var(--color-muted)]">Approved until</p>
+          <p className="text-sm text-[var(--color-warn)]">
+            {end}. {revokedConnectionWords(surface.displayName)}
+          </p>
         </div>
-        <Button
-          ref={control}
-          size="small"
-          variant={standing.kind === 'running' ? 'secondary' : 'primary'}
-          disabled={busy}
-          onClick={renew}
-        >
-          {busy ? 'Renewing…' : `Renew for ${days} days`}
-        </Button>
-      </div>
+      ) : (
+        <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+          <p className="text-[13px] text-[var(--color-muted)]">
+            {standing.kind === 'ended' ? 'Access ended' : 'Access lasts until'}
+          </p>
+          <p
+            className={`text-sm ${standing.kind === 'running' ? 'text-[var(--color-fg-2)]' : 'text-[var(--color-warn)]'}`}
+          >
+            {end}
+            {setBy}.{' '}
+            {standing.kind === 'ended'
+              ? 'Nothing is read or sent through this card until you renew it.'
+              : standing.kind === 'ending'
+                ? 'After that, nothing is read or sent through this card until you renew it.'
+                : EXPIRY_RULE}
+          </p>
+        </div>
+      )}
+      {connectionRevoked ? null : (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="grid gap-1.5">
+            <label htmlFor={periodId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
+              Access period
+            </label>
+            <select
+              id={periodId}
+              value={days}
+              disabled={busy}
+              onChange={(event) => setDays(Number(event.target.value))}
+              className={`${INPUT_CLASS} w-auto`}
+            >
+              {ACCESS_PERIODS.map((period) => (
+                <option key={period} value={period}>
+                  {period} days
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            ref={control}
+            size="small"
+            variant={standing.kind === 'running' ? 'secondary' : 'primary'}
+            disabled={busy}
+            onClick={renew}
+          >
+            {busy ? 'Renewing…' : `Renew for ${days} days`}
+          </Button>
+        </div>
+      )}
       <StatusRegion outcome={outcome} />
       {standing.kind === 'ended' && endedNote !== undefined ? (
         <p className="text-sm text-[var(--color-warn)]">{endedNote}</p>

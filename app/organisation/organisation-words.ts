@@ -139,26 +139,108 @@ export function secretWords(
     : 'None held';
 }
 
+/** How many employee cards a revoke ends, as `organisationConnections.cardsOn` counts them. */
+export interface CardsOnConnection {
+  readonly cards: number;
+  /** More cards than one revoke ends, which the revoke refuses. */
+  readonly atLeast: boolean;
+}
+
 /**
  * What revoking a connection does, said before the administrator confirms it (11-AO's `revoke`
- * with 11-AR's `endCardsOnConnection`): every card on it ends with the reason, what Day0 obtained
- * through it is revoked at the vendor, and no card on another system changes. No read counts the
- * cards beforehand (for the cockpit), so the words say every card rather than a number.
+ * with 11-AR's `endCardsOnConnection`): the cards on it end with the reason, by number once the
+ * count is read (11-AC's item 3; no employee is named, B8) and as every card until then, what Day0
+ * obtained through it is revoked at the vendor, and no card on another system changes.
  *
  * @param view - The connection.
+ * @param counted - How many cards it ends, once `cardsOn` has answered.
  */
-export function revokeLines(view: Pick<ConnectionView, 'displayName' | 'system'>): string[] {
+export function revokeLines(
+  view: Pick<ConnectionView, 'displayName' | 'system' | 'kind'>,
+  counted?: CardsOnConnection,
+): string[] {
   const system = systemDisplayName(view.system);
+  const revoked = `what Day0 obtained through it is revoked at ${system}.`;
+  // More cards than one revoke ends: the revoke is refused, so nothing after the count happens.
+  if (counted?.atLeast === true) return [endedCardsLine(view.displayName, revoked, counted)];
   return [
-    `Every employee's ${view.displayName} card connected through it ends now, each with your reason, and what Day0 obtained through it is revoked at ${system}.`,
-    'No card on any other system changes. Each manager sees the reason on the card.',
+    endedCardsLine(view.displayName, revoked, counted),
+    // Where the count says no card ends, no manager sees a reason (the round review's m17).
+    revokeEndsNoCard(counted)
+      ? 'No card on any other system changes.'
+      : 'No card on any other system changes. Each manager sees the reason on the card.',
+    // Slack's `auth.revoke` ends the configuration token alone (R41V-10, R41X-8).
+    ...(view.kind === 'slack-configuration' ? [SLACK_REFRESH_TOKEN_LINE] : []),
     'IT can connect it again with ./setup.sh access.',
   ];
 }
 
-/** What a rotation does, said before the administrator gives the new secret. */
-export const ROTATE_NOTE =
-  'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.';
+/**
+ * Whether the count says a revoke ends no card, so no manager reads its reason on a card (the
+ * round review's m17): none is connected through it, or more are than one revoke ends, which the
+ * revoke refuses. Unknown until the count answers.
+ *
+ * @param counted - How many cards it ends, once `cardsOn` has answered.
+ */
+export function revokeEndsNoCard(counted: CardsOnConnection | undefined): boolean {
+  return counted !== undefined && (counted.cards === 0 || counted.atLeast);
+}
+
+/**
+ * What a revoke of Slack's configuration connection cannot do, said before it is confirmed: nothing
+ * ends the configuration token's refresh token but its lapse. Day0's `auth.revoke` and the token
+ * row's Delete on api.slack.com each end an access token only, and once no access token lives the
+ * row is not listed at all (the re-walk, R41X-8), so what IT can do is keep closed the sign-in it
+ * was copied from.
+ */
+export const SLACK_REFRESH_TOKEN_LINE =
+  'Day0 revokes the configuration token at Slack, but nothing ends its refresh token, neither ' +
+  'Day0 nor a Delete on api.slack.com: it ends only when it lapses. Until then whoever copied it ' +
+  'while its row was listed under "Your App Configuration Tokens" can mint a new token with it, ' +
+  'so keep the sign-in of the account that generated it closed.';
+
+/** The revoke's first line: the cards it ends, by number once counted, then what is revoked. */
+function endedCardsLine(
+  displayName: string,
+  revoked: string,
+  counted: CardsOnConnection | undefined,
+): string {
+  if (counted === undefined) {
+    return `Every employee's ${displayName} card connected through it ends now, each with your reason, and ${revoked}`;
+  }
+  if (counted.atLeast) {
+    return `More than ${counted.cards} employee cards are connected through it, too many to end at once: Day0 refuses the revoke until some are removed.`;
+  }
+  if (counted.cards === 0) {
+    return `No employee card is connected through it, so none ends; ${revoked}`;
+  }
+  return counted.cards === 1
+    ? `One employee card connected through it ends now, with your reason, and ${revoked}`
+    : `${counted.cards} employee cards connected through it end now, each with your reason, and ${revoked}`;
+}
+
+/**
+ * What a rotation of Slack's configuration connection cannot do, said before the new secret is
+ * given: Day0 revokes the old configuration token, whose refresh token nothing ends but its lapse
+ * (R41X-8), as {@link SLACK_REFRESH_TOKEN_LINE} says for a revoke.
+ */
+export const SLACK_ROTATE_REFRESH_TOKEN_LINE =
+  "Nothing ends that token's refresh token, neither Day0 nor a Delete on api.slack.com: it ends " +
+  'only when it lapses. Until then whoever copied it while its row was listed can mint a new ' +
+  'token with it, so keep the sign-in of the account that generated it closed.';
+
+/**
+ * What a rotation does, said before the administrator gives the new secret: for Slack's
+ * configuration connection, that the old token's refresh token outlives the rotation (the round
+ * review's m17).
+ *
+ * @param view - The connection.
+ */
+export function rotateNote(view: Pick<ConnectionView, 'kind'>): string {
+  return view.kind === 'slack-configuration'
+    ? `No card is affected. Day0 seals the new secret, switches to it and revokes the old configuration token. ${SLACK_ROTATE_REFRESH_TOKEN_LINE}`
+    : 'No card is affected. Day0 seals the new secret, switches to it and revokes the old one.';
+}
 
 /**
  * One ledger line in the record's words (the contract's renderer, so the page and the audit

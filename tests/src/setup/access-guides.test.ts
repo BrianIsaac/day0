@@ -72,6 +72,17 @@ describe('the access recipes', (): void => {
     }
   });
 
+  it('never tells IT that a Delete on api.slack.com ends the configuration pair, which only its lapse ends (R41X-8, R41X-R2 to R4)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).not.toMatch(/ends the pair/);
+    expect(text).not.toMatch(/deleting it ends/);
+    expect(text).not.toContain('Slack shows two values');
+    expect(text).not.toContain('the one you generated is spent');
+    expect(text).toContain('ends the access token only');
+    expect(text).toContain('ends only when it lapses');
+    expect(text).toContain("keep the service account's sign-in closed");
+  });
+
   it('shows Slack’s manifest exactly as the kit prints it', (): void => {
     expect(pinned(page(ACCESS_KIT.slack.guide), 'manifest')?.trim()).toBe(
       slackKitManifestTemplate(),
@@ -125,6 +136,31 @@ describe('the access recipes', (): void => {
     expect(runbook).toContain('pnpm check:access');
     const readme = page('README.md');
     expect(readme.match(/docs\/running\/install\.md/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('says at the sign-in step, where the install first meets it, that an issuer certified by a private CA needs NODE_EXTRA_CA_CERTS (R41X-R5)', (): void => {
+    const install = page('docs/running/install.md').replace(/\s+/g, ' ');
+    const step3 =
+      install.split('3. **The company sign-in**')[1]?.split('4. **The organisation')[0] ?? '';
+    // The re-walk's run 1 stopped here, before step 6's proxy ever came up.
+    expect(step3).toContain('UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+    expect(step3).toContain('NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install');
+  });
+
+  it("has the runbook's failure table cure each gap by its cause, as pnpm check:access words it (the round review's m6)", (): void => {
+    const table = page('docs/running/install.md').split('## When a check fails')[1] ?? '';
+    const rows = table
+      .split('\n## ')[0]
+      ?.split('\n')
+      .filter((line) => line.startsWith('| `'));
+    const row = (start: string): string | undefined =>
+      rows?.find((line) => line.startsWith(`| ${start}`));
+    expect(row('`scopes` GAP, missing a scope')).toContain('--correct');
+    expect(row('`scopes` GAP, landed without')).toContain('land it again');
+    expect(row('`scopes` GAP, landed without')).not.toContain('--correct');
+    expect(row('`identity` GAP, no issuer')).toContain('land it again');
+    expect(row('`reach` GAP')).toContain('SSL_CERT_FILE');
+    expect(row('`reach` WARN')).toContain('./setup.sh resume');
   });
 
   it('carries no em dash', (): void => {

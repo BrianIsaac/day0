@@ -7,6 +7,7 @@ import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
 import { readRefValidator, surfaceToolsValidator } from './schema';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { claimHolder, RELEASED } from './skillAuthoringClaim';
+import { offerToPlainProposals } from './skillAdoption';
 
 /*
  * A skill's registration, in the authoring run's one transaction: the verified body stored, the
@@ -116,6 +117,8 @@ export async function completeRegistrationInTransaction(
     ...(stampedDuringRun ? {} : { recheckDueAt: undefined, recheckReason: undefined }),
     ...RELEASED,
   });
+  // A colleague's proposal of the name filed before this version existed is offered it now.
+  if (held !== undefined) await offerToPlainProposals(ctx, row, now);
   const replaced = await supersedeReplacedRow(ctx, row);
   if (replaced !== undefined) {
     // The replaced row's own line on the record: it stopped running in this transaction.

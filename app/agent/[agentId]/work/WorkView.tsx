@@ -15,6 +15,7 @@ import {
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { StateGlossary } from './StateGlossary';
+import { refusedSkillsOf } from './VerdictSection';
 import { WorkQueue } from './WorkQueue';
 
 /**
@@ -28,6 +29,9 @@ export function WorkView() {
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
+  // A card waiting on a skill whose draft failed its check says so and links to its Retry (D3).
+  const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
+  const refusedSkills = useMemo(() => refusedSkillsOf(failedSkills ?? []), [failedSkills]);
   // Real mode only, as the corrections are: the mock keeps none.
   const correctionRows = useQuery(api.corrections.listForAgent, real ? { agentId } : 'skip');
   const corrections: KeptCorrection[] = correctionRows ?? [];
@@ -73,6 +77,7 @@ export function WorkView() {
         loading={workItems === undefined}
         employeeName={agent.name}
         needsYou={needsYou}
+        refusedSkills={refusedSkills}
       />
       <StateGlossary />
     </Columns>

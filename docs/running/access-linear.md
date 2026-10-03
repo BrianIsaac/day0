@@ -24,24 +24,40 @@ the connection and in the install record:
 **Shared.** A Linear workspace administrator (installing an app as the app
 actor needs administrator permissions) creates one OAuth application from the
 manifest below: open the link `./setup.sh access --print-manifest linear`
-prints while signed in to Linear, check that **Client credentials** is
-enabled on the form (the manifest enables it), and create the app. Linear
+prints while signed in to Linear. The link pre-fills the form's name,
+developer, developer URL, callback URL and grant types from the manifest
+printed above it. Check each field against that manifest, tick **Client
+credentials** if the form shows it off, leave webhooks off, type the
+manifest's description if the form asks for one, and create the app. Linear
 shows its **client id** and **client secret**.
 
 **Per employee.** When an employee's Linear card asks for access, its manager
-forwards the access request to IT. A Linear administrator creates the
-employee's own app from the same manifest with the employee's name
-(`<employee name> (Day0)`) and without client credentials. An administrator
-then opens the link in the access request, which names the employee's card on
-the organisation page (`${DAY0_PUBLIC_URL}/organisation?card=<card>`), and
-records the app's client id and client secret there; Day0 then opens Linear
-for a Linear administrator to install it with `actor=app`. The card asks IT for
-nothing more: afterwards its Connect gives a fresh installation link (valid 15
+forwards the access request to IT. The request names the employee and links
+the employee's card on the organisation page
+(`${DAY0_PUBLIC_URL}/organisation?card=<card>`); the page itself offers the
+Client id and Client secret fields and no form link. So IT builds the
+employee's app first:
+
+```bash
+./setup.sh access --print-manifest linear --employee "<employee name>"
+```
+
+prints the employee's own app's manifest, named `<employee name> (Day0)`,
+authorisation code only (no client credentials), and the link that pre-fills
+Linear's create form with its fields. A Linear administrator opens the link
+signed in to Linear, checks the form against the manifest (**Client
+credentials** stays off), and creates the app. An administrator then opens the request's link
+to the organisation page, records the app's client id and client secret there,
+and presses **Record the app and install it**: Day0 opens Linear for a Linear
+administrator to install it with `actor=app`. The card asks IT for nothing
+more: afterwards its Connect gives a fresh installation link (valid 15
 minutes) whenever the employee's app needs installing again.
 
 ## 2. The manifest or the form
 
-Linear's app manifests pre-fill the create form; no API creates an app. For a
+No API creates a Linear app: IT creates it in Linear's form, which the printed
+link pre-fills with the manifest's fields (Linear refuses a manifest passed
+whole in a link: "The app manifest provided in the URL is not valid"). For a
 shared app on an install whose `DAY0_PUBLIC_URL` is `https://day0.acme.example`,
 the manifest is:
 
@@ -79,6 +95,14 @@ The redirect is `${DAY0_PUBLIC_URL}/api/oauth/linear`, byte for byte. An
 employee's own app has its own name and `grant_types` of
 `authorization_code` only. A name may not contain the word Linear.
 
+What Linear's form takes, as it answered on 3 October 2026: it refuses a
+Developer URL (the manifest's `client_uri`) whose host is `localhost` ("Must
+be a valid URL") and accepts `127.0.0.1` or a hostname, so a customer's
+`DAY0_PUBLIC_URL`, a hostname, passes; its callback field accepts an http
+address too. https is Day0's own rule, not Linear's: the codes and tokens come
+back on the redirect, so the kit refuses a `DAY0_PUBLIC_URL` that is not
+https.
+
 ## 3. The scopes
 
 Linear's manifests carry no scopes: Day0 asks for them when it obtains a
@@ -92,6 +116,7 @@ token. `write` is the only scope that changes an issue's state;
 ```text
 read
 write
+app:assignable
 ```
 
 and every client-credentials token is requested with this one fixed set:
@@ -101,10 +126,14 @@ and every client-credentials token is requested with this one fixed set:
 ```text
 read
 write
+app:assignable
 ```
 
 The set never changes after install: Linear revokes and replaces every
-app-actor token of an app when a token is requested with other scopes.
+app-actor token of an app when a token is requested with other scopes. A
+connection landed without `app:assignable` (up to v0.14.0 the kit landed
+`read` and `write` only) is changed by revoking it on the organisation page
+and landing it again; `check:access` names it as a gap.
 
 **Per employee.** Each employee's app is authorised with:
 
@@ -116,9 +145,12 @@ write
 app:assignable
 ```
 
-`app:assignable` lets a manager hand the employee a ticket by assigning it to
-the employee's app user; the employee takes the unassigned tickets and those
-assigned to it.
+In both modes `app:assignable` is what lets a manager hand an employee a
+ticket by delegating or assigning it to the app user. Without it Linear
+refuses the ticket ("One or more app users lack the required capability."),
+and the employee takes only unassigned tickets. Linear accepts the scope only
+from a token that acts as the app (`actor=app`, or client credentials), and
+checks it on a live token, which Day0 holds while a card is connected.
 
 ## 4. The allow-list
 
@@ -171,10 +203,13 @@ connection has no organisation secret to rotate.
 |---|---|
 | `status` | `pass`: Linear is connected, shared |
 | `redirect` | `pass`: the registered redirect is `${DAY0_PUBLIC_URL}/api/oauth/linear` |
-| `scopes` | `pass`: `read, write`, and the token Linear grants holds both |
+| `scopes` | `pass`: `read, write, app:assignable`, and the token Linear grants holds all three |
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Linear answers as the app (`viewer`) with a client-credentials token, which the check revokes again |
+| `reach` | `pass`: the backend container reached Linear's API (no token sent); a `GAP` names curl's words, cured by opening the deployment's way out to `api.linear.app` |
 
 A `GAP` names what to fix: client credentials not enabled on the app or a
 secret that is no longer the current one (Linear's `invalid_client`), a
-redirect that is not Day0's, or a scope Linear did not grant.
+redirect that is not Day0's, a scope Linear did not grant, or a shared
+connection landed without `app:assignable`, to which no ticket can be
+delegated: revoke it and land it again.

@@ -4,9 +4,12 @@
  * (S2; a token lapses twelve hours after it is issued, and a rotation spends its refresh token),
  * one app per `apps.manifest.create` with its own client and bot, a bot token's `auth.revoke`
  * taking the bot out of every channel (S1), `conversations.join` of a public channel (RM4), and an
- * app's deletion with the current configuration token (S4). It is the network seam (standard
- * 11.3): the code under test makes its real calls to it. Every token is a fake in the tree's
- * short shapes.
+ * app's deletion with the current configuration token (S4). As real Slack answered the walk of 3
+ * October 2026 (R41V-10): a rotation revokes the configuration token it replaces, `auth.revoke`
+ * of a configuration token ends that token only (`{"ok":true,"revoked":true}`) and its refresh
+ * token still rotates, and a token already revoked answers `token_revoked`. It is the network
+ * seam (standard 11.3): the code under test makes its real calls to it. Every token is a fake in
+ * the tree's short shapes.
  */
 
 /** The configuration token IT lands, and its refresh token. */
@@ -52,6 +55,8 @@ export interface SlackDouble {
     refreshToken: string;
     issuedAt: number;
     rotations: number;
+    /** Every configuration token Slack issued that no longer works: rotated away or revoked. */
+    readonly revoked: Set<string>;
   };
   /** Each live bot's channels, by its bot user id. */
   readonly memberships: Map<string, Set<string>>;
@@ -102,6 +107,7 @@ export function slackDouble(options: { readonly issuedAt?: number } = {}): Slack
       refreshToken: LANDED_REFRESH_TOKEN,
       issuedAt: options.issuedAt ?? Date.now(),
       rotations: 0,
+      revoked: new Set(),
     },
     memberships: new Map(),
     revokedBots: new Set(),
@@ -121,6 +127,7 @@ export function slackDouble(options: { readonly issuedAt?: number } = {}): Slack
 
 /** Whether the bearer is the current configuration token, still inside its twelve hours. */
 function configurationAnswer(double: SlackDouble, bearer: string | undefined): string | undefined {
+  if (bearer !== undefined && double.configuration.revoked.has(bearer)) return 'token_revoked';
   if (bearer !== double.configuration.token) return 'invalid_auth';
   if (Date.now() - double.configuration.issuedAt >= CONFIGURATION_LIFE_MS) return 'token_expired';
   return undefined;
@@ -150,6 +157,8 @@ async function respond(
         return answer({ ok: false, error: 'invalid_refresh_token' });
       }
       configuration.rotations += 1;
+      // Slack revokes the configuration token a rotation replaces (the walk, R41V-10).
+      configuration.revoked.add(configuration.token);
       configuration.token = `xoxe.xoxp-1-cfg${configuration.rotations}`;
       configuration.refreshToken = `xoxe-1-ref${configuration.rotations}`;
       configuration.issuedAt = Date.now();
@@ -220,7 +229,21 @@ async function respond(
         team: { id: 'T0W11AS' },
       });
     }
+    case 'auth.test':
+      // A live configuration token answers auth.test (the walk, R41V-10); a bot token below.
+      if (configurationAnswer(double, bearer) === undefined) {
+        return answer({ ok: true, user_id: 'U0SERVICE', team_id: 'T0W11AS' });
+      }
+      break;
     case 'auth.revoke': {
+      if (bearer !== undefined && configuration.revoked.has(bearer)) {
+        return answer({ ok: false, error: 'token_revoked' });
+      }
+      if (bearer === configuration.token) {
+        // The token alone: its refresh token still rotates (the walk, R41V-10).
+        configuration.revoked.add(bearer);
+        return answer({ ok: true, revoked: true });
+      }
       const app = liveBot(double, bearer);
       if (!app) return answer({ ok: false, error: 'invalid_auth' });
       endBot(double, app);

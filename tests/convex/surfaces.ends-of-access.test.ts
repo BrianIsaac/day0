@@ -380,6 +380,38 @@ describe('the ends of access on a card (11-AR)', (): void => {
     // The offer is an offer: the key keeps working until the manager moves the card (A27).
     expect((await read(harness, linked.surfaceId))?.credentialId).toBe(linked.key);
   });
+
+  it("offers no move to an own identity where IT's Linear connection is a static key, which no issuer acts through (D6, the round review's m11)", async (): Promise<void> => {
+    const harness = await realHarness();
+    // No connection of the fixture's own: the static key below is Linear's only one.
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    const linked = await pastedLinearCard(harness, leo.agentId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linked.surfaceId, {
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        verdict: 'approved',
+        reason: 'expired',
+        expiresAt: 1,
+      });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'static-key',
+        mode: 'shared',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.surfaces.setAccessDays, { surfaceId: linked.surfaceId, days: 30 }),
+    ).resolves.toEqual({ expiresAt: expect.any(Number) });
+  });
 });
 
 describe('an organisation connection revoked by the administrator (11-AR over 11-AO; cross-unit test 3)', (): void => {
@@ -476,6 +508,34 @@ describe('an organisation connection revoked by the administrator (11-AR over 11
     expect(await eventsOf(harness, leo.agentId, 'credential.revoked-at-source')).toEqual([
       expect.objectContaining({ end: 'organisation-revoked', outcome: 'token-revoked' }),
     ]);
+  });
+
+  it("neither counts nor ends again a card its manager already disconnected, keeping the manager's reason (the round review's m24)", async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', ADMINISTRATOR_ADDRESS);
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+    const connectionId = leo.connectionId;
+    if (connectionId === undefined) throw new Error('The fixture made no connection.');
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.disconnect, { surfaceId: leo.slack.surfaceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const before = await eventsOf(harness, leo.agentId, 'surface.disconnected');
+
+    await expect(
+      harness
+        .withIdentity(ADMINISTRATOR)
+        .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+    ).resolves.toEqual({ cards: 0, atLeast: false });
+    await harness.withIdentity(ADMINISTRATOR).mutation(api.organisationConnections.revoke, {
+      organisationConnectionId: connectionId,
+      reason: 'Revoked by IT.',
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(harness, leo.slack.surfaceId))?.reason).toBe('Disconnected by the manager.');
+    expect(await eventsOf(harness, leo.agentId, 'surface.disconnected')).toEqual(before);
   });
 });
 

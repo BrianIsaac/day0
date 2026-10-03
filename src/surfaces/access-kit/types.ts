@@ -57,6 +57,11 @@ export interface RecipeMode {
   readonly scopes: readonly string[];
   /** The fixed scope set of a shared app's client-credentials tokens (L2), where the mode uses them. */
   readonly clientCredentialsScopes?: readonly string[];
+  /**
+   * What Day0 cannot do without a scope, by scope, where a missing one costs more than its name
+   * says: `check:access` prints it beside the gap.
+   */
+  readonly missingScopeWords?: Readonly<Record<string, string>>;
   /** What the verb asks for, in order. */
   readonly asks: readonly RecipeAsk[];
   readonly secretLifetime: SecretLifetime;

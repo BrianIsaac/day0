@@ -2,7 +2,7 @@
 
 import { act, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Dialog } from '../../../app/components/Dialog';
+import { Dialog, DialogFooter } from '../../../app/components/Dialog';
 import { focusableIn } from '../../../app/components/use-modal';
 import { mount, press } from '../../fixtures/dom/press';
 
@@ -213,5 +213,50 @@ describe('Dialog', () => {
       'Shown',
     ]);
     view.unmount();
+  });
+});
+
+describe('a long dialog’s footer (11-AC’s item 13)', (): void => {
+  /** A dialog whose body runs long and whose answers sit in its footer. */
+  function Long() {
+    return (
+      <Dialog title="Hand Mira over?" onClose={() => undefined}>
+        <form id="hand-over" onSubmit={(event) => event.preventDefault()}>
+          <input aria-label="Their address" />
+          <ul>
+            {Array.from({ length: 30 }, (_, index) => (
+              <li key={index}>Its connection to system {index} is cut.</li>
+            ))}
+          </ul>
+        </form>
+        <DialogFooter>
+          <button type="button">Cancel</button>
+          <button type="submit" form="hand-over">
+            Ask
+          </button>
+        </DialogFooter>
+      </Dialog>
+    );
+  }
+
+  it('keeps the answers outside the body that scrolls, so they stay in view, in the tab order after it', async (): Promise<void> => {
+    mount(<Long />);
+    await act(async (): Promise<void> => {
+      await Promise.resolve();
+    });
+    const dialog = document.querySelector('[role="dialog"]');
+    const body = dialog?.querySelector('[data-dialog-body]');
+    const footer = dialog?.querySelector('[data-dialog-footer]');
+    const ask = [...(dialog?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Ask',
+    );
+    expect(body?.className).toContain('overflow-y-auto');
+    expect(footer?.contains(ask ?? null)).toBe(true);
+    expect(body?.contains(ask ?? null)).toBe(false);
+    expect(focusableIn(dialog as HTMLElement).map((element) => element.textContent)).toEqual([
+      '',
+      'Cancel',
+      'Ask',
+    ]);
   });
 });

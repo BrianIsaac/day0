@@ -4,12 +4,14 @@ import {
   accessExitCode,
   administratorsCheck,
   formatAccessChecks,
+  noConnectionLine,
   parseConnectionRows,
   slackApiBaseForCheck,
   type AccessCheck,
   type ConnectionRow,
   type VendorProbes,
 } from '../../scripts/check-access';
+import type { ModelDial } from '../../scripts/model-reach';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -40,8 +42,8 @@ const LINEAR: ConnectionRow = {
   kind: 'oauth-app',
   mode: 'shared',
   status: 'active',
-  scopes: ['read', 'write'],
-  clientCredentialsScopes: ['read', 'write'],
+  scopes: ['read', 'write', 'app:assignable'],
+  clientCredentialsScopes: ['read', 'write', 'app:assignable'],
   clientId: 'lin-client',
   redirectUrl: `${PUBLIC_URL}/api/oauth/linear`,
   secretCredentialId: 'cred-linear',
@@ -54,16 +56,24 @@ function vendors(
     readonly linearToken?: { status: number; body: unknown };
     readonly linearViewer?: unknown;
     readonly opened?: Readonly<Record<string, string | Error>>;
+    /** What the backend container's dial of an address finds; reached by default. */
+    readonly backend?: (url: URL) => ModelDial | undefined;
   } = {},
-): VendorProbes & { readonly calls: string[] } {
+): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
   const calls: string[] = [];
+  const fromTheBackend: string[] = [];
   const opened: Readonly<Record<string, string | Error>> = overrides.opened ?? {
     'cred-slack': CONFIGURATION_TOKEN,
     'cred-linear': LINEAR_SECRET,
   };
   return {
     calls,
+    fromTheBackend,
     slackApiBase: new URL('https://slack.com/api/'),
+    fromBackend: async (url: URL): Promise<ModelDial> => {
+      fromTheBackend.push(url.href);
+      return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
+    },
     openSecret: async (credentialId: string): Promise<string> => {
       const value = opened[credentialId];
       if (value instanceof Error) throw value;
@@ -84,11 +94,15 @@ function vendors(
       if (request.url === 'https://api.linear.app/oauth/token') {
         const form = new URLSearchParams(await request.text());
         expect(form.get('grant_type')).toBe('client_credentials');
-        expect(form.get('scope')).toBe('read,write');
         expect(form.get('client_secret')).toBe(LINEAR_SECRET);
+        // Linear's own answer to the set, 3 October: `scope: "app:assignable read write"`.
         const answer = overrides.linearToken ?? {
           status: 200,
-          body: { access_token: 'lin-test-token', token_type: 'Bearer', scope: 'read write' },
+          body: {
+            access_token: 'lin-test-token',
+            token_type: 'Bearer',
+            scope: form.get('scope')?.split(',').sort().join(' '),
+          },
         };
         return Response.json(answer.body, { status: answer.status });
       }
@@ -126,11 +140,13 @@ describe('check:access', (): void => {
       'slack scopes',
       'slack secret',
       'slack identity',
+      'slack reach',
       'linear status',
       'linear redirect',
       'linear scopes',
       'linear secret',
       'linear identity',
+      'linear reach',
     ]);
     expect(only(checks, 'linear', 'identity').detail).toContain('Day0');
     // The check's own token is revoked again: it leaves nothing usable behind.
@@ -197,6 +213,52 @@ describe('check:access', (): void => {
     expect(scopes.status).toBe('warn');
     expect(scopes.detail).toContain('admin, files:write');
     expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('passes a shared Linear connection landed read, write, app:assignable, with no note to remove a scope (R41V-3)', async (): Promise<void> => {
+    const checks = await accessChecks([LINEAR], VALUES, vendors());
+    expect(only(checks, 'linear', 'scopes')).toMatchObject({
+      status: 'ok',
+      detail: 'Holds read, write, app:assignable.',
+    });
+  });
+
+  it('says a shared Linear connection landed without app:assignable takes no delegated ticket, cured by revoke and land again', async (): Promise<void> => {
+    const landedBefore = {
+      ...LINEAR,
+      scopes: ['read', 'write'],
+      clientCredentialsScopes: ['read', 'write'],
+    };
+    const checks = await accessChecks([landedBefore], VALUES, vendors());
+    const scopes = only(checks, 'linear', 'scopes');
+    expect(scopes.status).toBe('gap');
+    expect(scopes.detail).toContain('app:assignable');
+    expect(scopes.detail).toContain('no ticket can be delegated');
+    expect(scopes.detail).toContain('revoke');
+    expect(scopes.detail).toContain('land it again');
+    expect(scopes.detail).not.toContain('--correct');
+    expect(accessExitCode(checks)).toBe(1);
+  });
+
+  it('says what a per-employee Linear registration without app:assignable costs (decision 5)', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [
+        {
+          ...LINEAR,
+          mode: 'per-employee',
+          scopes: ['read', 'write'],
+          clientCredentialsScopes: undefined,
+          secretCredentialId: undefined,
+        },
+      ],
+      VALUES,
+      vendors(),
+    );
+    const scopes = only(checks, 'linear', 'scopes');
+    expect(scopes.status).toBe('gap');
+    expect(scopes.detail).toContain(
+      'Missing scope app:assignable (no ticket can be delegated or assigned to the app user, so its employees take only unassigned tickets)',
+    );
   });
 
   it('says what Slack refused, and that an expired configuration token renews at the next app', async (): Promise<void> => {
@@ -290,6 +352,7 @@ describe('check:access', (): void => {
     };
     const metadata = (scopes: readonly string[]): VendorProbes => ({
       slackApiBase: new URL('https://slack.com/api/'),
+      fromBackend: async (): Promise<ModelDial> => ({ reach: 'reached', detail: 'HTTP 401' }),
       openSecret: async (): Promise<string> => {
         throw new Error('a public client opens no secret');
       },
@@ -310,8 +373,14 @@ describe('check:access', (): void => {
     const narrower = await accessChecks([mcp], VALUES, metadata(['crm.write']));
     expect(only(narrower, 'mcp:mcp.acme.com', 'scopes')).toMatchObject({ status: 'gap' });
 
+    // Every card refuses a connection with no issuer since the review's m4, so the check calls it a
+    // gap with its cure, where it once noted that the first sign-in would discover one.
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
-    expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity').status).toBe('warn');
+    expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
+      status: 'gap',
+      detail:
+        "No issuer is recorded, so every employee's authorisation is refused: revoke the connection and land it again; the setup verb finds the issuer from the server's own metadata.",
+    });
   });
 
   it('requests no app-actor token for a connection that holds no scope set of its own (join 7)', async (): Promise<void> => {
@@ -356,6 +425,104 @@ describe('check:access', (): void => {
     expect(probes.calls).toEqual([]);
   });
 
+  it("asks each vendor's address from inside the backend container, with no secret, so a pass says the deployment itself reaches it (the review's section 11, item 4)", async (): Promise<void> => {
+    const mcp: ConnectionRow = {
+      _id: 'conn-mcp',
+      system: 'mcp:mcp.acme.com',
+      displayName: 'mcp.acme.com',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      status: 'active',
+      scopes: [],
+      clientId: 'day0-mcp',
+      resource: 'https://mcp.acme.com/mcp',
+      redirectUrl: `${PUBLIC_URL}/api/oauth/mcp`,
+    };
+    const probes = vendors();
+
+    const checks = await accessChecks([SLACK, LINEAR, mcp], VALUES, probes);
+
+    expect(probes.fromTheBackend).toEqual([
+      'https://slack.com/api/api.test',
+      'https://api.linear.app/graphql',
+      'https://mcp.acme.com/mcp',
+    ]);
+    expect(only(checks, 'slack', 'reach')).toEqual({
+      subject: 'slack',
+      name: 'reach',
+      status: 'ok',
+      detail: 'The backend container reached https://slack.com/api/api.test (HTTP 200).',
+    });
+    expect(only(checks, 'mcp:mcp.acme.com', 'reach').status).toBe('ok');
+  });
+
+  it('reports a vendor the backend container cannot reach as a gap with the cure, and a dial that did not run as a note', async (): Promise<void> => {
+    const probes = vendors({
+      backend: (url: URL) =>
+        url.hostname === 'slack.com'
+          ? { reach: 'unreachable', detail: 'curl: (6) Could not resolve host: slack.com' }
+          : { reach: 'unknown', detail: 'service "backend" is not running' },
+    });
+
+    const checks = await accessChecks([SLACK, LINEAR], VALUES, probes);
+
+    expect(only(checks, 'slack', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        'The backend container could not reach https://slack.com/api/api.test: curl: (6) Could not resolve host: slack.com. Every call the deployment makes to Slack starts there: open its way out (the proxy or firewall in front of the backend), then run the check again.',
+    });
+    expect(only(checks, 'linear', 'reach')).toMatchObject({
+      status: 'warn',
+      detail:
+        'Not asked from the backend container: service "backend" is not running. Start it (`./setup.sh resume`) and run the check again.',
+    });
+    expect(accessExitCode(checks)).toBe(1);
+  });
+
+  it("stops an install whose backend dial did not run, where the access verb alone only notes it (the round review's m10)", async (): Promise<void> => {
+    const probes = vendors({
+      backend: () => ({ reach: 'unknown', detail: 'service "backend" is not running' }),
+    });
+
+    const alone = await accessChecks([LINEAR], VALUES, probes);
+    const installing = await accessChecks([LINEAR], VALUES, probes, { install: true });
+
+    expect(only(alone, 'linear', 'reach').status).toBe('warn');
+    expect(only(installing, 'linear', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        'Not asked from the backend container: service "backend" is not running. Start it (`./setup.sh resume`) and run the check again.',
+    });
+    expect(accessExitCode(installing)).toBe(1);
+  });
+
+  it("names the container's trust as the cure where its curl refuses the vendor's certificate (the code pass's m7)", async (): Promise<void> => {
+    const probes = vendors({
+      backend: () => ({
+        reach: 'unreachable',
+        detail: 'curl: (60) SSL certificate problem: unable to get local issuer certificate',
+      }),
+    });
+
+    const checks = await accessChecks([SLACK], VALUES, probes);
+
+    expect(only(checks, 'slack', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        "The backend container could not reach https://slack.com/api/api.test: curl: (60) SSL certificate problem: unable to get local issuer certificate. The backend does not trust the certificate the address presents: give the backend container the customer's CA bundle (its SSL_CERT_FILE), then run the check again.",
+    });
+  });
+
+  it('dials the fake Slack a bed names by the address the deployment itself uses', async (): Promise<void> => {
+    const probes = vendors();
+    await accessChecks(
+      [SLACK],
+      { ...VALUES, DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/' },
+      probes,
+    );
+    expect(probes.fromTheBackend).toEqual(['http://fake-slack:8090/api/api.test']);
+  });
+
   it('reaches the fake Slack a bed publishes on this machine, and Slack itself otherwise', (): void => {
     expect(slackApiBaseForCheck({}).href).toBe('https://slack.com/api/');
     expect(
@@ -377,5 +544,14 @@ describe('check:access', (): void => {
         DAY0_TEST_SLACK_AUTHORIZE_URL: 'http://127.0.0.1:1@evil.example/oauth/v2/authorize',
       }),
     ).toThrow(/this machine/);
+  });
+});
+
+describe('the check with nothing to check', (): void => {
+  it('says none is connected, never "yet", since every connection may have been revoked (the re-walk, row 10)', (): void => {
+    expect(noConnectionLine(undefined)).toBe(
+      '  None is connected: `./setup.sh access` connects them with the customer’s IT.',
+    );
+    expect(noConnectionLine('linear')).toBe('  Nothing is connected for linear.');
   });
 });

@@ -14,6 +14,7 @@ import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
+import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
 import {
   HANDOVER_IN_PROGRESS_REASON,
@@ -58,7 +59,11 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { accessRequestReason, organisationSystemOf } from '../src/surfaces/access-request';
+import {
+  accessRequestReason,
+  organisationSystemOf,
+  servedByIssuer,
+} from '../src/surfaces/access-request';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -942,11 +947,13 @@ export const seedItem = internalMutation({
 });
 
 /**
- * Seed every item the mock generator made for an approved charter, and the
- * `work.charter-derived` event, in one transaction. Internal; the charter's
- * seeding calls it. All or nothing, so a retry after a failure never adds a
- * second, different batch beside a partial first: the generator is a model
- * call and the seed dedups on external ids only (U9 D4).
+ * Seed every item the mock generator made for an approved charter, the
+ * tickets the office opens for them, and the `work.charter-derived` event, in
+ * one transaction. Internal; the charter's seeding calls it. All or nothing,
+ * so a retry after a failure never adds a second, different batch beside a
+ * partial first: the generator is a model call and the seed dedups on
+ * external ids only (U9 D4). Every item from the ticket queue names a ticket
+ * the office holds once it is seeded (`openTicketsForDraftedWork`, M10).
  *
  * @returns How many items were seeded.
  */
@@ -957,7 +964,8 @@ export const seedCharterDerived = internalMutation({
     items: v.array(v.object(workItemSeedFields)),
   },
   handler: async (ctx, args): Promise<number> => {
-    for (const item of args.items) {
+    const items = await openTicketsForDraftedWork(ctx, args.agentId, args.items);
+    for (const item of items) {
       await seedItemInTransaction(ctx, { agentId: args.agentId, ...item });
     }
     await appendEvent(ctx, {
@@ -970,12 +978,20 @@ export const seedCharterDerived = internalMutation({
   },
 });
 
+/** Why a listing is not written: the employee is gone or changed owner while the poll read its queue. */
+export const LISTING_AFTER_HANDOVER =
+  'the employee was handed over to a new manager, or retired, while this poll read its queue';
+
 /**
  * Bring the row of a ticket intake refused on this poll up to the listing
- * and withdraw it when it is only waiting. Internal; called by intake. A
- * ticket with no row gets none.
+ * and withdraw it when it is only waiting, while the employee is still the
+ * owner the poll read it under. Internal; called by intake. A ticket with no
+ * row gets none. A refused withdraw throws, as a refused seed does, so the
+ * sweep holds its checkpoint and the new owner's first poll reads the ticket
+ * (the wave 10 review's FR-m4).
  *
  * @returns The ticket's row, or null when it never had one.
+ * @throws Error with {@link LISTING_AFTER_HANDOVER} for an employee that is gone or another owner's.
  */
 export const withdrawListedItem = internalMutation({
   args: {
@@ -983,8 +999,17 @@ export const withdrawListedItem = internalMutation({
     ...workItemSeedFields,
     leftQueue: v.string(),
     tracker: v.optional(trackerSnapshot),
+    /** The employee's owner key when the sweep read it; null for an employee with none. */
+    startedUnder: v.union(v.string(), v.null()),
   },
-  handler: async (ctx, { leftQueue, tracker, ...listed }): Promise<Id<'workItems'> | null> => {
+  handler: async (
+    ctx,
+    { leftQueue, tracker, startedUnder, ...listed },
+  ): Promise<Id<'workItems'> | null> => {
+    const agent = await ctx.db.get(listed.agentId);
+    if (agent === null || (agent.userId ?? null) !== startedUnder) {
+      throw new Error(LISTING_AFTER_HANDOVER);
+    }
     const existing = await listedRow(ctx, listed);
     if (!existing) return null;
     await refreshListedItem(ctx, existing, listed, leftQueue);
@@ -2576,6 +2601,29 @@ async function verdictCharter(
 }
 
 /**
+ * Whether a queue verdict repeats the row's standing one: queued for the same reason, and judged
+ * under the charter its last evaluation named. A judgement under a newer approved charter is a
+ * new one, so the record names the rules that decided it (Q14).
+ */
+async function repeatsQueuedJudgement(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  effective: { decision: string; [key: string]: unknown },
+  evaluatedCharterId: Id<'charters'> | undefined,
+): Promise<boolean> {
+  const standing = row.verdict as { decision?: unknown; reason?: unknown } | undefined;
+  if (standing?.decision !== 'queue' || standing.reason !== effective.reason) return false;
+  const [charter, recent] = await Promise.all([
+    verdictCharter(ctx, row.agentId, evaluatedCharterId),
+    eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH),
+  ]);
+  const last = recent.find(
+    (event) => (event.payload as { workItemId?: unknown }).workItemId === row._id,
+  );
+  return (last?.payload as { charterId?: unknown } | undefined)?.charterId === charter?._id;
+}
+
+/**
  * The newest charter rows a verdict looks through for an approved one: drafts
  * sent back and redrafted stack above it only a few deep.
  */
@@ -2667,6 +2715,33 @@ export async function applyVerdict(
         superseded: effective,
       };
     }
+  }
+
+  // A queued row judged again with no slot free is the same judgement, not a new one: the mock
+  // loop asks after every change to the queue, and the record says it once (the redeploy walk
+  // saw "queued behind its open work" twice). Only the evaluation step's own marks are cleared.
+  // Real mode is left as it was: its loop never judges a queued row while no slot is free.
+  if (
+    SURFACE_MODE !== 'real' &&
+    row.state === 'discovered' &&
+    effective.decision === 'queue' &&
+    (await repeatsQueuedJudgement(ctx, row, effective, evaluatedCharterId))
+  ) {
+    if (
+      row.evaluationClaimedAt !== undefined ||
+      row.evaluationAttempts !== undefined ||
+      row.evaluationUnavailableAt !== undefined ||
+      row.evaluationUnavailableCause !== undefined
+    ) {
+      await ctx.db.patch(workItemId, {
+        evaluationClaimedAt: undefined,
+        evaluationAttempts: undefined,
+        evaluationUnavailableAt: undefined,
+        evaluationUnavailableCause: undefined,
+      });
+    }
+    await scheduleNextStep(ctx, { ...row, verdict: effective });
+    return effective;
   }
 
   const decision = effective.decision;
@@ -7552,8 +7627,15 @@ async function connectReadyCards(
       ) {
         return [];
       }
+      // A connection no issuer acts through connects no card (11-AC's item 8; D6, by its kind).
       const connection = await activeConnectionFor(ctx, system);
-      if (connection === null || accessRequestReason(surface, connection) !== undefined) return [];
+      if (
+        connection === null ||
+        !servedByIssuer(connection) ||
+        accessRequestReason(surface, connection) !== undefined
+      ) {
+        return [];
+      }
       if (await connectedSince(ctx, surface, request.draftedAt)) return [];
       return [{ surface, since: Math.max(connection.createdAt, request.draftedAt) }];
     }),

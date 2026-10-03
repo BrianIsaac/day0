@@ -72,7 +72,9 @@ describe('the retire revokes at the vendor what Day0 obtained (11-AR)', (): void
 
   it("retire revokes the employee's own Linear app token and deletes its Slack app", async (): Promise<void> => {
     const harness = await realHarness();
-    const leo = await seedIssuedIdentities(harness, { connection: true });
+    // The rows as an issuer before v0.14.0 stored them, under the owner's key; the next case is
+    // the product's own shape.
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
     network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
     network.answer('/oauth/revoke', { status: 200, body: '' });
 
@@ -174,13 +176,16 @@ describe('the retire revokes at the vendor what Day0 obtained (11-AR)', (): void
         expect.objectContaining({ system: 'linear', end: 'retire', outcome: 'token-revoked' }),
       ]),
     );
+    // The Linear app IT's per-employee connection recorded has its client secret ended with it.
     const after = await credentialRows(harness, [
       leo.slack.token,
       leo.slack.secret,
       leo.linear.access,
       leo.linear.refresh,
+      leo.linear.secret!,
     ]);
     expect(after.map((row) => [row?.sourceRevocation?.state, row?.ciphertext])).toEqual([
+      ['done', undefined],
       ['done', undefined],
       ['done', undefined],
       ['done', undefined],
@@ -189,7 +194,7 @@ describe('the retire revokes at the vendor what Day0 obtained (11-AR)', (): void
     const [retirement] = await harness.run(
       async (ctx) => await ctx.db.query('retirements').collect(),
     );
-    expect(retirement).toMatchObject({ revokedCredentials: 4, keptCredentials: 0 });
+    expect(retirement).toMatchObject({ revokedCredentials: 5, keptCredentials: 0 });
   });
 
   it("leaves a pasted key's vendor alone and says so, deleting Day0's copy as before", async (): Promise<void> => {

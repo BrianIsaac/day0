@@ -14,8 +14,11 @@ customer's own deployment on this machine and, from this machine, to the vendor
 that issued it and nowhere else: `pnpm check:access` asks Slack whether it
 accepts the configuration token and Linear whether it accepts the client
 secret, and the company sign-in's client secret may be given in the
-environment (`DAY0_OIDC_CLIENT_SECRET`) instead of the prompt. A check from this
-machine says nothing about the backend container's own way out to the vendor.
+environment (`DAY0_OIDC_CLIENT_SECRET`) instead of the prompt. Since a check from
+this machine says nothing about the backend container's own way out to the
+vendor, `pnpm check:access` also asks each vendor's address from inside the
+backend container (`reach`), with a plain request that carries no secret: a
+pass there says the deployment itself reaches Slack, Linear and the MCP server.
 
 ## Before the day
 
@@ -73,7 +76,14 @@ It runs, in order, and **stops at the first step that fails, naming it**:
 3. **The company sign-in** (`./setup.sh sign-in`): it asks for the tenant (or
    domain, or issuer), the client id, the client secret (hidden), the allowed
    domains and the public origin, writes them, pushes them, restarts the
-   backend and runs `pnpm check:setup`.
+   backend and runs `pnpm check:setup`. Where the identity provider's
+   certificate comes from a private certificate authority (a test issuer; a
+   customer's own issuer usually has a public one), this step stops with
+   "This machine cannot read
+   https://.../.well-known/openid-configuration:
+   UNABLE_TO_VERIFY_LEAF_SIGNATURE". Run the install with
+   `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, the same
+   trust step 6 needs for the proxy.
 4. **The organisation's systems** (`./setup.sh access`): it asks for the
    administrators, lists the systems the documentation names, and for each one
    the kit connects shows its recipe and records its mode (Slack and an MCP
@@ -92,6 +102,13 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    certificate authority, this machine's Node must trust it: run the install
    with `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, or the
    wait never succeeds.
+
+   The backend container needs the same trust. Step 4's check dials each
+   vendor from inside it, and an install where that dial cannot run stops
+   there. Where its way out passes such a proxy, give the container the
+   bundle: `SSL_CERT_FILE` for the check, `NODE_EXTRA_CA_CERTS` for the
+   deployment's calls. The kit sets neither, so agree with IT before the day
+   how the bundle reaches the container.
 7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
@@ -133,7 +150,9 @@ the customer's service manager.
 `./setup.sh access` writes `~/day0-install/<project>/install-record-<date>.md`
 (`--record <dir>` elsewhere): what was registered and where, the redirect URIs,
 each connection's mode and scopes, the administrators, and when each secret
-expires. It holds no secret. Hand it to the customer's IT.
+expires. It holds no secret. Hand it to the customer's IT. A later run the same
+day adds its own section below the earlier ones, so a day's record names every
+connection landed that day.
 
 ## Each half alone
 
@@ -141,9 +160,9 @@ expires. It holds no secret. Hand it to the customer's IT.
 |---|---|
 | `./setup.sh sign-in --provider entra` | the company sign-in only, ending on `pnpm check:setup` |
 | `./setup.sh access` | the organisation's systems only, ending on `pnpm check:access` |
-| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form) |
+| `./setup.sh access --print-manifest slack` | prints the Slack app manifest Day0 creates employees' apps from (`linear` prints the Linear app's, and the link that pre-fills its form with the manifest's fields; `linear --employee <name>` an employee's own app's) |
 | `./setup.sh access --dry-run` | lists the systems and what would be landed; writes nothing |
-| `./setup.sh access --correct <system>` | records the redirect Day0 returns to and the kit's scopes on a connection, after IT fixed them at the vendor; no secret changes and no card ends |
+| `./setup.sh access --correct <system>` | records the redirect Day0 returns to and the kit's scopes on a connection, after IT fixed them at the vendor; no secret changes and no card ends. A fixed set it cannot change is reported, not corrected |
 | `pnpm check:setup` | every setting, the sign-in block and the access block, without calling a vendor |
 | `pnpm check:access` | each connection: its status, redirect, scopes, whether its secret opens, and whether its vendor answers with it |
 | `pnpm check:sign-in` | one test sign-in, each claim's verdict |
@@ -154,9 +173,13 @@ expires. It holds no secret. Hand it to the customer's IT.
 |---|---|
 | `administrators` GAP | `./setup.sh access --administrators <addresses>` |
 | `redirect` GAP | register exactly `${DAY0_PUBLIC_URL}/api/oauth/<system>` at the vendor, then `./setup.sh access --correct <system>` records it; or set `DAY0_PUBLIC_URL` back to the origin it was registered with |
-| `scopes` GAP | grant the missing scopes at the vendor (the recipe lists them), then `./setup.sh access --correct <system>` records them |
+| `scopes` GAP, missing a scope ("Missing scope ...") | grant the missing scopes at the vendor (the recipe lists them), then `./setup.sh access --correct <system>` records them |
+| `scopes` GAP, landed without part of a fixed set ("... was landed with ..., without ...") | a fixed set, such as the `read, write` a shared Linear connection landed by v0.14.0 holds without `app:assignable`, cannot be changed in place, and a correction does not reach it: revoke the connection on the organisation page, then land it again with `./setup.sh access`. Every card on it ends, and each manager connects it again |
 | `secret` GAP | the deployment's credential key changed since the secret was landed: rotate the connection with a fresh secret |
-| `identity` GAP | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
+| `identity` GAP, no issuer ("No issuer is recorded ...", an MCP connection) | revoke the connection on the organisation page, then land it again with `./setup.sh access`, which finds the issuer from the server's own metadata. Every card on it ends |
+| `identity` GAP, any other | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
+| `reach` GAP | the backend container could not reach the vendor. When it does not trust the certificate, give the backend container the customer's CA bundle (see the note under step 6, `SSL_CERT_FILE`); otherwise open its way out (the proxy or firewall in front of the backend). Then run the check again |
+| `reach` WARN ("Not asked from the backend container") | start the backend (`./setup.sh resume`) and run the check again |
 | `status` GAP | the connection needs IT's attention, for the reason it gives |
 
 ## How long it takes

@@ -238,11 +238,15 @@ async function startingClient(
     );
   }
   // A client secret is unique to the server that issued it: it is sent only to the server it was
-  // registered with, never to whichever one the MCP server's own metadata names first.
-  if (connection.secretCredentialId && !connection.issuer) {
+  // registered with, never to whichever one the MCP server's own metadata names first. A public
+  // client's server is IT's to record as well: a manager's first authorisation never chooses it
+  // for every employee (the wave 11 review's m4), so a connection landed before that rule waits.
+  if (!connection.issuer) {
     return refused(
       'issuer-unregistered',
-      "The organisation's client has a secret but no authorisation server registered with it; IT records the issuer at install.",
+      connection.secretCredentialId
+        ? "The organisation's client has a secret but no authorisation server registered with it; IT records the issuer at install."
+        : "The organisation's connection for this server names no authorisation server; IT records the issuer at install.",
     );
   }
   if (!agent.userId) throw new ConvexError('The employee has no owner.');
@@ -270,7 +274,9 @@ async function discoverFor(
 
 /**
  * Seal a fresh PKCE verifier for the employee's owner, record the pending authorisation with the
- * issuer it must come back from and the discovered endpoints, and build the URL the browser goes to.
+ * issuer it must come back from and what that issuer's metadata said (whether it sends `iss`, its
+ * token endpoint and how it takes a client, R-S), record the discovered endpoints, and build the
+ * URL the browser goes to.
  */
 async function recordStart(
   ctx: ActionCtx,
@@ -304,6 +310,11 @@ async function recordStart(
       redirectUrl,
       organisationConnectionId: client.connection._id,
       startedAt: now,
+      issuerMetadata: {
+        issParameterSupported: server.issParameterSupported,
+        tokenEndpoint: server.tokenEndpoint,
+        tokenEndpointAuthMethods: [...server.tokenEndpointAuthMethods],
+      },
     },
     discovered: {
       issuer: server.issuer,
@@ -452,6 +463,28 @@ async function connectionStill(
   return connection && connection._id === pending.organisationConnectionId ? connection : null;
 }
 
+/** What the callback acts on of the issuer's metadata. */
+type CallbackMetadata = NonNullable<ClaimedAuthorisation['pending']['issuerMetadata']>;
+
+/**
+ * What the issuer's metadata said when the authorisation started, as the start recorded it with
+ * the pending authorisation (R-S): the callback holds the response to the issuer the start was
+ * checked against, whatever the metadata says now. An authorisation started before the record
+ * reads the metadata again.
+ */
+async function callbackMetadata(
+  deps: McpOauthDeps,
+  pending: ClaimedAuthorisation['pending'],
+): Promise<CallbackMetadata> {
+  if (pending.issuerMetadata !== undefined) return pending.issuerMetadata;
+  const server = await fetchAuthorisationServerMetadata(deps.fetch, pending.issuer);
+  return {
+    issParameterSupported: server.issParameterSupported,
+    tokenEndpoint: server.tokenEndpoint,
+    tokenEndpointAuthMethods: [...server.tokenEndpointAuthMethods],
+  };
+}
+
 /**
  * Check the response against the claimed authorisation and, when it holds, exchange its code and
  * land the tokens. The issuer check comes first: on a mismatch nothing the response carries is
@@ -470,7 +503,7 @@ async function exchangeAndLand(
   const { pending } = claim;
   const held: string[] = response.code ? [response.code] : [];
   try {
-    const server = await fetchAuthorisationServerMetadata(deps.fetch, pending.issuer);
+    const server = await callbackMetadata(deps, pending);
     const issuer = checkResponseIssuer({
       iss: response.iss ?? null,
       recordedIssuer: pending.issuer,

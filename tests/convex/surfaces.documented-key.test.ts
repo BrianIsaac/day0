@@ -129,6 +129,55 @@ describe('surfaces.propose: a key found in the documentation (B1, decision 1 (a)
     expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
   });
 
+  it("binds the documented key where IT's connection is one no issuer of Day0's acts through (11-AC's item 8)", async (): Promise<void> => {
+    const seeded = await seed('none');
+    await seeded.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'notion',
+        displayName: 'Notion',
+        kind: 'static-key',
+        mode: 'shared',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.patch(seeded.surfaceId, { slug: 'notion', displayName: 'Notion' });
+    });
+
+    await seeded.harness.mutation(internal.surfaces.propose, {
+      ...proposal(seeded),
+      path: 'documented-api',
+      endpoint: 'https://api.notion.com/v1',
+    });
+
+    const card = await readCard(seeded);
+    expect(card.credentialId).toBe(seeded.wikiKey);
+    expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
+  it("binds the documented key where IT landed a static key for Linear, which no issuer acts through (D6, the round review's m11)", async (): Promise<void> => {
+    const seeded = await seed('none');
+    await seeded.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'static-key',
+        mode: 'shared',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
+
+    await seeded.harness.mutation(internal.surfaces.propose, proposal(seeded));
+
+    const card = await readCard(seeded);
+    expect(card.credentialId).toBe(seeded.wikiKey);
+    expect(card.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
   it('binds the documented key where the connection needs IT’s attention, which covers nothing', async (): Promise<void> => {
     const seeded = await seed('needs-attention');
 

@@ -21,8 +21,9 @@ import {
   modeWords,
   ORGANISATION_REFUSED,
   registeredWords,
+  revokeEndsNoCard,
   revokeLines,
-  ROTATE_NOTE,
+  rotateNote,
   secretWords,
   type ConnectionView,
   type LedgerLine,
@@ -247,11 +248,18 @@ function RevokeDialog({
   onRevoked: () => void;
 }) {
   const revoke = useMutation(api.organisationConnections.revoke);
+  // How many cards it ends (11-AC's item 3): until the count answers, the words say every card.
+  const counted = useQuery(api.organisationConnections.cardsOn, {
+    organisationConnectionId: connection._id as Id<'organisationConnections'>,
+  });
   const keep = useRef<HTMLButtonElement>(null);
   const change = useChange(keep);
   const [reason, setReason] = useState('');
-  const [first, ...rest] = revokeLines(connection);
-  const ready = reason.trim() !== '' && !change.busy;
+  const [first, ...rest] = revokeLines(connection, counted ?? undefined);
+  // Where no card ends, the reason is the record's alone (the second pass's design reader).
+  const noneEnds = revokeEndsNoCard(counted ?? undefined);
+  // More cards than one revoke ends is refused by the backend, so Revoke is held (the design pass).
+  const ready = reason.trim() !== '' && !change.busy && counted?.atLeast !== true;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!ready) return;
@@ -286,7 +294,10 @@ function RevokeDialog({
         </p>
       ))}
       <form className="grid gap-4" onSubmit={submit}>
-        <Field label="The reason each card will show" hint="Managers read it on their cards.">
+        <Field
+          label={noneEnds ? 'The reason for the record' : 'The reason each card will show'}
+          hint={noneEnds ? 'No card shows it.' : 'Managers read it on their cards.'}
+        >
           {(control) => (
             <input
               {...control}
@@ -377,7 +388,7 @@ function RotateDialog({
   return (
     <Dialog
       title={`Give ${connection.displayName} a new secret`}
-      description={ROTATE_NOTE}
+      description={rotateNote(connection)}
       onClose={onClose}
       busy={change.busy}
     >

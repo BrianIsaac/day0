@@ -570,11 +570,132 @@ describe('the access request and the organisation connection ledger in the recor
       "Revoking an employee's access at Slack with the organisation's Slack connection failed: invalid_auth.",
     );
   });
+
+  it("says the organisation's shared Linear token was revoked with its connection, not an employee's access (R41V-1)", (): void => {
+    const shared = {
+      credentialId: 'k2',
+      system: 'linear',
+      end: 'organisation-revoked',
+      attempt: 1,
+      shared: true,
+    };
+    const line = (payload: Record<string, unknown>): string =>
+      recordWords(
+        { type: 'organisation.revoked-at-source', payload: { ...shared, ...payload } },
+        subject,
+      );
+    expect(line({ outcome: 'token-revoked' })).toBe(
+      "Day0 revoked the organisation's shared Linear app token at Linear and deleted its copy.",
+    );
+    expect(line({ outcome: 'already-gone' })).toBe(
+      "The organisation's shared Linear app token was already revoked at Linear; Day0 deleted its copy.",
+    );
+    expect(line({ outcome: 'failed', reason: 'Linear answered HTTP 503.' })).toBe(
+      "Revoking the organisation's shared Linear app token at Linear failed: Linear answered HTTP 503; Day0's copy was deleted, and the token lapses 30 days after it was issued.",
+    );
+  });
 });
 
 describe("what Day0's uses of the Slack configuration token and the re-join say in the record (11-AS)", (): void => {
   const subject = { name: 'Leo', connection: 'Slack' };
   const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+
+  it('tells a revoke at Slack from a token Slack had already ended, and tells IT to keep the generating sign-in closed, since only its lapse ends its refresh token (R41V-10, R41X-8)', (): void => {
+    const revoked = (payload: Record<string, unknown>): string =>
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', ...payload },
+        },
+        subject,
+      );
+    const advice =
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
+    expect(revoked({ outcome: 'done' })).toBe(
+      "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
+        `once it was taken out of use; ${advice}`,
+    );
+    expect(revoked({ outcome: 'already-revoked', reason: 'Slack answered token_revoked' })).toBe(
+      "The organisation's Slack configuration token had already ended at Slack when Day0 " +
+        `asked: Slack answered token_revoked; Day0 deleted its copy, and ${advice}`,
+    );
+    expect(revoked({ outcome: 'done', unkept: true })).toBe(
+      'Day0 revoked a configuration token Slack issued to a renewal that finished after the ' +
+        `connection was revoked, which it kept nowhere; ${advice}`,
+    );
+    expect(revoked({ outcome: 'failed', reason: 'Slack auth.revoke returned HTTP 503.' })).toBe(
+      "Revoking the organisation's Slack configuration token at Slack failed: Slack auth.revoke " +
+        `returned HTTP 503; Day0's copy was deleted, and ${advice}`,
+    );
+  });
+
+  it("never tells IT that deleting the token's row ends the refresh token, which only its lapse ends (R41X-8)", (): void => {
+    for (const outcome of ['done', 'already-revoked', 'unrecognised', 'failed']) {
+      const line = recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', outcome },
+        },
+        subject,
+      );
+      expect(line, outcome).not.toMatch(/\bdeletes? the token's row\b/);
+      expect(line, outcome).toContain('nothing ends its refresh token but its lapse');
+      expect(line, outcome).toContain('whoever copied it while its row was listed');
+      expect(line, outcome).toContain(
+        'so IT keeps the sign-in of the account that generated it closed.',
+      );
+    }
+  });
+
+  it("says a revoke Slack's auth.test could not check was not checked (the round review's m2)", (): void => {
+    const revoked = (payload: Record<string, unknown>): string =>
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', unchecked: true, ...payload },
+        },
+        subject,
+      );
+    const advice =
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
+    const notChecked = 'though Slack could not be asked afterwards whether it still works';
+    expect(revoked({ outcome: 'done' })).toBe(
+      "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
+        `once it was taken out of use, ${notChecked}; ${advice}`,
+    );
+    expect(revoked({ outcome: 'already-revoked', reason: 'Slack answered token_revoked' })).toBe(
+      "The organisation's Slack configuration token had already ended at Slack when Day0 " +
+        `asked: Slack answered token_revoked, ${notChecked}; Day0 deleted its copy, and ${advice}`,
+    );
+    expect(revoked({ outcome: 'done', unkept: true })).toBe(
+      'Day0 revoked a configuration token Slack issued to a renewal that finished after the ' +
+        `connection was revoked, which it kept nowhere, ${notChecked}; ${advice}`,
+    );
+  });
+
+  it("tells a token Slack did not recognise from one Slack had ended (the round review's m3)", (): void => {
+    const revoked = (payload: Record<string, unknown>): string =>
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', ...payload },
+        },
+        subject,
+      );
+    const advice =
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
+    expect(revoked({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' })).toBe(
+      "Slack did not recognise the organisation's Slack configuration token when Day0 asked to " +
+        'revoke it: Slack answered invalid_auth. Day0 cannot tell whether Slack had ended it ' +
+        `or never knew it; Day0 deleted its copy, and ${advice}`,
+    );
+  });
 
   it("says each call on the organisation's ledger without naming an employee", (): void => {
     expect(
@@ -972,6 +1093,19 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
       ended({ system: 'linear', surfaceName: 'Linear', end: 'retire', outcome: 'shared' }),
     ).toBe(
       "Access to the Slack connection ended; its shared app token was not revoked at Linear, since the app's other employees use it.",
+    );
+  });
+
+  it("says the shared token is revoked with the organisation's revoke of its connection, not kept for others (R41V-1)", (): void => {
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'organisation-revoked',
+        outcome: 'shared',
+      }),
+    ).toBe(
+      "Access to the Slack connection ended; its shared app token is revoked at Linear with the organisation's connection.",
     );
   });
 

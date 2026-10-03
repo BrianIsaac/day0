@@ -42,8 +42,8 @@ async function render(search: Record<string, string | string[]> = {}): Promise<s
 }
 
 describe('the organisation page behind the session gate (B8)', (): void => {
-  it('is titled for the tab', (): void => {
-    expect(metadata.title).toBe('Organisation');
+  it('is titled for the tab, then Day0, as every signed-in page is (round 0141 R-D item 5)', (): void => {
+    expect(metadata.title).toBe('Organisation · Day0');
   });
 
   it('asks for nothing until Convex holds the token', async (): Promise<void> => {

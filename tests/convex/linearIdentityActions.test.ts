@@ -14,6 +14,7 @@ import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
 import { throughTimers } from './fakes/fake-clock';
+import { LINEAR_OWN_APP_NAME } from '../fixtures/real-vendor-rewalk-2026-10-03';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const PUBLIC_URL = 'https://day0.acme.test';
@@ -55,7 +56,7 @@ beforeEach(async (): Promise<void> => {
         clientId: LEO_CLIENT,
         clientSecret: LEO_SECRET,
         clientCredentials: false,
-        appUser: { id: 'app-user-day0-leo', name: 'Day0 Leo' },
+        appUser: { id: 'app-user-day0-leo', name: 'Leo (Day0)' },
         redirectUris: [REDIRECT],
       },
       {
@@ -234,6 +235,83 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(await bearerOf(harness, token!._id)).toMatch(/^lin_oauth_shared_/);
   });
 
+  it("puts the employee's skills on a connected card due a re-check when it moves off a pasted key onto the shared app (R41V-7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    // The walk's Wren: the card connected on a key pasted while no connection was active, and a
+    // skill authored and verified under it.
+    const pasted = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear key',
+      plaintext: 'lin_api_pasted_0123456789',
+      source: 'entered',
+    });
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, {
+        verdict: 'connected',
+        credentialId: pasted,
+        credentialKind: 'value',
+        credentialLanded: true,
+        lastVerifiedAt: 3,
+        actsAs: { kind: 'shared-key', label: 'a key someone pasted', providerIdentityId: 'sam' },
+        providerIdentityId: 'sam',
+      });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment and close',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'linear',
+        registeredAt: 3,
+        createdAt: 3,
+      });
+    });
+
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toEqual({ ok: true, connected: true });
+
+    const { surface } = await read(harness, surfaceIds[0]!);
+    expect(surface.verdict).toBe('connected');
+    expect(surface.actsAs).toMatchObject({ kind: 'shared-app' });
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill).toMatchObject({
+      recheckDueAt: expect.any(Number),
+      recheckReason: 'its connection to linear now acts as another identity',
+    });
+  });
+
+  it('revokes at Linear the shared token issued while the connection was being revoked, which Day0 keeps nowhere', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds, connectionId } = await seed(harness, { mode: 'shared' });
+    const { internal } = await liveApi();
+    const issued: string[] = [];
+    const actions = await import('../../convex/linearIdentityActions');
+    actions.__setLinearIdentityDepsForTest({
+      now: () => clock,
+      fetch: async (url, init) => {
+        const answer = await linear.fetch(url, init);
+        if (url.href === 'https://api.linear.app/oauth/token') {
+          const body = (await answer.clone().json()) as { access_token?: string };
+          if (body.access_token !== undefined) issued.push(body.access_token);
+          // An administrator revokes the connection while Linear issues the token.
+          await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+            organisationConnectionId: connectionId,
+            reason: 'IT is moving workspaces',
+          });
+        }
+        return answer;
+      },
+    });
+
+    await expect(connect(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: false });
+
+    expect(issued).toHaveLength(1);
+    expect(linear.live(issued[0]!)).toBe(false);
+  });
+
   it("writes through the shared card carry the employee's trailer", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'shared' });
@@ -362,6 +440,39 @@ describe('shared mode: the organisation app actor', (): void => {
     expect(after.connection.sharedTokenCredentialId).toBe(tokenId);
     expect(after.surface.credentialId).toBe(tokenId);
     expect(after.credentials.find((row) => row._id === tokenId)?.generation).toBe(1);
+  });
+
+  it("revokes at Linear the value a renewal in place replaced, so the connection's revoke ends every value it held (the round review's m5)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const first = await bearerOf(harness, tokenId);
+
+    clock += 29.5 * DAY;
+    const renewed = await bearerOf(harness, tokenId);
+
+    expect(renewed).not.toBe(first);
+    expect(linear.live(renewed)).toBe(true);
+    expect(linear.live(first)).toBe(false);
+  });
+
+  it("revokes at Linear the token a renewal that lost the race requested, keeping the winner's live (the round review's m5)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'shared' });
+    await connect(harness, surfaceIds[0]!);
+    const tokenId = (await read(harness, surfaceIds[0]!)).connection.sharedTokenCredentialId!;
+    const first = await bearerOf(harness, tokenId);
+
+    clock += 29.5 * DAY;
+    const [one, two] = await Promise.all([bearerOf(harness, tokenId), bearerOf(harness, tokenId)]);
+
+    expect(tokenRequests()).toHaveLength(3);
+    expect(one).toBe(two);
+    expect(linear.live(one)).toBe(true);
+    expect(linear.live(first)).toBe(false);
+    // The first value and the loser's token: every token Day0 does not hold is ended at Linear.
+    expect(linear.requests.filter((request) => request.path === '/oauth/revoke')).toHaveLength(2);
   });
 
   it('answers a 401 with one new request, and a second refusal of the same token with its successor', async (): Promise<void> => {
@@ -599,7 +710,7 @@ describe('one bearer read for every rung, the probe and intake (join 5)', (): vo
     clock += DAY + 60_000;
 
     await expect(throughTimers(rungBearer(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -644,7 +755,13 @@ describe('an employee acts at the vendor only as the identity its card names (cr
       await rungBearer(harness, surface.credentialId!),
     );
 
-    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+    // The literal Leo's app was created with, never what the landing wrote from the same answer: a
+    // shared token landed on this card would name the shared app user in both (the review's M11 b).
+    expect(viewer).toMatchObject({ id: 'app-user-day0-leo', app: true });
+    expect(surface.actsAs).toMatchObject({
+      kind: 'own-app',
+      providerIdentityId: 'app-user-day0-leo',
+    });
   });
 
   it('shared-app: the bearer acts at Linear as the organisation’s shared app user, the one the card names', async (): Promise<void> => {
@@ -659,7 +776,11 @@ describe('an employee acts at the vendor only as the identity its card names (cr
       await rungBearer(harness, surface.credentialId!),
     );
 
-    expect(viewer).toMatchObject({ id: surface.actsAs?.providerIdentityId, app: true });
+    expect(viewer).toMatchObject({ id: 'app-user-day0-shared', app: true });
+    expect(surface.actsAs).toMatchObject({
+      kind: 'shared-app',
+      providerIdentityId: 'app-user-day0-shared',
+    });
   });
 
   it('shared-key: the bearer is the key someone pasted, read as it was stored', async (): Promise<void> => {
@@ -735,9 +856,9 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(surface).toMatchObject({
       credentialKind: 'oauth',
       organisationConnectionId: connectionId,
-      actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-day0-leo' },
+      actsAs: { kind: 'own-app', label: 'Leo (Day0)', providerIdentityId: 'app-user-day0-leo' },
       providerIdentityId: 'app-user-day0-leo',
-      provisioning: { appName: 'Day0 Leo', clientId: LEO_CLIENT, redirectUrl: REDIRECT },
+      provisioning: { appName: 'Leo (Day0)', clientId: LEO_CLIENT, redirectUrl: REDIRECT },
     });
     expect(surface.pendingAuthorisation).toBeUndefined();
     expect(secret).toMatchObject({
@@ -769,6 +890,18 @@ describe("per-employee mode: the employee's own app", (): void => {
       ]),
     );
     expect(linear.live(await bearerOf(harness, access!._id))).toBe(true);
+  });
+
+  it('names an employee’s own app as Linear does and the kit’s manifest does, on the record and the card (R41X-3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+
+    const { surface, events } = await read(harness, surfaceIds[0]!);
+    const provisioned = events.find((event) => event.type === 'surface.app-provisioned');
+    expect((provisioned?.payload as { appName?: string }).appName).toBe(LINEAR_OWN_APP_NAME);
+    expect(surface.actsAs?.label).toBe(LINEAR_OWN_APP_NAME);
+    expect(surface.provisioning?.appName).toBe(LINEAR_OWN_APP_NAME);
   });
 
   it("schedules the token's refresh for its last minutes, and nothing fires it sooner (the review's M11 a)", async (): Promise<void> => {
@@ -813,6 +946,28 @@ describe("per-employee mode: the employee's own app", (): void => {
     ).toBe('token-rotation');
   });
 
+  it('presents the refresh token once when two reads refresh at once, under the refresh lease (R-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface } = await read(harness, surfaceIds[0]!);
+
+    clock += DAY + 60_000;
+    // On the real timer: the second refresh sleeps on the first's lease between its reads.
+    vi.useRealTimers();
+    const [one, two] = await Promise.all([
+      bearerOf(harness, surface.credentialId!),
+      bearerOf(harness, surface.credentialId!),
+    ]);
+
+    expect(tokenRequests().map((request) => request.grant)).toEqual([
+      'authorization_code',
+      'refresh_token',
+    ]);
+    expect(one).toBe(two);
+    expect(linear.live(one)).toBe(true);
+  });
+
   it('ends the card with the reason when Linear refuses the refresh of an expired token', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
@@ -823,7 +978,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     clock += DAY + 60_000;
 
     await expect(throughTimers(bearerOf(harness, surface.credentialId!))).rejects.toThrow(
-      /Linear refused to renew the token: .*Refresh token is invalid or expired.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
+      /Linear refused to renew the token: .*Refresh token revoked.*Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card\./,
     );
   });
 
@@ -857,6 +1012,71 @@ describe("per-employee mode: the employee's own app", (): void => {
           job.name === 'surfaceActions:probeInternal' && job.scheduledTime === access.expiresAt,
       ),
     ).toBe(true);
+  });
+
+  it("checks the card at once when a scheduled refresh is refused, so a revoke in Linear's settings ends it now, not at the token's expiry (R41V-9)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { internal } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const { surface, credentials } = await read(harness, surfaceIds[0]!);
+    const access = credentials.find((row) => row._id === surface.credentialId)!;
+    // A Linear administrator's "Revoke access" ends both tokens of the pair at once.
+    linear.revokeAppTokens(LEO_CLIENT);
+    const refusedAt = clock;
+
+    await throughTimers(
+      harness.action(internal.linearIdentityActions.refreshScheduled, {
+        credentialId: access._id,
+        generation: 0,
+      }),
+    );
+
+    const after = await read(harness, surfaceIds[0]!);
+    const failed = after.events.at(-1);
+    expect(failed?.type).toBe('surface.install-failed');
+    expect((failed?.payload as { reason: string }).reason).toBe(
+      'Linear refused to renew the token: Linear refused the token or code it was shown: Refresh ' +
+        'token revoked. Day0 is unauthorised in Linear until a Linear administrator installs the ' +
+        'app again from the card.',
+    );
+    const probes = after.scheduled.filter((job) => job.name === 'surfaceActions:probeInternal');
+    expect(probes.some((job) => job.scheduledTime <= refusedAt)).toBe(true);
+    // The probe that ends the card meets Linear's 401 and asks once for a new token: refused, in
+    // the install-again words, as an authority withdrawn, never an unreadable answer.
+    await expect(
+      throughTimers(
+        harness.action(internal.linearIdentityActions.renewAfterRefusal, {
+          credentialId: access._id,
+          generation: 0,
+        }),
+      ),
+    ).rejects.toThrow(/Refresh token revoked\..*installs the app again from the card\./);
+  });
+
+  it('leaves the skills alone when a connected card installs the same app again (no move, R41V-7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, { verdict: 'connected', credentialLanded: true });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment and close',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'linear',
+        registeredAt: 3,
+        createdAt: 3,
+      });
+    });
+
+    await expect(installLeo(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: true });
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.recheckReason).toBeUndefined();
   });
 
   it('records a declined installation on the card and keeps no token', async (): Promise<void> => {
@@ -897,7 +1117,7 @@ describe("per-employee mode: the employee's own app", (): void => {
     });
     expect((await read(harness, surfaceIds[0]!)).surface.actsAs).toMatchObject({
       kind: 'own-app',
-      label: 'Day0 Leo',
+      label: 'Leo (Day0)',
     });
   });
 
@@ -1027,6 +1247,63 @@ describe("per-employee mode: the employee's own app", (): void => {
           .filter((event) => event.type === 'credential.revoked-at-source')
           .map((event) => event.payload),
       ).toEqual([expect.objectContaining({ credentialId: first, outcome: 'token-revoked' })]);
+    });
+  });
+
+  it('installs again from one Connect on a card Linear refused to renew, ending the refused pair as a Disconnect does (R41X-4)', async (): Promise<void> => {
+    // The refused pair's revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const surfaceId = surfaceIds[0]!;
+    await installLeo(harness, surfaceId);
+    const refused = (await read(harness, surfaceId)).surface;
+    // A Linear administrator's "Revoke access" in Linear's settings, then the card as its check
+    // leaves it (`recordProbeFailure`): not granted, still holding the refused pair.
+    linear.revokeAppTokens(LEO_CLIENT);
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(surfaceId, {
+          verdict: 'ungranted',
+          reason: 'Linear refused to renew the token: Refresh token revoked.',
+          credentialLanded: false,
+        }),
+    );
+
+    const started = await connect(harness, surfaceId);
+    if (!started.ok || !('authoriseUrl' in started)) throw new Error('no installation started');
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const { surface, credentials } = await read(harness, surfaceId);
+    expect(surface.credentialId).not.toBe(refused.credentialId);
+    expect(credentials.find((row) => row._id === refused.credentialId)).toMatchObject({
+      revokedAt: clock,
+      sourceRevocation: { end: 'disconnect' },
+    });
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceId);
+      expect(
+        events
+          .filter((event) => event.type === 'credential.revoked-at-source')
+          .map((event) => event.payload),
+      ).toEqual([
+        expect.objectContaining({
+          credentialId: refused.credentialId,
+          end: 'disconnect',
+          outcome: 'already-gone',
+        }),
+      ]);
     });
   });
 

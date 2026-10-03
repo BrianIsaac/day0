@@ -12,6 +12,7 @@ import { endAccessAtSource } from '../../convex/sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { KEPT_APP_CONNECTION_REVOKED } from '../../src/surfaces/identity-issuers/slack';
+import { LEASE_POLL_MS } from '../../src/surfaces/refresh-lease';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import {
@@ -400,6 +401,73 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     ]);
   });
 
+  it('presents the refresh token to Slack once when two provisionings rotate at once, under the refresh lease (R-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    const leo = await employee(harness, 'Leo');
+    // On the real timer: the second rotation sleeps on the first's lease between its reads.
+    vi.useRealTimers();
+
+    await Promise.all([provision(harness, maya.surfaceId), provision(harness, leo.surfaceId)]);
+
+    expect(callsOf(slack, 'tooling.tokens.rotate')).toEqual([
+      { method: 'tooling.tokens.rotate', form: { refresh_token: LANDED_REFRESH_TOKEN } },
+    ]);
+    expect(callsOf(slack, 'apps.manifest.create').map((call) => call.bearer)).toEqual([
+      slack.configuration.token,
+      slack.configuration.token,
+    ]);
+    const connection = await harness.run(async (ctx) => await ctx.db.get(connectionId));
+    expect(connection?.status).toBe('active');
+    const row = await configurationRow(harness, connectionId);
+    expect(row.generation).toBe(1);
+    expect(row).not.toHaveProperty('refreshingUntil');
+  });
+
+  it("uses the configuration token that still lives after five seconds behind a dead renewal's lease, not a whole lease (the round review's m7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    // Inside its renew margin but alive, behind the lease of a renewal whose action died.
+    const row = await configurationRow(harness, connectionId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(row._id, {
+        expiresAt: Date.now() + 10 * 60 * 1000,
+        refreshingUntil: Date.now() + 80_000,
+      });
+    });
+    let done = false;
+    const made = provision(harness, maya.surfaceId).finally((): void => {
+      done = true;
+    });
+    // A full event-loop turn per step, so the action's own imports and reads run between ticks.
+    const turn = async (): Promise<void> =>
+      await new Promise<void>((resolve): void => {
+        const { port1, port2 } = new MessageChannel();
+        port2.onmessage = (): void => resolve();
+        port1.postMessage(null);
+      });
+    try {
+      for (let step = 0; step < 24 && !done; step += 1) {
+        await vi.advanceTimersByTimeAsync(LEASE_POLL_MS);
+        await turn();
+      }
+      expect(done).toBe(true);
+    } finally {
+      // Let a waiter that outlived the bound finish before the test ends, whatever it answers.
+      for (let step = 0; step < 800 && !done; step += 1) {
+        await vi.advanceTimersByTimeAsync(LEASE_POLL_MS);
+        await turn();
+      }
+    }
+    await expect(made).resolves.toMatchObject({ appId: expect.any(String) });
+    expect(callsOf(slack, 'tooling.tokens.rotate')).toEqual([]);
+    expect(callsOf(slack, 'apps.manifest.create').map((call) => call.bearer)).toEqual([
+      LANDED_CONFIGURATION_TOKEN,
+    ]);
+  });
+
   it("uses a token pasted on the card when the organisation's connection cannot renew its own, and revokes it after", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await landSlack(harness);
@@ -467,7 +535,12 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     );
     expect(secrets).toHaveLength(1);
     expect(secrets[0]?.revokedAt).toBeDefined();
-    expect(secrets[0]?.issuedBy).toBeUndefined();
+    // Stored with the app's issuer (the pre-tag's item 10), and revoked once the record refused it.
+    expect(secrets[0]?.issuedBy).toMatchObject({
+      system: 'slack',
+      grant: 'app-created',
+      appId: 'A0APP1',
+    });
   });
 
   it("falls back to the card's field when the organisation's Slack connection is revoked", async (): Promise<void> => {
@@ -503,6 +576,193 @@ describe("an employee's own app through the organisation's connection (B9)", ():
       appId: pasted.appId,
       clientId: row.provisioning?.clientId,
     });
+  });
+});
+
+describe("the move off a pasted bot token onto the employee's own app (R41V-7)", (): void => {
+  it("puts the employee's skills on the connected card due a re-check, since it now acts as another identity", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    const pasted = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Slack bot token',
+      plaintext: 'xoxb-1234567890-pasted',
+      source: 'entered',
+    });
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(maya.surfaceId, {
+        verdict: 'connected',
+        credentialId: pasted,
+        credentialKind: 'value',
+        credentialLanded: true,
+        actsAs: {
+          kind: 'shared-key',
+          label: 'a key someone pasted',
+          providerIdentityId: 'U0SHARED',
+        },
+      });
+      return await ctx.db.insert('skills', {
+        agentId: maya.agentId,
+        name: 'chat-thread-reply',
+        description: 'Reply in the thread',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'slack',
+        registeredAt: 1,
+        createdAt: 1,
+      });
+    });
+
+    await install(harness, await provision(harness, maya.surfaceId));
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill).toMatchObject({
+      recheckDueAt: expect.any(Number),
+      recheckReason: 'its connection to slack now acts as another identity',
+    });
+  });
+});
+
+describe("a Slack connection's revoke as real Slack answers it (R41V-10)", (): void => {
+  /** Revoke the connection from the setup verb and run the call at Slack it schedules. */
+  async function revokeConnection(
+    harness: Harness,
+    connectionId: Id<'organisationConnections'>,
+  ): Promise<void> {
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'IT is moving workspaces',
+    });
+    await settle(harness);
+  }
+
+  /** The `auth.revoke` lines on the connection's ledger. */
+  async function revokeLines(harness: Harness): Promise<unknown[]> {
+    return (await ledger(harness))
+      .filter((line) => line.payload.method === 'auth.revoke')
+      .map((line) => line.payload as unknown);
+  }
+
+  it("revokes the token Day0 holds as current at the revoke, after the walk's rotation at first use, and Slack leaves its refresh token", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    // The walk: the landed pair, rotated at the first app Day0 created with it (generation 1).
+    await provision(harness, leo.surfaceId);
+    const row = await configurationRow(harness, connectionId);
+    expect(row.generation).toBe(1);
+    const current = await opened(harness, row._id);
+
+    await revokeConnection(harness, connectionId);
+
+    expect(callsOf(slack, 'auth.revoke').map((call) => call.bearer)).toEqual([current]);
+    expect(slack.configuration.revoked.has(current)).toBe(true);
+    expect(await revokeLines(harness)).toEqual([expect.objectContaining({ outcome: 'done' })]);
+    // Slack ended the token alone: its refresh token still rotates, which only IT can end.
+    const rotated = await slack.fetch('https://slack.com/api/tooling.tokens.rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ refresh_token: slack.configuration.refreshToken }).toString(),
+    });
+    expect(await rotated.json()).toMatchObject({ ok: true });
+  });
+
+  it("says on the ledger that a revoke was not checked when Slack's auth.test could not be asked (the round review's m2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    slack.refusals.set('auth.test', 'ratelimited');
+
+    await revokeConnection(harness, connectionId);
+
+    expect(callsOf(slack, 'auth.test')).toHaveLength(1);
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({ outcome: 'done', unchecked: true }),
+    ]);
+  });
+
+  it('records a revoke Slack answered but did not carry out as failed, after asking Slack whether the token still works', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    // The walk's anomaly: the ledger said done, and the token Day0 held still worked at Slack.
+    slack.refusals.set('auth.revoke', 'token_revoked');
+
+    await revokeConnection(harness, connectionId);
+
+    expect(callsOf(slack, 'auth.test')).toHaveLength(1);
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({
+        outcome: 'failed',
+        reason:
+          'Slack answered token_revoked to auth.revoke, yet still accepted the token at auth.test',
+      }),
+    ]);
+  });
+
+  it('records a token Slack had already revoked as already revoked, never as revoked by Day0', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    // IT deleted the token's row on api.slack.com, which ends it under Day0.
+    slack.configuration.revoked.add(slack.configuration.token);
+
+    await revokeConnection(harness, connectionId);
+
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({ outcome: 'already-revoked' }),
+    ]);
+  });
+
+  it("records a token Slack does not know as not recognised, never as one Slack had ended (the round review's m3)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    await provision(harness, leo.surfaceId);
+    // Bed 1: the fake was restarted, so the token Day0 holds is one Slack never issued.
+    slack.configuration.token = 'xoxe.xoxp-9999999999-zyxwvutsrq';
+
+    await revokeConnection(harness, connectionId);
+
+    expect(await revokeLines(harness)).toEqual([
+      expect.objectContaining({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' }),
+    ]);
+  });
+
+  it('revokes the token a rotation in flight was issued when the revoke lands before the rotation is written', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    let issued = '';
+    slack.beforeRotationAnswers = async (): Promise<void> => {
+      slack.beforeRotationAnswers = undefined;
+      issued = slack.configuration.token;
+      await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+        organisationConnectionId: connectionId,
+        reason: 'IT is moving workspaces',
+      });
+    };
+
+    await expect(provision(harness, leo.surfaceId)).rejects.toThrow(
+      'the organisation has no active Slack connection',
+    );
+    await settle(harness);
+
+    expect(issued).toBe('xoxe.xoxp-1-cfg1');
+    expect(callsOf(slack, 'auth.revoke').map((call) => call.bearer)).toEqual(
+      expect.arrayContaining([LANDED_CONFIGURATION_TOKEN, issued]),
+    );
+    expect(slack.configuration.revoked.has(issued)).toBe(true);
+    expect(await revokeLines(harness)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ outcome: 'done', unkept: true })]),
+    );
+    expect(JSON.stringify(await ledger(harness))).not.toContain('xoxe');
   });
 });
 
@@ -848,9 +1108,10 @@ describe('the install through the connection (the cockpit: recordInstalledApp)',
         row.label.startsWith('Slack bot token'),
       ),
     );
-    expect(bots.map((row) => [row.holder, row.revokedAt !== undefined, row.issuedBy])).toEqual([
-      [ORGANISATION_HOLDER, true, undefined],
-    ]);
+    // Stored with the install's issuer (the pre-tag's item 10), and taken back when the record failed.
+    expect(
+      bots.map((row) => [row.holder, row.revokedAt !== undefined, row.issuedBy?.grant]),
+    ).toEqual([[ORGANISATION_HOLDER, true, 'oauth-install']]);
     expect((await card(harness, leo.surfaceId)).credentialId).toBeUndefined();
   });
 

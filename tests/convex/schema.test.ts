@@ -1014,3 +1014,132 @@ describe('access schema (11-AK, N10: additive and optional)', (): void => {
     expect(transfer).toMatchObject({ cancelReason: 'handover-ended', settleFailures: 5 });
   });
 });
+
+describe('the round after wave 11 schema step (R-S, N10: additive and optional)', (): void => {
+  it('gives an access token its refresh lease, and keeps an older row with none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const token = {
+        userId: 'day0:organisation',
+        kind: 'oauth' as const,
+        label: 'Linear access token',
+        source: 'oauth' as const,
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('credentials', token);
+      const leased = await ctx.db.insert('credentials', {
+        ...token,
+        generation: 2,
+        refreshingUntil: 90_001,
+      });
+      return { older: await ctx.db.get(older), leased: await ctx.db.get(leased) };
+    });
+    expect(read.older).not.toHaveProperty('refreshingUntil');
+    expect(read.leased).toMatchObject({ generation: 2, refreshingUntil: 90_001 });
+  });
+
+  it("records with a pending authorisation what the issuer's metadata said at its start, and keeps an older one without it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const pending = {
+        stateNonce: 'nonce-1',
+        stateExpiresAt: 600_002,
+        clientId: 'mcp-client',
+        verifierCiphertext: 'sealed-verifier',
+        verifierIv: 'iv',
+        issuer: 'https://auth.example.com',
+        resource: 'https://mcp.example.com/mcp',
+        redirectUrl: 'http://localhost:3000/api/oauth/mcp',
+        startedAt: 2,
+      };
+      const card: WithoutSystemFields<Doc<'surfaces'>> = {
+        agentId,
+        slug: 'example',
+        displayName: 'Example',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('surfaces', { ...card, pendingAuthorisation: pending });
+      const recorded = await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'example-2',
+        pendingAuthorisation: {
+          ...pending,
+          issuerMetadata: {
+            issParameterSupported: true,
+            tokenEndpoint: 'https://auth.example.com/token',
+            tokenEndpointAuthMethods: ['client_secret_post'],
+          },
+        },
+      });
+      return { older: await ctx.db.get(older), recorded: await ctx.db.get(recorded) };
+    });
+    expect(read.older?.pendingAuthorisation).not.toHaveProperty('issuerMetadata');
+    expect(read.recorded?.pendingAuthorisation?.issuerMetadata).toEqual({
+      issParameterSupported: true,
+      tokenEndpoint: 'https://auth.example.com/token',
+      tokenEndpointAuthMethods: ['client_secret_post'],
+    });
+  });
+
+  it("gives a skill row its owner's key, read with its version by owner first; an older row keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Mateo',
+        readRefs: [],
+        verifiedAt: 2,
+        createdAt: 2,
+      });
+      const holder = {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        body: '# Comment and close',
+        sourceType: 'agent-authored' as const,
+        state: 'registered' as const,
+        versionId,
+        createdAt: 3,
+      };
+      const older = await ctx.db.insert('skills', holder);
+      const keyed = await ctx.db.insert('skills', { ...holder, ownerKey: 'owner' });
+      await ctx.db.insert('skills', { ...holder, ownerKey: 'another-owner' });
+      const holders = await ctx.db
+        .query('skills')
+        .withIndex('by_owner_version', (q) => q.eq('ownerKey', 'owner').eq('versionId', versionId))
+        .collect();
+      return { older: await ctx.db.get(older), holders: holders.map((row) => row._id), keyed };
+    });
+    expect(read.older).not.toHaveProperty('ownerKey');
+    expect(read.holders).toEqual([read.keyed]);
+  });
+});

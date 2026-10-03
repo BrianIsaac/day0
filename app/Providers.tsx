@@ -21,10 +21,14 @@ import {
   customerSignInHref,
   type SessionAccount,
 } from '@/lib/customer-sign-in';
+import { deploymentClerkAddresses } from '@/lib/clerk-addresses';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 import { Button, ButtonLink, buttonClass } from './components/Button';
+
+/** Where Clerk sends a visitor to sign in or up: Day0's own pages unless the environment names others. */
+const CLERK_ADDRESSES = deploymentClerkAddresses();
 
 /**
  * Wraps with Clerk + Convex. Clerk auto-provisions keyless dev keys when
@@ -79,7 +83,7 @@ export function Providers({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ClerkProvider>
+    <ClerkProvider {...CLERK_ADDRESSES}>
       <ClerkConvexProvider client={client}>{children}</ClerkConvexProvider>
     </ClerkProvider>
   );

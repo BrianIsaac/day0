@@ -91,6 +91,7 @@ import { generatedCodeState, restoreGeneratedCode } from './lib/generated-code';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
 import { parseAnswers, runAccess, type AccessFlags } from './setup-access';
+import type { OauthFetch } from '../src/surfaces/mcp-oauth';
 import { credentialKeyToAdopt, PROTECTED_PROJECTS, PROTECTED_VOLUMES } from './demo-bed';
 import {
   defaultModel,
@@ -381,6 +382,8 @@ export interface SetupIo {
   newestMigrationRelease?: string;
   /** The network seam the access verb calls the deployment through; the global `fetch` by default. */
   readonly fetch?: typeof fetch;
+  /** The network seam the access verb reads an MCP server's metadata through; the global one by default. */
+  readonly vendorFetch?: OauthFetch;
   /** All of stdin, for `--secrets-stdin`; a terminal on stdin is refused, a pipe or a file read whole. */
   readStdin?(): Promise<string>;
   /**
@@ -506,6 +509,8 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
     --record <dir>                        where the install record goes (default
                                           ~/day0-install/<project>)
     --print-manifest <slack|linear>       print the kit's manifest for that system and stop
+    --employee <name>                     with --print-manifest linear: the employee's own app's
+                                          form instead of the shared app's (per employee)
     --correct <slack|linear|https://...>  record the redirect Day0 returns to and the kit's
                                           scopes on that system's connection, after IT fixed
                                           them at the vendor; no secret changes, no card ends
@@ -564,6 +569,7 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     '--connect-mode': 'connectModes',
     '--record': 'record',
     '--print-manifest': 'printManifest',
+    '--employee': 'employee',
     '--correct': 'correct',
   };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {
@@ -3421,11 +3427,21 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return 1;
     }
 
+    let redactorHealth: ServiceHealth | undefined;
     if (route === 'endpoint') {
       // The address the backend dials is only known to work from inside it:
       // the bed's own stop was an endpoint on another Docker bridge that the
       // host reached and the container did not (pass 11, section 3b).
       const backendUrl = readEnvValues(envPath).CONVEX_OPENAI_BASE_URL?.trim() ?? '';
+      if (real && redactor && namesTheRedactor(backendUrl)) {
+        // An endpoint that is this project's own redactor listens only once it is healthy, and
+        // a restore or a first start has just recreated it (the pre-tag's restore race).
+        redactorHealth = await waitForRedactor(
+          io,
+          environment,
+          redactor.rebuilds ? 1_800_000 : 300_000,
+        );
+      }
       if (backendUrl !== '') {
         const dial = readContainerDial(
           io.run('docker', composeArguments(containerDialArguments(backendUrl)), {
@@ -3647,11 +3663,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     await io.waitForBackend(ports.backend, 180_000);
 
     if (real && redactor) {
-      const health = await waitForRedactor(
-        io,
-        environment,
-        redactor.rebuilds ? 1_800_000 : 300_000,
-      );
+      const health =
+        redactorHealth === 'healthy'
+          ? redactorHealth
+          : await waitForRedactor(io, environment, redactor.rebuilds ? 1_800_000 : 300_000);
       if (health === 'healthy') {
         io.log('    the redactor is healthy: the model is loaded and verified');
       } else {
@@ -5300,6 +5315,7 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     {
       access: options.access ?? {},
       dryRun: options.dryRun,
+      install: true,
       ...(answers === undefined ? {} : { answers }),
     },
     io,
@@ -5417,6 +5433,22 @@ function readVenvDevice(io: SetupIo, volume: string, image: string | undefined):
   const stamp = io.run('docker', venvStampCommand(volume, nodeImage), { timeoutMs: 120_000 });
   if (stamp.status !== 0) return 'unknown';
   return venvDevice(stamp.stdout, requirementsDigests(io.cwd));
+}
+
+/**
+ * Whether a model endpoint is this project's own redactor service, as a bed with no model vendor
+ * names it (`--endpoint http://redactor:8000/v1`): the backend reaches it by its service name.
+ *
+ * @param endpoint - The address the backend calls (`CONVEX_OPENAI_BASE_URL`).
+ * @returns True when the endpoint's host is the redactor's.
+ */
+export function namesTheRedactor(endpoint: string): boolean {
+  try {
+    return new URL(endpoint).hostname === new URL(REDACTOR_URL).hostname;
+  } catch {
+    // Not an address: the dial after it says so.
+    return false;
+  }
 }
 
 /**

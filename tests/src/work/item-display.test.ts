@@ -33,6 +33,18 @@ describe('sourceLine', (): void => {
     ).toBe('Sara, in #revops-asks');
   });
 
+  it('never prints a raw Slack user id for who asked, as intake records a Slack mention (the re-walk, row 8)', (): void => {
+    expect(
+      sourceLine(
+        row({
+          requesterLabel: 'U0BTFK6FLNL',
+          replyTarget: { channel: 'C0BSQTE1H7E', channelName: 'revops' },
+        }),
+      ),
+    ).toBe('A Slack member, in #revops');
+    expect(sourceLine(row({ requesterLabel: 'WAREHOUSE' }))).toBe('WAREHOUSE, in #revops-asks');
+  });
+
   it('names a ticket by its id, and says whichever half the row knows', (): void => {
     const ticket = { sourceCategory: 'ticket-queue', externalId: 'REVOPS-30', title: 'Refresh' };
     expect(sourceLine(row({ ...ticket, requesterLabel: 'Aman' }))).toBe('Aman, on REVOPS-30');

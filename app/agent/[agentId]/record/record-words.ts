@@ -226,9 +226,47 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
       : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
   }
   if (p.method === 'auth.revoke') {
-    return p.outcome === 'done'
-      ? `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use`
-      : `Revoking ${token} at Slack failed${because(p.reason)}; Day0's copy was deleted`;
+    // Slack's `auth.revoke` ends the token alone: its refresh token stays usable at Slack, and
+    // nothing ends it but its lapse, not even the row's Delete on api.slack.com, which is not
+    // listed after a revoke anyway (R41V-10, R41X-8), so every line says what IT can do.
+    const refreshAdvice =
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed';
+    // A token a renewal was issued after the connection's revoke was kept nowhere: no copy.
+    const unkept = p.unkept === true;
+    const which = unkept
+      ? 'a configuration token Slack issued to a renewal that finished after the connection was revoked'
+      : token;
+    // Slack's auth.test could not be asked afterwards whether the token still works (m2).
+    const notChecked =
+      p.unchecked === true
+        ? ', though Slack could not be asked afterwards whether it still works'
+        : '';
+    switch (p.outcome) {
+      case 'done':
+        return unkept
+          ? `Day0 revoked ${which}, which it kept nowhere${notChecked}; ${refreshAdvice}`
+          : `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use${notChecked}; ${refreshAdvice}`;
+      case 'already-revoked':
+        return `${capitalised(which)} had already ended at Slack when Day0 asked${because(p.reason)}${notChecked}; ${
+          unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
+        }, and ${refreshAdvice}`;
+      case 'unrecognised':
+        return `Slack did not recognise ${which} when Day0 asked to revoke it${because(p.reason)}${notChecked}. Day0 cannot tell whether Slack had ended it or never knew it; ${
+          unkept ? 'Day0 kept no copy' : 'Day0 deleted its copy'
+        }, and ${refreshAdvice}`;
+      case 'failed':
+      case 'superseded':
+      case undefined:
+        return `Revoking ${which} at Slack failed${because(p.reason)}; ${
+          unkept ? 'Day0 kept no copy' : "Day0's copy was deleted"
+        }, and ${refreshAdvice}`;
+      default: {
+        const unknown: never = p.outcome;
+        return `Day0 asked Slack to revoke ${token}: ${String(unknown)}`;
+      }
+    }
   }
   switch (p.outcome) {
     case 'done':
@@ -236,6 +274,8 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     case 'superseded':
       return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
     case 'failed':
+    case 'already-revoked':
+    case 'unrecognised':
     case undefined:
       return `Day0 could not renew ${token}${because(p.reason)}`;
     default: {
@@ -265,11 +305,45 @@ function channelsRejoinedWords(
 }
 
 /**
+ * What the revoke of a shared connection did to the organisation's own app-actor token at the
+ * vendor (R41V-1): no employee is left to share it, so it is revoked there.
+ */
+function sharedTokenRevokedWords(
+  p: Read<'organisation.revoked-at-source'>,
+  system: string,
+): string {
+  const token = `the organisation's shared ${system} app token`;
+  switch (p.outcome) {
+    case 'token-revoked':
+      return `Day0 revoked ${token} at ${system} and deleted its copy`;
+    case 'already-gone':
+      return `The organisation's shared ${system} app token was already revoked at ${system}; Day0 deleted its copy`;
+    case 'retrying':
+      return `Revoking ${token} at ${system} failed and will be tried again${because(p.reason)}`;
+    case 'failed':
+      return `Revoking ${token} at ${system} failed${because(p.reason)}; Day0's copy was deleted, and the token lapses 30 days after it was issued`;
+    case 'app-deleted':
+    case 'app-uninstalled':
+    case 'not-supported':
+    case 'shared':
+    case 'not-at-vendor':
+    case 'pasted-key':
+    case undefined:
+      return `The organisation's shared ${system} app token ended with its connection`;
+    default: {
+      const unknown: never = p.outcome;
+      return `The organisation's shared ${system} app token ended with its connection (${String(unknown)})`;
+    }
+  }
+}
+
+/**
  * What one attempt made with an organisation connection's secret did at the vendor, on the
  * connection's ledger (11-AR over 11-AO): it names no employee and no card (AC11).
  */
 function organisationRevokedAtSourceWords(p: Read<'organisation.revoked-at-source'>): string {
   const system = systemDisplayName(text(p.system) ?? 'the vendor');
+  if (p.shared === true) return sharedTokenRevokedWords(p, system);
   const by = `with the organisation's ${system} connection`;
   switch (p.outcome) {
     case 'token-revoked':
@@ -336,7 +410,11 @@ function revokedAtSourceWords(
     case 'not-supported':
       return `Access to ${connection} could not be revoked at ${system}${because(p.reason)}`;
     case 'shared':
-      return `Access to ${connection} ended; its shared app token was not revoked at ${system}, since the app's other employees use it`;
+      // The connection's own revoke revokes the shared token at the vendor (R41V-1); any other
+      // end leaves it to the app's other employees.
+      return p.end === 'organisation-revoked'
+        ? `Access to ${connection} ended; its shared app token is revoked at ${system} with the organisation's connection`
+        : `Access to ${connection} ended; its shared app token was not revoked at ${system}, since the app's other employees use it`;
     case 'not-at-vendor':
       return `Access to ${connection} ended with nothing changed at ${system}${because(p.reason)}`;
     case 'pasted-key':

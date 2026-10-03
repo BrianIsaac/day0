@@ -21,6 +21,8 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a query answers, by function name; undefined (loading) otherwise. */
   queries: {} as Record<string, unknown>,
+  /** A call that waits, by function name, until the test lets it settle. */
+  held: {} as Record<string, Promise<void>>,
 }));
 
 vi.mock('convex/react', () => {
@@ -29,6 +31,7 @@ vi.mock('convex/react', () => {
     async (args?: unknown): Promise<unknown> => {
       const name = getFunctionName(reference as never);
       backend.calls.push({ name, args });
+      await backend.held[name];
       const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
       return backend.results[name];
@@ -82,6 +85,50 @@ describe('loading is not the same as empty (P3-13)', (): void => {
     );
     expect(queue).toContain('Loading the work queue…');
     expect(queue).not.toContain('Nothing has come in yet');
+  });
+});
+
+describe("a card waiting on a skill whose draft failed Day0's check (D3)", (): void => {
+  it('tells only the card waiting on that skill, and links it to its Retry', (): void => {
+    const waiting = (id: string, skillId: string): Doc<'workItems'> =>
+      ({
+        _id: id,
+        _creationTime: 1,
+        agentId: 'a1',
+        title: `Close out ticket ${id}`,
+        state: 'needs-skill',
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: id,
+        contentSummary: 'Priya: "Please close it."',
+        contentRefs: [],
+        verdict: { decision: 'needs-skill', reason: 'smoke test failed' },
+        proposedSkillId: skillId,
+        createdAt: 1,
+      }) as unknown as Doc<'workItems'>;
+    const queue = renderToStaticMarkup(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={[waiting('w1', 'skill-failed'), waiting('w2', 'skill-proposed')]}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved={true}
+        autonomousActions={false}
+        surfaceMode="mock"
+        refusedSkills={
+          new Map([
+            [
+              'skill-failed',
+              { skillId: 'skill-failed', name: 'kanban-comment-and-close', retryable: true },
+            ],
+          ])
+        }
+      />,
+    );
+    expect(queue.match(/Retry it on the Skills tab/g)).toHaveLength(1);
+    expect(queue).toContain('href="/agent/a1/skills#skill-skill-failed"');
+    expect(queue).toContain('holds the proposal');
   });
 });
 
@@ -281,6 +328,78 @@ describe('the queue gliding its cards to their new places (second review x8)', (
       { id: 'item-w-b', from: 'translateY(100px)' },
       { id: 'item-w-a', from: 'translateY(-100px)' },
     ]);
+    view.unmount();
+  });
+});
+
+describe("the mock office's own loop (round 0141 R-D item 1, the bed walk)", (): void => {
+  afterEach((): void => {
+    backend.calls.length = 0;
+    backend.held = {};
+    backend.results = {};
+  });
+
+  /** A work item row with the given id, state and verdict. */
+  function item(id: string, state: string, verdict?: unknown): Doc<'workItems'> {
+    return {
+      _id: id,
+      _creationTime: 1,
+      agentId: 'a1',
+      state,
+      title: id,
+      sourceSystem: 'ticket',
+      sourceCategory: 'ticket-queue',
+      externalId: id,
+      contentSummary: 's',
+      contentRefs: [],
+      observedAt: 1,
+      createdAt: 1,
+      ...(verdict !== undefined ? { verdict } : {}),
+    } as unknown as Doc<'workItems'>;
+  }
+
+  function queue(items: Doc<'workItems'>[]) {
+    return (
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={items}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={1}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="mock"
+      />
+    );
+  }
+
+  const evaluations = (): number =>
+    backend.calls.filter((call) => call.name === 'workActions:evaluateWorkItem').length;
+
+  it('asks again for a queued item when its slot freed while that item was being judged', async (): Promise<void> => {
+    let release = (): void => undefined;
+    backend.held = {
+      'workActions:evaluateWorkItem': new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    };
+    backend.results = { 'workActions:evaluateWorkItem': { decision: 'queue' } };
+    const queued = item('w-ticket', 'discovered', { decision: 'queue' });
+    const view = mount(queue([queued, item('w-docs', 'actions-pending')]));
+    await settle();
+    expect(evaluations()).toBe(1);
+
+    // The docs item finishes while the ticket item's judgement is still under way.
+    act((): void => view.root.render(queue([queued, item('w-docs', 'completed')])));
+    await settle();
+    expect(evaluations()).toBe(1);
+
+    backend.held = {};
+    await act(async (): Promise<void> => {
+      release();
+    });
+    await settle();
+    expect(evaluations()).toBe(2);
     view.unmount();
   });
 });

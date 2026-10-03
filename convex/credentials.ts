@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import {
   internalAction,
   internalMutation,
@@ -12,6 +12,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
+import { credentialIssuerValidator } from './schema';
 import { isOrganisationOwnerKey, ORGANISATION_HOLDER } from '../src/lib/organisation-key';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/credential-ref';
@@ -38,6 +39,23 @@ const ORGANISATION_HOLDER_MISMATCH =
 /** Why an organisation credential from a documentation page is refused. */
 const ORGANISATION_PAGE_SOURCE =
   "An organisation credential is entered by IT or issued to Day0, never read off an owner's page.";
+
+/**
+ * Refuse an issuer on a value found in documentation: Day0 obtains a value through an issuer or an
+ * install, never from a page, and a page-derived row is upserted by its page and ref.
+ *
+ * @throws Error when a page-derived value names an issuer.
+ */
+function assertIssuedNotFound(
+  issuedBy: Infer<typeof credentialIssuerValidator> | undefined,
+  source: Infer<typeof credentialSource>,
+): void {
+  if (issuedBy !== undefined && pageSource(source) !== undefined) {
+    throw new Error(
+      'A value found in documentation is never one Day0 obtained; nothing was stored.',
+    );
+  }
+}
 
 /**
  * Refuse a credential write whose holder and owner key disagree (AC12): a row the organisation
@@ -184,9 +202,12 @@ export const persistEncrypted = internalMutation({
     syncRunId: v.optional(v.id('docSyncRuns')),
     /** `organisation` for a row the organisation holds, under the reserved key; absent for an owner's. */
     holder: v.optional(credentialHolder),
+    /** How Day0 obtained the value, written with it (`store`'s `issuedBy`). */
+    issuedBy: v.optional(credentialIssuerValidator),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     assertHolderOfKey(args.userId, args.holder, args.source);
+    assertIssuedNotFound(args.issuedBy, args.source);
     const sourced = pageSource(args.source);
     await fenceSyncWrite(ctx, sourced?.sourceId, args.syncRunId);
     if (sourced) {
@@ -221,6 +242,7 @@ export const persistEncrypted = internalMutation({
         quoted: args.quoted,
         source: args.source,
         appId: args.appId,
+        ...(args.issuedBy === undefined ? {} : { issuedBy: args.issuedBy }),
         createdAt: Date.now(),
       });
     }
@@ -782,7 +804,10 @@ async function storedValue(
  * again, so no known value mints a second row. The value is sealed bound to its
  * owner, so it opens only on that owner's row; a value the organisation holds
  * (`holder: 'organisation'` under the reserved key) is sealed bound to the
- * organisation (F18). The Node-only AES operation is
+ * organisation (F18). A value Day0 itself obtained carries its `issuedBy`
+ * into the same write, so no such row ever exists without it (a row without
+ * one is read as a pasted key and never revoked at the vendor); a value found
+ * in documentation never carries one. The Node-only AES operation is
  * isolated in `credentialCryptoActions` because Convex forbids a Node module
  * from also exporting this module's public query and mutation.
  */
@@ -803,9 +828,12 @@ export const store = internalAction({
      * with `userId` the reserved organisation key; absent for an owner's.
      */
     holder: v.optional(credentialHolder),
+    /** How Day0 obtained the value (11-AR reads it to revoke it at the vendor); absent for a pasted one. */
+    issuedBy: v.optional(credentialIssuerValidator),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     assertHolderOfKey(args.userId, args.holder, args.source);
+    assertIssuedNotFound(args.issuedBy, args.source);
     const plaintext = credentialPlaintext(args.kind, args.plaintext);
     const sourced = pageSource(args.source);
     if (sourced) {
@@ -867,6 +895,7 @@ export const store = internalAction({
     return await ctx.runMutation(internal.credentials.persistEncrypted, {
       userId: args.userId,
       ...(args.holder === undefined ? {} : { holder: args.holder }),
+      ...(args.issuedBy === undefined ? {} : { issuedBy: args.issuedBy }),
       source: args.source,
       ...metadata,
       ...encrypted,

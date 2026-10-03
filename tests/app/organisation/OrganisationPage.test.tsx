@@ -293,6 +293,47 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     );
   });
 
+  it("asks how many cards a revoke ends, and says the number (11-AC's item 3)", async (): Promise<void> => {
+    asAdministrator();
+    backend.queries['organisationConnections:cardsOn'] = { cards: 3, atLeast: false };
+    mount(<OrganisationPage zone="UTC" />);
+    await settle();
+    await open('Revoke');
+    expect(text(dialog())).toContain(
+      '3 employee cards connected through it end now, each with your reason, and what Day0 obtained through it is revoked at Slack.',
+    );
+    expect(backend.asked).toContainEqual({
+      name: 'organisationConnections:cardsOn',
+      args: { organisationConnectionId: 'connection-slack' },
+    });
+  });
+
+  it("names the reason the record's alone where the revoke ends no card (the second pass's design reader)", async (): Promise<void> => {
+    asAdministrator();
+    backend.queries['organisationConnections:cardsOn'] = { cards: 0, atLeast: false };
+    mount(<OrganisationPage zone="UTC" />);
+    await settle();
+    await open('Revoke');
+    expect(text(dialog())).toContain('The reason for the record');
+    expect(text(dialog())).toContain('No card shows it.');
+    expect(text(dialog())).not.toContain('The reason each card will show');
+  });
+
+  it('holds Revoke where more cards use the connection than one revoke ends, which the backend refuses', async (): Promise<void> => {
+    asAdministrator();
+    backend.queries['organisationConnections:cardsOn'] = { cards: 1000, atLeast: true };
+    mount(<OrganisationPage zone="UTC" />);
+    await settle();
+    await open('Revoke');
+    const reason = dialog().querySelector<HTMLInputElement>('input');
+    if (!reason) throw new Error('no reason field');
+    typeInto(reason, 'Moving to a new workspace');
+    const revoke = [...dialog().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Revoke Slack',
+    );
+    expect(revoke?.disabled).toBe(true);
+  });
+
   it('says a refused revoke inside the dialog and keeps it open', async (): Promise<void> => {
     asAdministrator();
     backend.refusals['organisationConnections:revoke'] = 'The connection is already revoked.';
@@ -315,6 +356,8 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
     await settle();
     await open('Give it a new secret');
     expect(text(dialog())).toContain('No card is affected');
+    // Slack's auth.revoke ends the old token alone (the round review's m17).
+    expect(text(dialog())).toContain("Nothing ends that token's refresh token");
     const [secret, refresh] = [...dialog().querySelectorAll<HTMLInputElement>('input')];
     expect(secret?.type).toBe('password');
     expect(refresh?.type).toBe('password');

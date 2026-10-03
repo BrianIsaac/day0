@@ -288,7 +288,7 @@ export function SurfaceCards({
           refused: `${surface.displayName} was not disconnected.`,
         });
       },
-      draftAccessRequest: () => draftAccessRequest({ surfaceId: surface._id }),
+      draftAccessRequest: (via) => draftAccessRequest({ surfaceId: surface._id, via }),
       recordAccessRequestSent: (via) => recordAccessRequestSent({ surfaceId: surface._id, via }),
     };
   }

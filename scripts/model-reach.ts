@@ -35,6 +35,18 @@ export interface ModelDial {
  *   Arguments for `docker compose`.
  */
 export function containerDialArguments(baseUrl: string): string[] {
+  return containerReachArguments(`${baseUrl.trim().replace(/\/+$/, '')}/models`);
+}
+
+/**
+ * The `docker compose` arguments, after the project and env file, that ask one address from the
+ * backend container with a GET and no credential, printing only the HTTP status (`000` when
+ * nothing answered, with curl's reason on stderr). `check:access` asks each vendor's address
+ * this way, so a pass says the deployment itself reaches it.
+ *
+ * @param address - The address to ask.
+ */
+export function containerReachArguments(address: string): string[] {
   return [
     'exec',
     '-T',
@@ -47,7 +59,7 @@ export function containerDialArguments(baseUrl: string): string[] {
     '%{http_code}',
     '--max-time',
     String(DIAL_SECONDS),
-    `${baseUrl.trim().replace(/\/+$/, '')}/models`,
+    address,
   ];
 }
 

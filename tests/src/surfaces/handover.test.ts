@@ -86,6 +86,32 @@ describe("the employee's own identity at a handover (A25; the access plan, secti
     ).toBe('cut');
   });
 
+  it("keeps an own app whose access ended on the page as the move keeps it, by the app's secret (11-AC's item 15)", (): void => {
+    const secretId = 'secret' as Id<'credentials'>;
+    // An expiry or a Disconnect cleared the bot token; the app the connection created stays.
+    const ended = {
+      ...ownIdentityCard(),
+      verdict: 'approved' as const,
+      credentialId: undefined,
+      provisioning: {
+        appId: 'A1',
+        appName: 'Leo (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: secretId,
+        organisationConnectionId: connectionId,
+      },
+    } as Parameters<typeof surfaceHandoverOf>[0];
+    const secret = {
+      _id: secretId,
+      userId: 'organisation',
+      holder: 'organisation',
+      issuedBy: { system: 'slack', grant: 'app-created', organisationConnectionId: connectionId },
+    } as unknown as Doc<'credentials'>;
+
+    expect(surfaceHandoverOf(ended, [secret])).toBe('reapprove');
+    expect(surfaceHandoverOf(ended)).toBe('reapprove');
+  });
+
   it('cuts an own app Day0 made without an organisation connection, as before', (): void => {
     const card = { ...ownIdentityCard(), organisationConnectionId: undefined };
     const unlinkedIssue = {

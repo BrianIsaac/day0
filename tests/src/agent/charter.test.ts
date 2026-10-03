@@ -18,6 +18,7 @@ import {
   OPEN_QUESTIONS_2026_09_16,
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../fixtures/charter-synthesis-notes-2026-09-16';
+import { MOCK_OFFICE_NAMED_SYSTEMS } from '../../../src/surfaces/mock-office';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -239,5 +240,33 @@ describe('the charter prompt', (): void => {
       '- Leave out the rule "Own segment or pipeline work assigned to Priya.": the manager struck it.',
     ]);
     expect(prompt.indexOf('[open-questions]')).toBeLessThan(prompt.indexOf('[changes-requested]'));
+  });
+});
+
+describe('the mock office in the charter draft (round 0141 R-D item 5)', (): void => {
+  const answers = Object.fromEntries(
+    DAY_ONE_TOPICS.map((topic): [string, string] => [topic, `answer on ${topic}`]),
+  ) as Parameters<typeof userPrompt>[0];
+  const queue: NamedSystem = {
+    name: 'the ticket queue',
+    class: 'kanban',
+    whereMentioned: 'Work is tracked in the ticket queue.',
+  };
+
+  it("keeps the office's ticket queue as a named system under the office's name", (): void => {
+    expect(normaliseNamedSystems([queue], MOCK_OFFICE_NAMED_SYSTEMS)).toEqual([
+      { ...queue, name: 'Ticket queue' },
+    ]);
+  });
+
+  it('still reads a queue as a location inside a system where no office is given', (): void => {
+    expect(normaliseNamedSystems([queue])).toEqual([]);
+  });
+
+  it("tells the drafter the office's systems, and only when there is an office", (): void => {
+    const prompt = userPrompt(answers, [], MOCK_OFFICE_NAMED_SYSTEMS);
+    expect(prompt).toContain('[office]');
+    expect(prompt).toContain('Ticket queue (kanban)');
+    expect(userPrompt(answers)).not.toContain('[office]');
   });
 });

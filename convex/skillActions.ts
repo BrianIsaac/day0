@@ -14,29 +14,6 @@ import { authorAndRegister, type AuthoringResult } from './skillAuthoringRun';
  * a deferred run's scheduled job names the second.
  */
 
-/*
- * The names `convex/storedVerification.ts` reads from this module; they live in
- * `convex/skillAuthorPrompt.ts`, `convex/skillSandboxCheck.ts` and `convex/skillAuthoringRecord.ts`.
- */
-export {
-  authorSchema,
-  authorSchemaFor,
-  buildAuthorPrompt,
-  linkedRunbookExcerpts,
-  skillAuthorAgent,
-  type AuthorPromptSkill,
-  type AuthorRunbookPage,
-} from './skillAuthorPrompt';
-export { holdSandboxLease, namedHarnessSurfaces, verifyAuthoredSkill } from './skillSandboxCheck';
-export {
-  FAILED_VERIFICATION_LOG_CHARS,
-  recordAuthoringFailure,
-  recordingAuthoringCalls,
-  redactAuthoringTexts,
-  storedCopyRefusedReason,
-  SUPERSEDED,
-} from './skillAuthoringRecord';
-
 /**
  * One authoring run of an approved skill, as the dashboard starts it once the approval returns.
  * Public; the caller must own the skill (`skills.get`'s guard, asked first). Writes what the run

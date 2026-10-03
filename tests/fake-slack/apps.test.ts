@@ -112,7 +112,7 @@ describe("fake Slack's configuration token (S2)", (): void => {
 
     expect(await api('apps.manifest.create', CONFIGURATION_TOKEN, { manifest: '{}' })).toEqual({
       ok: false,
-      error: 'invalid_auth',
+      error: 'token_revoked',
     });
     expect((await createApp(token)).appId).toBe('A_DAY0_FAKE');
     expect(
@@ -223,7 +223,7 @@ describe("an app's deletion and uninstall (S4)", (): void => {
     });
     expect(await api('apps.manifest.delete', CONFIGURATION_TOKEN, { app_id: app.appId })).toEqual({
       ok: false,
-      error: 'invalid_auth',
+      error: 'token_revoked',
     });
     expect(await api('apps.manifest.delete', String(rotated.token), { app_id: app.appId })).toEqual(
       { ok: true },

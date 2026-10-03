@@ -8,7 +8,10 @@ import {
   CONFIGURATION_RENEW_BEFORE_MS,
   CONFIGURATION_TOKEN_LIFETIME_MS,
   KEEP_CURRENT_MIN_DELAY_MS,
+  KEPT_APP_CONNECTION_REVOKED,
   configurationRenewal,
+  installedBotIssuer,
+  isIssuedAs,
   keepCurrentAt,
   parseTokenRotation,
   rejoinPlan,
@@ -18,6 +21,7 @@ import {
   slackBotTokenIssuer,
   slackClientSecretIssuer,
 } from '../../../../src/surfaces/identity-issuers/slack';
+import { SLACK_RETIRE_ORPHANED_APP } from '../../../fixtures/real-vendor-rewalk-2026-10-03';
 import { ManifestTemplateError } from '../../../../src/surfaces/slack-manifest';
 
 const POLICY = readFileSync(
@@ -193,6 +197,33 @@ describe('what an issued row says about how Day0 obtained it (11-AR)', (): void 
     });
   });
 
+  it("reads the installed bot token's issuer off the card's app, with the connection that made it", (): void => {
+    expect(
+      installedBotIssuer({
+        appId: 'A1',
+        clientId: '1.2',
+        organisationConnectionId: connection,
+        clientSecretCredentialId: secret,
+      }),
+    ).toEqual({
+      system: 'slack',
+      grant: 'oauth-install',
+      appId: 'A1',
+      clientId: '1.2',
+      organisationConnectionId: connection,
+      clientSecretCredentialId: secret,
+    });
+  });
+
+  it('knows a stored row by every field of the issuer it was given, and nothing less (the pre-tag item 10)', (): void => {
+    const expected = slackClientSecretIssuer({ appId: 'A1', clientId: '1.2' });
+    expect(isIssuedAs({ ...expected }, expected)).toBe(true);
+    expect(isIssuedAs(undefined, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, appId: 'A2' }, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, grant: 'oauth-install' }, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, organisationConnectionId: connection }, expected)).toBe(false);
+  });
+
   it('acts as its own app, named by the app and its bot user', (): void => {
     expect(slackActsAs({ appName: 'Leo (Day0)', botUserId: 'U1' })).toEqual({
       kind: 'own-app',
@@ -226,5 +257,19 @@ describe('the re-join after a renewal (RM4)', (): void => {
 
   it('reads a blank name as none', (): void => {
     expect(rejoinPlan(['  ', '#'], visible)).toEqual({ join: [], alreadyIn: [], needsPerson: [] });
+  });
+});
+
+describe('an app whose creating connection IT revoked (R41X-9)', (): void => {
+  it('never promises a retire deletes it once IT connects Slack again, since the retire then answers that it cannot', (): void => {
+    // Juno's retire with IT's new connection live: SLACK_RETIRE_ORPHANED_APP.
+    expect(SLACK_RETIRE_ORPHANED_APP).toContain("delete it in Slack's app settings");
+    expect(KEPT_APP_CONNECTION_REVOKED).not.toMatch(/retire the app/i);
+    expect(KEPT_APP_CONNECTION_REVOKED).not.toMatch(/Once IT connects Slack again, retire/);
+    expect(KEPT_APP_CONNECTION_REVOKED).toBe(
+      "IT revoked the organisation's Slack connection this employee's app was created with, so " +
+        'the app is not installed again, and Day0 cannot delete it, even once IT connects Slack ' +
+        "again: IT deletes it in Slack's app settings.",
+    );
   });
 });

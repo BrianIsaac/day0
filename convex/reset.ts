@@ -1244,6 +1244,8 @@ const previewOutcome = v.object({
     v.literal('pasted-key'),
     v.literal('kept'),
   ),
+  /** Why no vendor is called, in the plan's own words, where the plan gives them (R41V-11). */
+  reason: v.optional(v.string()),
 });
 
 /** What `retirePreview` answers. */

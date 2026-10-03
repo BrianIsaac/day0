@@ -606,6 +606,46 @@ export function emptyScopeReason(system: string, surfaceClass: string): string {
   return `Reads nothing from ${system}: no documented ${what} was picked for this role.`;
 }
 
+/** A card as far as the page scan's reach reads it. */
+export interface PageScanCard {
+  readonly class: string;
+  readonly verdict: string;
+  readonly intakeScope?: unknown;
+}
+
+/**
+ * Whether intake reads a card by the page scan of the releases before the approved scope (the
+ * wave 11 review's m5): a kanban card proposed before `intakeScope` that the upgrade's
+ * `surfaces-intake-scope` pass could not scope. A declared card is scoped at its proposal, and an
+ * absent one reads nothing.
+ */
+export function keepsPageScan(card: PageScanCard): boolean {
+  return (
+    card.class === 'kanban' &&
+    card.intakeScope === undefined &&
+    card.verdict !== 'declared' &&
+    card.verdict !== 'absent'
+  );
+}
+
+/**
+ * The card's one line for a card that keeps the page scan (R-S; a wording draft, flagged).
+ *
+ * @param system - The surface's display name.
+ */
+export function pageScanLine(system: string): string {
+  return `No intake scope was approved with this card, so intake reads ${system} by the older page scan: the first project any page names.`;
+}
+
+/**
+ * The note a scope the upgrade derived carries on the card (R-S; a wording draft, flagged).
+ *
+ * @param system - The surface's display name.
+ */
+export function upgradeScopeNote(system: string): string {
+  return `Set at the upgrade from the documented queues your own words about ${system} name; before it, intake read the first project any page named.`;
+}
+
 /**
  * The card's line for what a surface reads, with the quotes that ground it.
  *

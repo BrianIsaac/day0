@@ -1,3 +1,5 @@
+import { linearTokenRevocation, readLinearAnswer } from '../revokers/linear';
+
 /*
  * Linear's identity issuer (wave 11, 11-AL; the access plan, sections 4.2 and 4.10; the wave
  * file's L1 to L4, read again on 2 October). Two modes, chosen per deployment on the
@@ -263,6 +265,13 @@ function grantedScopes(value: unknown): readonly string[] {
   return listed.map((scope) => scope.trim()).filter((scope) => scope !== '');
 }
 
+/**
+ * Linear's words for a token whose grant was revoked, which it sends without `invalid_grant`
+ * ("Refresh token revoked" after an administrator's "Revoke access", the real-vendor walk, 3
+ * October 2026, R41V-9).
+ */
+const GRANT_REVOKED = /\btoken\b.*\brevoked\b/i;
+
 /** The refusal Linear's OAuth error answer names. */
 function refusalOf(status: number, error: string | undefined, description: string | undefined) {
   if (status >= 500 || status === 429) return 'unavailable' as const;
@@ -275,6 +284,9 @@ function refusalOf(status: number, error: string | undefined, description: strin
   if (error === 'invalid_client' || error === 'unauthorized_client')
     return 'client-refused' as const;
   if (error === 'invalid_grant') return 'token-refused' as const;
+  if ([error, description].some((words) => words !== undefined && GRANT_REVOKED.test(words))) {
+    return 'token-refused' as const;
+  }
   if (status === 401) return 'unauthorised' as const;
   return 'malformed' as const;
 }
@@ -308,8 +320,12 @@ export function readTokenResponse(status: number, body: unknown, now: number): L
   }
   const error = record === undefined ? undefined : stringField(record, 'error');
   const description = record === undefined ? undefined : stringField(record, 'error_description');
+  // An answer with no token is read by its words whatever its status: the walk quoted Linear's
+  // "Refresh token revoked" without its status, and a 2xx carrying it is still a revoked grant.
   const reason =
-    status >= 200 && status < 300 ? ('malformed' as const) : refusalOf(status, error, description);
+    status >= 200 && status < 300 && error === undefined && description === undefined
+      ? ('malformed' as const)
+      : refusalOf(status, error, description);
   const detail = shownDescription(description) ?? error ?? `HTTP ${status}`;
   throw new LinearIssuerRefusal(reason, `${REFUSAL_LEADS[reason]}: ${detail}.`, error);
 }
@@ -522,13 +538,11 @@ export function renewalDueAt(expiresAt: number, now: number, lead: number): numb
   return Math.max(due, now + MIN_RENEWAL_INTERVAL_MS);
 }
 
-/** Linear's revocation endpoint (L3). */
-export const LINEAR_REVOKE_URL = 'https://api.linear.app/oauth/revoke';
-
 /**
  * Revoke one token Linear issued that Day0 will not keep (`POST /oauth/revoke` with `token` and
- * its `token_type_hint`, L3), so no grant is left live behind a refused landing. Linear's 400
- * ("unable to revoke", the token already revoked) leaves nothing live and is taken as done.
+ * its `token_type_hint`, L3), so no grant is left live behind a refused landing. The answer is
+ * read by Linear's revocation reader: a token Linear says it already revoked, or does not know
+ * (R41X-1), is done, and any other refusal is one, never taken as revoked (the round review's m4).
  *
  * @throws LinearIssuerRefusal when Linear cannot be reached or refuses otherwise.
  */
@@ -537,16 +551,38 @@ export async function revokeLinearToken(
   token: string,
   hint: 'access_token' | 'refresh_token',
 ): Promise<void> {
-  const response = await send(fetch, LINEAR_REVOKE_URL, {
+  const request = linearTokenRevocation(token, hint);
+  const response = await send(fetch, request.url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, token_type_hint: hint }).toString(),
+    headers: request.headers,
+    body: request.body,
   });
-  if (response.status === 200 || response.status === 400) return;
-  throw new LinearIssuerRefusal(
-    response.status >= 500 || response.status === 429 ? 'unavailable' : 'malformed',
-    `Linear did not revoke the token: HTTP ${response.status}.`,
-  );
+  let body: unknown;
+  try {
+    body = await bodyOf(response);
+  } catch (error) {
+    // An answer whose body never arrived is the transport's failure, as an unreachable Linear is.
+    throw new LinearIssuerRefusal(
+      'unavailable',
+      `${REFUSAL_LEADS.unavailable}: ${transportDetail(error)}.`,
+    );
+  }
+  const answer = readLinearAnswer(response.status, body);
+  switch (answer.kind) {
+    case 'revoked':
+    case 'gone':
+      return;
+    case 'retry':
+    case 'refused':
+      throw new LinearIssuerRefusal(
+        answer.kind === 'retry' ? 'unavailable' : 'malformed',
+        `Linear did not revoke the token: ${answer.words.split(token).join('[token]')}`,
+      );
+    default: {
+      const unknown: never = answer;
+      throw new Error(`unhandled revocation answer ${String(unknown)}`);
+    }
+  }
 }
 
 /** The refusals that withdraw Day0's authority in Linear, which only IT or the manager restores. */

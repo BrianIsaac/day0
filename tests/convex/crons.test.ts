@@ -529,6 +529,7 @@ describe('the cron targets, run by the names they are scheduled under', (): void
       expired: 0,
       noticed: 0,
       scheduled: 1,
+      keptEnded: 0,
     });
     await expect(runCron(harness, 'sync documentation sources')).resolves.toEqual({
       sources: 0,

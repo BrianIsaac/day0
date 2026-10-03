@@ -125,7 +125,16 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
         ]),
         'Leo',
       ),
-    ).toEqual(["Leo's Slack app: deleted in Slack.", "Leo's Linear access: revoked at Linear."]);
+    ).toEqual([
+      "Leo's Slack app: deleted in Slack.",
+      "Leo's Linear access: revoked at Linear. Leo's own Linear app stays in Linear's settings for IT to delete.",
+    ]);
+  });
+
+  it("says an employee's own Linear app stays in Linear's settings for IT to delete, as the retire leaves it (R41X-5)", (): void => {
+    expect(revokedLines(preview([outcome('Linear', 'linear', 'token-revoked')]), 'Mira')).toEqual([
+      "Mira's Linear access: revoked at Linear. Mira's own Linear app stays in Linear's settings for IT to delete.",
+    ]);
   });
 
   it('says every other outcome in its own words, a shared app and a server with no revocation included', (): void => {
@@ -146,6 +155,23 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
       "Leo's Acme docs access: docs.acme.test offers no way to revoke it, so Day0 deletes its copy.",
       "Leo's Tracker access: Day0 can no longer revoke it at tracker.acme.test, so revoke it there.",
       "Leo's Wiki access: ends in Day0, with nothing to revoke at wiki.acme.test.",
+    ]);
+  });
+
+  it("says in the plan's own words what stays at the vendor for IT, never that the vendor cannot revoke it (R41V-11)", (): void => {
+    expect(
+      revokedLines(
+        preview([
+          {
+            ...outcome('Slack', 'slack', 'not-supported'),
+            reason:
+              "Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
+          },
+        ]),
+        'Wren',
+      ),
+    ).toEqual([
+      "Wren's Slack access: ends in Day0. Day0 holds no configuration token to delete the app; delete it in Slack's app settings.",
     ]);
   });
 

@@ -4,30 +4,51 @@ import type { AccessRecipe } from './types';
 
 /*
  * Linear in the access kit (the access plan, section 4.10; L1 to L3, read 1 October 2026): IT
- * creates an OAuth app in Linear's settings from the manifest below (Linear's app manifests
- * pre-fill the create form; no API creates an app). In `shared` mode one app serves every
- * employee through client-credentials tokens, app-actor tokens valid 30 days, with a fixed scope
- * set (L2: a request with other scopes revokes and replaces the app's tokens). In `per-employee`
- * mode each employee has its own app, since Linear documents one app user per app per workspace
- * (L1), installed with `actor=app` by a Linear administrator from the access request's link.
+ * creates an OAuth app in Linear's settings from the manifest below, through a link that
+ * pre-fills the create form with the manifest's fields (no API creates an app). In `shared` mode
+ * one app serves every employee through client-credentials tokens, app-actor tokens valid 30
+ * days, with a fixed scope set (L2: a request with other scopes revokes and replaces the app's
+ * tokens). In `per-employee` mode each employee has its own app, since Linear documents one app
+ * user per app per workspace (L1), installed with `actor=app` by a Linear administrator from the
+ * access request's link.
  */
 
 /** The path Linear's authorisation returns to (11-AL's route, `app/api/oauth/linear`). */
 export const LINEAR_REDIRECT_PATH = '/api/oauth/linear';
 
 /**
- * The scopes a shared app's client-credentials tokens hold, fixed at install (L2): `read`, and
- * `write`, the only scope that changes an issue's state (`comments:create` covers comments only).
+ * The scope without which Linear refuses a ticket delegated or assigned to the app user ("One or
+ * more app users lack the required capability.", the real-vendor walk, 3 October 2026), and which
+ * Linear accepts only with `actor=app`. Linear checks it on a live app-actor token: the shared
+ * app's set must hold it, or its employees take only unassigned tickets (decision 5).
  */
-export const LINEAR_CLIENT_CREDENTIALS_SCOPES: readonly string[] = ['read', 'write'];
+export const LINEAR_DELEGATE_SCOPE = 'app:assignable';
 
 /**
- * The scopes an employee's own app is authorised with: the shared set, and `app:assignable`, so a
- * manager hands the employee a ticket by assigning it to the employee's app user (AC8).
+ * The scopes a shared app's client-credentials tokens hold, fixed at install (L2): `read`;
+ * `write`, the only scope that changes an issue's state (`comments:create` covers comments only);
+ * and {@link LINEAR_DELEGATE_SCOPE}, so a manager hands a ticket to the shared app user (AL1).
  */
-export const LINEAR_PER_EMPLOYEE_SCOPES: readonly string[] = ['read', 'write', 'app:assignable'];
+export const LINEAR_CLIENT_CREDENTIALS_SCOPES: readonly string[] = [
+  'read',
+  'write',
+  LINEAR_DELEGATE_SCOPE,
+];
 
-/** Linear's create-application page, which a manifest pre-fills. */
+/**
+ * The scopes an employee's own app is authorised with: the shared set, `app:assignable` among
+ * them, so a manager hands the employee a ticket by assigning it to the employee's app user (AC8).
+ */
+export const LINEAR_PER_EMPLOYEE_SCOPES: readonly string[] = LINEAR_CLIENT_CREDENTIALS_SCOPES;
+
+/** What a Linear app's employees cannot be handed without {@link LINEAR_DELEGATE_SCOPE}. */
+const LINEAR_MISSING_SCOPE_WORDS: Readonly<Record<string, string>> = {
+  [LINEAR_DELEGATE_SCOPE]:
+    'no ticket can be delegated or assigned to the app user, so its employees take only ' +
+    'unassigned tickets',
+};
+
+/** Linear's create-application page, which its dotted query fields pre-fill. */
 const CREATE_APPLICATION_URL = 'https://linear.app/settings/api/applications/new';
 
 /** Linear's authorisation endpoint. */
@@ -39,6 +60,16 @@ const MANIFEST_SCHEMA = 'https://linear.app/.well-known/oauth-app-manifest.schem
 /** A Linear app's name: 2 to 80 characters, never naming Linear itself. */
 const CLIENT_NAME_MIN = 2;
 const CLIENT_NAME_MAX = 80;
+
+/**
+ * The name of an employee's own Linear app, `<employee> (Day0)`: the manifest's `client_name`, and
+ * the name Linear then gives the app on its consent and in `viewer` (the re-walk, R41X-3).
+ *
+ * @param employee - The employee's name, as its card shows it.
+ */
+export function linearEmployeeAppName(employee: string): string {
+  return `${employee.trim()} (Day0)`;
+}
 
 /** An OAuth app manifest as Linear's schema 1.0.0 reads it: the fields Day0 sets. */
 export interface LinearAppManifest {
@@ -101,14 +132,28 @@ export function linearKitManifest(input: {
 }
 
 /**
- * The link that opens Linear's create-application form pre-filled with a manifest.
+ * The link that opens Linear's create-application form pre-filled with a manifest's fields, in
+ * Linear's dotted query form (`oauth.client_name=...`). Linear refuses a `?manifest=` link ("The
+ * app manifest provided in the URL is not valid", the re-walk, R41X-2), and the dotted form
+ * pre-filled an employee's app's form on real Linear. Each value is percent-encoded whole
+ * (`encodeURIComponent`): a space is `%20` as in that link, never `+`, and an origin's `:` and `/`
+ * are escaped too, where that link left the origin bare; both decode to the same fields. A list
+ * repeats its field, as the shared app's second grant type does. The description and the webhook
+ * setting are not in the link: the form is checked against the printed manifest.
  *
  * @param manifest - The manifest, from {@link linearKitManifest}.
  */
-export function linearManifestUrl(manifest: LinearAppManifest): string {
-  const url = new URL(CREATE_APPLICATION_URL);
-  url.searchParams.set('manifest', JSON.stringify(manifest));
-  return url.toString();
+export function linearCreateFormUrl(manifest: LinearAppManifest): string {
+  const fields: ReadonlyArray<readonly [name: string, value: string]> = [
+    ['distribution', manifest.distribution],
+    ['developer.name', manifest.developer.name],
+    ['oauth.client_name', manifest.oauth.client_name],
+    ['oauth.client_uri', manifest.oauth.client_uri],
+    ...manifest.oauth.redirect_uris.map((uri) => ['oauth.redirect_uris', uri] as const),
+    ...manifest.oauth.grant_types.map((grant) => ['oauth.grant_types', grant] as const),
+  ];
+  const query = fields.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&');
+  return `${CREATE_APPLICATION_URL}?${query}`;
 }
 
 /**
@@ -154,6 +199,7 @@ export const LINEAR_RECIPE: AccessRecipe = {
       kind: 'oauth-app',
       scopes: LINEAR_CLIENT_CREDENTIALS_SCOPES,
       clientCredentialsScopes: LINEAR_CLIENT_CREDENTIALS_SCOPES,
+      missingScopeWords: LINEAR_MISSING_SCOPE_WORDS,
       summary:
         'Create one OAuth app from the manifest, with client credentials enabled, and hand over ' +
         'its client id and client secret: every employee acts as that app.',
@@ -184,6 +230,7 @@ export const LINEAR_RECIPE: AccessRecipe = {
       mode: 'per-employee',
       kind: 'oauth-app',
       scopes: LINEAR_PER_EMPLOYEE_SCOPES,
+      missingScopeWords: LINEAR_MISSING_SCOPE_WORDS,
       summary:
         'Nothing to hand over now: for each employee a Linear administrator creates its own app ' +
         'from the access request and installs it as the app actor.',

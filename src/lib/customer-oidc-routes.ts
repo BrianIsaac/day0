@@ -547,6 +547,73 @@ export async function tokenRoute(request: NextRequest): Promise<NextResponse> {
   }
 }
 
+/** How long a session's ID token must still be good for to act on Convex with, unrefreshed. */
+const REDIRECT_TOKEN_MARGIN_MS = 10_000;
+
+/** The caller a top-level redirect acts as under the company sign-in, and what it writes back. */
+export interface RedirectCaller {
+  /** The ID token to act on Convex with, or null when the browser holds no live session. */
+  readonly idToken: string | null;
+  /** Write onto the redirect what became of the session: refreshed, ended, or nothing. */
+  readonly finish: (response: NextResponse) => Promise<void>;
+}
+
+/**
+ * The caller of a top-level redirect back into Day0 from another site (an MCP server's
+ * authorisation), under the company sign-in: the browser's session, its ID token refreshed with
+ * the refresh token first when it has lapsed or lapses within seconds, so a consent that took
+ * longer than the ID token lives still completes (the wave 11 pre-tag's second pass). A refresh
+ * the issuer refuses ends the session as the token route ends it; an issuer that cannot be
+ * reached leaves it standing and the redirect acts with no caller. The page's own token fetch is
+ * not there to refresh it: the redirect is a navigation, not a page.
+ *
+ * @param request - The redirect, with the session's cookies.
+ * @param now - The current time in milliseconds.
+ */
+export async function redirectCaller(
+  request: NextRequest,
+  now: number = Date.now(),
+): Promise<RedirectCaller> {
+  const nothing: RedirectCaller = { idToken: null, finish: async (): Promise<void> => undefined };
+  let settings: CustomerSignInSettings;
+  try {
+    settings = customerSignInSettings();
+  } catch (err) {
+    if (!(err instanceof CustomerSignInUnavailable)) throw err;
+    return nothing;
+  }
+  const session = await sessionOf(request, settings, now);
+  if (!session) return nothing;
+  if (session.idTokenExpiresAt - now > REDIRECT_TOKEN_MARGIN_MS) {
+    return { idToken: session.idToken, finish: nothing.finish };
+  }
+  if (!session.refreshToken) return nothing;
+  const outcome = await refreshSession(settings, session, now);
+  switch (outcome.kind) {
+    case 'refreshed':
+      return {
+        idToken: outcome.session.idToken,
+        finish: async (response: NextResponse): Promise<void> =>
+          await writeSession(response, { request, settings, session: outcome.session, now }),
+      };
+    case 'refused':
+      return {
+        idToken: null,
+        finish: async (response: NextResponse): Promise<void> =>
+          clearSession(response, request, settings),
+      };
+    case 'unavailable':
+      log.warn('the sign-in service did not answer a redirect’s refresh', {
+        detail: outcome.detail,
+      });
+      return nothing;
+    default: {
+      const unknown: never = outcome;
+      throw new Error(`unhandled refresh outcome ${String(unknown)}`);
+    }
+  }
+}
+
 /**
  * `POST /api/auth/oidc/logout`: end the session. The refresh token is revoked
  * where the issuer allows it, the cookies are cleared, and the browser is sent

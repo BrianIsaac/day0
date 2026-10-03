@@ -397,3 +397,88 @@ describe("a pending authorisation on a listed card (11-AC's cockpit item 7)", ()
     expect(JSON.stringify(listed)).not.toContain('nonce-1');
   });
 });
+
+describe('a card an administrator ended by revoking its connection (the pre-tag second pass)', (): void => {
+  it('says so on the listed card once it holds no credential, and nothing on a card on a live connection', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, revokedCard, liveCard } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const connection = (status: 'active' | 'revoked', system: string) =>
+        ctx.db.insert('organisationConnections', {
+          system,
+          displayName: system,
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: [],
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status,
+          createdAt: 1,
+          ...(status === 'revoked' ? { revokedAt: 2, statusReason: 'moving' } : {}),
+        });
+      const card = (
+        slug: string,
+        endpoint: string,
+        organisationConnectionId: Id<'organisationConnections'>,
+      ) =>
+        ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          path: 'documented-api',
+          endpoint,
+          verdict: 'approved',
+          whereFound: [],
+          managerApprovedAt: 1,
+          credentialLanded: false,
+          organisationConnectionId,
+          reason: 'moving',
+          createdAt: 1,
+        });
+      return {
+        agentId,
+        revokedCard: await card(
+          'linear',
+          'https://api.linear.app/graphql',
+          await connection('revoked', 'linear'),
+        ),
+        liveCard: await card(
+          'github',
+          'https://api.github.com',
+          await connection('active', 'github'),
+        ),
+      };
+    });
+
+    const cards = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(cards.find((card) => card._id === revokedCard)?.connectionRevoked).toBe(true);
+    expect(cards.find((card) => card._id === liveCard)?.connectionRevoked).toBeUndefined();
+
+    // Once IT lands Linear again the card is no longer one a revoke ended (the code pass's m2).
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 3 },
+        status: 'active',
+        createdAt: 3,
+      });
+    });
+    const after = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+    expect(after.find((card) => card._id === revokedCard)?.connectionRevoked).toBeUndefined();
+  });
+});

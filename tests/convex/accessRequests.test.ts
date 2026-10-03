@@ -188,10 +188,10 @@ describe('drafting and sending the access request', (): void => {
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     expect(drafted.text).toBe(shown?.text);
     expect(drafted.draftedAt).toEqual(expect.any(Number));
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const events = await requestEvents(harness, agentId);
     expect(events).toEqual([
       {
@@ -210,11 +210,25 @@ describe('drafting and sending the access request', (): void => {
     });
   });
 
+  it("takes a draft from a tab open across the upgrade, which names no way it was sent, as copied (the round review's m14)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+
+    expect(drafted.draftedAt).toEqual(expect.any(Number));
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.filter((job) => job.name.includes('sendAccessRequest'))).toEqual([]);
+  });
+
   it('puts the same words in the export as on the card', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const page = await owner.action(api.exportActions.exportPage, {
       agentId,
       section: 'events',
@@ -233,7 +247,7 @@ describe('drafting and sending the access request', (): void => {
     await expect(
       owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' }),
     ).rejects.toThrow(ConvexError);
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'emailed' });
     const view = await owner.query(api.accessRequests.forCard, { surfaceId });
@@ -244,13 +258,15 @@ describe('drafting and sending the access request', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     const jobs = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
     expect(jobs).toEqual([]);
     await connectLinear(harness);
-    await expect(owner.mutation(api.accessRequests.draft, { surfaceId })).rejects.toSatisfy(
+    await expect(
+      owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' }),
+    ).rejects.toSatisfy(
       (error: unknown) => error instanceof ConvexError && error.data === NO_ACCESS_REQUEST,
     );
   });
@@ -264,7 +280,7 @@ describe('a request after the system was connected and revoked again (11-AO revi
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
     vi.setSystemTime(Date.UTC(2026, 9, 2, 10));
     await connectLinear(harness);
@@ -278,8 +294,29 @@ describe('a request after the system was connected and revoked again (11-AO revi
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
     expect(shown).not.toHaveProperty('copiedAt');
     expect(shown).not.toHaveProperty('draftedAt');
-    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     expect(await requestEvents(harness, agentId)).toHaveLength(2);
+  });
+
+  it('says IT revoked the connection, never that the system is not connected yet (the pre-tag second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await connectLinear(harness);
+    const connection = await harness.query(internal.organisationConnections.activeFor, {
+      system: 'linear',
+    });
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connection!._id,
+      reason: 'the app was removed',
+    });
+
+    const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
+
+    expect(shown?.text).toContain(
+      'The organisation’s Linear connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.',
+    );
+    expect(shown?.text).not.toContain('not connected for the organisation yet');
   });
 });
 
@@ -288,7 +325,7 @@ describe('the card after a draft (11-AO re-review)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedMaya(harness);
     const owner = harness.withIdentity(managerIdentity());
-    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId });
+    const drafted = await owner.mutation(api.accessRequests.draft, { surfaceId, via: 'copied' });
     await harness.run(async (ctx) => {
       await ctx.db.patch(surfaceId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
     });

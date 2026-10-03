@@ -45,7 +45,7 @@ import {
   APPROVE_CARD,
   APPROVE_CHARTER,
   APPROVE_PLAN,
-  APPROVE_SKILL,
+  approveSkillName,
   ASK_AGAIN,
   CANCEL_ITEM,
   CANCEL_WITHOUT_REASON,
@@ -318,7 +318,7 @@ describe('the dashboard driver', (): void => {
       [...item.querySelectorAll('*')].some((element) => element.textContent === skill.name),
     );
     expect(items).toHaveLength(1);
-    oneByRole(items[0] as HTMLElement, 'button', APPROVE_SKILL);
+    oneByRole(items[0] as HTMLElement, 'button', approveSkillName(skill.name));
     view.unmount();
   });
 
@@ -364,7 +364,7 @@ describe('the dashboard driver', (): void => {
       oneByRole(document, 'button', offerChoiceName(choice, skill.name));
     }
     // An offered proposal draws no plain approval, which is why it needs a verb of its own.
-    expect(byRole(document, 'button', APPROVE_SKILL)).toEqual([]);
+    expect(byRole(document, 'button', approveSkillName(skill.name))).toEqual([]);
     view.unmount();
   });
 

@@ -3,7 +3,7 @@
  * `pnpm check:access`: the live check of the organisation's connections, run with the customer's
  * IT after `./setup.sh access` (the access plan, section 4.8; B13).
  *
- *   pnpm check:access [env file] [--system <key>] [--report]
+ *   pnpm check:access [env file] [--system <key>] [--report] [--install]
  *
  * For the deployment, whether it names its administrators (B8). For each connection IT landed
  * (active, or needing IT's attention; a revoked one is history): its status; the redirect URI it
@@ -32,6 +32,7 @@ import {
 import { recipeForSystem, type RecipeMode } from '../src/surfaces/access-kit';
 import { slackKitManifest } from '../src/surfaces/access-kit/slack';
 import {
+  LINEAR_GRAPHQL_URL,
   LinearIssuerRefusal,
   readLinearViewer,
   requestAppActorToken,
@@ -44,7 +45,12 @@ import { SLACK_API_ENDPOINT } from '../src/surfaces/slack-endpoint';
 import type { CheckStatus } from './check-sign-in';
 import { adminTarget, deploymentAdmin } from './lib/convex-admin';
 import { readEnvValues } from './lib/env-file';
-import { firstLine } from './model-reach';
+import {
+  containerReachArguments,
+  firstLine,
+  readContainerDial,
+  type ModelDial,
+} from './model-reach';
 
 type Values = Readonly<Record<string, string>>;
 
@@ -56,6 +62,7 @@ export const ACCESS_CHECK_NAMES = [
   'scopes',
   'secret',
   'identity',
+  'reach',
 ] as const;
 
 /** One of {@link ACCESS_CHECK_NAMES}. */
@@ -97,6 +104,11 @@ export interface VendorProbes {
    * @throws Error saying why it does not open; never its value.
    */
   openSecret(credentialId: string): Promise<string>;
+  /**
+   * Ask one address from inside the backend container, with a GET and no secret: what the
+   * deployment's own way out to the vendor finds, where every other probe asks from this machine.
+   */
+  fromBackend(address: URL): Promise<ModelDial>;
 }
 
 /** How long one vendor call may take. */
@@ -202,20 +214,54 @@ function missing(held: readonly string[], needed: readonly string[]): string[] {
   return needed.filter((scope: string): boolean => !held.includes(scope));
 }
 
+/** What the kit says Day0 cannot do without the scopes a connection lacks, or undefined. */
+function costOf(mode: RecipeMode, lacking: readonly string[]): string | undefined {
+  const costs = lacking
+    .map((scope: string): string | undefined => mode.missingScopeWords?.[scope])
+    .filter((words): words is string => words !== undefined);
+  return costs.length === 0 ? undefined : costs.join('; ');
+}
+
+/**
+ * A connection whose fixed client-credentials set lacks a scope of the kit's: the set cannot be
+ * changed in place, since a token requested with another set revokes and replaces every token of
+ * the app (L2), so the cure is to revoke the connection and land it again.
+ */
+function fixedSetCheck(
+  row: ConnectionRow,
+  mode: RecipeMode,
+  lacking: readonly string[],
+): AccessCheck {
+  const cost = costOf(mode, lacking);
+  return check(
+    row.system,
+    'scopes',
+    'gap',
+    `${row.displayName} was landed with ${row.clientCredentialsScopes?.join(', ') || 'no scope set'}, ` +
+      `without ${lacking.join(', ')}${cost === undefined ? '' : `: ${cost}`}. The set cannot be changed in place, since ` +
+      `${row.displayName} revokes every token of the app when one is requested with another set: ` +
+      'revoke the connection on the organisation page, then land it again with `./setup.sh access`.',
+  );
+}
+
 /** The registration's scopes against the kit's for its mode. */
 function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
-  const lacking = [
-    ...missing(row.scopes, mode.scopes),
-    ...missing(row.clientCredentialsScopes ?? [], mode.clientCredentialsScopes ?? []),
-  ];
+  const lackingFixed = missing(
+    row.clientCredentialsScopes ?? [],
+    mode.clientCredentialsScopes ?? [],
+  );
+  if (lackingFixed.length > 0) return fixedSetCheck(row, mode, lackingFixed);
+  const lacking = missing(row.scopes, mode.scopes);
   if (lacking.length > 0) {
+    const cost = costOf(mode, lacking);
     return check(
       row.system,
       'scopes',
       'gap',
-      `Missing scope ${[...new Set(lacking)].join(', ')}: the registration holds ` +
-        `${row.scopes.join(', ') || 'none'}, and Day0 needs ${mode.scopes.join(', ')}. Grant ` +
-        `them at the vendor, then record them with \`./setup.sh access --correct ${row.system}\`.`,
+      `Missing scope ${[...new Set(lacking)].join(', ')}${cost === undefined ? '' : ` (${cost})`}: the ` +
+        `registration holds ${row.scopes.join(', ') || 'none'}, and Day0 needs ` +
+        `${mode.scopes.join(', ')}. Grant them at the vendor, then record them with ` +
+        `\`./setup.sh access --correct ${row.system}\`.`,
     );
   }
   if (mode.scopes.length === 0 && row.scopes.length === 0) {
@@ -476,9 +522,10 @@ async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<Ac
       check(
         row.system,
         'identity',
-        'warn',
-        "No issuer was given: Day0 discovers the authorisation server from the server's own " +
-          'metadata at the first sign-in.',
+        'gap',
+        "No issuer is recorded, so every employee's authorisation is refused: revoke the " +
+          "connection and land it again; the setup verb finds the issuer from the server's own " +
+          'metadata.',
       ),
     ];
   }
@@ -602,6 +649,93 @@ async function liveChecks(
   }
 }
 
+/**
+ * The address the deployment calls a connection's vendor at, as the backend container reaches it:
+ * Slack's Web API (the fake a bed names on the Compose network, as the deployment does), Linear's
+ * API, or the MCP server IT connected. Undefined for a system the kit knows no address for.
+ */
+export function backendAddressOf(row: ConnectionRow, values: Values): URL | undefined {
+  if (row.kind === 'slack-configuration') {
+    const fake = (values.DAY0_TEST_SLACK_API_URL ?? '').trim();
+    return new URL('api.test', fake === '' ? SLACK_API_ENDPOINT : fake);
+  }
+  if (row.system === 'linear') return new URL(LINEAR_GRAPHQL_URL);
+  if (row.kind === 'mcp-client') {
+    const server = row.resource ?? row.issuer;
+    return server === undefined ? undefined : new URL(server);
+  }
+  return undefined;
+}
+
+/** curl's words for a certificate the container does not trust, whose cure is trust, not a route. */
+const UNTRUSTED_CERTIFICATE = /SSL certificate|certificate verify|self[- ]signed|local issuer/i;
+
+/** How a run of the check reads what it could not ask. */
+export interface AccessCheckOptions {
+  /**
+   * Run by `./setup.sh install`: a backend dial that did not run is a gap, so an install never
+   * passes with the backend container never asked (the round review's m10).
+   */
+  readonly install?: boolean;
+}
+
+/**
+ * Whether the backend container itself reaches the connection's vendor (the wave 11 review's
+ * section 11, item 4; AI9): every other check here asks from this machine, which says nothing of
+ * the deployment's own way out. Nothing is sent but a GET: any HTTP answer means it is reached.
+ */
+async function reachCheck(
+  row: ConnectionRow,
+  values: Values,
+  probes: VendorProbes,
+  options: AccessCheckOptions,
+): Promise<AccessCheck> {
+  const address = backendAddressOf(row, values);
+  if (address === undefined) {
+    return check(
+      row.system,
+      'reach',
+      'warn',
+      `Not asked from the backend container: the kit knows no address for ${row.displayName}.`,
+    );
+  }
+  const dial = await probes.fromBackend(address);
+  switch (dial.reach) {
+    case 'reached':
+      return check(
+        row.system,
+        'reach',
+        'ok',
+        `The backend container reached ${address.href} (${dial.detail}).`,
+      );
+    case 'unreachable':
+      return check(
+        row.system,
+        'reach',
+        'gap',
+        `The backend container could not reach ${address.href}: ${dial.detail}. ` +
+          (UNTRUSTED_CERTIFICATE.test(dial.detail)
+            ? 'The backend does not trust the certificate the address presents: give the backend ' +
+              "container the customer's CA bundle (its SSL_CERT_FILE), then run the check again."
+            : `Every call the deployment makes to ${row.displayName} starts there: open its way ` +
+              'out (the proxy or firewall in front of the backend), then run the check again.'),
+      );
+    case 'unknown':
+      // The install never passes with the backend unasked (the round review's m10).
+      return check(
+        row.system,
+        'reach',
+        options.install === true ? 'gap' : 'warn',
+        `Not asked from the backend container: ${dial.detail}. Start it (\`./setup.sh resume\`) ` +
+          'and run the check again.',
+      );
+    default: {
+      const unhandled: never = dial.reach;
+      throw new Error(`unhandled dial ${String(unhandled)}`);
+    }
+  }
+}
+
 /** A later verdict on the same check replaces the earlier one (a granted scope after a registered one). */
 function merged(checks: readonly AccessCheck[]): AccessCheck[] {
   const out: AccessCheck[] = [];
@@ -624,11 +758,16 @@ export async function accessChecks(
   rows: readonly ConnectionRow[],
   values: Values,
   probes: VendorProbes,
+  options: AccessCheckOptions = {},
 ): Promise<AccessCheck[]> {
   const checks: AccessCheck[] = [administratorsCheck(values)];
   for (const row of rows) {
     checks.push(
-      ...merged([...connectionChecks(row, values), ...(await liveChecks(row, values, probes))]),
+      ...merged([
+        ...connectionChecks(row, values),
+        ...(await liveChecks(row, values, probes)),
+        await reachCheck(row, values, probes, options),
+      ]),
     );
   }
   return checks;
@@ -761,6 +900,19 @@ function onThisMachine(address: string): boolean {
   );
 }
 
+/**
+ * What the check says when no connection is active or needs IT's attention, for every system or
+ * the one asked for. Never "yet": the deployment may have had connections that were all revoked
+ * (the re-walk, row 10).
+ *
+ * @param system - The system the check was asked for, if one was.
+ */
+export function noConnectionLine(system: string | undefined): string {
+  return system === undefined
+    ? '  None is connected: `./setup.sh access` connects them with the customer’s IT.'
+    : `  Nothing is connected for ${system}.`;
+}
+
 /** The connections the deployment holds, through the Convex CLI pointed at it. */
 function listConnections(values: Values): ConnectionRow[] {
   const names = ['CONVEX_SELF_HOSTED_URL', 'CONVEX_SELF_HOSTED_ADMIN_KEY'];
@@ -786,11 +938,26 @@ function listConnections(values: Values): ConnectionRow[] {
   return parseConnectionRows(run.stdout ?? '');
 }
 
+/** Ask one address from the backend container of the project the env file names. */
+function dialFromBackend(project: string, envFile: string, address: URL): ModelDial {
+  const run = spawnSync(
+    'docker',
+    ['compose', '-p', project, '--env-file', envFile, ...containerReachArguments(address.href)],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  return readContainerDial({
+    status: run.status,
+    stdout: run.stdout ?? '',
+    stderr: run.stderr ?? (run.error ? errorMessage(run.error) : ''),
+  });
+}
+
 /** The parsed command line. */
 interface CheckArguments {
   readonly envFile: string;
   readonly system?: string;
   readonly report: boolean;
+  readonly install: boolean;
 }
 
 function parseArguments(argv: readonly string[]): CheckArguments {
@@ -806,6 +973,7 @@ function parseArguments(argv: readonly string[]): CheckArguments {
     envFile: positional[0] ?? '.env.local',
     ...(system === undefined ? {} : { system }),
     report: argv.includes('--report'),
+    install: argv.includes('--install'),
   };
 }
 
@@ -840,20 +1008,21 @@ export async function main(argv: readonly string[]): Promise<number> {
     console.error(errorMessage(err));
     return 1;
   }
-  const checks = await accessChecks(rows, values, {
-    fetch,
-    slackApiBase,
-    openSecret: async (credentialId: string): Promise<string> =>
-      await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
-  });
+  const checks = await accessChecks(
+    rows,
+    values,
+    {
+      fetch,
+      slackApiBase,
+      openSecret: async (credentialId: string): Promise<string> =>
+        await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
+      fromBackend: async (address: URL): Promise<ModelDial> =>
+        dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
+    },
+    { install: args.install },
+  );
   console.log(`The organisation's connections, read from ${args.envFile}:`);
-  if (rows.length === 0) {
-    console.log(
-      args.system === undefined
-        ? '  None is connected yet: `./setup.sh access` connects them with the customer’s IT.'
-        : `  Nothing is connected for ${args.system}.`,
-    );
-  }
+  if (rows.length === 0) console.log(noConnectionLine(args.system));
   for (const line of formatAccessChecks(checks)) console.log(line);
   if (args.report) {
     console.log(

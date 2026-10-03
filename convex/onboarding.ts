@@ -22,6 +22,7 @@ import { assertOwnsAgentAction } from './ownership';
 import type { WorkspaceFile } from './charters';
 import { logEvent } from './eventLog';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { MOCK_OFFICE_NAMED_SYSTEMS } from '../src/surfaces/mock-office';
 import { errorMessage } from '../src/lib/errors';
 import { userFromManager } from '../src/agent/charter-workspace';
 
@@ -249,6 +250,9 @@ async function draftCharter(args: {
     version: CHARTER_VERSION,
     bossLabel: args.bossLabel,
     changeRequests: args.changeRequests,
+    // The hosted office's ticket queue and wiki are systems of their own; a real deployment's
+    // systems are the products the manager names, which its declared surfaces are made from.
+    ...(SURFACE_MODE === 'real' ? {} : { office: MOCK_OFFICE_NAMED_SYSTEMS }),
   });
   // The manager's side is the answers themselves, and the notes they sent
   // earlier drafts back with: both are their words, copied.

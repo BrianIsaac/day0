@@ -11,6 +11,9 @@ import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from './types';
  * what the manager's own last word on it was. Pure, so the card and its tests read one source.
  */
 
+/** A Slack user id as intake records an asker: `U` or `W`, then capitals and digits. */
+const SLACK_USER_ID = /^[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,}$/;
+
 /**
  * Who asked for the work and where, for the line under the item's title: `Sara, in #revops-asks`,
  * `Aman, on REVOPS-30`, or whichever half the row knows.
@@ -24,7 +27,9 @@ export function sourceLine(
     'requesterLabel' | 'replyTarget' | 'sourceCategory' | 'externalId' | 'title'
   >,
 ): string | undefined {
-  const who = item.requesterLabel?.trim() || undefined;
+  const label = item.requesterLabel?.trim() || undefined;
+  // Slack intake records the asker by user id (`U0BTFK6FLNL`), which says nothing to a manager.
+  const who = label !== undefined && SLACK_USER_ID.test(label) ? 'A Slack member' : label;
   const channel = replyTargetFor(item)?.channelName;
   const where = channel
     ? `in #${channel}`

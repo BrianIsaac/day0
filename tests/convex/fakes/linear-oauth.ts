@@ -6,6 +6,12 @@ import {
   TOKEN_INVALID_GRANT,
   VIEWER_UNAUTHENTICATED,
 } from '../../fixtures/linear/linear-oauth-2026-10-02';
+import {
+  LINEAR_REFRESH_TOKEN_REVOKED,
+  LINEAR_REVOKE_ALREADY_REVOKED,
+  LINEAR_REVOKE_SUCCESS,
+} from '../../fixtures/real-vendor-walk-2026-10-03';
+import { LINEAR_REVOKE_TOKEN_NOT_FOUND } from '../../fixtures/real-vendor-rewalk-2026-10-03';
 
 /*
  * A fake Linear for the issuer's tests (wave 11, 11-AL): the token endpoint for the three grants,
@@ -18,9 +24,14 @@ import {
  * - authorisation code with PKCE (L1, L3): `actor=app` consent by an administrator, a 24-hour
  *   access token and a refresh token that rotates on use, with a 30-minute grace in which the
  *   spent refresh token answers the same new pair;
- * - `viewer` names the app user a token acts as, and refuses a token it does not know.
+ * - `viewer` names the app user a token acts as, and refuses a token it does not know;
+ * - as real Linear answered the walk of 3 October 2026: a revoke of either token of a pair ends the
+ *   whole grant, a token already revoked is answered "Token has already been revoked.", and a
+ *   revoked refresh token is refused with "Refresh token revoked"; and as it answered the
+ *   re-walk, a revoke of a token it does not know is `401 {"error":"Token not found"}`.
  *
- * Its answers use the recorded and documented shapes under `tests/fixtures/linear/`.
+ * Its answers use the recorded and documented shapes under `tests/fixtures/linear/` and the walk's
+ * answers in `tests/fixtures/real-vendor-walk-2026-10-03.ts`.
  */
 
 /** One OAuth app IT created in the fake workspace. */
@@ -40,6 +51,8 @@ interface IssuedToken {
   readonly kind: 'app-actor' | 'access' | 'refresh';
   readonly scopes: string;
   readonly expiresAt: number;
+  /** The authorisation a pair belongs to, kept across its rotations; a revoke ends all of it. */
+  readonly grant?: number;
   revoked: boolean;
 }
 
@@ -90,7 +103,10 @@ export interface FakeLinear {
   revokedByScopeChange(): number;
   /** An administrator consents to the install link; answers the redirect Linear sends back. */
   consent(authoriseUrl: string, options?: { readonly deny?: boolean }): URL;
-  /** Revoke every token of an app, as rotating its client secret does to app-actor tokens. */
+  /**
+   * Revoke every token of an app, as rotating its client secret does to app-actor tokens and as a
+   * Linear administrator's "Revoke access" in the workspace's settings does to an installed app.
+   */
   revokeAppTokens(clientId: string): void;
   /** Make the next requests fail at the transport. */
   setUnreachable(unreachable: boolean): void;
@@ -177,30 +193,40 @@ export function fakeLinear(apps: readonly FakeLinearApp[], now: () => number): F
         return json(TOKEN_INVALID_GRANT.status, TOKEN_INVALID_GRANT.body);
       }
       code.used = true;
-      return json(200, pair(app.clientId, code.scopes));
+      serial += 1;
+      return json(200, pair(app.clientId, code.scopes, serial));
     }
     if (grant === 'refresh_token') {
       const presented = form.get('refresh_token') ?? '';
       const earlier = spent.get(presented);
       if (earlier !== undefined && now() - earlier.at <= GRACE_MS) return json(200, earlier.answer);
       const token = tokens.get(presented);
-      if (!token || token.kind !== 'refresh' || token.revoked || token.clientId !== app.clientId) {
+      if (!token || token.kind !== 'refresh' || token.clientId !== app.clientId) {
         return json(TOKEN_INVALID_GRANT.status, TOKEN_INVALID_GRANT.body);
       }
+      if (token.revoked) {
+        const [revoked] = LINEAR_REFRESH_TOKEN_REVOKED;
+        return json(revoked!.status, revoked!.body);
+      }
       token.revoked = true;
-      const answer = pair(app.clientId, token.scopes);
+      const answer = pair(app.clientId, token.scopes, token.grant);
       spent.set(presented, { at: now(), answer });
       return json(200, answer);
     }
     return json(400, { error: 'unsupported_grant_type' });
   };
 
-  const pair = (clientId: string, scopes: string): Record<string, unknown> => ({
+  const pair = (
+    clientId: string,
+    scopes: string,
+    grant: number | undefined,
+  ): Record<string, unknown> => ({
     access_token: mint('lin_oauth_access', {
       clientId,
       kind: 'access',
       scopes,
       expiresAt: now() + ACCESS_LIFETIME_S * 1_000,
+      ...(grant === undefined ? {} : { grant }),
     }),
     token_type: 'Bearer',
     expires_in: ACCESS_LIFETIME_S,
@@ -210,6 +236,7 @@ export function fakeLinear(apps: readonly FakeLinearApp[], now: () => number): F
       kind: 'refresh',
       scopes,
       expiresAt: Number.MAX_SAFE_INTEGER,
+      ...(grant === undefined ? {} : { grant }),
     }),
   });
 
@@ -223,9 +250,18 @@ export function fakeLinear(apps: readonly FakeLinearApp[], now: () => number): F
       const form = new URLSearchParams(body);
       requests.push({ path: '/oauth/revoke' });
       const token = tokens.get(form.get('token') ?? '');
-      if (!token || token.revoked) return json(400, { error: 'invalid_token' });
-      token.revoked = true;
-      return json(200, {});
+      if (!token) {
+        return json(LINEAR_REVOKE_TOKEN_NOT_FOUND.status, LINEAR_REVOKE_TOKEN_NOT_FOUND.body);
+      }
+      if (token.revoked) {
+        return json(LINEAR_REVOKE_ALREADY_REVOKED.status, LINEAR_REVOKE_ALREADY_REVOKED.body);
+      }
+      for (const held of tokens.values()) {
+        if (held === token || (token.grant !== undefined && held.grant === token.grant)) {
+          held.revoked = true;
+        }
+      }
+      return json(LINEAR_REVOKE_SUCCESS.status, LINEAR_REVOKE_SUCCESS.body);
     }
     if (url.href === 'https://api.linear.app/graphql') {
       const bearer = new Headers(init.headers).get('authorization')?.replace(/^Bearer /, '') ?? '';

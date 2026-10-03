@@ -9,7 +9,9 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { credentialKeyring } from './credentialCryptoActions';
 import { assertOwnsAgentAction } from './ownership';
 import { logEvent } from './eventLog';
+import type { RefreshClaim } from './refreshLease';
 import type { HeldConfigurationRows, RotationRecorded } from './slackProvision';
+import { revokeSlackConfigurationToken, slackRevocationOutcome } from './sourceRevocationSend';
 import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { log } from '../src/lib/logger';
@@ -25,19 +27,30 @@ import {
 import {
   configurationRenewal,
   configurationTokenRefused,
+  installedBotIssuer,
   KEPT_APP_CONNECTION_REVOKED,
   NO_CONFIGURATION_TOKEN,
   parseTokenRotation,
   rejoinPlan,
   rotationRefusal,
   slackAppManifest,
+  slackClientSecretIssuer,
   SLACK_SYSTEM,
   type SlackAppManifest,
+  type SlackIssuedBy,
   type VisibleChannel,
 } from '../src/surfaces/identity-issuers/slack';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
 import { slackInstallUrl } from '../src/surfaces/slack-manifest';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import {
+  awaitLeaseHolder,
+  LEASE_CLAIMS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
+  RefreshInProgress,
+  sleepFor,
+  type LeasedRow,
+} from '../src/surfaces/refresh-lease';
 import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 
 type CredentialId = GenericId<'credentials'>;
@@ -67,6 +80,7 @@ const credentialInternal = internal as unknown as {
         plaintext?: string;
         source: { ref: string; sourceId: Id<'docSources'> } | 'entered' | 'oauth';
         userId: string;
+        issuedBy?: SlackIssuedBy;
       },
       CredentialId
     >;
@@ -256,12 +270,15 @@ interface ProvisionDependencies {
   fetch: Fetcher;
   newNonce(): string;
   now(): number;
+  /** How a rotation waiting for another's refresh lease sleeps between its reads. */
+  sleep(ms: number): Promise<void>;
 }
 
 const provisionDependencies: ProvisionDependencies = {
   fetch: (input, init) => fetch(input, init),
   newNonce: newOauthNonce,
   now: () => Date.now(),
+  sleep: sleepFor,
 };
 
 /** How many times a use re-reads the configuration token after losing to a concurrent rotation. */
@@ -299,14 +316,92 @@ function sealedForOrganisation(value: string): { ciphertext: string; iv: string;
 /** What one rotation came to: the new token, written; or the pair moved on and is read again. */
 type RotationOutcome =
   | { readonly kind: 'rotated'; readonly token: string }
-  | { readonly kind: 'moved' };
+  | { readonly kind: 'moved' }
+  /** The held token still lives behind a lease its holder never ended: it is used as it is. */
+  | { readonly kind: 'stored' };
+
+/** The lease a rotation holds: the refresh token's row of the claimed snapshot and the lease's end. */
+type ConfigurationLease = Extract<RefreshClaim, { kind: 'claimed' }>;
+
+/**
+ * Take the refresh lease on the configuration token's row (R-S; the wave 11 review's m11), so two
+ * renewals never present one refresh token to Slack: a rotation that finds the lease held waits
+ * for its holder, and answers `moved` once the holder's pair is written for the caller to read.
+ *
+ * A use whose held token still lives waits `LIVE_TOKEN_LEASE_POLLS` reads in all, and then
+ * uses that token rather than waiting out a lease whose holder may have died (the round review's
+ * m7); a scheduled renewal waits the whole lease.
+ *
+ * @param options.storedTokenLives - Whether the held configuration token still lives.
+ * @returns The lease; `moved` when the pair moved on, was revoked, or was written meanwhile;
+ *   `stored` when the held token still lives after the bounded wait.
+ * @throws RefreshInProgress when other renewals held the lease throughout; Error when the
+ *   configuration token has no live refresh token.
+ */
+async function claimConfigurationLease(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  dependencies: ProvisionDependencies,
+  options: { readonly storedTokenLives: boolean },
+): Promise<ConfigurationLease | { readonly kind: 'moved' } | { readonly kind: 'stored' }> {
+  const generation = held.secret.generation ?? 0;
+  for (let claims = 1; ; claims += 1) {
+    const claim: RefreshClaim = await ctx.runMutation(internal.refreshLease.claim, {
+      credentialId: held.secret._id,
+      expectedGeneration: generation,
+      now: dependencies.now(),
+    });
+    switch (claim.kind) {
+      case 'claimed':
+        return claim;
+      case 'moved':
+      case 'gone':
+        return { kind: 'moved' };
+      case 'no-refresh-token':
+        throw new Error('The organisation holds no refresh token to rotate with.');
+      case 'leased': {
+        const waited = await awaitLeaseHolder(
+          {
+            read: async (): Promise<LeasedRow | null> => {
+              const now: HeldConfigurationRows | null = await ctx.runQuery(
+                internal.slackProvision.heldConfiguration,
+                { organisationConnectionId: held.connection._id },
+              );
+              // A secret IT replaced since is a pair that moved on.
+              return now !== null && now.secret._id === held.secret._id ? now.secret : null;
+            },
+            now: dependencies.now,
+            sleep: dependencies.sleep,
+          },
+          { generation, until: claim.until },
+          options.storedTokenLives ? LIVE_TOKEN_POLLS_PER_CLAIM : undefined,
+        );
+        if (waited === 'moved') return { kind: 'moved' };
+        if (claims === LEASE_CLAIMS) {
+          // Read again after the wait: a token that died meanwhile is never used.
+          if (options.storedTokenLives && (held.secret.expiresAt ?? 0) > dependencies.now()) {
+            return { kind: 'stored' };
+          }
+          throw new RefreshInProgress();
+        }
+        break;
+      }
+      default: {
+        const unknown: never = claim;
+        throw new Error(`unhandled lease claim ${String(unknown)}`);
+      }
+    }
+  }
+}
 
 /**
  * Rotate the connection's configuration token with its kept refresh token
- * (`tooling.tokens.rotate`, S2) and write the new pair before anything uses it, under the
- * generation the snapshot read: a concurrent rotation that wrote first wins, and this one answers
- * `moved` for the caller to read the winner's. A refusal is written on the connection's ledger;
- * a spent refresh token marks the connection for IT's attention.
+ * (`tooling.tokens.rotate`, S2) under the refresh lease, and write the new pair before anything
+ * uses it, under the generation the snapshot read: a rotation that finds another's lease waits for
+ * it and answers `moved` for the caller to read the winner's pair, and a write that finds the pair
+ * moved on answers `moved` too. A refusal is written on the connection's ledger; a spent refresh
+ * token marks the connection for IT's attention. The lease ends with the rotation's write, or is
+ * released when the rotation fails.
  *
  * @throws Error with Slack's words when Slack refused and the pair had not moved on.
  */
@@ -314,11 +409,43 @@ async function rotateConfiguration(
   ctx: ActionCtx,
   held: HeldConfigurationRows,
   dependencies: ProvisionDependencies,
+  options: { readonly storedTokenLives: boolean } = { storedTokenLives: false },
 ): Promise<RotationOutcome> {
   if (held.refresh === null)
     throw new Error('The organisation holds no refresh token to rotate with.');
+  const lease = await claimConfigurationLease(ctx, held, dependencies, options);
+  if (lease.kind === 'moved' || lease.kind === 'stored') return lease;
+  try {
+    return await rotateUnderLease(ctx, held, openHeld(lease.refresh), dependencies);
+  } finally {
+    await releaseConfigurationLease(ctx, held.secret._id, lease.leaseUntil);
+  }
+}
+
+/** End a rotation's lease; a release that fails is logged, since the lease lapses by itself. */
+async function releaseConfigurationLease(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  leaseUntil: number,
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.refreshLease.release, { credentialId, leaseUntil });
+  } catch (error: unknown) {
+    log.warn('slack configuration lease not released; it lapses at its end', {
+      leaseUntil,
+      reason: safeFailureMessage(error, '', 'no detail'),
+    });
+  }
+}
+
+/** Present the refresh token of the claimed snapshot to Slack once, and write what it answers. */
+async function rotateUnderLease(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  refreshToken: string,
+  dependencies: ProvisionDependencies,
+): Promise<RotationOutcome> {
   const expectedGeneration = held.secret.generation ?? 0;
-  const refreshToken = openHeld(held.refresh);
   const identity = {
     organisationConnectionId: held.connection._id,
     secretCredentialId: held.secret._id,
@@ -350,7 +477,30 @@ async function rotateConfiguration(
     expiresAt: rotated.expiresAt,
     now: dependencies.now(),
   });
-  return recorded.ok ? { kind: 'rotated', token: rotated.token } : { kind: 'moved' };
+  if (recorded.ok) return { kind: 'rotated', token: rotated.token };
+  if (recorded.reason === 'gone') await revokeUnkept(ctx, held, rotated.token, dependencies);
+  return { kind: 'moved' };
+}
+
+/**
+ * Revoke at Slack the configuration token a rotation was issued after its connection was revoked
+ * or given a new secret: Day0 keeps it nowhere, and Slack revoked the token it replaced, so the
+ * connection's own `auth.revoke` met only that one (R41V-10). The call goes on the connection's
+ * ledger as any `auth.revoke` does.
+ */
+async function revokeUnkept(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  token: string,
+  dependencies: ProvisionDependencies,
+): Promise<void> {
+  const answer = await revokeSlackConfigurationToken(token, dependencies.fetch);
+  await ctx.runMutation(internal.organisationSecrets.finishSlackRevocation, {
+    organisationConnectionId: held.connection._id,
+    credentialIds: [],
+    ...slackRevocationOutcome(answer),
+    unkept: true,
+  });
 }
 
 /**
@@ -386,9 +536,17 @@ async function currentConfiguration(
     if (renewal === 'use') {
       return { connection: held.connection, token: openHeld(held.secret), rotated: false };
     }
-    const outcome = await rotateConfiguration(ctx, held, dependencies);
+    // A token Slack refused is never used again; one inside its renew margin still works.
+    const storedTokenLives =
+      !options.rotate &&
+      held.secret.expiresAt !== undefined &&
+      held.secret.expiresAt > dependencies.now();
+    const outcome = await rotateConfiguration(ctx, held, dependencies, { storedTokenLives });
     if (outcome.kind === 'rotated') {
       return { connection: held.connection, token: outcome.token, rotated: true };
+    }
+    if (outcome.kind === 'stored') {
+      return { connection: held.connection, token: openHeld(held.secret), rotated: false };
     }
   }
   throw new Error(
@@ -751,6 +909,13 @@ async function recordCreatedApp(
       plaintext: created.clientSecret,
       source: 'oauth',
       appId: created.appId,
+      issuedBy: slackClientSecretIssuer({
+        appId: created.appId,
+        clientId: created.clientId,
+        ...(created.organisationConnectionId === undefined
+          ? {}
+          : { organisationConnectionId: created.organisationConnectionId }),
+      }),
     },
   );
   const app: RegisteredApp = {
@@ -880,7 +1045,8 @@ interface KeepCurrentJob {
 /**
  * Renew the organisation's kept configuration token before it lapses, though nothing uses it
  * (B9), so a retire's `apps.manifest.delete` (11-AR, which reads the stored token as it stands)
- * finds it current. Each rotation queues the next ({@link keepCurrentAt}); a job finds nothing to
+ * finds it current. The landing and a rotation by hand queue the first (m9), each rotation the
+ * next ({@link keepCurrentAt}); a job finds nothing to
  * do when the connection is revoked or needs IT, or when another rotation moved the pair on
  * (that rotation queued its own). A token IT rotated by hand since is adopted and renewed at once.
  * A paused deployment calls no vendor (`DAY0_CRONS_PAUSED`), and looks again an hour later. A
@@ -1135,6 +1301,9 @@ export async function runCompleteInstall(
         plaintext: access.botToken,
         source: 'oauth',
         appId: context.surface.provisioning?.appId,
+        ...(context.surface.provisioning === undefined
+          ? {}
+          : { issuedBy: installedBotIssuer(context.surface.provisioning) }),
       }),
     };
     await ctx.runMutation(internal.surfaces.recordInstalledApp, {

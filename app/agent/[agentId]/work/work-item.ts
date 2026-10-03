@@ -130,11 +130,12 @@ export interface PlanObligationsRow {
  *   landed: The ledger rows that reached the work environment.
  *
  * Returns:
- *   `3 changes reached the work environment · 3 applied autonomously`, or without the tail.
+ *   `3 actions reached the work environment · 3 applied autonomously`, or without the tail.
+ *   Reads and writes alike, so a read is never called a change (the re-walk, row 8).
  */
 export function landedHeadline(landed: ReadonlyArray<{ authority?: ActionAuthority }>): string {
   const autonomous = landed.filter((row) => row.authority === 'autonomous').length;
-  const head = `${landed.length} ${landed.length === 1 ? 'change' : 'changes'} reached the work environment`;
+  const head = `${landed.length} ${landed.length === 1 ? 'action' : 'actions'} reached the work environment`;
   return autonomous > 0 ? `${head} · ${autonomous} applied autonomously` : head;
 }
 

@@ -16,7 +16,15 @@
  * Everything is asked and checked before anything is written: a missing answer stops the verb
  * with nothing changed.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { ADMINISTRATORS_VAR, parseAdministrators } from '../src/lib/administrators';
 import {
@@ -39,14 +47,21 @@ import {
   type RecipeField,
   type RecipeMode,
 } from '../src/surfaces/access-kit';
-import { linearKitManifest, linearManifestUrl } from '../src/surfaces/access-kit/linear';
+import {
+  linearCreateFormUrl,
+  linearEmployeeAppName,
+  linearKitManifest,
+} from '../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../src/surfaces/access-kit/slack';
+import { discoverAuthorisation, type OauthFetch } from '../src/surfaces/mcp-oauth';
 import { adminTarget, deploymentAdmin, type DeploymentAdmin } from './lib/convex-admin';
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import {
   defaultInstallRecordDirectory,
   installRecordMarkdown,
   installRecordName,
+  installRecordRunMarkdown,
+  type InstallRecord,
   type RecordedConnection,
   type RecordedSignIn,
   type RecordedSkip,
@@ -74,6 +89,11 @@ export interface AccessFlags {
   /** Print one system's manifest and stop. */
   readonly printManifest?: string;
   /**
+   * With `printManifest` for Linear, the employee whose own app's form to print (per-employee mode):
+   * its name, `<employee> (Day0)`, and no client credentials (R41V-R5).
+   */
+  readonly employee?: string;
+  /**
    * Correct the redirect and the scopes one system's connection records to what Day0 returns to
    * and the kit's list, and stop (the wave 11 review's M12 e): a kit system's key or an MCP
    * server's https address.
@@ -87,6 +107,8 @@ export interface AccessOptions {
   readonly dryRun: boolean;
   /** Answers read from stdin by `./setup.sh install`, which reads it once for both halves. */
   readonly answers?: ReadonlyMap<string, string>;
+  /** Run by `./setup.sh install`, whose check counts a backend dial that did not run as a gap. */
+  readonly install?: boolean;
 }
 
 /** A child process's status and output, as the setup's runner returns it. */
@@ -105,6 +127,8 @@ export interface AccessIo {
   log(line: string): void;
   /** The network seam the deployment's function API is called through; the global one by default. */
   readonly fetch?: typeof fetch;
+  /** The network seam an MCP server's metadata is read through at install; the global one by default. */
+  readonly vendorFetch?: OauthFetch;
   /** All of stdin, for `--secrets-stdin`. */
   readStdin?(): Promise<string>;
   /** The clock the install record is dated by. */
@@ -384,7 +408,7 @@ function originOf(values: Readonly<Record<string, string>>): string {
   }
   if (url.protocol !== 'https:' && !isLoopback(url.origin)) {
     throw new AccessRefused(
-      `${PUBLIC_URL_VAR} must be https: every vendor refuses a plain-http redirect.`,
+      `${PUBLIC_URL_VAR} must be https: Day0 has every vendor send its codes and tokens back to an https address only.`,
     );
   }
   return url.origin;
@@ -393,23 +417,39 @@ function originOf(values: Readonly<Record<string, string>>): string {
 /** Print one system's manifest: the Slack template the issuer builds from, or Linear's app and its link. */
 function printManifest(
   system: string,
+  employee: string | undefined,
   values: Readonly<Record<string, string>>,
   io: AccessIo,
 ): number {
   if (system === 'slack') {
+    if (employee !== undefined) {
+      io.log(
+        "Day0 creates each employee's Slack app itself through the organisation's connection; " +
+          '--print-manifest slack alone prints the template it fills in.',
+      );
+      return 1;
+    }
     io.log(slackKitManifestTemplate());
     return 0;
   }
   if (system === 'linear') {
+    if (employee !== undefined && employee.trim() === '') {
+      io.log("--employee needs the employee's name, as the card shows it.");
+      return 1;
+    }
     try {
-      const manifest = linearKitManifest({
-        appName: 'Day0',
-        publicUrl: values[PUBLIC_URL_VAR] ?? '',
-        mode: 'shared',
-      });
+      const manifest = linearKitManifest(
+        employee === undefined
+          ? { appName: 'Day0', publicUrl: values[PUBLIC_URL_VAR] ?? '', mode: 'shared' }
+          : {
+              appName: linearEmployeeAppName(employee),
+              publicUrl: values[PUBLIC_URL_VAR] ?? '',
+              mode: 'per-employee',
+            },
+      );
       io.log(JSON.stringify(manifest, null, 2));
       io.log(
-        `\nCreate it in Linear from this link (an administrator, signed in):\n${linearManifestUrl(manifest)}`,
+        `\nCreate it in Linear from this link (an administrator, signed in), and check the form against the manifest above:\n${linearCreateFormUrl(manifest)}`,
       );
       return 0;
     } catch (err) {
@@ -427,6 +467,7 @@ interface RecordedRegistration {
   readonly mode?: OrganisationConnectionMode;
   readonly redirectUrl?: string;
   readonly scopes?: readonly string[];
+  readonly clientCredentialsScopes?: readonly string[];
 }
 
 /**
@@ -489,7 +530,27 @@ async function correctConnection(
     if (scopes !== undefined) {
       io.log(`${name}: the recorded scopes are now ${scopes.join(', ')}.`);
     }
-    io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+    const lacking = (mode?.clientCredentialsScopes ?? []).filter(
+      (scope) => !(row.clientCredentialsScopes ?? []).includes(scope),
+    );
+    if (lacking.length === 0) {
+      io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+      return 0;
+    }
+    // A fixed client-credentials set is not IT's registration: a token requested with another set
+    // revokes every token of the app (L2), so no correction reaches it (the round review's m6).
+    io.log(
+      `${name}: the shared app token was landed with ` +
+        `${row.clientCredentialsScopes?.join(', ') || 'no scope'}, without ${lacking.join(', ')}.`,
+    );
+    io.log(
+      `A correction cannot add them: ${name} revokes every token of the app when one is requested ` +
+        'with another set.',
+    );
+    io.log(
+      'Revoke the connection on the organisation page, then land it again with ./setup.sh access. ' +
+        'Every card on it ends. pnpm check:access reports the gap until then.',
+    );
     return 0;
   } catch (err) {
     io.log(`Nothing was corrected: ${errorMessage(err)}`);
@@ -637,6 +698,45 @@ function recordedSignIn(
   };
 }
 
+/**
+ * An MCP landing with the issuer of its authorisation server: IT's, or, for a public client IT left
+ * it blank for, the one the server's own resource metadata names, read now with IT beside the verb
+ * and said, so the connection records IT's choice and never a manager's first authorisation (the
+ * wave 11 review's m4). A confidential client's issuer is never read from the server. Any other
+ * landing is returned as it is.
+ *
+ * @throws Error naming the server when a confidential client has no issuer, or when the metadata
+ *   names no authorisation server Day0 can read.
+ */
+async function withIssuer(landing: Landing, io: AccessIo): Promise<Landing> {
+  const given = typeof landing.issuer === 'string' ? landing.issuer.trim() : '';
+  if (!landing.system.startsWith('mcp:') || given !== '') return landing;
+  const server = String(landing.resource);
+  // A client secret goes to the server IT registered the client with, never to whichever one
+  // the resource names (M12 f): only a public client's issuer is read from the server.
+  if (landing.secret !== undefined) {
+    throw new Error(
+      `${server} has a client secret and no issuer: give the issuer of the authorisation server ` +
+        "IT registered the client with (the prompt's issuer, or MCP_ISSUER on stdin); Day0 sends " +
+        'the secret to that server alone.',
+    );
+  }
+  let issuer: string;
+  try {
+    const target = await discoverAuthorisation(io.vendorFetch ?? fetch, new URL(server));
+    issuer = target.server.issuer;
+  } catch (err) {
+    throw new Error(
+      `${server} names no authorisation server Day0 could read (${errorMessage(err)}). ` +
+        "Give its issuer: the prompt's issuer, or MCP_ISSUER on stdin.",
+    );
+  }
+  io.log(
+    `  The server names ${issuer} as its authorisation server; the connection records it as the issuer.`,
+  );
+  return { ...landing, issuer };
+}
+
 /** A landed (or kept) connection as the record names it. */
 function recordedConnection(
   landing: Landing,
@@ -692,8 +792,12 @@ const CHECK_ACCESS = ['pnpm', 'run', 'check:access'] as const;
 export async function runAccess(options: AccessOptions, io: AccessIo): Promise<number> {
   const envPath = join(io.cwd, ENV_FILE);
   const values = readEnvValues(envPath);
+  if (options.access.employee !== undefined && options.access.printManifest === undefined) {
+    io.log('--employee names whose own app --print-manifest linear prints; it takes nothing else.');
+    return 1;
+  }
   if (options.access.printManifest !== undefined) {
-    return printManifest(options.access.printManifest, values, io);
+    return printManifest(options.access.printManifest, options.access.employee, values, io);
   }
   if (options.access.correct !== undefined) {
     return await correctConnection(options.access.correct, values, io);
@@ -732,6 +836,16 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
     return 1;
   }
 
+  if (options.install === true && resolved.named.length === 0) {
+    // An install that connects nothing would end "passed every check" with every card's system
+    // unconnected (the wave 11 review's m20).
+    io.log(
+      'The install has no system to connect: the documentation names none the kit knows. Name ' +
+        "them with --systems (slack, linear, or an MCP server's https address), then run the " +
+        'install again.',
+    );
+    return 1;
+  }
   io.log(
     resolved.named.length === 0
       ? 'The documentation names no system the kit knows; name them with --systems.'
@@ -775,7 +889,8 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
         `\n${one.recipe.system === 'mcp' ? 'An MCP server' : one.recipe.displayName}: ${one.mode.summary}`,
       );
       io.log(`  The recipe: ${one.recipe.guide}. ${one.mode.secretLifetime.words}`);
-      landings.push({ landing: landingOf(one, await answersFor(from, one), origin), planned: one });
+      const landing = landingOf(one, await answersFor(from, one), origin);
+      landings.push({ landing: await withIssuer(landing, io), planned: one });
     }
   } catch (err) {
     io.log(`Nothing was written: ${errorMessage(err)}`);
@@ -821,7 +936,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
 
   io.log(`\n${CHECK_ACCESS.join(' ')}    (check every connection)`);
   const [command, ...args] = CHECK_ACCESS;
-  const checked = io.run(command, args, { inherit: true });
+  const checked = io.run(command, [...args, ...(options.install === true ? ['--install'] : [])], {
+    inherit: true,
+  });
   const status = checked.status ?? 1;
   writeRecord(io, options, values, origin, resolved, recorded, status);
   return status;
@@ -852,7 +969,7 @@ function writeRecord(
       : defaultInstallRecordDirectory(home, project);
   const at = new Date(io.now?.() ?? Date.now());
   const signIn = recordedSignIn(values, origin);
-  const markdown = installRecordMarkdown({
+  const record: InstallRecord = {
     project,
     recordedAt: at,
     publicUrl: origin,
@@ -863,11 +980,16 @@ function writeRecord(
     ...(checkStatus === undefined
       ? {}
       : { check: { command: CHECK_ACCESS.join(' '), status: checkStatus } }),
-  });
+  };
   try {
     mkdirSync(directory, { recursive: true });
     const path = join(directory, installRecordName(at));
-    writeFileSync(path, markdown, { encoding: 'utf8', mode: 0o600 });
+    // A later run the same day is added to the day's record, never in place of it (R41V-12).
+    if (existsSync(path)) {
+      appendFileSync(path, `\n${installRecordRunMarkdown(record)}`, { encoding: 'utf8' });
+    } else {
+      writeFileSync(path, installRecordMarkdown(record), { encoding: 'utf8', mode: 0o600 });
+    }
     io.log(`\nThe install record for the customer's IT: ${path}`);
   } catch (err) {
     io.log(`The install record could not be written to ${directory}: ${errorMessage(err)}`);

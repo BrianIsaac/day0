@@ -27,6 +27,7 @@ import {
 } from '../src/lib/oauth-state';
 import { ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { assertRealMode } from '../src/lib/surface-mode';
+import { linearEmployeeAppName } from '../src/surfaces/access-kit/linear';
 import { organisationSystemOf } from '../src/surfaces/access-request';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
@@ -261,6 +262,9 @@ async function sharedToken(
       "The organisation's Linear connection holds no client id or secret.",
     );
   }
+  // The value a renewal in place replaces stays live at Linear for its 30 days unless revoked,
+  // and the connection's revoke ends only the value it holds then (the round review's m5).
+  const superseded = usable ? await valueOf(ctx, token._id) : undefined;
   const issued = await requestAppActorToken(
     deps.fetch,
     { clientId: connection.clientId, clientCredentialsScopes: connection.clientCredentialsScopes },
@@ -279,6 +283,10 @@ async function sharedToken(
     },
   );
   if (landed.ok) {
+    // Never the value just landed: a vendor that answered the same token again keeps it live.
+    if (superseded !== undefined && superseded !== issued.accessToken) {
+      await revokeUnkept(deps, { accessToken: superseded });
+    }
     return {
       credentialId: landed.credentialId,
       generation: landed.generation,
@@ -286,7 +294,9 @@ async function sharedToken(
     };
   }
   if (landed.reason === 'stale') {
-    // Another renewal wrote first; its token is as good as this one, which lapses unused.
+    // Another renewal wrote first; its token is as good as this one, which Day0 keeps nowhere, so
+    // it is revoked at Linear rather than left live for 30 days (the round review's m5), unless it
+    // is the very value that renewal landed.
     const winner =
       landed.credentialId === undefined
         ? null
@@ -296,17 +306,23 @@ async function sharedToken(
     if (landed.credentialId === undefined || winner?.access.ciphertext === undefined) {
       // The app's secret was rotated while this token was requested (join 3): it may carry the
       // old secret, and the emptied row waits for a request made after the rotation.
+      await revokeUnkept(deps, issued);
       throw new LinearIssuerRefusal(
         'unavailable',
         "The organisation's Linear app was rotated while its token was renewed: the next read requests one with the new secret.",
       );
     }
+    const bearer = await valueOf(ctx, landed.credentialId);
+    if (bearer !== issued.accessToken) await revokeUnkept(deps, issued);
     return {
       credentialId: landed.credentialId,
       generation: winner?.access.generation ?? 0,
-      bearer: await valueOf(ctx, landed.credentialId),
+      bearer,
     };
   }
+  // The connection was revoked while Linear issued the token: Day0 keeps it nowhere, so it is
+  // revoked at Linear now rather than left live for 30 days (R41V-1).
+  await revokeUnkept(deps, issued);
   throw new LinearIssuerRefusal(
     'connection-ended',
     "The organisation's Linear connection was revoked while its token was requested.",
@@ -553,7 +569,10 @@ export const registerEmployeeApp = action({
         "Give the app's client id and client secret from Linear's app settings.",
       );
     }
-    const appName = (args.appName?.trim() || `Day0 ${context.agent.name}`).slice(0, APP_NAME_MAX);
+    const appName = (args.appName?.trim() || linearEmployeeAppName(context.agent.name)).slice(
+      0,
+      APP_NAME_MAX,
+    );
     const deps = linearIdentityDeps();
     const now = deps.now();
     await ctx.runMutation(internal.organisationConnections.linkSurface, {
@@ -1067,7 +1086,8 @@ function unreachable(error: unknown): boolean {
  * store's scheduled refresh (`runScheduledRefresh`) through {@link linearTokenRefresher}. Does
  * nothing when another refresh has moved the pair on. Linear unreachable is tried again with a
  * growing wait; a refusal, or the retries running out, goes on the record of every card holding the
- * token, and each card ends with the reason when the token stops working. Internal; scheduled by
+ * token, and each card is checked at once and ends with the reason when Linear refuses its access
+ * token (at once after a revoke in Linear's settings, R41V-9). Internal; scheduled by
  * `linearIdentity` at each landing and rotation.
  */
 export const refreshScheduled = internalAction({

@@ -192,7 +192,7 @@ export function publicOrigin(publicUrl: string): string {
   }
   if (parsed.protocol !== 'https:') {
     throw new ManifestTemplateError(
-      'DAY0_PUBLIC_URL must be https; Slack refuses a plain-http redirect URL.',
+      'DAY0_PUBLIC_URL must be https: Day0 has Slack send its codes and tokens back to an https address only.',
     );
   }
   return parsed.origin;

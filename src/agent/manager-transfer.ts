@@ -90,6 +90,14 @@ const TRANSFER_MOVES: Readonly<Record<ManagerTransferState, readonly ManagerTran
 export const TRANSFER_EXPIRY_MS = 14 * DAY_MS;
 
 /**
+ * How long the identity a handover kept for a card (A25) waits for the new manager to approve the
+ * card again before it is ended at the vendor (the wave 11 review's m8): as long as a request waits
+ * for its answer. Its scheduled refresh keeps it current meanwhile, so the re-approval stays one
+ * click.
+ */
+export const KEPT_IDENTITY_WAIT_MS = TRANSFER_EXPIRY_MS;
+
+/**
  * How long an accepted request waits for runs in flight before it stops them
  * and moves the employee (D18): past the ten-minute step lease, the
  * twelve-minute stall bound and the six-minute apply recovery.

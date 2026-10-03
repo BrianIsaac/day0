@@ -17,7 +17,11 @@ import { purgeCredential } from './credentials';
 import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
-import { endCardsOnConnection } from './surfaces';
+import {
+  CONNECTION_CARD_LIMIT,
+  endCardsOnConnection,
+  holdsAccessThroughConnection,
+} from './surfaces';
 import { log } from '../src/lib/logger';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import {
@@ -29,6 +33,7 @@ import {
   type OrganisationRegistrar,
 } from '../src/surfaces/access-identity';
 import { isOrganisationSystemKey, organisationSystemOf } from '../src/surfaces/access-request';
+import { KEEP_CURRENT_MIN_DELAY_MS } from '../src/surfaces/identity-issuers/slack';
 
 /*
  * The organisation's connections (the access plan, section 4.1; B8, AC12): one row per system per
@@ -220,9 +225,13 @@ export function landingRefusal(landing: Landing): string | undefined {
       return 'An MCP client connection needs the client id IT registered.';
     }
     // With no issuer the secret could go to whichever server a resource names, so every card
-    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f).
-    if (landing.secret !== undefined && (landing.issuer ?? '').trim() === '') {
-      return "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone.";
+    // refuses one (`startAuthorisation`); the landing refuses it first (the review's M12 f). A
+    // public client names its server too, so no manager's first authorisation chooses it for
+    // every employee (the review's m4).
+    if ((landing.issuer ?? '').trim() === '') {
+      return landing.secret !== undefined
+        ? "A confidential MCP client needs the issuer of the authorisation server IT registered it with: Day0 sends the secret to that server's token endpoint alone."
+        : MCP_ISSUER_NEEDED;
     }
   } else if (mcpField) {
     return 'The issuer, the resource and the client registration belong to an MCP client only.';
@@ -231,6 +240,10 @@ export function landingRefusal(landing: Landing): string | undefined {
   }
   return undefined;
 }
+
+/** Why a public MCP client is not landed without its issuer (the review's m4). */
+export const MCP_ISSUER_NEEDED =
+  "An MCP client connection needs the issuer of its authorisation server: every employee's authorisation goes to that server alone. The setup verb finds it from the server's own metadata when IT leaves it blank.";
 
 /** Why a revoke's reason is not one, or undefined when it is. */
 function reasonRefusal(reason: string): string | undefined {
@@ -448,9 +461,43 @@ const storedSecretsFields = {
 };
 
 /**
+ * Queue the renewal that keeps a Slack configuration token current from the moment IT lands or
+ * rotates it, so the chain no longer waits for the first app to be created (the wave 11 review's
+ * m9). The token's age is unknown until its first rotation says when it lapses, so the first
+ * renewal runs as soon as a renewal may ({@link KEEP_CURRENT_MIN_DELAY_MS}); each rotation then
+ * queues the next. A token landed without its refresh token has nothing to renew with.
+ *
+ * @param input - The connection, its kind, the secrets just stored for it, and the time.
+ */
+async function keepConfigurationCurrentFrom(
+  ctx: MutationCtx,
+  input: {
+    readonly organisationConnectionId: Id<'organisationConnections'>;
+    readonly kind: OrganisationConnectionKind;
+    readonly secrets: ObjectType<typeof storedSecretsFields>;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { secretCredentialId, refreshCredentialId } = input.secrets;
+  if (
+    input.kind !== 'slack-configuration' ||
+    secretCredentialId === undefined ||
+    refreshCredentialId === undefined
+  ) {
+    return;
+  }
+  await ctx.scheduler.runAt(
+    input.now + KEEP_CURRENT_MIN_DELAY_MS,
+    internal.slackProvisionActions.keepConfigurationCurrent,
+    { organisationConnectionId: input.organisationConnectionId, secretCredentialId, generation: 0 },
+  );
+}
+
+/**
  * Record a landed connection and its ledger line, in one transaction. Internal, for
  * {@link landConnection}. When the system gained an active connection since the action checked,
  * the secrets the action stored are revoked here and the refusal returned, so none is left live.
+ * A Slack configuration pair queues its first renewal ({@link keepConfigurationCurrentFrom}).
  */
 export const recordLanded = internalMutation({
   args: {
@@ -501,6 +548,12 @@ export const recordLanded = internalMutation({
       },
       ...actorOf(registrar),
       createdAt: now,
+    });
+    await keepConfigurationCurrentFrom(ctx, {
+      organisationConnectionId,
+      kind: landing.kind,
+      secrets,
+      now,
     });
     return { recorded: true, organisationConnectionId };
   },
@@ -653,7 +706,8 @@ async function emptySharedToken(
  * token and ended by its kind ({@link endOrganisationSecrets}; M6), and the shared token issued with it is
  * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
- * and the secrets the action stored are revoked here.
+ * and the secrets the action stored are revoked here. A Slack configuration pair queues the
+ * renewal of the new token ({@link keepConfigurationCurrentFrom}).
  */
 export const recordRotated = internalMutation({
   args: {
@@ -713,6 +767,12 @@ export const recordRotated = internalMutation({
       },
       ...actorOf(registrar),
       createdAt: now,
+    });
+    await keepConfigurationCurrentFrom(ctx, {
+      organisationConnectionId: connection._id,
+      kind: connection.kind,
+      secrets,
+      now,
     });
     return { recorded: true, organisationConnectionId: connection._id };
   },
@@ -859,6 +919,32 @@ export const revoke = mutation({
   },
 });
 
+/**
+ * How many employee cards a revoke of the connection would end (11-AC's item 3), for the revoke's
+ * confirmation, counting only cards that still hold access through it (the round review's m24): a count and nothing else, so no employee or card is named to an administrator (B8).
+ * `atLeast` says the cards are more than one revoke ends (`CONNECTION_CARD_LIMIT`), which the
+ * revoke refuses. Public, guarded by `assertAdministrator`; writes nothing.
+ */
+export const cardsOn = query({
+  args: { organisationConnectionId: v.id('organisationConnections') },
+  returns: v.object({ cards: v.number(), atLeast: v.boolean() }),
+  handler: async (ctx, args): Promise<{ cards: number; atLeast: boolean }> => {
+    await assertAdministrator(ctx);
+    const cards = await ctx.db
+      .query('surfaces')
+      .withIndex('by_organisation_connection', (q) =>
+        q.eq('organisationConnectionId', args.organisationConnectionId),
+      )
+      .take(CONNECTION_CARD_LIMIT + 1);
+    const holding = cards.filter(holdsAccessThroughConnection);
+    // The limit is on the cards one revoke reads, as `endCardsOnConnection` refuses (the second pass).
+    return {
+      cards: Math.min(holding.length, CONNECTION_CARD_LIMIT),
+      atLeast: cards.length > CONNECTION_CARD_LIMIT,
+    };
+  },
+});
+
 /** Revoke an organisation connection from the setup verb. Internal; writes what {@link revoke} writes. */
 export const revokeFromSetup = internalMutation({
   args: revocationFields,
@@ -969,6 +1055,8 @@ export const listForAdministrator = query({
 const managerSystemValidator = v.object({
   system: v.string(),
   displayName: v.string(),
+  /** What IT registered, so a card reads whether an issuer acts through it (D6). */
+  kind: connectionKindValidator,
   mode: connectionModeValidator,
   status: v.union(v.literal('active'), v.literal('needs-attention')),
   connectedAt: v.number(),
@@ -1007,6 +1095,7 @@ export const summaryForManager = query({
       .map((connection) => ({
         system: connection.system,
         displayName: connection.displayName,
+        kind: connection.kind,
         mode: connection.mode,
         status: connection.status,
         connectedAt: connection.createdAt,

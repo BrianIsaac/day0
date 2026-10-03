@@ -430,19 +430,26 @@ function attemptPlans(subject: RevocationSubject, plan: AttemptPlan): AttemptPla
   };
 }
 
-/** One attempt's calls: each refresh token of the pair first, then the held credential's plan. */
+/**
+ * One attempt's calls: each refresh token of the pair first, then the held credential's plan. A
+ * held token the vendor finds already gone after this attempt revoked its pair's refresh token was
+ * ended by that revoke (Linear ends the whole grant at the first, R41V-8), so the attempt records
+ * the refresh token's outcome.
+ */
 async function revoke(
   plans: AttemptPlans,
   plan: AttemptPlan,
   opened: Opened,
 ): Promise<AttemptOutcome> {
   let viaConnection = false;
+  let pairRevoked: AttemptResult | undefined;
   for (const [index, refreshPlan] of plans.refreshes.entries()) {
     const refreshToken = opened.refreshTokens[index];
     if (refreshPlan.kind === 'none' || refreshToken === undefined) continue;
     const made = await runCalls(refreshPlan.calls, refreshToken, opened, plan);
     viaConnection = viaConnection || made.viaConnection;
     if (made.result.kind === 'failure') return { result: made.result, viaConnection };
+    if (made.result.outcome !== 'already-gone') pairRevoked = made.result;
   }
   if (plans.own.kind === 'none') {
     return {
@@ -451,7 +458,15 @@ async function revoke(
     };
   }
   const own = await runCalls(plans.own.calls, opened.token, opened, plan);
-  return { result: own.result, viaConnection: viaConnection || own.viaConnection };
+  return {
+    result:
+      pairRevoked !== undefined &&
+      own.result.kind === 'final' &&
+      own.result.outcome === 'already-gone'
+        ? pairRevoked
+        : own.result,
+    viaConnection: viaConnection || own.viaConnection,
+  };
 }
 
 /**

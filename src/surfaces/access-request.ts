@@ -130,6 +130,49 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
   return undefined;
 }
 
+/** The connection kind an issuer of Day0's acts through, by the named system it serves. */
+const ISSUER_KINDS: Readonly<Record<string, OrganisationConnectionKind>> = {
+  slack: 'slack-configuration',
+  linear: 'oauth-app',
+};
+
+/**
+ * The kind an issuer of Day0's acts through for a system, or undefined where none serves it.
+ *
+ * @param system - The system key (`organisationSystemOf`).
+ */
+export function issuerKindFor(system: string): OrganisationConnectionKind | undefined {
+  return system.startsWith(MCP_SYSTEM_PREFIX) ? 'mcp-client' : ISSUER_KINDS[system];
+}
+
+/**
+ * Whether an issuer of Day0's serves a system at all: Slack's own apps, Linear's app, and an MCP
+ * server's client. A card on any other system asks IT for nothing and takes a key of its own
+ * (11-AC's item 8: a product call, flagged).
+ *
+ * @param system - The system key (`organisationSystemOf`).
+ */
+export function issuerServesSystem(system: string): boolean {
+  return issuerKindFor(system) !== undefined;
+}
+
+/**
+ * Whether an issuer of Day0's acts through an organisation connection, so the connection covers
+ * the cards of its system: its kind is the one the issuer for its system acts through (Slack's
+ * configuration token, Linear's OAuth app, an MCP server's client). A static key or a service
+ * account landed for any system is recorded and acted through by nothing, so it covers no card and
+ * the card takes a key of its own (decision D6 (b), a product call, flagged; the round review's
+ * m11).
+ *
+ * @param connection - The connection's system and kind.
+ */
+export function servedByIssuer(
+  connection: Readonly<{ system: string; kind: OrganisationConnectionKind }>,
+): boolean {
+  const kind = issuerKindFor(connection.system);
+  return kind !== undefined && kind === connection.kind;
+}
+
 /**
  * Why a card refuses a pasted credential: its system has an active organisation connection, so
  * the card's credential comes from that connection, never from a paste (the access plan,
@@ -194,9 +237,15 @@ export function accessRequestReason(
   connection: AccessRequestConnection | null,
   neededScopes?: readonly string[],
 ): AccessRequestReason | undefined {
-  if (organisationSystemOf(card) === undefined) return undefined;
+  const system = organisationSystemOf(card);
+  if (system === undefined) return undefined;
   if (card.managerApprovedAt === undefined || card.credentialId !== undefined) return undefined;
+  // A system no issuer acts through asks IT for nothing, connected or not: the card takes a key.
+  if (!issuerServesSystem(system)) return undefined;
   if (connection === null) return 'no-connection';
+  // A connection no issuer acts through (a static key IT landed for Linear) covers nothing, and
+  // the card takes a key of its own rather than asking IT for an install it cannot use (D6).
+  if (!servedByIssuer(connection)) return undefined;
   if (neededScopes?.some((scope: string): boolean => !connection.scopes.includes(scope))) {
     return 'scope-widening';
   }
@@ -240,6 +289,8 @@ export interface AccessRequestInput {
   readonly zone: string;
   /** The app's public origin, for the organisation page's address, when the deployment has one. */
   readonly publicUrl?: string;
+  /** Whether IT revoked the system's connection and none is active since. */
+  readonly connectionRevoked?: boolean;
 }
 
 /** The access request as the card shows it, the manager's DM carries it and the export records it. */
@@ -271,11 +322,18 @@ function approvedScopes(card: AccessRequestCard): readonly string[] {
   return scopes.length > 0 ? scopes : [`${card.slug}:read`, `${card.slug}:write`];
 }
 
-/** Why the card asks, in IT's words. */
-function reasonLine(reason: AccessRequestReason, system: string, employee: string): string {
+/** Why the card asks, in IT's words: a connection IT revoked is said as revoked, never as not yet made. */
+function reasonLine(
+  reason: AccessRequestReason,
+  system: string,
+  employee: string,
+  connectionRevoked: boolean,
+): string {
   switch (reason) {
     case 'no-connection':
-      return `${system} is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.`;
+      return connectionRevoked
+        ? `The organisation’s ${system} connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.`
+        : `${system} is not connected for the organisation yet: an administrator connects it once, and every employee’s card then uses that connection.`;
     case 'install-needed':
       return `${system} is connected for each employee, and ${employee}’s own app needs an administrator to install it.`;
     case 'scope-widening':
@@ -365,7 +423,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
   const subject = `Day0 access request: ${name} for ${employee}`;
   const lines = [
     `${employee}, a Day0 employee, needs access to ${name}; ${employee}’s manager approved it and asks IT to connect it.`,
-    reasonLine(input.reason, name, employee),
+    reasonLine(input.reason, name, employee, input.connectionRevoked === true),
     `Access needed: ${scopes.join(', ')}.`,
     evidenceLine(input.card, employee),
     lengthLine(input.card, input.zone),

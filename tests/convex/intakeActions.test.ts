@@ -61,6 +61,10 @@ import {
 import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { LIST_ISSUES_SELECTABLE_FIELDS } from '../fixtures/linear/linear-oauth-2026-10-02';
+import {
+  LINEAR_MCP_REVOKED_TOKEN_ERROR,
+  LINEAR_MCP_TRANSPORT_ERROR,
+} from '../fixtures/real-vendor-walk-2026-10-03';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -2921,6 +2925,47 @@ describe('each employee reads its own approved queues', (): void => {
       expect(unread.withdrawn).toEqual([]);
     });
 
+    it("withdraws under the owner the poll read the employee under, and names a withdraw a handover refused (the wave 10 review's FR-m4)", async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      const under: Array<string | null> = [];
+      const withdraw = harness.runtime.withdraw;
+      harness.runtime.withdraw = async (candidate, startedUnder): Promise<void> => {
+        under.push(startedUnder);
+        if (candidate.externalId === 'FIN-3') {
+          throw new Error(
+            'the employee was handed over to a new manager, or retired, while this poll read its queue',
+          );
+        }
+        await withdraw(candidate, startedUnder);
+      };
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [
+            ticket('FIN-1'),
+            ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+            ticket('FIN-3', { status: 'Done', statusType: 'completed' }),
+          ],
+          { owner: KEY_OWNER },
+        ),
+      });
+      expect(under).toEqual([financeAgent.userId, financeAgent.userId]);
+      expect(harness.withdrawn.map((row) => row.externalId)).toEqual(['FIN-2']);
+      // The refused withdraw holds the checkpoint, so the new owner's first poll reads it again.
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(harness.records[0]?.skipReason).toContain('FIN-3 (');
+    });
+
     it('holds the checkpoint and takes no ticket when the fields selector cannot select who owns it (M8)', async (): Promise<void> => {
       const finance: Doc<'surfaces'> = {
         ...companySurfaces()[1],
@@ -4490,6 +4535,53 @@ describe("a provider that does not answer in time (the real-Linear walk's m12)",
   it('keeps every other failure in its own words', async (): Promise<void> => {
     expect(await timedOut(new Error('getaddrinfo ENOTFOUND slack.com'))).toBe(
       'intake failed: getaddrinfo ENOTFOUND slack.com',
+    );
+  });
+});
+
+describe("a card's intake skip in Day0's words, never the MCP client's (R41V-9)", (): void => {
+  const linearCredential = id<'credentials'>('credential-linear');
+  const skipped = async (error: Error): Promise<string | undefined> => {
+    const harness = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+        }),
+      ],
+      [pageRow('linear.md', 'Linear', LINEAR)],
+      new Map([[String(linearCredential), 'lin_oauth_access_1']]),
+    );
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 10_000,
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async (): Promise<never> => {
+          throw error;
+        },
+        toolFromDefinition: async (): Promise<never> => {
+          throw error;
+        },
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    });
+    return harness.records[0]?.skipReason;
+  };
+
+  it("names a token Linear refused as Linear's refusal, and what Day0 does next", async (): Promise<void> => {
+    const reason = await skipped(new Error(LINEAR_MCP_REVOKED_TOKEN_ERROR));
+    expect(reason).toBe(
+      'intake failed: Linear refused the token Day0 holds for this card, so nothing was read; ' +
+        "the card's next check says whether the connection still works.",
+    );
+  });
+
+  it('names an MCP server that could not be reached, without the client’s transport text', async (): Promise<void> => {
+    const reason = await skipped(new Error(LINEAR_MCP_TRANSPORT_ERROR));
+    expect(reason).toBe(
+      "intake failed: Linear's MCP server could not be reached, so nothing was read; intake " +
+        'tries again at its next poll.',
     );
   });
 });

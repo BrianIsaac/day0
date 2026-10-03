@@ -3,7 +3,7 @@ import { SessionGate, SessionPending } from '../Providers';
 import { OrganisationPage } from './OrganisationPage';
 
 /** The page's title in the tab. */
-export const metadata: Metadata = { title: 'Organisation' };
+export const metadata: Metadata = { title: 'Organisation · Day0' };
 
 /**
  * The organisation page (B8), drawn once Convex holds the signed-in person's token: the

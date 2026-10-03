@@ -14,7 +14,11 @@ import type {
   OrganisationConfigurationUsedPayload,
   SlackConfigurationMethod,
 } from '../src/events/contract';
-import { keepCurrentAt, slackClientSecretIssuer } from '../src/surfaces/identity-issuers/slack';
+import {
+  isIssuedAs,
+  keepCurrentAt,
+  slackClientSecretIssuer,
+} from '../src/surfaces/identity-issuers/slack';
 
 /*
  * The transactions of Slack's identity issuer (wave 11, 11-AS; the access plan, section 4.9): the
@@ -157,7 +161,13 @@ export const recordRotation = internalMutation({
     }
     const generation = args.expectedGeneration + 1;
     await ctx.db.patch(held.refresh._id, { ...args.refresh });
-    await ctx.db.patch(held.secret._id, { ...args.token, generation, expiresAt: args.expiresAt });
+    // The rotation ends the refresh lease its holder took (`refreshLease.claim`).
+    await ctx.db.patch(held.secret._id, {
+      ...args.token,
+      generation,
+      expiresAt: args.expiresAt,
+      refreshingUntil: undefined,
+    });
     if (
       held.connection.status === 'needs-attention' &&
       held.connection.statusReason === SPENT_REFRESH_REASON
@@ -304,15 +314,16 @@ const CHANGED_HANDS =
 /**
  * Record the app Day0 just created for an employee, with its install link, in one transaction:
  * the card's `provisioning` (the connection that created it, when one did: 11-AR's retire reads it
- * to choose `apps.manifest.delete`, S4), the client secret's `issuedBy` (`app-created`), and the
- * record's `surface.app-provisioned`. The client secret is a row the organisation holds, stored by
- * the action with its holder, which nothing names until this write. Internal, for
+ * to choose `apps.manifest.delete`, S4) and the record's `surface.app-provisioned`. The client
+ * secret is a row the organisation holds, stored by the action with its holder and this app's
+ * `issuedBy` (`app-created`), which nothing names until this write. Internal, for
  * `slackProvisionActions`. Refuses an employee that changed hands since the action started, as the
  * Linear and MCP recorders do (the wave 11 review's m10): the old manager's app never lands on a
  * card the handover gave another.
  *
  * @throws ConvexError with {@link CARD_HAS_APP} when the card was given an app meanwhile, when the
- *   employee changed hands, or when the secret is not a fresh row the organisation holds.
+ *   employee changed hands, or when the secret is not a live row the organisation holds for this
+ *   app.
  */
 export const recordCreatedApp = internalMutation({
   args: {
@@ -339,9 +350,6 @@ export const recordCreatedApp = internalMutation({
     const agent = await ctx.db.get(surface.agentId);
     if (agent?.userId !== args.startedUnder) throw new ConvexError(CHANGED_HANDS);
     if (surface.provisioning !== undefined) throw new ConvexError(CARD_HAS_APP);
-    if (!liveOrganisationRow(secret) || secret.issuedBy !== undefined) {
-      throw new ConvexError("The app's client secret is not one the organisation holds for it.");
-    }
     const app = {
       appId: args.appId,
       clientId: args.clientId,
@@ -349,7 +357,14 @@ export const recordCreatedApp = internalMutation({
         ? {}
         : { organisationConnectionId: args.organisationConnectionId }),
     };
-    await ctx.db.patch(secret._id, { issuedBy: slackClientSecretIssuer(app) });
+    // The action stored the secret with this app's issuer (the pre-tag's item 10): one stored for
+    // another app, or without one, is not this app's.
+    if (
+      !liveOrganisationRow(secret) ||
+      !isIssuedAs(secret.issuedBy, slackClientSecretIssuer(app))
+    ) {
+      throw new ConvexError("The app's client secret is not one the organisation holds for it.");
+    }
     await ctx.db.patch(surface._id, {
       provisioning: {
         ...app,

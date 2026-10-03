@@ -7,6 +7,8 @@ import { slackKitManifestTemplate } from '../../src/surfaces/access-kit/slack';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { buildSlackManifest } from '../../src/surfaces/slack-manifest';
 import { harness, type Harness, type HarnessOptions } from './setup-harness';
+import { createIssuer } from '../../fake-oidc/issuer.js';
+import type { OauthFetch } from '../../src/surfaces/mcp-oauth';
 
 /** An installation with the company sign-in in place, as `./setup.sh sign-in` leaves it. */
 const SIGNED_IN = [
@@ -45,7 +47,23 @@ interface Deployment {
   readonly fetch: typeof fetch;
 }
 
-function deployment(connected: readonly string[] = []): Deployment {
+/** The row `occupyingFor` answers for a connected system, unless a test names its own. */
+function slackRow(system: string): Record<string, unknown> {
+  return {
+    system,
+    displayName: 'Slack',
+    status: 'active',
+    kind: 'slack-configuration',
+    mode: 'per-employee',
+    scopes: ['chat:write', 'im:write'],
+    redirectUrl: 'https://day0.old.acme.test/api/oauth/slack',
+  };
+}
+
+function deployment(
+  connected: readonly string[] = [],
+  rows: Readonly<Record<string, Record<string, unknown>>> = {},
+): Deployment {
   const calls: Deployment['calls'] = [];
   return {
     calls,
@@ -64,17 +82,7 @@ function deployment(connected: readonly string[] = []): Deployment {
         const system = String(body.args.system);
         return Response.json({
           status: 'success',
-          value: connected.includes(system)
-            ? {
-                system,
-                displayName: 'Slack',
-                status: 'active',
-                kind: 'slack-configuration',
-                mode: 'per-employee',
-                scopes: ['chat:write', 'im:write'],
-                redirectUrl: 'https://day0.old.acme.test/api/oauth/slack',
-              }
-            : null,
+          value: connected.includes(system) ? (rows[system] ?? slackRow(system)) : null,
         });
       }
       if (body.path === 'organisationConnections:landFromSetup') {
@@ -108,12 +116,21 @@ interface AccessBed {
   run(args: readonly string[], stdin?: string): Promise<number>;
 }
 
+/** A vendor seam that refuses every call: no test reaches a vendor it did not stand up. */
+const NO_VENDOR: OauthFetch = async (url: URL): Promise<Response> => {
+  throw new Error(`no vendor answers ${url.href} in a test`);
+};
+
 function accessBed(
-  options: HarnessOptions & { readonly connected?: readonly string[] } = {},
+  options: HarnessOptions & {
+    readonly connected?: readonly string[];
+    readonly rows?: Readonly<Record<string, Record<string, unknown>>>;
+    readonly vendorFetch?: OauthFetch;
+  } = {},
 ): AccessBed {
   const bed = harness({ envLocal: SIGNED_IN, ...options });
   documentation(bed.directory);
-  const api = deployment(options.connected);
+  const api = deployment(options.connected, options.rows);
   const record = mkdtempSync(join(tmpdir(), 'day0-install-record-'));
   return {
     bed,
@@ -123,6 +140,7 @@ function accessBed(
       await runCommand(parseSetupArguments(['--mode', 'real', ...args]), {
         ...bed.io,
         fetch: api.fetch,
+        vendorFetch: options.vendorFetch ?? NO_VENDOR,
         readStdin: async (): Promise<string> => stdin,
       }),
   };
@@ -163,8 +181,8 @@ describe('setup: the access verb', (): void => {
         displayName: 'Linear',
         kind: 'oauth-app',
         mode: 'shared',
-        scopes: ['read', 'write'],
-        clientCredentialsScopes: ['read', 'write'],
+        scopes: ['read', 'write', 'app:assignable'],
+        clientCredentialsScopes: ['read', 'write', 'app:assignable'],
         clientId: 'lin-client',
         redirectUrl: 'https://day0.acme.test/api/oauth/linear',
         secret: SECRETS.LINEAR_CLIENT_SECRET,
@@ -244,6 +262,33 @@ describe('setup: the access verb', (): void => {
     expect(record).toContain('12 hours');
     expect(record).toContain('Linear, shared');
     expect(record).toContain('30 days');
+  });
+
+  it('adds a second run on the same day to the install record, never replacing the first (R41V-12)', async (): Promise<void> => {
+    const bed = accessBed();
+    // The walk: Linear per employee, then Slack later the same day.
+    await bed.run([
+      'access',
+      '--administrators',
+      'ines@acme.test',
+      '--systems',
+      'linear',
+      '--connect-mode',
+      'linear=per-employee',
+      '--record',
+      bed.record,
+    ]);
+    await bed.run([...ACCESS, '--systems', 'slack', '--record', bed.record]);
+
+    const files = readdirSync(bed.record);
+    expect(files).toHaveLength(1);
+    const record = readFileSync(join(bed.record, files[0]!), 'utf8');
+    expect(record).toContain('Linear, per employee');
+    expect(record).toContain('Slack, per employee');
+    expect(record.indexOf('Linear, per employee')).toBeLessThan(
+      record.indexOf('Slack, per employee'),
+    );
+    expect(record.match(/^# Day0 install record/gm)).toHaveLength(1);
   });
 
   it('writes the record under HOME by default, and nowhere when HOME is unset and no --record is given', async (): Promise<void> => {
@@ -332,7 +377,9 @@ describe('setup: the access verb', (): void => {
     const stdin = [
       'MCP_MCP_ACME_COM_CLIENT_ID=acme-client',
       'MCP_MCP_ACME_COM_CLIENT_SECRET=acme-test-secret',
+      'MCP_MCP_ACME_COM_ISSUER=https://auth.acme.com',
       'MCP_CRM_ACME_COM_CLIENT_ID=crm-client',
+      'MCP_CRM_ACME_COM_ISSUER=https://id.crm.acme.com',
       '',
     ].join('\n');
     const status = await bed.run(
@@ -342,11 +389,82 @@ describe('setup: the access verb', (): void => {
     expect(status).toBe(0);
     const landed = bed.deployment.calls
       .filter((call) => call.path === 'organisationConnections:landFromSetup')
-      .map((call) => [call.args.system, call.args.clientId, call.args.secret ?? null]);
+      .map((call) => [
+        call.args.system,
+        call.args.clientId,
+        call.args.secret ?? null,
+        call.args.issuer,
+      ]);
     expect(landed).toEqual([
-      ['mcp:mcp.acme.com', 'acme-client', 'acme-test-secret'],
-      ['mcp:crm.acme.com', 'crm-client', null],
+      ['mcp:mcp.acme.com', 'acme-client', 'acme-test-secret', 'https://auth.acme.com'],
+      ['mcp:crm.acme.com', 'crm-client', null, 'https://id.crm.acme.com'],
     ]);
+  });
+
+  it("finds a public MCP client's issuer from the server's own metadata when IT leaves it blank, and says so (the review's m4)", async (): Promise<void> => {
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'docs-client', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const bed = accessBed({
+      vendorFetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        await issuer.handle(new Request(url, init)),
+    });
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\n',
+    );
+    expect(status).toBe(0);
+    const [landing] = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationConnections:landFromSetup',
+    );
+    expect(landing?.args).toMatchObject({
+      system: 'mcp:auth.acme.test',
+      clientId: 'docs-client',
+      issuer: 'https://auth.acme.test',
+    });
+    expect(bed.bed.output.join('\n')).toContain(
+      'The server names https://auth.acme.test as its authorisation server; the connection records it as the issuer.',
+    );
+  });
+
+  it("never reads a confidential client's issuer from the server: IT names it, or nothing is landed (the code pass's M1)", async (): Promise<void> => {
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'docs-client', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const bed = accessBed({
+      vendorFetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        await issuer.handle(new Request(url, init)),
+    });
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\nMCP_CLIENT_SECRET=docs-test-secret\n',
+    );
+    expect(status).toBe(1);
+    expect(
+      bed.deployment.calls.filter((call) => call.path === 'organisationConnections:landFromSetup'),
+    ).toEqual([]);
+    expect(bed.bed.output.join('\n')).toContain(
+      "Nothing was written: https://auth.acme.test/mcp has a client secret and no issuer: give the issuer of the authorisation server IT registered the client with (the prompt's issuer, or MCP_ISSUER on stdin); Day0 sends the secret to that server alone.",
+    );
+  });
+
+  it('writes and lands nothing when the server names no authorisation server it can read', async (): Promise<void> => {
+    const bed = accessBed();
+    const status = await bed.run(
+      [...ACCESS, '--systems', 'https://auth.acme.test/mcp'],
+      'MCP_CLIENT_ID=docs-client\n',
+    );
+    expect(status).toBe(1);
+    expect(
+      bed.deployment.calls.filter((call) => call.path === 'organisationConnections:landFromSetup'),
+    ).toEqual([]);
+    expect(bed.bed.output.join('\n')).toContain(
+      'Nothing was written: https://auth.acme.test/mcp names no authorisation server Day0 could read',
+    );
   });
 
   it('prints the plan on a dry run, asks no secret, writes and lands nothing', async (): Promise<void> => {
@@ -384,7 +502,43 @@ describe('setup: the access verb', (): void => {
     expect(await bed.run(['access', '--print-manifest', 'linear'])).toBe(0);
     const printed = bed.bed.output.join('\n');
     expect(printed).toContain('"client_credentials"');
-    expect(printed).toContain('https://linear.app/settings/api/applications/new?manifest=');
+    // Linear's dotted query form, which pre-fills it; never a `?manifest=` link (R41X-2).
+    expect(printed).toContain(
+      'https://linear.app/settings/api/applications/new?distribution=private&developer.name=Day0&oauth.client_name=Day0&',
+    );
+    expect(printed).toContain(
+      'oauth.grant_types=authorization_code&oauth.grant_types=client_credentials',
+    );
+    expect(printed).not.toContain('?manifest=');
+  });
+
+  it('prints an employee’s own Linear app’s form, pre-filled with its name and no client credentials (R41V-R5)', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'linear', '--employee', 'Leo'])).toBe(0);
+    const printed = bed.bed.output.join('\n');
+    const link = /https:\/\/linear\.app\/settings\/api\/applications\/new\?\S+/.exec(printed)?.[0];
+    expect(link).toBeDefined();
+    const fields = new URL(link ?? '').searchParams;
+    expect(fields.get('oauth.client_name')).toBe('Leo (Day0)');
+    expect(fields.getAll('oauth.grant_types')).toEqual(['authorization_code']);
+    expect(printed).not.toContain('"client_credentials"');
+  });
+
+  it('refuses --employee without --print-manifest linear, and an empty name, landing nothing', async (): Promise<void> => {
+    const alone = accessBed();
+    expect(await alone.run([...ACCESS, '--employee', 'Leo'])).toBe(1);
+    expect(alone.bed.output.join('\n')).toContain('--employee names whose own app');
+    expect(alone.deployment.calls.filter((call) => call.kind === 'action')).toEqual([]);
+
+    const empty = accessBed();
+    expect(await empty.run(['access', '--print-manifest', 'linear', '--employee', ' '])).toBe(1);
+    expect(empty.bed.output.join('\n')).toContain("--employee needs the employee's name");
+  });
+
+  it('refuses an employee’s name for Slack, whose employees’ apps Day0 creates itself', async (): Promise<void> => {
+    const bed = accessBed();
+    expect(await bed.run(['access', '--print-manifest', 'slack', '--employee', 'Leo'])).toBe(1);
+    expect(bed.bed.output.join('\n')).toContain("Day0 creates each employee's Slack app itself");
   });
 
   it("corrects a connection's recorded redirect and scopes to what Day0 returns to and the kit's list, revoking nothing (M12 e)", async (): Promise<void> => {
@@ -409,6 +563,34 @@ describe('setup: the access verb', (): void => {
       'Slack: the recorded redirect is now https://day0.acme.test/api/oauth/slack (it was https://day0.old.acme.test/api/oauth/slack)',
     );
     expect(said).toContain('No secret changed and no card ended.');
+  });
+
+  it("never says a correction cures a shared Linear connection's fixed set, which only a landing again changes (the round review's m6)", async (): Promise<void> => {
+    const bed = accessBed({
+      connected: ['linear'],
+      rows: {
+        linear: {
+          system: 'linear',
+          displayName: 'Linear',
+          status: 'active',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read', 'write'],
+          clientCredentialsScopes: ['read', 'write'],
+          redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+        },
+      },
+    });
+    expect(await bed.run(['access', '--correct', 'linear'])).toBe(0);
+    const said = bed.bed.output.join('\n');
+    expect(said).not.toContain('to see it pass');
+    expect(said).toContain(
+      'Linear: the shared app token was landed with read, write, without app:assignable.\n' +
+        'A correction cannot add them: Linear revokes every token of the app when one is ' +
+        'requested with another set.\n' +
+        'Revoke the connection on the organisation page, then land it again with ./setup.sh ' +
+        'access. Every card on it ends. pnpm check:access reports the gap until then.',
+    );
   });
 
   it('corrects one system at a time, refusing a list before it calls anything', async (): Promise<void> => {

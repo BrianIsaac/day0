@@ -22,6 +22,7 @@ import {
 } from '@/work/state-display';
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
+import type { RefusedSkill } from './VerdictSection';
 import { WorkItemCard } from './WorkItemCard';
 
 /**
@@ -203,6 +204,26 @@ export function sortedForQueue<
 /** No item is known to wait on the manager until the needs-you read answers. */
 const NO_ITEMS: ReadonlySet<string> = new Set();
 
+/** No skill is known to have failed its check until the skills read answers. */
+const NO_REFUSED_SKILLS: ReadonlyMap<string, RefusedSkill> = new Map();
+
+/**
+ * The failed skill an item waits on, as the card's prop, or nothing.
+ *
+ * @param item - The row.
+ * @param refusedSkills - The employee's failed skills, by id.
+ */
+function refusedSkillOf(
+  item: Doc<'workItems'>,
+  refusedSkills: ReadonlyMap<string, RefusedSkill>,
+): { refusedSkill?: RefusedSkill } {
+  const refused =
+    item.state === 'needs-skill' && item.proposedSkillId !== undefined
+      ? refusedSkills.get(item.proposedSkillId)
+      : undefined;
+  return refused === undefined ? {} : { refusedSkill: refused };
+}
+
 /** The employee's work items in the order that puts what needs the manager first. */
 export function WorkQueue({
   agentId,
@@ -218,8 +239,11 @@ export function WorkQueue({
   loading = false,
   employeeName = 'the employee',
   needsYou = NO_ITEMS,
+  refusedSkills = NO_REFUSED_SKILLS,
 }: {
   agentId: Id<'agents'>;
+  /** The employee's skills whose draft failed Day0's check, by id, for the cards waiting on one. */
+  refusedSkills?: ReadonlyMap<string, RefusedSkill>;
   /** The employee's name, for the cards' sentences. */
   employeeName?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
@@ -285,9 +309,18 @@ export function WorkQueue({
   // several times over. Each step's claim mutation refuses the duplicate, but
   // a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
+  // A step asked for again while its call is in flight is not dropped: the
+  // rows may have moved since that call read them (a slot freed while a queued
+  // item was being judged, which then stayed queued with nothing to ask again),
+  // so the loop looks once more when the call settles.
+  const missed = useRef(new Set<string>());
+  const [lookAgain, setLookAgain] = useState(0);
   const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
     const key = `${step}:${id}`;
-    if (inFlight.current.has(key)) return;
+    if (inFlight.current.has(key)) {
+      missed.current.add(key);
+      return;
+    }
     inFlight.current.add(key);
     call()
       // A step that fails on the row records the failure there, where the card
@@ -296,7 +329,10 @@ export function WorkQueue({
       // already holds) leaves nothing on the row and is dropped here; the
       // promise only holds the in-flight key.
       .catch((): void => undefined)
-      .finally(() => inFlight.current.delete(key));
+      .finally(() => {
+        inFlight.current.delete(key);
+        if (missed.current.delete(key)) setLookAgain((count) => count + 1);
+      });
   }, []);
 
   // Auto-progression, mock mode only: once charter is approved, evaluate every
@@ -309,7 +345,7 @@ export function WorkQueue({
     if (!drivesLoop || !charterApproved) return;
     const next = nextItemToEvaluate(workItems);
     if (next) once('evaluate', next._id, () => evaluate({ workItemId: next._id }));
-  }, [drivesLoop, charterApproved, workItems, evaluate, once]);
+  }, [drivesLoop, charterApproved, workItems, evaluate, once, lookAgain]);
 
   useEffect(() => {
     if (!drivesLoop) return;
@@ -321,7 +357,7 @@ export function WorkQueue({
         once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [drivesLoop, workItems, draftPlan, executePlan, once]);
+  }, [drivesLoop, workItems, draftPlan, executePlan, once, lookAgain]);
 
   return (
     <Card
@@ -401,6 +437,7 @@ export function WorkQueue({
                   onDismiss={() => dismissFailed({ workItemId: item._id })}
                   employeeName={employeeName}
                   servedByLoop={surfaceMode === 'real'}
+                  {...refusedSkillOf(item, refusedSkills)}
                 />
               ))}
             </div>

@@ -1468,6 +1468,7 @@ describe('the hourly re-probe sweep', (): void => {
       expired: 1,
       noticed: 1,
       scheduled: 2,
+      keptEnded: 0,
     });
 
     const rows = await harness.run(async (ctx) => ({
@@ -1658,6 +1659,74 @@ describe('credential landing from the card', (): void => {
       reason: 'the app was removed',
     });
     await expect(land()).resolves.toEqual({ landed: true, probeScheduled: true });
+  });
+
+  it("takes a pasted key where IT's connection for the system is one no issuer of Day0's acts through (11-AC's item 8)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(liveInternal.organisationConnections.landFromSetup, {
+      system: 'notion',
+      displayName: 'Notion',
+      kind: 'static-key',
+      mode: 'shared',
+      scopes: ['read'],
+      secret: 'secret_notion_0123456789',
+    });
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        slug: 'notion',
+        displayName: 'Notion',
+        class: 'docs',
+        path: 'documented-api',
+        endpoint: 'https://api.notion.com/v1',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(managerIdentity()).action(liveApi.surfaceActions.landCredential, {
+        surfaceId,
+        label: '',
+        plaintext: 'secret_pasted_by_the_manager',
+      }),
+    ).resolves.toEqual({ landed: true, probeScheduled: true });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.credentialId).toBeDefined();
+  });
+
+  it("takes a pasted key where IT landed a static key for Linear, which no issuer of Day0's acts through (D6, the round review's m11)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(liveInternal.organisationConnections.landFromSetup, {
+      system: 'linear',
+      displayName: 'Linear',
+      kind: 'static-key',
+      mode: 'shared',
+      scopes: ['read'],
+      secret: 'lin_api_0123456789abcdef',
+    });
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'documented-api',
+        endpoint: 'https://api.linear.app/graphql',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(managerIdentity()).action(liveApi.surfaceActions.landCredential, {
+        surfaceId,
+        label: '',
+        plaintext: 'lin_api_pasted_by_the_manager',
+      }),
+    ).resolves.toEqual({ landed: true, probeScheduled: true });
   });
 
   it('stores a documented-location landing as kind location', async (): Promise<void> => {

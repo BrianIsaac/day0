@@ -45,11 +45,15 @@ export const KEEP_CURRENT_MIN_DELAY_MS = 15 * 60 * 1000;
 export const NO_CONFIGURATION_TOKEN =
   "Paste an app configuration token: the organisation has no active Slack connection to create this employee's app with.";
 
-/** Why a kept app is not installed again: IT revoked the connection that created it. */
+/**
+ * Why a kept app is not installed again: IT revoked the connection that created it. Nor can Day0
+ * delete it afterwards, even through a connection IT lands again: only the creating connection's
+ * configuration token could, and its retire says so (the re-walk, R41X-9).
+ */
 export const KEPT_APP_CONNECTION_REVOKED =
   "IT revoked the organisation's Slack connection this employee's app was created with, so the " +
-  'app is not installed again. Once IT connects Slack again, retire the app with the employee ' +
-  "or delete it in Slack's app settings before a new one is created.";
+  'app is not installed again, and Day0 cannot delete it, even once IT connects Slack again: ' +
+  "IT deletes it in Slack's app settings.";
 
 /** The manifest an employee's app is created from, and which template it was built from. */
 export interface SlackAppManifest extends BuiltSlackManifest {
@@ -248,6 +252,58 @@ export function slackBotTokenIssuer(
     grant: 'oauth-install',
     clientSecretCredentialId: app.clientSecretCredentialId,
   };
+}
+
+/**
+ * `issuedBy` of the bot token a card's own app's install gives, read off the card's
+ * `provisioning`: the app, the connection that created it when one did, and its client secret.
+ *
+ * @param provisioning - The card's app, as `provisioning` records it.
+ */
+export function installedBotIssuer(provisioning: {
+  readonly appId: string;
+  readonly clientId: string;
+  readonly organisationConnectionId?: Id<'organisationConnections'>;
+  readonly clientSecretCredentialId: Id<'credentials'>;
+}): SlackIssuedBy {
+  return slackBotTokenIssuer({
+    appId: provisioning.appId,
+    clientId: provisioning.clientId,
+    ...(provisioning.organisationConnectionId === undefined
+      ? {}
+      : { organisationConnectionId: provisioning.organisationConnectionId }),
+    clientSecretCredentialId: provisioning.clientSecretCredentialId,
+  });
+}
+
+/** A stored row's `issuedBy` (the `credentialIssuerValidator` shape), as the check reads it. */
+export interface HeldIssuer {
+  readonly system: string;
+  readonly grant: string;
+  readonly appId?: string;
+  readonly clientId?: string;
+  readonly organisationConnectionId?: string;
+  readonly clientSecretCredentialId?: string;
+}
+
+/**
+ * Whether a stored row's `issuedBy` is exactly the one the issuer gives it: the row the action
+ * just stored for this app, with this grant (the pre-tag's item 10, `credentials.store` writing it
+ * with the value).
+ *
+ * @param held - The row's `issuedBy`, as stored.
+ * @param expected - What the issuer gives the row (`slackClientSecretIssuer`, `installedBotIssuer`).
+ */
+export function isIssuedAs(held: HeldIssuer | undefined, expected: SlackIssuedBy): boolean {
+  return (
+    held !== undefined &&
+    held.system === expected.system &&
+    held.grant === expected.grant &&
+    held.appId === expected.appId &&
+    held.clientId === expected.clientId &&
+    held.organisationConnectionId === expected.organisationConnectionId &&
+    held.clientSecretCredentialId === expected.clientSecretCredentialId
+  );
 }
 
 /**

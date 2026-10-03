@@ -206,8 +206,8 @@ export function DraftDetails({ output, title }: { output: RunOutput; title?: str
       ) : null}
       <p className="mt-2 text-[13px] text-[var(--color-muted)]">
         {closingPhase
-          ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
-          : "The employee's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+          ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the actions listed above reached the work environment.'
+          : "The employee's own words, written before anything was applied. Only the actions listed above reached the work environment."}
       </p>
     </Disclosure>
   );

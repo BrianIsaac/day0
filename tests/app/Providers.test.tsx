@@ -6,7 +6,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const recorded = vi.hoisted(() => ({ clients: [] as unknown[], clerkStatus: 'loading' }));
 
 vi.mock('@clerk/nextjs', () => ({
-  ClerkProvider: ({ children }: { children: ReactNode }) => <div data-auth="clerk">{children}</div>,
+  ClerkProvider: ({
+    children,
+    signInUrl,
+    signUpUrl,
+    signInFallbackRedirectUrl,
+    signUpFallbackRedirectUrl,
+  }: {
+    children: ReactNode;
+    signInUrl?: string;
+    signUpUrl?: string;
+    signInFallbackRedirectUrl?: string;
+    signUpFallbackRedirectUrl?: string;
+  }) => (
+    <div
+      data-auth="clerk"
+      data-sign-in={signInUrl}
+      data-sign-up={signUpUrl}
+      data-after-sign-in={signInFallbackRedirectUrl}
+      data-after-sign-up={signUpFallbackRedirectUrl}
+    >
+      {children}
+    </div>
+  ),
   useAuth: () => ({}),
   useClerk: () => ({ status: recorded.clerkStatus }),
 }));
@@ -87,6 +109,30 @@ describe('application providers', () => {
     expect((recorded.clients[0] as ConvexReactClient).url).toBe(
       'https://configured-test.convex.cloud',
     );
+  });
+
+  it("hands Clerk Day0's own sign-in and sign-up addresses when the environment names none (round 0141 R-D item 4)", async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://configured-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    vi.stubEnv('NEXT_PUBLIC_CLERK_SIGN_IN_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_CLERK_SIGN_UP_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL', '');
+    const { Providers } = await import('../../app/Providers');
+    const html = renderToStaticMarkup(<Providers>{null}</Providers>);
+    expect(html).toContain('data-sign-in="/sign-in"');
+    expect(html).toContain('data-sign-up="/sign-up"');
+    expect(html).toContain('data-after-sign-in="/"');
+    expect(html).toContain('data-after-sign-up="/"');
+  });
+
+  it('hands Clerk the sign-in address the environment names over the default', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://configured-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    vi.stubEnv('NEXT_PUBLIC_CLERK_SIGN_IN_URL', '/enter');
+    const { Providers } = await import('../../app/Providers');
+    const html = renderToStaticMarkup(<Providers>{null}</Providers>);
+    expect(html).toContain('data-sign-in="/enter"');
   });
 
   it('still refuses the no-auth flag in a production build', async () => {

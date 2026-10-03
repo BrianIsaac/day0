@@ -23,6 +23,11 @@ import {
   type LinearFetch,
 } from '../../../../src/surfaces/identity-issuers/linear';
 import {
+  LINEAR_REFRESH_TOKEN_REVOKED,
+  LINEAR_REVOKE_ALREADY_REVOKED,
+} from '../../../fixtures/real-vendor-walk-2026-10-03';
+import { LINEAR_REVOKE_TOKEN_NOT_FOUND } from '../../../fixtures/real-vendor-rewalk-2026-10-03';
+import {
   ARRAY_SCOPE_TOKEN,
   AUTHORISATION_CODE_TOKEN,
   CLIENT_CREDENTIALS_TOKEN,
@@ -203,6 +208,52 @@ describe('the per-employee grants', (): void => {
     expect(refusal.message).toContain('fetch failed');
   });
 
+  it.each(LINEAR_REFRESH_TOKEN_REVOKED)(
+    'reads "Refresh token revoked" as a refused refresh, an authority withdrawn, never an unreadable answer (R41V-9): %j',
+    ({ status, body }): void => {
+      let thrown: unknown;
+      try {
+        readTokenResponse(status, body, NOW);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(LinearIssuerRefusal);
+      expect((thrown as LinearIssuerRefusal).reason).toBe('token-refused');
+      expect(isAuthorityRefusal(thrown)).toBe(true);
+      expect((thrown as Error).message).toBe(
+        'Linear refused the token or code it was shown: Refresh token revoked.',
+      );
+    },
+  );
+
+  it.each(
+    [200, 400].flatMap((status) =>
+      LINEAR_REFRESH_TOKEN_REVOKED.map(({ body }) => ({ status, body })),
+    ),
+  )(
+    'reads "Refresh token revoked" by its words whatever the status Linear sends it under (the round review\'s M1): %j',
+    ({ status, body }): void => {
+      let thrown: unknown;
+      try {
+        readTokenResponse(status, body, NOW);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(LinearIssuerRefusal);
+      expect((thrown as LinearIssuerRefusal).reason).toBe('token-refused');
+      expect(isAuthorityRefusal(thrown)).toBe(true);
+    },
+  );
+
+  it("reads an error a success carries by its words, not as an unreadable answer (the round review's M1)", (): void => {
+    expect(() => readTokenResponse(200, { error: 'invalid_grant' }, NOW)).toThrow(
+      expect.objectContaining({ reason: 'token-refused' }) as Error,
+    );
+    expect(() => readTokenResponse(200, { error: 'invalid_client' }, NOW)).toThrow(
+      expect.objectContaining({ reason: 'client-refused' }) as Error,
+    );
+  });
+
   it("says Linear's description only when it is one short printable line, else its error code (the review's m13)", (): void => {
     const words = (description: string): string => {
       try {
@@ -348,6 +399,53 @@ describe('revoking a token Day0 will not keep', (): void => {
       (await refusalOf(revokeLinearToken(answering(503, 'busy').fetch, 't', 'access_token')))
         .reason,
     ).toBe('unavailable');
+  });
+
+  it('says Linear could not be reached when the answer to a revoke starts but its body never arrives (the second pass)', async (): Promise<void> => {
+    const hanging: LinearFetch = async (): Promise<Response> =>
+      new Response(
+        new ReadableStream({
+          pull(controller): void {
+            controller.error(new DOMException('The operation timed out', 'TimeoutError'));
+          },
+        }),
+        { status: 200 },
+      );
+    expect(
+      (await refusalOf(revokeLinearToken(hanging, 'lin_oauth_live', 'access_token'))).reason,
+    ).toBe('unavailable');
+  });
+
+  it("takes a 400 as done only when Linear says the token was already revoked (the round review's m4)", async (): Promise<void> => {
+    await expect(
+      revokeLinearToken(
+        answering(LINEAR_REVOKE_ALREADY_REVOKED.status, LINEAR_REVOKE_ALREADY_REVOKED.body).fetch,
+        'gone',
+        'access_token',
+      ),
+    ).resolves.toBeUndefined();
+    const refused = await refusalOf(
+      revokeLinearToken(
+        answering(400, { error: 'invalid_request', error_description: 'Missing token' }).fetch,
+        'lin_oauth_live',
+        'access_token',
+      ),
+    );
+    expect(refused.reason).toBe('malformed');
+    expect(refused.message).toContain('invalid_request');
+    expect(refused.message).not.toContain('lin_oauth_live');
+  });
+});
+
+describe("Linear's answer for a token it does not know (R41X-1)", (): void => {
+  it('takes 401 "Token not found" as done, since nothing is left to revoke', async (): Promise<void> => {
+    await expect(
+      revokeLinearToken(
+        answering(LINEAR_REVOKE_TOKEN_NOT_FOUND.status, LINEAR_REVOKE_TOKEN_NOT_FOUND.body).fetch,
+        'lin_oauth_forgotten',
+        'access_token',
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 

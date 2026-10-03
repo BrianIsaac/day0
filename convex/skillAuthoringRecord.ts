@@ -15,7 +15,7 @@ import { ownerKnownValues } from '../src/redaction/known-values';
  * What an authoring run keeps of itself: the fenced failure that parks a skill short of
  * `registered`, a refused draft and the sandbox's output made safe to keep, the model calls on
  * the ledger, and the stored copy's refusals. Shared by the authoring run
- * (`convex/skillActions.ts`) and the stored verification (`convex/storedVerification.ts`); no
+ * (`convex/skillAuthoringRun.ts`) and the stored verification (`convex/storedVerification.ts`); no
  * Convex function lives here.
  */
 

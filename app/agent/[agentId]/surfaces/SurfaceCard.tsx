@@ -17,8 +17,8 @@ import {
   presentBrowserComponent,
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
-import { scopeFieldsFor } from '@/surfaces/intake-scope';
-import { organisationSystemOf } from '@/surfaces/access-request';
+import { keepsPageScan, scopeFieldsFor } from '@/surfaces/intake-scope';
+import { organisationSystemOf, servedByIssuer } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
@@ -37,8 +37,12 @@ import {
   moveOfferWords,
   noWayOnWords,
   slackChannelsGoWords,
+  unservedConnectionWords,
   identityChip,
+  actsAsAfterRevokeWords,
+  itsReasonWords,
   reachedWords,
+  rejoinWords,
   stateChip,
   type OrganisationSystem,
 } from './card-words';
@@ -54,6 +58,7 @@ import {
   EvidenceQuote,
   IntakeScopeRow,
   ONE_APPROVER,
+  PageScanRow,
   ProvisioningRow,
   SurfaceLadder,
 } from './SurfaceRows';
@@ -156,7 +161,7 @@ export interface SurfaceCardActions {
   /** End the card's access (`surfaces.disconnect`), once the dialog confirmed it. */
   readonly disconnect: () => Promise<unknown>;
   /** Draft the card's access request (`accessRequests.draft`). */
-  readonly draftAccessRequest: () => Promise<unknown>;
+  readonly draftAccessRequest: (via: 'copied' | 'emailed' | 'messaged') => Promise<unknown>;
   /** Record the request copied or opened in an email (`accessRequests.recordSent`). */
   readonly recordAccessRequestSent: (via: 'copied' | 'emailed') => Promise<unknown>;
 }
@@ -276,13 +281,22 @@ export function SurfaceCard({
     surface.channelsNotJoined,
     provisioning?.appName,
   );
+  // The renewal's re-join, while the card holds the token that renewal installed (11-AC's item 5).
+  const rejoined =
+    surface.credentialId === undefined
+      ? undefined
+      : rejoinWords(surface.lastRejoin, context.employeeName, provisioning?.installedAt);
   const reached = reachedWords(surface.path);
   const approvedAt = surface.verdict === 'proposed' ? undefined : surface.managerApprovedAt;
   const proposal = request ? <ProposalFacts request={request} surface={surface} /> : null;
   const system = organisationSystemOf(surface);
   const connection = system === undefined ? undefined : context.organisation.get(system);
-  // Only an active connection covers the card: `landCredential` refuses a paste while one is.
-  const covering = connection?.status === 'active' ? connection : undefined;
+  // Only an active connection an issuer acts through covers the card: `landCredential` refuses a
+  // paste while one is. Another the card cannot use, and it takes a key of its own (11-AC's item 8;
+  // D6, by the connection's kind and system).
+  const active = connection?.status === 'active' ? connection : undefined;
+  const covering = active !== undefined && servedByIssuer(active) ? active : undefined;
+  const unserved = active !== undefined && covering === undefined ? active : undefined;
   const slack = system === 'slack';
   const provisioningPresentation = presentProvisioning({
     credential: request?.credential,
@@ -290,6 +304,7 @@ export function SurfaceCard({
     provisioning,
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
+    employee: context.employeeName,
   });
   // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
   const identity = surface.identity;
@@ -328,13 +343,23 @@ export function SurfaceCard({
           onMove,
         }
       : undefined;
+  // A card Linear refused to renew keeps the refused pair of its own app, which no longer works
+  // (R41X-4): Connect installs the app again, and the installation ends the refused pair as a
+  // Disconnect would (`retireReplaced`), so one press does what Disconnect then Connect did.
+  const refusedOwnApp =
+    system === 'linear' &&
+    covering?.mode === 'per-employee' &&
+    surface.verdict === 'ungranted' &&
+    identity.kind === 'own-app' &&
+    !identity.planned &&
+    surface.provisioning !== undefined;
   const connectable =
     actions.connect !== undefined &&
     covering !== undefined &&
     !slack &&
     approvedAccess &&
     !ended &&
-    surface.credentialId === undefined &&
+    (surface.credentialId === undefined || refusedOwnApp) &&
     !accessRequest;
   const slackConnectable =
     slack &&
@@ -369,7 +394,9 @@ export function SurfaceCard({
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
             M13); a reason that is the skip line is said once, as the skip. */}
         {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
-          <p className="text-sm text-[var(--color-fg)]">{surface.reason}</p>
+          <p className="text-sm text-[var(--color-fg)]">
+            {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
+          </p>
         ) : null}
         {skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
@@ -381,6 +408,13 @@ export function SurfaceCard({
         ) : null}
         {channelsNotJoined ? (
           <p className="text-sm text-[var(--color-warn)]">{channelsNotJoined}</p>
+        ) : null}
+        {rejoined ? (
+          <p
+            className={`text-sm ${surface.lastRejoin?.needsPerson.length ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg-2)]'}`}
+          >
+            {rejoined}
+          </p>
         ) : null}
         {/* A proposed card says it beside its disabled Approve instead. */}
         {browserFloor.absent && surface.verdict !== 'proposed' ? (
@@ -396,8 +430,10 @@ export function SurfaceCard({
           <dl className="grid gap-2.5">
             {showsIdentity ? (
               <Fact label="Acts as">
-                {actsAsWords(identity, identityNames)}
-                {chipForIdentity !== undefined ? (
+                {surface.connectionRevoked
+                  ? actsAsAfterRevokeWords(identityNames)
+                  : actsAsWords(identity, identityNames)}
+                {chipForIdentity !== undefined && !surface.connectionRevoked ? (
                   <>
                     {' '}
                     <Chip tone="warn">{chipForIdentity}</Chip>
@@ -447,6 +483,7 @@ export function SurfaceCard({
             system={surface.displayName}
           />
         ) : null}
+        {keepsPageScan(surface) ? <PageScanRow system={surface.displayName} /> : null}
         <ToolsRow surface={surface} onApprove={actions.approveTools} />
         <ExpiryBlock
           surface={surface}
@@ -459,6 +496,7 @@ export function SurfaceCard({
               : undefined
           }
           move={move}
+          connectionRevoked={surface.connectionRevoked === true}
         />
         {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
             approved card, as the action refuses one before. */}
@@ -484,6 +522,11 @@ export function SurfaceCard({
             error={failed('connect')}
             onConnect={actions.connect}
           />
+        ) : null}
+        {unserved !== undefined && approvedAccess && surface.credentialId === undefined ? (
+          <p className="text-sm text-[var(--color-fg-2)]">
+            {unservedConnectionWords(unserved.displayName)}
+          </p>
         ) : null}
         {noWayOn && covering !== undefined ? (
           <p className="text-sm text-[var(--color-warn)]">

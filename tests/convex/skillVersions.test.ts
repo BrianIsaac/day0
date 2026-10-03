@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import {
   copyVersionsForMove,
   deleteOwnerLibrary,
+  holdersOf,
   LIBRARY_LOOKUP_LIMIT,
   ownerVersions,
   releaseAuthor,
@@ -15,6 +16,7 @@ import {
   stampRecheckDue,
   stampRecheckDueOnSurfaces,
 } from '../../convex/skillVersions';
+import { openRevision } from '../../convex/skillControls';
 import { versionBodyHash } from '../../src/work/skill-library';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -53,13 +55,17 @@ async function employee(harness: Harness, name: string, owner = 'owner'): Promis
   );
 }
 
-/** A shaped, agent-authored skill held by an authoring run, as a claim leaves it. */
+/**
+ * A shaped, agent-authored skill held by an authoring run, as a claim leaves it: keyed on its
+ * employee's owner, as every insert writes it (K-m3).
+ */
 async function claimedSkill(
   harness: Harness,
   agentId: Id<'agents'>,
   extra: Partial<Doc<'skills'>> = {},
 ): Promise<{ skillId: Id<'skills'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
+    const ownerKey = (await ctx.db.get(agentId))?.userId;
     const runId = await ctx.db.insert('events', {
       agentId,
       type: 'skill.authoring-claimed',
@@ -80,6 +86,7 @@ async function claimedSkill(
       authoringRunId: runId,
       authoringClaimedAt: 1,
       createdAt: 1,
+      ...(ownerKey === undefined ? {} : { ownerKey }),
       ...extra,
     });
     return { skillId, runId };
@@ -837,5 +844,105 @@ describe('skillVersions: the shared-skills switch (K4)', (): void => {
     expect(sharedSkillsOn()).toBe(false);
     vi.stubEnv('DAY0_SHARED_SKILLS', 'true');
     expect(sharedSkillsOn()).toBe(true);
+  });
+});
+
+describe('skillVersions: the owner key on every holder row (K-m3, R-S)', (): void => {
+  it("writes the employee's owner key on a row at a built-in install, a proposal and a revision", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const builtinId = await harness.mutation(internal.skills.installBuiltin, {
+      agentId: priya,
+      name: 'triage',
+      description: 'Triage a ticket.',
+      body: '# Triage',
+    });
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: priya,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-1',
+          title: 'Add the close-summary audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'needs-skill',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const proposedId = await harness.mutation(internal.skills.propose, {
+      agentId: priya,
+      workItemId,
+      name: 'audit-note',
+      description: 'Add an audit note.',
+      rationale: 'The work needs it.',
+      requiredScopes: [],
+    });
+    const claimed = await claimedSkill(harness, priya);
+    await register(harness, claimed, BODY_ONE);
+    const revisionId = await harness.run(async (ctx) => {
+      const current = await ctx.db.get(claimed.skillId);
+      if (current === null) throw new Error('skill missing');
+      return await openRevision(ctx, current);
+    });
+
+    for (const id of [builtinId, proposedId, revisionId]) {
+      expect((await skill(harness, id)).ownerKey, id).toBe('owner');
+    }
+  });
+
+  it("reads a version's holders by the owner key: a row keyed for another owner is not one, and a row not keyed yet is one only of the owner's employee", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    const tomas = await employee(harness, 'Tomas', 'rival');
+    const keyed = await claimedSkill(harness, priya, { ownerKey: 'owner' });
+    await register(harness, keyed, BODY_ONE);
+    const [version] = await versionsOf(harness);
+    const rows = await harness.run(async (ctx) => {
+      const holder = {
+        name: NAME,
+        description: 'Ticket comment-and-close on a kanban surface.',
+        body: BODY_ONE,
+        sourceType: 'agent-authored' as const,
+        state: 'registered' as const,
+        versionId: version._id,
+        createdAt: 2,
+      };
+      return {
+        // Written before the field: between the push and the skills-owner-key pass, a withdrawal
+        // must still reach it (the second pass's M2).
+        unkeyed: await ctx.db.insert('skills', { ...holder, agentId: mateo }),
+        rivalUnkeyed: await ctx.db.insert('skills', { ...holder, agentId: tomas }),
+        rival: await ctx.db.insert('skills', { ...holder, agentId: mateo, ownerKey: 'rival' }),
+      };
+    });
+
+    const holders = await harness.run(async (ctx) => await holdersOf(ctx.db, version._id));
+
+    expect(holders.map((row) => row._id).sort()).toEqual([keyed.skillId, rows.unkeyed].sort());
+  });
+
+  it("rewrites every row of a moving employee to the new owner's key", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const claimed = await claimedSkill(harness, priya, { ownerKey: 'owner' });
+    await register(harness, claimed, BODY_ONE);
+    const proposed = await claimedSkill(harness, priya, {
+      name: 'other',
+      state: 'proposed',
+      ownerKey: 'owner',
+    });
+
+    await harness.run(async (ctx) => {
+      await copyVersionsForMove(ctx, { agentId: priya, toOwnerKey: 'lead', cutSlugs: [], now: 5 });
+    });
+
+    expect((await skill(harness, claimed.skillId)).ownerKey).toBe('lead');
+    expect((await skill(harness, proposed.skillId)).ownerKey).toBe('lead');
+    const [copied] = await versionsOf(harness, 'lead');
+    const holders = await harness.run(async (ctx) => await holdersOf(ctx.db, copied!._id));
+    expect(holders.map((row) => row._id)).toEqual([claimed.skillId]);
   });
 });
