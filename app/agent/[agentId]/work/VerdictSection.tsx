@@ -5,6 +5,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { verdictFor } from '@/surfaces/verdict';
 import { runProgress, type WorkGate } from '@/work/item-display';
+import { attemptsSpent } from '@/work/needs-manager';
 import { needsSkillReason } from '@/work/skill-rationale';
 import { Help, ItemSection, Lead, Note } from './ItemParts';
 import { cancelledReason, colleagueHolding } from './work-item';
@@ -25,6 +26,46 @@ export interface ItemVerdict {
 }
 
 /**
+ * A skill an item waits on whose draft failed Day0's authoring check: the waiting card says so
+ * and links to its Retry on the Skills tab, since nothing tries it again on its own (decision D3
+ * (b), a product call, flagged).
+ */
+export interface RefusedSkill {
+  readonly skillId: string;
+  readonly name: string;
+  /** Whether Retry is still offered: false once every attempt is spent and Give up is left. */
+  readonly retryable: boolean;
+}
+
+/**
+ * The employee's failed skills by id, as the waiting cards read them.
+ *
+ * @param skills - The employee's skills in the `failed` state.
+ */
+export function refusedSkillsOf(
+  skills: ReadonlyArray<
+    Pick<Doc<'skills'>, 'name' | 'state' | 'authoringAttempts' | 'offeredVersionId'> & {
+      readonly _id: string;
+    }
+  >,
+): ReadonlyMap<string, RefusedSkill> {
+  return new Map(
+    skills
+      // An adoption's failed check is drawn by the adoption card, whose row has no Retry here.
+      .filter((skill) => skill.offeredVersionId === undefined)
+      .map((skill): [string, RefusedSkill] => [
+        skill._id,
+        { skillId: skill._id, name: skill.name, retryable: !attemptsSpent(skill) },
+      ]),
+  );
+}
+
+/** Where a failed skill's row is on the Skills tab, which lands on it (`useSkillAnchor`). */
+export function skillAnchorHref(agentId: string, skillId: string): string {
+  return `/agent/${agentId}/skills#skill-${skillId}`;
+}
+
+/**
  * Why an item that is not moving is where it is, from its verdict: parked until a system is
  * connected, a scope is granted or the charter is approved; waiting on a skill; held by a
  * colleague; cancelled, and why. A skip is its own section (`SkippedSection`); an item moving
@@ -40,11 +81,14 @@ export function VerdictSection({
   verdict,
   surfaces,
   now,
+  refusedSkill,
 }: {
   item: Doc<'workItems'>;
   verdict: ItemVerdict | undefined;
   surfaces: readonly SurfaceRecord[];
   now: number;
+  /** The skill the item waits on, when its draft failed Day0's check (D3). */
+  refusedSkill?: RefusedSkill;
 }) {
   if (item.state === 'cancelled') {
     return (
@@ -74,6 +118,33 @@ export function VerdictSection({
           To give it to this employee instead, cancel it on {holder.name}&apos;s card; it comes back
           here by itself once they let it go.
         </Help>
+      </ItemSection>
+    );
+  }
+  if (item.state === 'needs-skill' && verdict && refusedSkill) {
+    const href = skillAnchorHref(item.agentId, refusedSkill.skillId);
+    return (
+      <ItemSection>
+        <Note>
+          <Lead>Waiting on a skill</Lead>: {refusedSkill.name}.{' '}
+          {refusedSkill.retryable ? (
+            <>
+              Its draft failed Day0&apos;s check, and nothing tries it again on its own:{' '}
+              <Link href={href} className="text-[var(--color-accent)] underline underline-offset-4">
+                Retry it on the Skills tab
+              </Link>
+              .
+            </>
+          ) : (
+            <>
+              Its draft failed Day0&apos;s check on every attempt:{' '}
+              <Link href={href} className="text-[var(--color-accent)] underline underline-offset-4">
+                The Skills tab
+              </Link>{' '}
+              offers Give up.
+            </>
+          )}
+        </Note>
       </ItemSection>
     );
   }

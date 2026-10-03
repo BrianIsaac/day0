@@ -22,6 +22,7 @@ import {
 } from '@/work/state-display';
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
+import type { RefusedSkill } from './VerdictSection';
 import { WorkItemCard } from './WorkItemCard';
 
 /**
@@ -203,6 +204,26 @@ export function sortedForQueue<
 /** No item is known to wait on the manager until the needs-you read answers. */
 const NO_ITEMS: ReadonlySet<string> = new Set();
 
+/** No skill is known to have failed its check until the skills read answers. */
+const NO_REFUSED_SKILLS: ReadonlyMap<string, RefusedSkill> = new Map();
+
+/**
+ * The failed skill an item waits on, as the card's prop, or nothing.
+ *
+ * @param item - The row.
+ * @param refusedSkills - The employee's failed skills, by id.
+ */
+function refusedSkillOf(
+  item: Doc<'workItems'>,
+  refusedSkills: ReadonlyMap<string, RefusedSkill>,
+): { refusedSkill?: RefusedSkill } {
+  const refused =
+    item.state === 'needs-skill' && item.proposedSkillId !== undefined
+      ? refusedSkills.get(item.proposedSkillId)
+      : undefined;
+  return refused === undefined ? {} : { refusedSkill: refused };
+}
+
 /** The employee's work items in the order that puts what needs the manager first. */
 export function WorkQueue({
   agentId,
@@ -218,8 +239,11 @@ export function WorkQueue({
   loading = false,
   employeeName = 'the employee',
   needsYou = NO_ITEMS,
+  refusedSkills = NO_REFUSED_SKILLS,
 }: {
   agentId: Id<'agents'>;
+  /** The employee's skills whose draft failed Day0's check, by id, for the cards waiting on one. */
+  refusedSkills?: ReadonlyMap<string, RefusedSkill>;
   /** The employee's name, for the cards' sentences. */
   employeeName?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
@@ -413,6 +437,7 @@ export function WorkQueue({
                   onDismiss={() => dismissFailed({ workItemId: item._id })}
                   employeeName={employeeName}
                   servedByLoop={surfaceMode === 'real'}
+                  {...refusedSkillOf(item, refusedSkills)}
                 />
               ))}
             </div>

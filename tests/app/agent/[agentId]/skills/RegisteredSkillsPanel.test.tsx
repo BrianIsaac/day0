@@ -848,6 +848,11 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     backend.results = {};
   });
 
+  it("names each unregistered row by its skill, so a work card's link lands on its Retry (D3)", (): void => {
+    const markup = markupOf([], [failing(2)]);
+    expect(markup).toMatch(/<li[^>]*id="skill-failing-2"[^>]*tabindex="-1"/);
+  });
+
   it('the third failed attempt withdraws Retry and leaves Give up', (): void => {
     const markup = markupOf([], [failing(3)]);
     expect(markup).toContain('>Attempt 3 of 3<');
