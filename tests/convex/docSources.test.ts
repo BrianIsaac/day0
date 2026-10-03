@@ -1549,6 +1549,48 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
     ]);
   });
 
+  it("re-binds a card its manager has not approved without probing it, keeping the card's own reason", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const queueChanged =
+      'The documented queue this card reads changed; approve it again once it is right.';
+    const { newId, surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      const newId = await ctx.db.insert(
+        'credentials',
+        pageRow(sourceId, NEW_REF, { createdAt: 9 }),
+      );
+      const surfaceId = await ctx.db.insert(
+        'surfaces',
+        card(agentId, 'linear', oldId, {
+          verdict: 'proposed',
+          managerApprovedAt: undefined,
+          reason: queueChanged,
+          lastVerifiedAt: undefined,
+          toolAllowlist: undefined,
+          providerIdentityId: undefined,
+        }),
+      );
+      return { newId, surfaceId };
+    });
+
+    await syncNewValue(harness, sourceId);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toMatchObject({
+      credentialId: newId,
+      verdict: 'proposed',
+      reason: queueChanged,
+    });
+    const probes = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter((job) =>
+        job.name.includes('probeInternal'),
+      ),
+    );
+    expect(probes).toEqual([]);
+  });
+
   it('sends a card back to landing only where the page holds no live row of the same label', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

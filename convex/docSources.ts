@@ -1554,7 +1554,7 @@ const REBOUND_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
   'ungranted',
 ]);
 
-/** What a re-bound card says until its probe has checked the page's new value. */
+/** What a re-bound card its manager approved says until its probe has checked the page's new value. */
 const REBOUND_REASON =
   'The documentation now states a new value under the same label. Day0 bound it to this card and checks it before the card connects again.';
 
@@ -1676,7 +1676,8 @@ async function rebindSurface(
       { kind: replacement.kind, label: replacement.label },
     ),
     verdict: probe ? 'approved' : surface.verdict,
-    reason: REBOUND_REASON,
+    // A card the manager has not approved keeps its own reason: nothing about it is checked yet.
+    reason: probe ? REBOUND_REASON : surface.reason,
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
     toolAllowlist: undefined,
