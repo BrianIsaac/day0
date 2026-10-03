@@ -108,6 +108,10 @@ test.describe('the focus ring (C1)', () => {
   for (const path of PAGES) {
     test(`shows on every control Tab reaches on ${path}`, async ({ page }) => {
       await page.goto(path, { waitUntil: 'load' });
+      // The page's own content, drawn and hydrated, as `public-pages.spec.ts` waits for it: `/`
+      // draws its landing only once the browser knows who it has, so a walk begun at `load` on a
+      // busy runner met the header's two controls alone and failed (seen once in R-W's gate).
+      await expect(page.locator('main h1').first()).toBeVisible();
       const missing: string[] = [];
       let stops = 0;
       for (let press = 0; press < MAX_STOPS; press += 1) {
