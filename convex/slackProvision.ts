@@ -157,7 +157,13 @@ export const recordRotation = internalMutation({
     }
     const generation = args.expectedGeneration + 1;
     await ctx.db.patch(held.refresh._id, { ...args.refresh });
-    await ctx.db.patch(held.secret._id, { ...args.token, generation, expiresAt: args.expiresAt });
+    // The rotation ends the refresh lease its holder took (`refreshLease.claim`).
+    await ctx.db.patch(held.secret._id, {
+      ...args.token,
+      generation,
+      expiresAt: args.expiresAt,
+      refreshingUntil: undefined,
+    });
     if (
       held.connection.status === 'needs-attention' &&
       held.connection.statusReason === SPENT_REFRESH_REASON

@@ -9,6 +9,7 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { credentialKeyring } from './credentialCryptoActions';
 import { assertOwnsAgentAction } from './ownership';
 import { logEvent } from './eventLog';
+import type { RefreshClaim } from './refreshLease';
 import type { HeldConfigurationRows, RotationRecorded } from './slackProvision';
 import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
 import { cronsPauseReason } from '../src/lib/crons-pause';
@@ -38,6 +39,12 @@ import {
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
 import { slackInstallUrl } from '../src/surfaces/slack-manifest';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import {
+  awaitLeaseHolder,
+  RefreshInProgress,
+  sleepFor,
+  type LeasedRow,
+} from '../src/surfaces/refresh-lease';
 import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 
 type CredentialId = GenericId<'credentials'>;
@@ -256,12 +263,15 @@ interface ProvisionDependencies {
   fetch: Fetcher;
   newNonce(): string;
   now(): number;
+  /** How a rotation waiting for another's refresh lease sleeps between its reads. */
+  sleep(ms: number): Promise<void>;
 }
 
 const provisionDependencies: ProvisionDependencies = {
   fetch: (input, init) => fetch(input, init),
   newNonce: newOauthNonce,
   now: () => Date.now(),
+  sleep: sleepFor,
 };
 
 /** How many times a use re-reads the configuration token after losing to a concurrent rotation. */
@@ -302,11 +312,79 @@ type RotationOutcome =
   | { readonly kind: 'moved' };
 
 /**
+ * How many times a rotation asks for the refresh lease: once, and once more after the holder it
+ * waited for let the lease end without a rotation.
+ */
+const LEASE_CLAIMS = 2;
+
+/** The lease a rotation holds: the refresh token's row of the claimed snapshot and the lease's end. */
+type ConfigurationLease = Extract<RefreshClaim, { kind: 'claimed' }>;
+
+/**
+ * Take the refresh lease on the configuration token's row (R-S; the wave 11 review's m11), so two
+ * renewals never present one refresh token to Slack: a rotation that finds the lease held waits
+ * for its holder, and answers `moved` once the holder's pair is written for the caller to read.
+ *
+ * @returns The lease, or `moved` when the pair moved on, was revoked, or was written meanwhile.
+ * @throws RefreshInProgress when other renewals held the lease throughout; Error when the
+ *   configuration token has no live refresh token.
+ */
+async function claimConfigurationLease(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  dependencies: ProvisionDependencies,
+): Promise<ConfigurationLease | { readonly kind: 'moved' }> {
+  const generation = held.secret.generation ?? 0;
+  for (let claims = 1; ; claims += 1) {
+    const claim: RefreshClaim = await ctx.runMutation(internal.refreshLease.claim, {
+      credentialId: held.secret._id,
+      expectedGeneration: generation,
+      now: dependencies.now(),
+    });
+    switch (claim.kind) {
+      case 'claimed':
+        return claim;
+      case 'moved':
+      case 'gone':
+        return { kind: 'moved' };
+      case 'no-refresh-token':
+        throw new Error('The organisation holds no refresh token to rotate with.');
+      case 'leased': {
+        const waited = await awaitLeaseHolder(
+          {
+            read: async (): Promise<LeasedRow | null> => {
+              const now: HeldConfigurationRows | null = await ctx.runQuery(
+                internal.slackProvision.heldConfiguration,
+                { organisationConnectionId: held.connection._id },
+              );
+              // A secret IT replaced since is a pair that moved on.
+              return now !== null && now.secret._id === held.secret._id ? now.secret : null;
+            },
+            now: dependencies.now,
+            sleep: dependencies.sleep,
+          },
+          { generation, until: claim.until },
+        );
+        if (waited === 'moved') return { kind: 'moved' };
+        if (claims === LEASE_CLAIMS) throw new RefreshInProgress();
+        break;
+      }
+      default: {
+        const unknown: never = claim;
+        throw new Error(`unhandled lease claim ${String(unknown)}`);
+      }
+    }
+  }
+}
+
+/**
  * Rotate the connection's configuration token with its kept refresh token
- * (`tooling.tokens.rotate`, S2) and write the new pair before anything uses it, under the
- * generation the snapshot read: a concurrent rotation that wrote first wins, and this one answers
- * `moved` for the caller to read the winner's. A refusal is written on the connection's ledger;
- * a spent refresh token marks the connection for IT's attention.
+ * (`tooling.tokens.rotate`, S2) under the refresh lease, and write the new pair before anything
+ * uses it, under the generation the snapshot read: a rotation that finds another's lease waits for
+ * it and answers `moved` for the caller to read the winner's pair, and a write that finds the pair
+ * moved on answers `moved` too. A refusal is written on the connection's ledger; a spent refresh
+ * token marks the connection for IT's attention. The lease ends with the rotation's write, or is
+ * released when the rotation fails.
  *
  * @throws Error with Slack's words when Slack refused and the pair had not moved on.
  */
@@ -317,8 +395,39 @@ async function rotateConfiguration(
 ): Promise<RotationOutcome> {
   if (held.refresh === null)
     throw new Error('The organisation holds no refresh token to rotate with.');
+  const lease = await claimConfigurationLease(ctx, held, dependencies);
+  if (lease.kind === 'moved') return lease;
+  try {
+    return await rotateUnderLease(ctx, held, openHeld(lease.refresh), dependencies);
+  } finally {
+    await releaseConfigurationLease(ctx, held.secret._id, lease.leaseUntil);
+  }
+}
+
+/** End a rotation's lease; a release that fails is logged, since the lease lapses by itself. */
+async function releaseConfigurationLease(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+  leaseUntil: number,
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.refreshLease.release, { credentialId, leaseUntil });
+  } catch (error: unknown) {
+    log.warn('slack configuration lease not released; it lapses at its end', {
+      leaseUntil,
+      reason: safeFailureMessage(error, '', 'no detail'),
+    });
+  }
+}
+
+/** Present the refresh token of the claimed snapshot to Slack once, and write what it answers. */
+async function rotateUnderLease(
+  ctx: ActionCtx,
+  held: HeldConfigurationRows,
+  refreshToken: string,
+  dependencies: ProvisionDependencies,
+): Promise<RotationOutcome> {
   const expectedGeneration = held.secret.generation ?? 0;
-  const refreshToken = openHeld(held.refresh);
   const identity = {
     organisationConnectionId: held.connection._id,
     secretCredentialId: held.secret._id,

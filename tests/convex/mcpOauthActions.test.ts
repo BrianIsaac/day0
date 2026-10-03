@@ -881,6 +881,8 @@ describe('refreshing with rotation', (): void => {
     const credentialId = await landed(harness);
     const { internal } = await liveApi();
     clock += 290_000;
+    // On the real timer: the second refresh sleeps on the first's lease between its reads.
+    vi.useRealTimers();
     const [one, two] = await Promise.all([
       harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
       harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
@@ -888,6 +890,36 @@ describe('refreshing with rotation', (): void => {
     expect(one).toBe(two);
     const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     expect(row?.generation).toBe(1);
+  });
+
+  it('presents the refresh token once when two refreshes run at once, under the refresh lease (R-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await landed(harness);
+    const presented: string[] = [];
+    const actions = await import('../../convex/mcpOauthActions');
+    actions.__setMcpOauthDepsForTest({
+      fetch: async (url: URL, init: RequestInit): Promise<Response> => {
+        const form = typeof init.body === 'string' ? new URLSearchParams(init.body) : undefined;
+        if (form?.get('grant_type') === 'refresh_token') {
+          presented.push(form.get('refresh_token') ?? '');
+        }
+        return await server.handle(new Request(url, init));
+      },
+      now: () => clock,
+    });
+    const { internal } = await liveApi();
+    clock += 290_000;
+    // On the real timer: the second refresh sleeps on the first's lease between its reads.
+    vi.useRealTimers();
+    const [one, two] = await Promise.all([
+      harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
+      harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
+    ]);
+    expect(presented).toHaveLength(1);
+    expect(one).toBe(two);
+    const row = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    expect(row?.generation).toBe(1);
+    expect(row).not.toHaveProperty('refreshingUntil');
   });
 
   it('records on the card’s record when the server refuses the refresh', async (): Promise<void> => {

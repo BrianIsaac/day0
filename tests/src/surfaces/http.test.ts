@@ -1006,10 +1006,11 @@ describe('the documented-API rung asks the token store for its token', (): void 
       // A Nango-held row seals the Nango connection it points at, never a token.
       accessToken: async (): Promise<string> =>
         tokenStore === 'nango' ? 'nango:tracker/tracker-connection' : 'native-access-token',
-      refreshToken: async (): Promise<string> => {
+      claimRefreshToken: async () => {
         refreshReads += 1;
-        return 'refresh-token-never-sent';
+        return { kind: 'claimed', presented: 'refresh-token-never-sent', leaseUntil: now + 90_000 };
       },
+      releaseRefreshLease: async (): Promise<void> => undefined,
       rotate: async () => ({ ok: true, generation: 1 }),
     };
   }

@@ -469,6 +469,8 @@ export const rotateTokens = internalMutation({
       expiresAt: args.expiresAt,
       issuedBy,
       refreshCredentialId,
+      // The rotation ends the refresh lease its holder took (`refreshLease.claim`).
+      refreshingUntil: undefined,
     });
     if (refreshCredentialId && args.expiresAt !== undefined) {
       await ctx.scheduler.runAt(

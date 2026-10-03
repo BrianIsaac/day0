@@ -692,6 +692,8 @@ export const rotateEmployeeTokens = internalMutation({
       generation,
       issuedBy,
       lastUsedAt: undefined,
+      // The rotation ends the refresh lease its holder took (`refreshLease.claim`).
+      refreshingUntil: undefined,
     });
     if (args.refresh !== undefined && access.refreshCredentialId !== undefined) {
       const refresh = await ctx.db.get(access.refreshCredentialId);
