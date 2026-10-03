@@ -296,6 +296,7 @@ export function SurfaceCard({
     provisioning,
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
+    employee: context.employeeName,
   });
   // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
   const identity = surface.identity;

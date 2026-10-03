@@ -1,10 +1,6 @@
 'use client';
 
-import {
-  type ProvisioningPresentation,
-  PROVISION_LABEL,
-  REINSTALL_LABEL,
-} from '@/surfaces/credential-presentation';
+import { type ProvisioningPresentation, PROVISION_LABEL } from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { type ScopeValue, type IntakeScope, presentIntakeScope } from '@/surfaces/intake-scope';
 import { useId, useRef, type FormEvent } from 'react';
@@ -356,7 +352,8 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
  * registration again where an install did not complete.
  */
 function provisionLabel(presentation: ProvisioningPresentation): string {
-  if (presentation.stage === 'reinstall') return REINSTALL_LABEL;
+  // The reinstall's title names the employee whose app it is (11-AC's item 12).
+  if (presentation.stage === 'reinstall') return presentation.title;
   if (presentation.stage === 'offer') return CONNECT_LABEL;
   return PROVISION_LABEL;
 }
