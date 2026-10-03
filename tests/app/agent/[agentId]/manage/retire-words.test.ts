@@ -125,7 +125,16 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
         ]),
         'Leo',
       ),
-    ).toEqual(["Leo's Slack app: deleted in Slack.", "Leo's Linear access: revoked at Linear."]);
+    ).toEqual([
+      "Leo's Slack app: deleted in Slack.",
+      "Leo's Linear access: revoked at Linear. Leo's own Linear app stays in Linear's settings for IT to delete.",
+    ]);
+  });
+
+  it("says an employee's own Linear app stays in Linear's settings for IT to delete, as the retire leaves it (R41X-5)", (): void => {
+    expect(revokedLines(preview([outcome('Linear', 'linear', 'token-revoked')]), 'Mira')).toEqual([
+      "Mira's Linear access: revoked at Linear. Mira's own Linear app stays in Linear's settings for IT to delete.",
+    ]);
   });
 
   it('says every other outcome in its own words, a shared app and a server with no revocation included', (): void => {
