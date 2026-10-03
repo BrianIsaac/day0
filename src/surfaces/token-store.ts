@@ -388,7 +388,7 @@ export interface NativeTokenStoreDeps {
 export interface RefreshOptions {
   /**
    * The caller's stored token still lives: behind another refresh's lease the refresh waits only
-   * {@link LIVE_TOKEN_LEASE_POLLS} reads in all, and after its last claim hands the stored
+   * `LIVE_TOKEN_LEASE_POLLS` reads in all, and after its last claim hands the stored
    * token back rather than waiting out a lease whose holder may have died.
    */
   readonly storedTokenLives?: boolean;

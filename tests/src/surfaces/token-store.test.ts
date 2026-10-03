@@ -6,7 +6,11 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { IssuedTokens } from '../../../src/surfaces/mcp-oauth';
 import { sealForOwner } from '../../../src/lib/credential-crypto';
-import { LIVE_TOKEN_LEASE_POLLS, REFRESH_LEASE_MS } from '../../../src/surfaces/refresh-lease';
+import {
+  LIVE_TOKEN_LEASE_POLLS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
+  REFRESH_LEASE_MS,
+} from '../../../src/surfaces/refresh-lease';
 import {
   accessTokenFor,
   heldFromRows,
@@ -353,6 +357,8 @@ describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
       },
     };
     await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    // It does wait for a live holder's exchange, and no longer than five seconds in all.
+    expect(slept).toBeGreaterThanOrEqual(LIVE_TOKEN_POLLS_PER_CLAIM);
     expect(slept).toBeLessThanOrEqual(LIVE_TOKEN_LEASE_POLLS);
   });
 

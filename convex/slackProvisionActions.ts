@@ -328,7 +328,7 @@ type ConfigurationLease = Extract<RefreshClaim, { kind: 'claimed' }>;
  * renewals never present one refresh token to Slack: a rotation that finds the lease held waits
  * for its holder, and answers `moved` once the holder's pair is written for the caller to read.
  *
- * A use whose held token still lives waits {@link LIVE_TOKEN_LEASE_POLLS} reads in all, and then
+ * A use whose held token still lives waits `LIVE_TOKEN_LEASE_POLLS` reads in all, and then
  * uses that token rather than waiting out a lease whose holder may have died (the round review's
  * m7); a scheduled renewal waits the whole lease.
  *

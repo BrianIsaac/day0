@@ -937,9 +937,10 @@ export const cardsOn = query({
       )
       .take(CONNECTION_CARD_LIMIT + 1);
     const holding = cards.filter(holdsAccessThroughConnection);
+    // The limit is on the cards one revoke reads, as `endCardsOnConnection` refuses (the second pass).
     return {
       cards: Math.min(holding.length, CONNECTION_CARD_LIMIT),
-      atLeast: holding.length > CONNECTION_CARD_LIMIT,
+      atLeast: cards.length > CONNECTION_CARD_LIMIT,
     };
   },
 });
