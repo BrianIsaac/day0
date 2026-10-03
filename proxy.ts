@@ -62,10 +62,12 @@ const isApiRoute = createRouteMatcher(['/api/(.*)']);
 
 /**
  * Whether the App Router sent the request from a page already open: a prefetch of a link, or a
- * client-side navigation, as opposed to a full page load or a server action.
+ * client-side navigation, as opposed to a full page load or a server action. Next strips its
+ * flight headers (`rsc`, `next-router-prefetch`) before this proxy runs, so the mark is
+ * `next-url`, the one Clerk itself reads to treat a request as an in-app navigation.
  */
 function isRouterFetch(req: NextRequest): boolean {
-  return req.headers.get('rsc') === '1' && !req.headers.has('next-action');
+  return req.headers.has('next-url') && !req.headers.has('next-action');
 }
 
 const { signInUrl, signUpUrl } = deploymentClerkAddresses();

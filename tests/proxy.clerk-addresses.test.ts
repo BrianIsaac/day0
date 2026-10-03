@@ -86,6 +86,12 @@ function request(pathname: string, headers: Record<string, string> = {}): ProxyR
 /** A full page load, as a browser sends one for a typed or followed link. */
 const DOCUMENT = { 'sec-fetch-dest': 'document', accept: 'text/html' };
 
+/**
+ * A prefetch or client-side navigation as the proxy receives it: Next strips its flight headers
+ * (`rsc`, `next-router-prefetch`) before the proxy runs and keeps `next-url`.
+ */
+const ROUTER_FETCH = { 'next-url': '/', accept: '*/*' };
+
 describe('where the Clerk proxy sends a signed-out visitor', (): void => {
   it.each(['/organisation', '/home', '/agent/j57agent', '/documentation'])(
     "sends a signed-out page load of %s to Day0's own sign-in, returning to the page after it",
@@ -106,23 +112,19 @@ describe('where the Clerk proxy sends a signed-out visitor', (): void => {
   });
 
   it('never redirects a prefetch the router sends without a session, so the link loads whole when followed', async (): Promise<void> => {
-    const response = await proxy(
-      request('/agent/j57agent', { rsc: '1', 'next-router-prefetch': '1', 'next-url': '/' }),
-    );
+    const response = await proxy(request('/agent/j57agent', ROUTER_FETCH));
     expect(response?.status).toBe(204);
     expect(response?.headers.get('location')).toBeNull();
   });
 
   it('never redirects an in-app navigation the router sends without a session', async (): Promise<void> => {
-    const response = await proxy(request('/organisation', { rsc: '1', 'next-url': '/' }));
+    const response = await proxy(request('/organisation', ROUTER_FETCH));
     expect(response?.status).toBe(204);
     expect(response?.headers.get('location')).toBeNull();
   });
 
   it('lets a signed-in prefetch through untouched', async (): Promise<void> => {
     session.userId = 'user_signed_in';
-    await expect(
-      proxy(request('/agent/j57agent', { rsc: '1', 'next-router-prefetch': '1', 'next-url': '/' })),
-    ).resolves.toBeUndefined();
+    await expect(proxy(request('/agent/j57agent', ROUTER_FETCH))).resolves.toBeUndefined();
   });
 });
