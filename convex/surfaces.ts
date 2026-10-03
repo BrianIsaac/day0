@@ -1853,13 +1853,15 @@ export function identityMovedReason(slug: string): string {
   return `its connection to ${slug} now acts as another identity`;
 }
 
-/** Whether two identities a card acts as are one: the same kind and the same user at the vendor. */
+/**
+ * Whether two identities a card acts as are one: the same kind, and the same user at the vendor
+ * where both name one, else the same name (a Slack app installed before its bot user was read).
+ */
 function sameIdentity(before: ActsAs | undefined, after: ActsAs): boolean {
-  return (
-    before !== undefined &&
-    before.kind === after.kind &&
-    before.providerIdentityId === after.providerIdentityId
-  );
+  if (before === undefined || before.kind !== after.kind) return false;
+  return before.providerIdentityId !== undefined && after.providerIdentityId !== undefined
+    ? before.providerIdentityId === after.providerIdentityId
+    : before.label === after.label;
 }
 
 /**

@@ -998,6 +998,31 @@ describe("per-employee mode: the employee's own app", (): void => {
     ).rejects.toThrow(/Refresh token revoked\..*installs the app again from the card\./);
   });
 
+  it('leaves the skills alone when a connected card installs the same app again (no move, R41V-7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    await installLeo(harness, surfaceIds[0]!);
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceIds[0]!, { verdict: 'connected', credentialLanded: true });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment and close',
+        body: '# Procedure',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'linear',
+        registeredAt: 3,
+        createdAt: 3,
+      });
+    });
+
+    await expect(installLeo(harness, surfaceIds[0]!)).resolves.toMatchObject({ ok: true });
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.recheckReason).toBeUndefined();
+  });
+
   it('records a declined installation on the card and keeps no token', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
