@@ -159,9 +159,13 @@ connection landed that day.
 |---|---|
 | `administrators` GAP | `./setup.sh access --administrators <addresses>` |
 | `redirect` GAP | register exactly `${DAY0_PUBLIC_URL}/api/oauth/<system>` at the vendor, then `./setup.sh access --correct <system>` records it; or set `DAY0_PUBLIC_URL` back to the origin it was registered with |
-| `scopes` GAP | grant the missing scopes at the vendor (the recipe lists them), then `./setup.sh access --correct <system>` records them |
+| `scopes` GAP, missing a scope ("Missing scope ...") | grant the missing scopes at the vendor (the recipe lists them), then `./setup.sh access --correct <system>` records them |
+| `scopes` GAP, landed without part of a fixed set ("... was landed with ..., without ...": a shared Linear connection landed by v0.14.0 holds `read, write`, without `app:assignable`) | the set cannot be changed in place, and a correction does not reach it: revoke the connection on the organisation page, then land it again with `./setup.sh access`. Every card on it ends, and each manager connects it again |
 | `secret` GAP | the deployment's credential key changed since the secret was landed: rotate the connection with a fresh secret |
-| `identity` GAP | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
+| `identity` GAP, no issuer ("No issuer is recorded ...", an MCP connection) | revoke the connection on the organisation page, then land it again with `./setup.sh access`, which finds the issuer from the server's own metadata |
+| `identity` GAP, any other | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
+| `reach` GAP | the backend container could not reach the vendor. When it does not trust the certificate, give the backend container the customer's CA bundle (step 6, `SSL_CERT_FILE`); otherwise open its way out (the proxy or firewall in front of the backend). Then run the check again |
+| `reach` WARN ("Not asked from the backend container") | start the backend (`./setup.sh resume`) and run the check again |
 | `status` GAP | the connection needs IT's attention, for the reason it gives |
 
 ## How long it takes

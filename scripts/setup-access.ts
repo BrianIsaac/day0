@@ -461,6 +461,7 @@ interface RecordedRegistration {
   readonly mode?: OrganisationConnectionMode;
   readonly redirectUrl?: string;
   readonly scopes?: readonly string[];
+  readonly clientCredentialsScopes?: readonly string[];
 }
 
 /**
@@ -523,7 +524,23 @@ async function correctConnection(
     if (scopes !== undefined) {
       io.log(`${name}: the recorded scopes are now ${scopes.join(', ')}.`);
     }
-    io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+    const lacking = (mode?.clientCredentialsScopes ?? []).filter(
+      (scope) => !(row.clientCredentialsScopes ?? []).includes(scope),
+    );
+    if (lacking.length === 0) {
+      io.log('No secret changed and no card ended. Run pnpm check:access to see it pass.');
+      return 0;
+    }
+    // A fixed client-credentials set is not IT's registration: a token requested with another set
+    // revokes every token of the app (L2), so no correction reaches it (the round review's m6).
+    io.log(
+      `${name}: the shared app token's set was landed as ` +
+        `${row.clientCredentialsScopes?.join(', ') || 'no scope'}, without ${lacking.join(', ')}, ` +
+        `and a correction cannot change it, since ${name} revokes every token of the app when one ` +
+        'is requested with another set: revoke the connection on the organisation page, then ' +
+        'land it again with ./setup.sh access. pnpm check:access reports the gap until then.',
+    );
+    io.log('No secret changed and no card ended.');
     return 0;
   } catch (err) {
     io.log(`Nothing was corrected: ${errorMessage(err)}`);

@@ -47,7 +47,23 @@ interface Deployment {
   readonly fetch: typeof fetch;
 }
 
-function deployment(connected: readonly string[] = []): Deployment {
+/** The row `occupyingFor` answers for a connected system, unless a test names its own. */
+function slackRow(system: string): Record<string, unknown> {
+  return {
+    system,
+    displayName: 'Slack',
+    status: 'active',
+    kind: 'slack-configuration',
+    mode: 'per-employee',
+    scopes: ['chat:write', 'im:write'],
+    redirectUrl: 'https://day0.old.acme.test/api/oauth/slack',
+  };
+}
+
+function deployment(
+  connected: readonly string[] = [],
+  rows: Readonly<Record<string, Record<string, unknown>>> = {},
+): Deployment {
   const calls: Deployment['calls'] = [];
   return {
     calls,
@@ -66,17 +82,7 @@ function deployment(connected: readonly string[] = []): Deployment {
         const system = String(body.args.system);
         return Response.json({
           status: 'success',
-          value: connected.includes(system)
-            ? {
-                system,
-                displayName: 'Slack',
-                status: 'active',
-                kind: 'slack-configuration',
-                mode: 'per-employee',
-                scopes: ['chat:write', 'im:write'],
-                redirectUrl: 'https://day0.old.acme.test/api/oauth/slack',
-              }
-            : null,
+          value: connected.includes(system) ? (rows[system] ?? slackRow(system)) : null,
         });
       }
       if (body.path === 'organisationConnections:landFromSetup') {
@@ -118,12 +124,13 @@ const NO_VENDOR: OauthFetch = async (url: URL): Promise<Response> => {
 function accessBed(
   options: HarnessOptions & {
     readonly connected?: readonly string[];
+    readonly rows?: Readonly<Record<string, Record<string, unknown>>>;
     readonly vendorFetch?: OauthFetch;
   } = {},
 ): AccessBed {
   const bed = harness({ envLocal: SIGNED_IN, ...options });
   documentation(bed.directory);
-  const api = deployment(options.connected);
+  const api = deployment(options.connected, options.rows);
   const record = mkdtempSync(join(tmpdir(), 'day0-install-record-'));
   return {
     bed,
@@ -553,6 +560,33 @@ describe('setup: the access verb', (): void => {
       'Slack: the recorded redirect is now https://day0.acme.test/api/oauth/slack (it was https://day0.old.acme.test/api/oauth/slack)',
     );
     expect(said).toContain('No secret changed and no card ended.');
+  });
+
+  it("never says a correction cures a shared Linear connection's fixed set, which only a landing again changes (the round review's m6)", async (): Promise<void> => {
+    const bed = accessBed({
+      connected: ['linear'],
+      rows: {
+        linear: {
+          system: 'linear',
+          displayName: 'Linear',
+          status: 'active',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read', 'write'],
+          clientCredentialsScopes: ['read', 'write'],
+          redirectUrl: 'https://day0.acme.test/api/oauth/linear',
+        },
+      },
+    });
+    expect(await bed.run(['access', '--correct', 'linear'])).toBe(0);
+    const said = bed.bed.output.join('\n');
+    expect(said).not.toContain('to see it pass');
+    expect(said).toContain(
+      "Linear: the shared app token's set was landed as read, write, without app:assignable, " +
+        'and a correction cannot change it, since Linear revokes every token of the app when one ' +
+        'is requested with another set: revoke the connection on the organisation page, then land ' +
+        'it again with ./setup.sh access. pnpm check:access reports the gap until then.',
+    );
   });
 
   it('corrects one system at a time, refusing a list before it calls anything', async (): Promise<void> => {
