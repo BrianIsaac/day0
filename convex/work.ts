@@ -2580,6 +2580,29 @@ async function verdictCharter(
 }
 
 /**
+ * Whether a queue verdict repeats the row's standing one: queued for the same reason, and judged
+ * under the charter its last evaluation named. A judgement under a newer approved charter is a
+ * new one, so the record names the rules that decided it (Q14).
+ */
+async function repeatsQueuedJudgement(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  effective: { decision: string; [key: string]: unknown },
+  evaluatedCharterId: Id<'charters'> | undefined,
+): Promise<boolean> {
+  const standing = row.verdict as { decision?: unknown; reason?: unknown } | undefined;
+  if (standing?.decision !== 'queue' || standing.reason !== effective.reason) return false;
+  const [charter, recent] = await Promise.all([
+    verdictCharter(ctx, row.agentId, evaluatedCharterId),
+    eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH),
+  ]);
+  const last = recent.find(
+    (event) => (event.payload as { workItemId?: unknown }).workItemId === row._id,
+  );
+  return (last?.payload as { charterId?: unknown } | undefined)?.charterId === charter?._id;
+}
+
+/**
  * The newest charter rows a verdict looks through for an approved one: drafts
  * sent back and redrafted stack above it only a few deep.
  */
@@ -2676,10 +2699,12 @@ export async function applyVerdict(
   // A queued row judged again with no slot free is the same judgement, not a new one: the mock
   // loop asks after every change to the queue, and the record says it once (the redeploy walk
   // saw "queued behind its open work" twice). Only the evaluation step's own marks are cleared.
+  // Real mode is left as it was: its loop never judges a queued row while no slot is free.
   if (
+    SURFACE_MODE !== 'real' &&
     row.state === 'discovered' &&
-    (row.verdict as { decision?: unknown } | undefined)?.decision === 'queue' &&
-    effective.decision === 'queue'
+    effective.decision === 'queue' &&
+    (await repeatsQueuedJudgement(ctx, row, effective, evaluatedCharterId))
   ) {
     if (
       row.evaluationClaimedAt !== undefined ||

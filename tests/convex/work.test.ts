@@ -8175,6 +8175,47 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
     expect(row).toMatchObject({ state: 'discovered', verdict: { decision: 'queue' } });
   });
 
+  it('leaves real mode as it was: every judgement of a queued row is written', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { applyVerdict } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const { waiting } = await seedAtCap(harness);
+    for (let ask = 0; ask < 2; ask += 1) {
+      await harness.run(async (ctx) => {
+        await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
+      });
+    }
+    expect(await judged(harness, waiting)).toEqual(['queue', 'queue']);
+  });
+
+  it('writes the queued judgement again under a newer approved charter, so the record names the rules that decided', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { applyVerdict } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, waiting } = await seedAtCap(harness);
+    const charter = async (version: string): Promise<Id<'charters'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('charters', {
+            agentId,
+            version,
+            approved: true,
+            approvedAt: 1,
+            body: {},
+            createdAt: 1,
+          }),
+      );
+    const first = await charter('0.0');
+    await harness.run(async (ctx) => {
+      await applyVerdict(ctx, waiting, { decision: 'claim' }, first);
+    });
+    const second = await charter('0.1');
+    await harness.run(async (ctx) => {
+      await applyVerdict(ctx, waiting, { decision: 'claim' }, second);
+    });
+    expect(await judged(harness, waiting)).toEqual(['queue', 'queue']);
+  });
+
   it('still writes the claim once a slot frees', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { applyVerdict } = await import('../../convex/work');
