@@ -21,15 +21,16 @@ needs to create those apps: an app configuration token and its refresh token.
    day that person leaves.
 2. Signed in to <https://api.slack.com/apps> **as that service account**, under
    **Your App Configuration Tokens**, **Generate Token** for the customer's
-   workspace. Slack shows two values: the **access token** (the configuration
-   token) and the **refresh token**. The table keeps a row for the workspace
-   with a **Copy** button for each, and once Day0 has renewed the pair the row
-   yields Day0's current token: whoever signs in as the service account can
-   copy the live token, so its sign-in is guarded as the secret it is. The
-   row's **Delete** ends the pair, under Day0 too. **Generate Token** is
-   disabled while the account holds a token for that workspace, so a fresh
-   pair needs the old row deleted first; do that only when the connection is
-   to be landed again or rotated at once.
+   workspace. Slack shows neither value: the table gains a row for the
+   workspace with two buttons, **Copy access token** (the configuration
+   token) and **Copy refresh token**. Once Day0 has renewed the pair the row
+   yields Day0's current pair: whoever signs in as the service account can
+   copy the live tokens, so its sign-in is guarded as the secret it is. The
+   row's **Delete token** ("Revoke this token?") ends the access token only:
+   the refresh token still renews after it. **Generate Token** is disabled
+   while the account holds a token for that workspace, so a fresh pair needs
+   the old row deleted first; do that only when the connection is to be
+   landed again or rotated at once.
 3. **A second collaborator** on each app Day0 creates: once an employee's app
    exists (its name is `<employee name> (Day0)`), add a second collaborator
    on its **Collaborators** page, an IT administrator or a second service
@@ -131,21 +132,25 @@ step 1.4 is the gate.
 
 ## 5. The secret and its lifetime
 
-The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair.
+The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.
 
 So hand both to the setup verb together: an install that runs after the
 configuration token has lapsed still lands, and Day0 renews the token with the
 refresh token at its first use. The refresh token keeps the connection usable
-for as long as Day0 keeps renewing it; once Day0 has renewed the pair, the one
-you generated is spent. An administrator rotates or revokes the connection on
-Day0's organisation page.
+for as long as Day0 keeps renewing it; once Day0 has renewed the pair, the
+refresh token you generated is spent, though the access token you generated
+still works until its 12 hours are up unless it is revoked. An administrator
+rotates or revokes the connection on Day0's organisation page.
 
 A revoke, and a rotation, revokes the configuration token Day0 held at Slack
 (`auth.revoke`), which ends that token alone: its refresh token stays usable
-at Slack by whoever holds it, and Slack offers no call that ends a refresh
-token. So after a revoke, IT signs in to <https://api.slack.com/apps> as the
-service account and, under **Your App Configuration Tokens**, deletes the
-workspace's row: deleting it ends the pair. The connection's ledger on the
+at Slack by whoever holds it. Nothing IT can click ends a configuration
+refresh token either: the row's **Delete token** on
+<https://api.slack.com/apps> ends the access token only, and once no access
+token of the pair lives the row is not listed at all, so after Day0's revoke
+there is nothing to delete. The refresh token ends only when it lapses. Until
+then whoever copied it while its row was listed can mint a token with it, so
+keep the service account's sign-in closed. The connection's ledger on the
 organisation page says the same after each revoke, and tells a token Day0
 revoked from one Slack had already ended.
 

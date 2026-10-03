@@ -600,7 +600,7 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
   const subject = { name: 'Leo', connection: 'Slack' };
   const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
 
-  it("tells a revoke at Slack from a token Slack had already ended, and tells IT to delete the token's row, since Slack never ends its refresh token (R41V-10)", (): void => {
+  it('tells a revoke at Slack from a token Slack had already ended, and tells IT to keep the generating sign-in closed, since only its lapse ends its refresh token (R41V-10, R41X-8)', (): void => {
     const revoked = (payload: Record<string, unknown>): string =>
       recordWords(
         {
@@ -610,8 +610,8 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
-      '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
+      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
+      'that generated it closed until then.';
     expect(revoked({ outcome: 'done' })).toBe(
       "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
         `once it was taken out of use; ${advice}`,
@@ -630,6 +630,23 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
     );
   });
 
+  it("never tells IT that deleting the token's row ends the refresh token, which only its lapse ends (R41X-8)", (): void => {
+    for (const outcome of ['done', 'already-revoked', 'unrecognised', 'failed']) {
+      const line = recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'auth.revoke', outcome },
+        },
+        subject,
+      );
+      expect(line, outcome).not.toMatch(/\bdeletes? the token's row\b/);
+      expect(line, outcome).toContain(
+        'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
+          'that generated it closed until then.',
+      );
+    }
+  });
+
   it("says a revoke Slack's auth.test could not check was not checked (the round review's m2)", (): void => {
     const revoked = (payload: Record<string, unknown>): string =>
       recordWords(
@@ -640,8 +657,8 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
-      '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
+      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
+      'that generated it closed until then.';
     const notChecked = 'though Slack could not be asked afterwards whether it still works';
     expect(revoked({ outcome: 'done' })).toBe(
       "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
@@ -667,8 +684,8 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      "Slack offers no call that ends its refresh token, so IT deletes the token's row under " +
-      '"Your App Configuration Tokens" on api.slack.com if it is still listed.';
+      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
+      'that generated it closed until then.';
     expect(revoked({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' })).toBe(
       "Slack did not recognise the organisation's Slack configuration token when Day0 asked to " +
         'revoke it: Slack answered invalid_auth. Day0 cannot tell whether Slack had ended it ' +

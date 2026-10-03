@@ -72,6 +72,17 @@ describe('the access recipes', (): void => {
     }
   });
 
+  it('never tells IT that a Delete on api.slack.com ends the configuration pair, which only its lapse ends (R41X-8, R41X-R2 to R4)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).not.toMatch(/ends the pair/);
+    expect(text).not.toMatch(/deleting it ends/);
+    expect(text).not.toContain('Slack shows two values');
+    expect(text).not.toContain('the one you generated is spent');
+    expect(text).toContain('ends the access token only');
+    expect(text).toContain('ends only when it lapses');
+    expect(text).toContain("keep the service account's sign-in closed");
+  });
+
   it('shows Slack’s manifest exactly as the kit prints it', (): void => {
     expect(pinned(page(ACCESS_KIT.slack.guide), 'manifest')?.trim()).toBe(
       slackKitManifestTemplate(),

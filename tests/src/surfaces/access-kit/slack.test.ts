@@ -79,11 +79,19 @@ describe('the Slack recipe', (): void => {
     // The renewal as the code makes it (the wave 11 review's M12 d): an hour before the token
     // lapses, before any use in its last half hour, and after a lapse through the refresh token.
     expect(perEmployee.secretLifetime.words).toBe(
-      'The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair.',
+      "The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.",
     );
     expect(perEmployee.secretLifetime.words).not.toContain('each time it creates an app');
     expect(perEmployee.landsAtInstall).toBe(true);
     expect(SLACK_RECIPE.redirectPath).toBe(SLACK_REDIRECT_PATH);
     expect(SLACK_RECIPE.guide).toBe('docs/running/access-slack.md');
+  });
+
+  it('says nothing IT can click ends a configuration refresh token, which ends only by lapsing (R41X-8)', (): void => {
+    const [perEmployee] = SLACK_RECIPE.modes;
+    expect(perEmployee.secretLifetime.words).toContain(
+      'Nothing ends a refresh token but its lapse',
+    );
+    expect(perEmployee.secretLifetime.words).not.toMatch(/ends the pair/);
   });
 });

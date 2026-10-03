@@ -169,7 +169,7 @@ export function revokeLines(
     revokeEndsNoCard(counted)
       ? 'No card on any other system changes.'
       : 'No card on any other system changes. Each manager sees the reason on the card.',
-    // Slack's `auth.revoke` ends the configuration token alone (R41V-10).
+    // Slack's `auth.revoke` ends the configuration token alone (R41V-10, R41X-8).
     ...(view.kind === 'slack-configuration' ? [SLACK_REFRESH_TOKEN_LINE] : []),
     'IT can connect it again with ./setup.sh access.',
   ];
@@ -187,14 +187,17 @@ export function revokeEndsNoCard(counted: CardsOnConnection | undefined): boolea
 }
 
 /**
- * What a revoke of Slack's configuration connection cannot do, said before it is confirmed: Slack
- * offers no call that ends the configuration token's refresh token (the real-vendor walk,
- * R41V-10), so IT ends it by deleting the token's row on api.slack.com.
+ * What a revoke of Slack's configuration connection cannot do, said before it is confirmed: nothing
+ * ends the configuration token's refresh token but its lapse. Day0's `auth.revoke` and the token
+ * row's Delete on api.slack.com each end an access token only, and once no access token lives the
+ * row is not listed at all (the re-walk, R41X-8), so what IT can do is keep closed the sign-in it
+ * was copied from.
  */
 export const SLACK_REFRESH_TOKEN_LINE =
-  'Day0 revokes the configuration token at Slack, but Slack offers no call that ends its refresh ' +
-  'token: once this is revoked, IT deletes the token\'s row under "Your App Configuration Tokens" ' +
-  'on api.slack.com, signed in as the account that generated it.';
+  'Day0 revokes the configuration token at Slack, but nothing ends its refresh token, neither ' +
+  'Day0 nor a Delete on api.slack.com: it ends only when it lapses. Until then whoever copied it ' +
+  'while its row was listed under "Your App Configuration Tokens" can mint a new token with it, ' +
+  'so keep the sign-in of the account that generated it closed.';
 
 /** The revoke's first line: the cards it ends, by number once counted, then what is revoked. */
 function endedCardsLine(
@@ -218,12 +221,13 @@ function endedCardsLine(
 
 /**
  * What a rotation of Slack's configuration connection cannot do, said before the new secret is
- * given: Day0 revokes the old configuration token, whose refresh token Slack offers no call to end
- * (R41V-10), as {@link SLACK_REFRESH_TOKEN_LINE} says for a revoke.
+ * given: Day0 revokes the old configuration token, whose refresh token nothing ends but its lapse
+ * (R41X-8), as {@link SLACK_REFRESH_TOKEN_LINE} says for a revoke.
  */
 export const SLACK_ROTATE_REFRESH_TOKEN_LINE =
-  "Slack cannot end that token's refresh token, so IT then deletes its row under " +
-  '"Your App Configuration Tokens" on api.slack.com, signed in as the account that generated it.';
+  "Nothing ends that token's refresh token, neither Day0 nor a Delete on api.slack.com: it ends " +
+  'only when it lapses. Until then whoever copied it while its row was listed can mint a new ' +
+  'token with it, so keep the sign-in of the account that generated it closed.';
 
 /**
  * What a rotation does, said before the administrator gives the new secret: for Slack's
