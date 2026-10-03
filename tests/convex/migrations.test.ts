@@ -1609,7 +1609,7 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
     });
     const { completed, endedShort } = await harness.run(async (ctx) => {
       // Re-pinned at 12-S3: the runs carry no page refs. A run whose cursor is a listing cursor
-      // began at 0.6.0 or later and never wrote refs, and the sync-runs-refs pass now ends a run
+      // began at 0.6.0 or later and never wrote refs, and the sync-runs-refs pass now clears the cursor of a run
       // that still carries them, so a fixture with both would not be taken over.
       const run = {
         sourceId,
@@ -2737,7 +2737,7 @@ describe('the sync runs refs clearing (12-S3, N10)', (): void => {
     });
   });
 
-  it("clears every run's refs, keeps its page count, ends a run that did not complete so no sync resumes it, and is safe to run twice", async (): Promise<void> => {
+  it("clears every run's refs, keeps its page count, clears the cursor of a run that did not complete so no sync resumes or finishes it, and is safe to run twice", async (): Promise<void> => {
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
     const runs = {

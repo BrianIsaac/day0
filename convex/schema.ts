@@ -1144,9 +1144,11 @@ export default defineSchema({
     applyAttemptId: v.optional(v.id('events')),
     applyClaimedAt: v.optional(v.number()),
     /**
-     * The scheduled function of the row's next step (wave 12, 12-W; V12-3): recorded by the
-     * loop when it schedules a draft, an execution or an apply for the row, so Stop can cancel
-     * it. Absent when no step is queued, and on rows scheduled before the stamp.
+     * The scheduled function of the latest step the loop queued for the row (wave 12, 12-W;
+     * V12-3): recorded where it schedules a draft, an execution or an apply, so Stop can cancel
+     * it. One id: an earlier step still pending is held off by the fences (`executionRunId`,
+     * `applyAttemptId`), which Stop clears. Absent when no step is queued, and on rows scheduled
+     * before the stamp.
      */
     stepJobId: v.optional(v.id('_scheduled_functions')),
     /**
