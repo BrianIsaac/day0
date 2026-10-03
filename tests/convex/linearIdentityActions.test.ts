@@ -1237,6 +1237,63 @@ describe("per-employee mode: the employee's own app", (): void => {
     });
   });
 
+  it('installs again from one Connect on a card Linear refused to renew, ending the refused pair as a Disconnect does (R41X-4)', async (): Promise<void> => {
+    // The refused pair's revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const surfaceId = surfaceIds[0]!;
+    await installLeo(harness, surfaceId);
+    const refused = (await read(harness, surfaceId)).surface;
+    // A Linear administrator's "Revoke access" in Linear's settings, then the card as its check
+    // leaves it (`recordProbeFailure`): not granted, still holding the refused pair.
+    linear.revokeAppTokens(LEO_CLIENT);
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(surfaceId, {
+          verdict: 'ungranted',
+          reason: 'Linear refused to renew the token: Refresh token revoked.',
+          credentialLanded: false,
+        }),
+    );
+
+    const started = await connect(harness, surfaceId);
+    if (!started.ok || !('authoriseUrl' in started)) throw new Error('no installation started');
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const { surface, credentials } = await read(harness, surfaceId);
+    expect(surface.credentialId).not.toBe(refused.credentialId);
+    expect(credentials.find((row) => row._id === refused.credentialId)).toMatchObject({
+      revokedAt: clock,
+      sourceRevocation: { end: 'disconnect' },
+    });
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceId);
+      expect(
+        events
+          .filter((event) => event.type === 'credential.revoked-at-source')
+          .map((event) => event.payload),
+      ).toEqual([
+        expect.objectContaining({
+          credentialId: refused.credentialId,
+          end: 'disconnect',
+          outcome: 'already-gone',
+        }),
+      ]);
+    });
+  });
+
   it('renews an expired card by re-authorising its own app through the issuer, with a fresh link (join 6)', async (): Promise<void> => {
     // The expiry's revocation reaches Linear through the deployment's own fetch: the fake's.
     vi.stubGlobal(

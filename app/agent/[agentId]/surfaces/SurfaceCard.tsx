@@ -343,13 +343,22 @@ export function SurfaceCard({
           onMove,
         }
       : undefined;
+  // A card Linear refused to renew keeps the refused pair of its own app, which no longer works
+  // (R41X-4): Connect installs the app again, and the installation ends the refused pair as a
+  // Disconnect would (`retireReplaced`), so one press does what Disconnect then Connect did.
+  const refusedOwnApp =
+    system === 'linear' &&
+    surface.verdict === 'ungranted' &&
+    identity.kind === 'own-app' &&
+    !identity.planned &&
+    surface.provisioning !== undefined;
   const connectable =
     actions.connect !== undefined &&
     covering !== undefined &&
     !slack &&
     approvedAccess &&
     !ended &&
-    surface.credentialId === undefined &&
+    (surface.credentialId === undefined || refusedOwnApp) &&
     !accessRequest;
   const slackConnectable =
     slack &&

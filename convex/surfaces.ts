@@ -1527,6 +1527,10 @@ export const recordProbeFailure = internalMutation({
       channelsNotJoined: undefined,
       lastVerifiedAt: undefined,
       probeStartedAt: undefined,
+      // The check has run: a poll's skip that waited on it ("the card's next check says whether
+      // the connection still works") is stale, and the card's own reason says why intake skips it
+      // now (R41X-4). The next poll writes a fresh one if it skips for another reason.
+      intakeSkipReason: undefined,
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
