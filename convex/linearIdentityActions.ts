@@ -27,6 +27,7 @@ import {
 } from '../src/lib/oauth-state';
 import { ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { assertRealMode } from '../src/lib/surface-mode';
+import { linearEmployeeAppName } from '../src/surfaces/access-kit/linear';
 import { organisationSystemOf } from '../src/surfaces/access-request';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
@@ -568,7 +569,10 @@ export const registerEmployeeApp = action({
         "Give the app's client id and client secret from Linear's app settings.",
       );
     }
-    const appName = (args.appName?.trim() || `Day0 ${context.agent.name}`).slice(0, APP_NAME_MAX);
+    const appName = (args.appName?.trim() || linearEmployeeAppName(context.agent.name)).slice(
+      0,
+      APP_NAME_MAX,
+    );
     const deps = linearIdentityDeps();
     const now = deps.now();
     await ctx.runMutation(internal.organisationConnections.linkSurface, {

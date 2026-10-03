@@ -7,6 +7,7 @@ import {
   linearAuthoriseUrl,
   linearKitManifest,
   linearCreateFormUrl,
+  linearEmployeeAppName,
 } from '../../../../src/surfaces/access-kit/linear';
 import {
   LINEAR_MANIFEST_LINK_REFUSED,
@@ -112,6 +113,10 @@ describe('the Linear recipe', (): void => {
       'authorization_code',
       'client_credentials',
     ]);
+  });
+
+  it('names an employee’s own app as Linear then names it, its name before "(Day0)" (R41X-3)', (): void => {
+    expect(linearEmployeeAppName(' Leo ')).toBe(LINEAR_OWN_APP_NAME);
   });
 
   it('authorises an employee’s app as the app actor with the scopes and redirect the manifest declares', (): void => {

@@ -60,6 +60,16 @@ const MANIFEST_SCHEMA = 'https://linear.app/.well-known/oauth-app-manifest.schem
 const CLIENT_NAME_MIN = 2;
 const CLIENT_NAME_MAX = 80;
 
+/**
+ * The name of an employee's own Linear app, `<employee> (Day0)`: the manifest's `client_name`, and
+ * the name Linear then gives the app on its consent and in `viewer` (the re-walk, R41X-3).
+ *
+ * @param employee - The employee's name, as its card shows it.
+ */
+export function linearEmployeeAppName(employee: string): string {
+  return `${employee.trim()} (Day0)`;
+}
+
 /** An OAuth app manifest as Linear's schema 1.0.0 reads it: the fields Day0 sets. */
 export interface LinearAppManifest {
   readonly $schema: string;

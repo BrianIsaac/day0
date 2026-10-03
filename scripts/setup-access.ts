@@ -47,7 +47,11 @@ import {
   type RecipeField,
   type RecipeMode,
 } from '../src/surfaces/access-kit';
-import { linearCreateFormUrl, linearKitManifest } from '../src/surfaces/access-kit/linear';
+import {
+  linearCreateFormUrl,
+  linearEmployeeAppName,
+  linearKitManifest,
+} from '../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../src/surfaces/access-kit/slack';
 import { discoverAuthorisation, type OauthFetch } from '../src/surfaces/mcp-oauth';
 import { adminTarget, deploymentAdmin, type DeploymentAdmin } from './lib/convex-admin';
@@ -438,7 +442,7 @@ function printManifest(
         employee === undefined
           ? { appName: 'Day0', publicUrl: values[PUBLIC_URL_VAR] ?? '', mode: 'shared' }
           : {
-              appName: `${employee.trim()} (Day0)`,
+              appName: linearEmployeeAppName(employee),
               publicUrl: values[PUBLIC_URL_VAR] ?? '',
               mode: 'per-employee',
             },
