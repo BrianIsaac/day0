@@ -5,6 +5,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schemaModule from '../../convex/schema';
+import { HANDOVER_REAPPROVE_REASON } from '../../convex/surfaces';
 import { KEPT_IDENTITY_WAIT_MS } from '../../src/agent/manager-transfer';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -65,7 +66,7 @@ interface Seeded {
  */
 async function seedKept(
   harness: TestConvex<Schema>,
-  card: { readonly heldKey?: 'issued' | 'pasted' } = {},
+  card: { readonly heldKey?: 'issued' | 'pasted'; readonly reason?: string } = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const agentId = await ctx.db.insert('agents', {
@@ -118,6 +119,8 @@ async function seedKept(
       path: 'mcp',
       endpoint: 'https://auth.acme.test/mcp',
       credentialLanded: false,
+      // The handover's re-approval says why the card is back at proposed (A25).
+      reason: card.reason ?? HANDOVER_REAPPROVE_REASON,
       credentialId: accessId,
       credentialKind: issued ? 'oauth' : 'value',
       ...(issued ? { actsAs: { kind: 'delegated' as const, label: MANAGER_ADDRESS } } : {}),
@@ -201,6 +204,20 @@ describe('a kept identity its new manager has not approved again (the review’s
   it('leaves a proposed card holding a key Day0 did not obtain alone', async (): Promise<void> => {
     const harness = await realHarness();
     const seeded = await seedKept(harness, { heldKey: 'pasted' });
+
+    expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS * 2)).toBe(0);
+
+    const { surface, access } = await rows(harness, seeded);
+    expect(surface?.credentialId).toBe(seeded.accessId);
+    expect(access?.revokedAt).toBeUndefined();
+  });
+
+  it("leaves a card a changed intake queue sent back to proposed, whose identity no handover kept (the code pass's B1)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const seeded = await seedKept(harness, {
+      reason:
+        'A documented intake queue changed. Reject this card and re-run orientation before approval.',
+    });
 
     expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS * 2)).toBe(0);
 

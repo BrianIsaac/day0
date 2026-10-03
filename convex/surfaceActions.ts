@@ -1803,7 +1803,6 @@ export const reprobeAll = internalAction({
   ): Promise<{ expired: number; noticed: number; scheduled: number; keptEnded: number }> => {
     if (SURFACE_MODE === 'mock') return { expired: 0, noticed: 0, scheduled: 0, keptEnded: 0 };
     const now = Date.now();
-    const keptEnded = await endUnapprovedKeptIdentities(ctx, now);
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.reprobeCandidates,
       {},
@@ -1827,6 +1826,16 @@ export const reprobeAll = internalAction({
         routine: true,
       });
       scheduled += 1;
+    }
+    // After the expiries, notices and re-probes, so a failure here stops none of them; it is
+    // logged and the next hour's sweep pages through again (the code pass's m4).
+    let keptEnded = 0;
+    try {
+      keptEnded = await endUnapprovedKeptIdentities(ctx, now);
+    } catch (error) {
+      log.warn('the kept identities sweep failed; the next sweep tries again', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
     return { expired, noticed, scheduled, keptEnded };
   },

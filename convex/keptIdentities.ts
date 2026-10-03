@@ -2,7 +2,12 @@ import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import { eventsOfType } from './eventLog';
-import { endKeptIdentity } from './surfaces';
+import {
+  endKeptIdentity,
+  HANDOVER_CUT_REPROPOSE_REASON,
+  HANDOVER_REAPPROVE_REASON,
+} from './surfaces';
+import { isEventOf } from '../src/events/contract';
 import { KEPT_IDENTITY_WAIT_MS } from '../src/agent/manager-transfer';
 
 /*
@@ -18,12 +23,27 @@ const KEPT_SWEEP_PAGE = 100;
 /** The most `surface.proposed` lines of one employee read to find a card's latest. */
 const PROPOSED_EVENTS_READ = 100;
 
+/** The reasons a handover's re-approval leaves on a card that kept the employee's own identity. */
+const HANDOVER_REAPPROVAL_REASONS: ReadonlySet<string> = new Set([
+  HANDOVER_REAPPROVE_REASON,
+  HANDOVER_CUT_REPROPOSE_REASON,
+]);
+
 /**
- * Whether a `proposed` card holds an identity Day0 obtained: a handover's re-approval keeps one
- * (A25), and nothing else leaves a credential with an issuer on a card waiting for approval.
+ * Whether a `proposed` card holds an identity a handover kept for re-approval (A25): the move's
+ * own reason on it, no approval since, and a live credential Day0 obtained. A card a changed
+ * intake queue sent back to `proposed` keeps its identity under another reason, and is never
+ * ended here (the code pass's B1).
  */
 async function holdsKeptIdentity(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<boolean> {
-  if (surface.credentialId === undefined) return false;
+  if (
+    surface.credentialId === undefined ||
+    surface.managerApprovedAt !== undefined ||
+    surface.reason === undefined ||
+    !HANDOVER_REAPPROVAL_REASONS.has(surface.reason)
+  ) {
+    return false;
+  }
   const credential = await ctx.db.get(surface.credentialId);
   return (
     credential !== null && credential.revokedAt === undefined && credential.issuedBy !== undefined
@@ -39,7 +59,7 @@ async function waitingSince(
     .order('desc')
     .take(PROPOSED_EVENTS_READ);
   const latest = proposed.find(
-    (event) => (event.payload as { readonly surfaceId?: unknown }).surfaceId === surface._id,
+    (event) => isEventOf(event, 'surface.proposed') && event.payload.surfaceId === surface._id,
   );
   return latest?.createdAt;
 }
