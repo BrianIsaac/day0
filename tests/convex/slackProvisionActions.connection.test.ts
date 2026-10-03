@@ -12,6 +12,7 @@ import { endAccessAtSource } from '../../convex/sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { KEPT_APP_CONNECTION_REVOKED } from '../../src/surfaces/identity-issuers/slack';
+import { LEASE_POLL_MS } from '../../src/surfaces/refresh-lease';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import {
@@ -422,6 +423,49 @@ describe("an employee's own app through the organisation's connection (B9)", ():
     const row = await configurationRow(harness, connectionId);
     expect(row.generation).toBe(1);
     expect(row).not.toHaveProperty('refreshingUntil');
+  });
+
+  it("uses the configuration token that still lives after five seconds behind a dead renewal's lease, not a whole lease (the round review's m7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const maya = await employee(harness, 'Maya');
+    // Inside its renew margin but alive, behind the lease of a renewal whose action died.
+    const row = await configurationRow(harness, connectionId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(row._id, {
+        expiresAt: Date.now() + 10 * 60 * 1000,
+        refreshingUntil: Date.now() + 80_000,
+      });
+    });
+    let done = false;
+    const made = provision(harness, maya.surfaceId).finally((): void => {
+      done = true;
+    });
+    // A full event-loop turn per step, so the action's own imports and reads run between ticks.
+    const turn = async (): Promise<void> =>
+      await new Promise<void>((resolve): void => {
+        const { port1, port2 } = new MessageChannel();
+        port2.onmessage = (): void => resolve();
+        port1.postMessage(null);
+      });
+    try {
+      for (let step = 0; step < 24 && !done; step += 1) {
+        await vi.advanceTimersByTimeAsync(LEASE_POLL_MS);
+        await turn();
+      }
+      expect(done).toBe(true);
+    } finally {
+      // Let a waiter that outlived the bound finish before the test ends, whatever it answers.
+      for (let step = 0; step < 800 && !done; step += 1) {
+        await vi.advanceTimersByTimeAsync(LEASE_POLL_MS);
+        await turn();
+      }
+    }
+    await expect(made).resolves.toMatchObject({ appId: expect.any(String) });
+    expect(callsOf(slack, 'tooling.tokens.rotate')).toEqual([]);
+    expect(callsOf(slack, 'apps.manifest.create').map((call) => call.bearer)).toEqual([
+      LANDED_CONFIGURATION_TOKEN,
+    ]);
   });
 
   it("uses a token pasted on the card when the organisation's connection cannot renew its own, and revokes it after", async (): Promise<void> => {

@@ -14,7 +14,8 @@ import type { IssuedTokens } from './mcp-oauth';
 import { safeFailureMessage } from './redact';
 import {
   awaitLeaseHolder,
-  LIVE_TOKEN_LEASE_POLLS,
+  LEASE_CLAIMS,
+  LIVE_TOKEN_POLLS_PER_CLAIM,
   RefreshInProgress,
   sleepFor,
 } from './refresh-lease';
@@ -39,12 +40,6 @@ const ROTATION_WAIT_MS = 200;
 
 /** How many times it waits. */
 const ROTATION_WAITS = 3;
-
-/**
- * How many times a refresh asks for the lease: once, and once more after the holder it waited for
- * let the lease end without a rotation. A third holder in that time answers {@link RefreshInProgress}.
- */
-const LEASE_CLAIMS = 2;
 
 /** The credential an authorisation landed, as the native store is told to keep it. */
 export interface LandTokens {
@@ -393,7 +388,7 @@ export interface NativeTokenStoreDeps {
 export interface RefreshOptions {
   /**
    * The caller's stored token still lives: behind another refresh's lease the refresh waits only
-   * {@link LIVE_TOKEN_LEASE_POLLS} reads at each claim, and after its last claim hands the stored
+   * {@link LIVE_TOKEN_LEASE_POLLS} reads in all, and after its last claim hands the stored
    * token back rather than waiting out a lease whose holder may have died.
    */
   readonly storedTokenLives?: boolean;
@@ -484,7 +479,7 @@ export async function refreshHeld(
             sleep: deps.sleep ?? sleepFor,
           },
           { generation: held.generation, until: claim.until },
-          options.storedTokenLives === true ? LIVE_TOKEN_LEASE_POLLS : undefined,
+          options.storedTokenLives === true ? LIVE_TOKEN_POLLS_PER_CLAIM : undefined,
         );
         if (waited === 'moved') {
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };

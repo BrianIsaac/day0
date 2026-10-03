@@ -339,6 +339,23 @@ describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
     expect(slept).toBeLessThanOrEqual(2 * LIVE_TOKEN_LEASE_POLLS);
   });
 
+  it("waits five seconds in all behind a dead holder's lease while the stored token lives, the claims sharing one budget (the round review's m7)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 30_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let slept = 0;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      sleep: async (): Promise<void> => {
+        slept += 1;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).resolves.toBe('access-0');
+    expect(slept).toBeLessThanOrEqual(LIVE_TOKEN_LEASE_POLLS);
+  });
+
   it("never hands back a stored token that died while the read waited behind another holder's lease (the round review's m8)", async (): Promise<void> => {
     // Three seconds left, and the holder died: its lease never ends while the reader waits.
     const pair = pairFor({ expiresAt: NOW + 3_000, refreshingUntil: NOW + 80_000 });

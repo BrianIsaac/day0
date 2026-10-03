@@ -21,11 +21,23 @@ export const LEASE_POLL_MS = 250;
 export const LEASE_POLLS = Math.ceil(REFRESH_LEASE_MS / LEASE_POLL_MS) + 1;
 
 /**
- * The most reads a waiter makes while the token it holds still lives (five seconds): long enough
- * for a live holder's exchange to land, short enough that a read behind a dead holder's lease
- * uses the stored token rather than waiting out the lease.
+ * The most reads a waiter makes while the token it holds still lives (five seconds in all, shared
+ * by its claims): long enough for a live holder's exchange to land, short enough that a read
+ * behind a dead holder's lease uses the stored token rather than waiting out the lease.
  */
 export const LIVE_TOKEN_LEASE_POLLS = Math.ceil(5_000 / LEASE_POLL_MS);
+
+/**
+ * How many times a refresh asks for the lease: once, and once more after the holder it waited for
+ * let the lease end without a rotation.
+ */
+export const LEASE_CLAIMS = 2;
+
+/**
+ * The reads one claim makes while the stored token lives, so the claims together keep to {@link
+ * LIVE_TOKEN_LEASE_POLLS} (the round review's m7: two claims of the whole bound waited ten).
+ */
+export const LIVE_TOKEN_POLLS_PER_CLAIM = Math.floor(LIVE_TOKEN_LEASE_POLLS / LEASE_CLAIMS);
 
 /** An access token's row as far as the lease reads it. */
 export interface LeasedRow {
