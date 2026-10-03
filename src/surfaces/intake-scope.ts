@@ -634,7 +634,7 @@ export function keepsPageScan(card: PageScanCard): boolean {
  * @param system - The surface's display name.
  */
 export function pageScanLine(system: string): string {
-  return `Reads ${system} by the older page scan: no team or project its pages state could be tied to this role, so intake reads the first project any page names.`;
+  return `No intake scope was approved with this card, so intake reads ${system} by the older page scan: the first project any page names.`;
 }
 
 /**
