@@ -1,10 +1,17 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, query, type DatabaseReader } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type DatabaseReader,
+  type MutationCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import type { MockSurfaceSnapshot, MockWriteResult } from '../src/work/types';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { agentReadsSource } from '../src/docs/agent-sources';
+import { groundTicketWork, type TicketGroundingItem } from '../src/work/office-tickets';
 
 /**
  * Read + write API for the mock work environment.
@@ -528,6 +535,51 @@ export const listTickets = query({
       .collect();
   },
 });
+
+/**
+ * The most tickets one employee's office is read for when it opens tickets for drafted work: it
+ * holds three seeded tickets and at most three more for each charter approval.
+ */
+const OFFICE_TICKETS_READ = 1000;
+
+/**
+ * Open the tickets a batch of charter-derived work names and the office does not hold, and return
+ * the batch as it is seeded (`groundTicketWork`): every item from the ticket queue then names a
+ * ticket the office holds, so its run can close the loop on it (the wave 11 review's M10).
+ * Called inside the seeding mutation, so the tickets and the items land together or not at all.
+ *
+ * @param ctx - The seeding mutation's context.
+ * @param agentId - The employee whose office it is.
+ * @param items - The batch as the generator drafted it.
+ * @returns The batch to seed, in the same order.
+ */
+export async function openTicketsForDraftedWork<T extends TicketGroundingItem>(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  items: readonly T[],
+): Promise<T[]> {
+  const held = await ctx.db
+    .query('mockTickets')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+    .take(OFFICE_TICKETS_READ);
+  const grounded = groundTicketWork(
+    items,
+    held.map((ticket) => ticket.slug),
+  );
+  for (const ticket of grounded.opened) {
+    await ctx.db.insert('mockTickets', {
+      agentId,
+      slug: ticket.slug,
+      title: ticket.title,
+      body: ticket.body,
+      status: 'open',
+      ...(ticket.priority !== undefined ? { priority: ticket.priority } : {}),
+      comments: [],
+      updatedAt: Date.now(),
+    });
+  }
+  return grounded.items;
+}
 
 /** Internal: creates a mock ticket for an employee unless one with that slug exists. */
 export const ensureTicket = internalMutation({

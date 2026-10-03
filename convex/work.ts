@@ -14,6 +14,7 @@ import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
+import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
 import {
   HANDOVER_IN_PROGRESS_REASON,
@@ -942,11 +943,13 @@ export const seedItem = internalMutation({
 });
 
 /**
- * Seed every item the mock generator made for an approved charter, and the
- * `work.charter-derived` event, in one transaction. Internal; the charter's
- * seeding calls it. All or nothing, so a retry after a failure never adds a
- * second, different batch beside a partial first: the generator is a model
- * call and the seed dedups on external ids only (U9 D4).
+ * Seed every item the mock generator made for an approved charter, the
+ * tickets the office opens for them, and the `work.charter-derived` event, in
+ * one transaction. Internal; the charter's seeding calls it. All or nothing,
+ * so a retry after a failure never adds a second, different batch beside a
+ * partial first: the generator is a model call and the seed dedups on
+ * external ids only (U9 D4). Every item from the ticket queue names a ticket
+ * the office holds once it is seeded (`openTicketsForDraftedWork`, M10).
  *
  * @returns How many items were seeded.
  */
@@ -957,7 +960,8 @@ export const seedCharterDerived = internalMutation({
     items: v.array(v.object(workItemSeedFields)),
   },
   handler: async (ctx, args): Promise<number> => {
-    for (const item of args.items) {
+    const items = await openTicketsForDraftedWork(ctx, args.agentId, args.items);
+    for (const item of items) {
       await seedItemInTransaction(ctx, { agentId: args.agentId, ...item });
     }
     await appendEvent(ctx, {

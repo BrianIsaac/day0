@@ -7932,3 +7932,179 @@ describe('the plan-grounding read across a handover (U3-m2)', (): void => {
     expect((await groundingEvent(harness, eventId)).payload).not.toHaveProperty('applied');
   });
 });
+
+describe('the mock office holds every ticket its charter-derived work names (M10)', (): void => {
+  /** A drafted item as the mock generator returns it. */
+  function drafted(
+    externalId: string,
+    overrides: Partial<{
+      sourceCategory: string;
+      sourceSystem: string;
+      title: string;
+      contentRefs: string[];
+    }> = {},
+  ): {
+    sourceCategory: string;
+    sourceSystem: string;
+    externalId: string;
+    title: string;
+    contentSummary: string;
+    contentRefs: string[];
+    priority: string;
+    requesterLabel: string;
+  } {
+    return {
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'ticket',
+      externalId,
+      title: 'Routine close-out ticket needs comment and closure this week',
+      contentSummary: 'Tomas filed this: "Comment on the close-out ticket and close it."',
+      contentRefs: [],
+      priority: 'P1',
+      requesterLabel: 'Tomas',
+      ...overrides,
+    };
+  }
+
+  /** An employee whose office holds the three seeded tickets. */
+  async function seedOffice(harness: Harness): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Ines',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (const slug of ['REVOPS-201', 'REVOPS-202', 'REVOPS-203']) {
+        await ctx.db.insert('mockTickets', {
+          agentId,
+          slug,
+          title: `Seeded ${slug}`,
+          body: 'Seeded ticket.',
+          status: 'open',
+          comments: [],
+          updatedAt: 1,
+        });
+      }
+      return agentId;
+    });
+  }
+
+  /** Each item's references and the office's tickets, after the seed. */
+  async function office(
+    harness: Harness,
+    agentId: Id<'agents'>,
+  ): Promise<{
+    refs: Map<string, string[]>;
+    tickets: Doc<'mockTickets'>[];
+  }> {
+    const { items, tickets } = await harness.run(async (ctx) => ({
+      items: await ctx.db
+        .query('workItems')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+        .collect(),
+      tickets: await ctx.db
+        .query('mockTickets')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+        .collect(),
+    }));
+    return { refs: new Map(items.map((item) => [item.externalId, item.contentRefs])), tickets };
+  }
+
+  it('opens a ticket for a drafted ticket item that names no ticket the office holds', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedOffice(harness);
+    await harness.mutation(internal.work.seedCharterDerived, {
+      agentId,
+      role: 'support triage',
+      items: [
+        drafted('ticket-routine-closeout'),
+        drafted('ticket-revops-closeout', { contentRefs: ['ticket://ticket-revops-closeout'] }),
+      ],
+    });
+
+    const { refs, tickets } = await office(harness, agentId);
+    expect(refs.get('ticket-routine-closeout')).toEqual(['ticket://REVOPS-204']);
+    expect(refs.get('ticket-revops-closeout')).toEqual(['ticket://REVOPS-205']);
+    const opened = tickets.find((ticket) => ticket.slug === 'REVOPS-204');
+    expect(opened).toMatchObject({
+      title: 'Routine close-out ticket needs comment and closure this week',
+      body: 'Tomas filed this: "Comment on the close-out ticket and close it."',
+      status: 'open',
+      priority: 'P1',
+      comments: [],
+    });
+    expect(tickets.map((ticket) => ticket.slug).sort()).toEqual([
+      'REVOPS-201',
+      'REVOPS-202',
+      'REVOPS-203',
+      'REVOPS-204',
+      'REVOPS-205',
+    ]);
+  });
+
+  it('leaves an item on a seeded ticket as drafted and opens nothing for it', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedOffice(harness);
+    await harness.mutation(internal.work.seedCharterDerived, {
+      agentId,
+      role: 'pipeline hygiene',
+      items: [
+        drafted('ticket-REVOPS-203', {
+          contentRefs: ['ticket://REVOPS-203', 'mock-spreadsheet://q4-revenue-tracker'],
+        }),
+      ],
+    });
+
+    const { refs, tickets } = await office(harness, agentId);
+    expect(refs.get('ticket-REVOPS-203')).toEqual([
+      'ticket://REVOPS-203',
+      'mock-spreadsheet://q4-revenue-tracker',
+    ]);
+    expect(tickets).toHaveLength(3);
+  });
+
+  it('drops a ticket reference the office does not hold from work that is not a ticket', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedOffice(harness);
+    await harness.mutation(internal.work.seedCharterDerived, {
+      agentId,
+      role: 'pipeline hygiene',
+      items: [
+        drafted('slack-dm-priya', {
+          sourceCategory: 'inbox',
+          sourceSystem: 'slack',
+          contentRefs: ['channel://dm-priya', 'ticket://REVOPS-999', 'ticket://REVOPS-202'],
+        }),
+      ],
+    });
+
+    const { refs, tickets } = await office(harness, agentId);
+    expect(refs.get('slack-dm-priya')).toEqual(['channel://dm-priya', 'ticket://REVOPS-202']);
+    expect(tickets).toHaveLength(3);
+  });
+
+  it('numbers a later charter’s tickets after the ones an earlier seed opened', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedOffice(harness);
+    await harness.mutation(internal.work.seedCharterDerived, {
+      agentId,
+      role: 'support triage',
+      items: [drafted('ticket-first')],
+    });
+    await harness.mutation(internal.work.seedCharterDerived, {
+      agentId,
+      role: 'support triage',
+      items: [drafted('ticket-second')],
+    });
+
+    const { refs } = await office(harness, agentId);
+    expect(refs.get('ticket-first')).toEqual(['ticket://REVOPS-204']);
+    expect(refs.get('ticket-second')).toEqual(['ticket://REVOPS-205']);
+  });
+});
