@@ -17,6 +17,7 @@ const projection = projectKnowledge({
   skills: [{ name: 'see-internal-docs', sourceType: 'builtin' }],
   surfaces: [{ displayName: 'Slack', verdict: 'connected', expiresAt: Date.UTC(2026, 11, 25) }],
   documentation: [],
+  office: 'real',
 });
 
 describe('KnowledgeProjection', (): void => {

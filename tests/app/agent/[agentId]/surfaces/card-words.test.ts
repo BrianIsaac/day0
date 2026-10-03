@@ -9,7 +9,6 @@ import {
   documentedKeyUnusedWords,
   expectedCredential,
   identityChip,
-  mockActsAsWords,
   moveOfferWords,
   reachedWords,
   stateChip,
@@ -263,10 +262,6 @@ describe('whom a card acts as, before approval as after (D2; the access plan, se
         expect(words).not.toContain('\u2014');
       }
     }
-  });
-
-  it("says the hosted office's words on every mock surface", (): void => {
-    expect(mockActsAsWords('Maya')).toBe('Maya, its own app in this office');
   });
 });
 

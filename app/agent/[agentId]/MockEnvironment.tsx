@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { MOCK_OFFICE_SYSTEMS, mockActsAsWords } from '@/surfaces/mock-office';
 import type { SurfaceMode } from '@/surfaces/types';
 import { DocsTab } from './mock/DocsTab';
 import { SpreadsheetTab } from './mock/SpreadsheetTab';
@@ -11,7 +12,6 @@ import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfaceCards } from './surfaces/SurfaceCards';
-import { mockActsAsWords } from './surfaces/card-words';
 import { PermissionsCard } from './surfaces/PermissionsCard';
 import { Card } from '../../components/Card';
 import { Columns } from '../../components/Columns';
@@ -26,13 +26,8 @@ import {
 } from './environment-hash';
 
 /** The office's surfaces, one tab each, in the order the office draws them. */
-const OFFICE_TABS: ReadonlyArray<{ readonly key: TabKey; readonly label: string }> = [
-  { key: 'slack', label: 'Slack' },
-  { key: 'spreadsheet', label: 'Spreadsheet' },
-  { key: 'docs', label: 'Docs' },
-  { key: 'tickets', label: 'Tickets' },
-  { key: 'tweet', label: 'Social' },
-];
+const OFFICE_TABS: ReadonlyArray<{ readonly key: TabKey; readonly label: string }> =
+  MOCK_OFFICE_SYSTEMS;
 
 /** What the mock office says of itself beside its title. */
 export const OFFICE_CAPTION = 'the seeded workplace this employee works in';

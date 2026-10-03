@@ -48,6 +48,7 @@ function mira(overrides: Partial<ProjectionInput> = {}): ProjectionInput {
       { displayName: 'Looker', verdict: 'proposed' },
     ],
     documentation: ['RevOps runbooks'],
+    office: 'real',
     ...overrides,
   };
 }
@@ -113,5 +114,13 @@ describe('projectKnowledge', (): void => {
       mira({ surfaces: [{ displayName: 'Looker', verdict: 'declared' }] }),
     );
     expect(text).toContain('Connections: Looker (being looked into)');
+  });
+
+  it("names the mock office's systems and whom the employee acts as there, in the Surfaces tab's words (round 0141 R-D item 3)", (): void => {
+    const { text } = projectKnowledge(mira({ office: 'mock', surfaces: [] }));
+    expect(text.split('\n')).toContain(
+      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social; acts as Mira, its own app in this office",
+    );
+    expect(text).not.toContain('Connections: none yet');
   });
 });

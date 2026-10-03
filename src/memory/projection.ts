@@ -1,5 +1,6 @@
 import type { Doc } from '../../convex/_generated/dataModel';
 import { formatStamp } from '../lib/zone';
+import { mockActsAsWords, mockOfficeSystemsPhrase } from '../surfaces/mock-office';
 
 /**
  * The readable projection of what an employee knows (decision A2): its charter, the people it
@@ -54,6 +55,11 @@ export interface ProjectionInput {
   readonly surfaces: readonly ProjectedSurface[];
   /** The documentation sources the employee inherits, by label. */
   readonly documentation: readonly string[];
+  /**
+   * Where the employee works: the hosted mock office, whose systems are the office's own and hold
+   * no surface rows, or the real systems its surfaces name.
+   */
+  readonly office: 'mock' | 'real';
 }
 
 /** The projection as the dashboard draws it. */
@@ -174,6 +180,20 @@ function surfaceState(surface: ProjectedSurface, zone: string): string {
 }
 
 /**
+ * The connections line: in the mock office, its systems and whom the employee acts as there, in
+ * the Surfaces tab's words; elsewhere each surface and how far it has come.
+ */
+function connectionsLine(input: ProjectionInput): string {
+  if (input.office === 'mock') {
+    return `Connections: the mock office's ${mockOfficeSystemsPhrase()}; acts as ${mockActsAsWords(input.name)}`;
+  }
+  const surfaces = input.surfaces.map(
+    (surface) => `${surface.displayName} (${surfaceState(surface, input.zone)})`,
+  );
+  return `Connections: ${surfaces.length > 0 ? surfaces.join(', ') : 'none yet'}`;
+}
+
+/**
  * The projection's text, section by section, cut at whole lines when it would pass the limit.
  *
  * @param input - The structured rows it is made from.
@@ -192,15 +212,7 @@ export function projectKnowledge(input: ProjectionInput): KnowledgeProjection {
         : 'Working agreements: none kept yet',
     ],
     [`Skills: ${skills.length > 0 ? skills.join(', ') : 'none registered yet'}`],
-    [
-      `Connections: ${
-        input.surfaces.length > 0
-          ? input.surfaces
-              .map((surface) => `${surface.displayName} (${surfaceState(surface, input.zone)})`)
-              .join(', ')
-          : 'none yet'
-      }`,
-    ],
+    [connectionsLine(input)],
     [
       `Documentation: ${input.documentation.length > 0 ? input.documentation.join(', ') : 'none linked'}`,
     ],
