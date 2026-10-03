@@ -325,10 +325,13 @@ const EVENT_PAGE = 10;
 const RUN_PAGE = 10;
 
 /**
- * Documentation pages one page of the listing stamp reads: a page body can be
- * up to 768 KiB, so the read is bounded by bytes as well as rows.
+ * Rows one page of a migration over large rows reads: a documentation page or
+ * its mirror carries a body of up to 768 KiB, and a sync run of a release
+ * before 0.6.0 up to 8,192 page refs, so the read is bounded by bytes as well
+ * as rows (M23). A page the bound ends early continues from the last row it
+ * returned, so no row is skipped.
  */
-const PAGE_BODIES_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
+const LARGE_ROWS_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
@@ -604,7 +607,7 @@ async function rewriteAvatarIds(ctx: MutationCtx, cursor: string | null): Promis
  * no sync has written it yet, so the employee never loses the page.
  */
 async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('mockDocs').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const page = await ctx.db.query('mockDocs').paginate({ ...LARGE_ROWS_READ, cursor });
   let changed = 0;
   for (const mirror of page.page) {
     if (mirror.sourceId === undefined || mirror.sourceRef === undefined) continue;
@@ -647,7 +650,7 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
  * pages its refs name.
  */
 async function stampPageListings(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('docPages').paginate({ ...PAGE_BODIES_READ, cursor });
+  const page = await ctx.db.query('docPages').paginate({ ...LARGE_ROWS_READ, cursor });
   let changed = 0;
   for (const stored of page.page) {
     const listed = await ctx.db

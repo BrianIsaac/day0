@@ -1095,6 +1095,52 @@ describe('the mirror re-key (review M20)', (): void => {
       completedAt: expect.any(Number),
     });
   });
+
+  it('reads within its byte bound, so mirrors of full page bodies re-key inside the transaction read limit (M23)', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const sourceId = await source(harness, 'owner');
+    // Thirty mirrors of 600 KB each are 18 MB: more than one transaction may read, so a page
+    // bounded by rows alone fails, and one bounded by bytes takes them a few at a time.
+    const body = 'x'.repeat(600_000);
+    const refs = Array.from({ length: 30 }, (_unused, index) => `page-${index}.md`);
+    for (const ref of refs) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: `source-legacy-${ref}`,
+          title: ref,
+          body,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: ref,
+          updatedAt: 1,
+        });
+      });
+    }
+
+    await runAll(harness);
+
+    // One read per mirror: the test is held to the same read limit as the migration.
+    for (const ref of refs) {
+      const mirror = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('mockDocs')
+            .withIndex('by_agent_slug', (q) =>
+              q.eq('agentId', agentId).eq('slug', mirroredDocSlug(sourceId, ref)),
+            )
+            .unique(),
+      );
+      expect(mirror?.sourceRef, ref).toBe(ref);
+    }
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'mirrors-rekey')).toMatchObject({
+      read: 30,
+      changed: 30,
+      completedAt: expect.any(Number),
+    });
+  });
 });
 
 describe('the release stamp', (): void => {
