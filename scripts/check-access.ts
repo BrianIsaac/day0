@@ -633,6 +633,9 @@ export function backendAddressOf(row: ConnectionRow, values: Values): URL | unde
   return undefined;
 }
 
+/** curl's words for a certificate the container does not trust, whose cure is trust, not a route. */
+const UNTRUSTED_CERTIFICATE = /SSL certificate|certificate verify|self[- ]signed|local issuer/i;
+
 /**
  * Whether the backend container itself reaches the connection's vendor (the wave 11 review's
  * section 11, item 4; AI9): every other check here asks from this machine, which says nothing of
@@ -666,9 +669,12 @@ async function reachCheck(
         row.system,
         'reach',
         'gap',
-        `The backend container could not reach ${address.href}: ${dial.detail}. Every call the ` +
-          `deployment makes to ${row.displayName} starts there: open its way out (the proxy or ` +
-          'firewall in front of the backend), then run the check again.',
+        `The backend container could not reach ${address.href}: ${dial.detail}. ` +
+          (UNTRUSTED_CERTIFICATE.test(dial.detail)
+            ? 'The backend does not trust the certificate the address presents: give the backend ' +
+              "container the customer's CA bundle (its SSL_CERT_FILE), then run the check again."
+            : `Every call the deployment makes to ${row.displayName} starts there: open its way ` +
+              'out (the proxy or firewall in front of the backend), then run the check again.'),
       );
     case 'unknown':
       return check(

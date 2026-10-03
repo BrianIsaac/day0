@@ -5435,11 +5435,8 @@ function readVenvDevice(io: SetupIo, volume: string, image: string | undefined):
  * Whether a model endpoint is this project's own redactor service, as a bed with no model vendor
  * names it (`--endpoint http://redactor:8000/v1`): the backend reaches it by its service name.
  *
- * Args:
- *   endpoint: The address the backend calls (`CONVEX_OPENAI_BASE_URL`).
- *
- * Returns:
- *   True when the endpoint's host is the redactor's.
+ * @param endpoint - The address the backend calls (`CONVEX_OPENAI_BASE_URL`).
+ * @returns True when the endpoint's host is the redactor's.
  */
 export function namesTheRedactor(endpoint: string): boolean {
   try {

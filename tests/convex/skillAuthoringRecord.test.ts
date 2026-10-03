@@ -33,8 +33,8 @@ const AGENT = 'agent-1' as Id<'agents'>;
 function failingRun(recorded: boolean): { ctx: ActionCtx; written: unknown[] } {
   const written: unknown[] = [];
   const ctx = {
-    runMutation: async (_reference: unknown, args: unknown): Promise<{ recorded: boolean }> => {
-      written.push(args);
+    runMutation: async (...call: readonly unknown[]): Promise<{ recorded: boolean }> => {
+      written.push(call[1]);
       return { recorded };
     },
   } as unknown as ActionCtx;

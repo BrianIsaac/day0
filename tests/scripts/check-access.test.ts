@@ -428,6 +428,23 @@ describe('check:access', (): void => {
     expect(accessExitCode(checks)).toBe(1);
   });
 
+  it("names the container's trust as the cure where its curl refuses the vendor's certificate (the code pass's m7)", async (): Promise<void> => {
+    const probes = vendors({
+      backend: () => ({
+        reach: 'unreachable',
+        detail: 'curl: (60) SSL certificate problem: unable to get local issuer certificate',
+      }),
+    });
+
+    const checks = await accessChecks([SLACK], VALUES, probes);
+
+    expect(only(checks, 'slack', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        "The backend container could not reach https://slack.com/api/api.test: curl: (60) SSL certificate problem: unable to get local issuer certificate. The backend does not trust the certificate the address presents: give the backend container the customer's CA bundle (its SSL_CERT_FILE), then run the check again.",
+    });
+  });
+
   it('dials the fake Slack a bed names by the address the deployment itself uses', async (): Promise<void> => {
     const probes = vendors();
     await accessChecks(

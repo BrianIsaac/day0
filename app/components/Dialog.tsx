@@ -21,16 +21,16 @@ import { keepTabInside, useModal } from './use-modal';
  * not scroll. It scales in from 0.96 as the product's one dialog motion (`[data-dialog]`
  * in `app/globals.css`), and it is the only element with a shadow and no border.
  *
+ * The body scrolls inside the panel, under the dimmed page's height; what a caller draws in a
+ * {@link DialogFooter} sits in a strip below the body that never scrolls, so a long dialog's
+ * answers stay in view at a phone's height (11-AC's item 13).
+ *
  * @param title - The dialog's heading, which names it.
  * @param description - The sentence that says what the dialog is about, drawn under the heading
  *   and bound as its description, so an assistive technology says it with the name on open.
  * @param onClose - Close it: Escape and a press on the dimmed page both ask, unless `busy`.
  * @param initialFocus - The element that takes focus on open; the first control when absent, so
  *   a dialog that asks for something destructive names its safe choice here.
- * The body scrolls inside the panel, under the dimmed page's height; what a caller draws in a
- * {@link DialogFooter} sits in a strip below the body that never scrolls, so a long dialog's
- * answers stay in view at a phone's height (11-AC's item 13).
- *
  * @param role - `alertdialog` for a confirmation that interrupts, `dialog` otherwise.
  * @param busy - Whether a change is in flight; the dialog cannot be dismissed until it settles.
  */
@@ -123,7 +123,9 @@ const FooterSlot = createContext<HTMLDivElement | null>(null);
  * A dialog's answers, drawn in the strip below its body that never scrolls, so they stay in view
  * however long the body runs (11-AC's item 13). The controls stay the caller's, with its state; a
  * submit button names its form (`form="<id>"`), since it is drawn outside it. Draws nothing
- * outside a {@link Dialog}.
+ * outside a {@link Dialog}. It is drawn one commit after the dialog opens, once its strip is on
+ * the page, so a dialog's `initialFocus` never names a control in its footer: the modal's first
+ * focus would not find it there.
  */
 export function DialogFooter({ children }: { children: ReactNode }) {
   const slot = useContext(FooterSlot);
