@@ -93,7 +93,17 @@ describe('the rotation-safe write of the configuration pair (B9, S2)', (): void 
     const scheduled = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
+    // The landing queued the first renewal (m9); the rotation queues the next, at the new generation.
     expect(scheduled.map((job) => [job.name, job.scheduledTime, job.args[0]])).toEqual([
+      [
+        'slackProvisionActions:keepConfigurationCurrent',
+        Date.now() + HOUR / 4,
+        {
+          organisationConnectionId: landed.connectionId,
+          secretCredentialId: landed.secretId,
+          generation: 0,
+        },
+      ],
       [
         'slackProvisionActions:keepConfigurationCurrent',
         Date.now() + 11 * HOUR,

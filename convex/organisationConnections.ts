@@ -29,6 +29,7 @@ import {
   type OrganisationRegistrar,
 } from '../src/surfaces/access-identity';
 import { isOrganisationSystemKey, organisationSystemOf } from '../src/surfaces/access-request';
+import { KEEP_CURRENT_MIN_DELAY_MS } from '../src/surfaces/identity-issuers/slack';
 
 /*
  * The organisation's connections (the access plan, section 4.1; B8, AC12): one row per system per
@@ -448,9 +449,43 @@ const storedSecretsFields = {
 };
 
 /**
+ * Queue the renewal that keeps a Slack configuration token current from the moment IT lands or
+ * rotates it, so the chain no longer waits for the first app to be created (the wave 11 review's
+ * m9). The token's age is unknown until its first rotation says when it lapses, so the first
+ * renewal runs as soon as a renewal may ({@link KEEP_CURRENT_MIN_DELAY_MS}); each rotation then
+ * queues the next. A token landed without its refresh token has nothing to renew with.
+ *
+ * @param input - The connection, its kind, the secrets just stored for it, and the time.
+ */
+async function keepConfigurationCurrentFrom(
+  ctx: MutationCtx,
+  input: {
+    readonly organisationConnectionId: Id<'organisationConnections'>;
+    readonly kind: OrganisationConnectionKind;
+    readonly secrets: ObjectType<typeof storedSecretsFields>;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { secretCredentialId, refreshCredentialId } = input.secrets;
+  if (
+    input.kind !== 'slack-configuration' ||
+    secretCredentialId === undefined ||
+    refreshCredentialId === undefined
+  ) {
+    return;
+  }
+  await ctx.scheduler.runAt(
+    input.now + KEEP_CURRENT_MIN_DELAY_MS,
+    internal.slackProvisionActions.keepConfigurationCurrent,
+    { organisationConnectionId: input.organisationConnectionId, secretCredentialId, generation: 0 },
+  );
+}
+
+/**
  * Record a landed connection and its ledger line, in one transaction. Internal, for
  * {@link landConnection}. When the system gained an active connection since the action checked,
  * the secrets the action stored are revoked here and the refusal returned, so none is left live.
+ * A Slack configuration pair queues its first renewal ({@link keepConfigurationCurrentFrom}).
  */
 export const recordLanded = internalMutation({
   args: {
@@ -501,6 +536,12 @@ export const recordLanded = internalMutation({
       },
       ...actorOf(registrar),
       createdAt: now,
+    });
+    await keepConfigurationCurrentFrom(ctx, {
+      organisationConnectionId,
+      kind: landing.kind,
+      secrets,
+      now,
     });
     return { recorded: true, organisationConnectionId };
   },
@@ -653,7 +694,8 @@ async function emptySharedToken(
  * token and ended by its kind ({@link endOrganisationSecrets}; M6), and the shared token issued with it is
  * emptied in place ({@link emptySharedToken}); the scopes change only when given, and the
  * client-credentials scopes never (L2). A connection revoked since the action read it refuses,
- * and the secrets the action stored are revoked here.
+ * and the secrets the action stored are revoked here. A Slack configuration pair queues the
+ * renewal of the new token ({@link keepConfigurationCurrentFrom}).
  */
 export const recordRotated = internalMutation({
   args: {
@@ -713,6 +755,12 @@ export const recordRotated = internalMutation({
       },
       ...actorOf(registrar),
       createdAt: now,
+    });
+    await keepConfigurationCurrentFrom(ctx, {
+      organisationConnectionId: connection._id,
+      kind: connection.kind,
+      secrets,
+      now,
     });
     return { recorded: true, organisationConnectionId: connection._id };
   },

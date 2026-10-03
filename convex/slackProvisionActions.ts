@@ -880,7 +880,8 @@ interface KeepCurrentJob {
 /**
  * Renew the organisation's kept configuration token before it lapses, though nothing uses it
  * (B9), so a retire's `apps.manifest.delete` (11-AR, which reads the stored token as it stands)
- * finds it current. Each rotation queues the next ({@link keepCurrentAt}); a job finds nothing to
+ * finds it current. The landing and a rotation by hand queue the first (m9), each rotation the
+ * next ({@link keepCurrentAt}); a job finds nothing to
  * do when the connection is revoked or needs IT, or when another rotation moved the pair on
  * (that rotation queued its own). A token IT rotated by hand since is adopted and renewed at once.
  * A paused deployment calls no vendor (`DAY0_CRONS_PAUSED`), and looks again an hour later. A
