@@ -478,6 +478,23 @@ describe('check:access', (): void => {
     expect(accessExitCode(checks)).toBe(1);
   });
 
+  it("stops an install whose backend dial did not run, where the access verb alone only notes it (the round review's m10)", async (): Promise<void> => {
+    const probes = vendors({
+      backend: () => ({ reach: 'unknown', detail: 'service "backend" is not running' }),
+    });
+
+    const alone = await accessChecks([LINEAR], VALUES, probes);
+    const installing = await accessChecks([LINEAR], VALUES, probes, { install: true });
+
+    expect(only(alone, 'linear', 'reach').status).toBe('warn');
+    expect(only(installing, 'linear', 'reach')).toMatchObject({
+      status: 'gap',
+      detail:
+        'Not asked from the backend container: service "backend" is not running. Start it (`./setup.sh resume`) and run the check again.',
+    });
+    expect(accessExitCode(installing)).toBe(1);
+  });
+
   it("names the container's trust as the cure where its curl refuses the vendor's certificate (the code pass's m7)", async (): Promise<void> => {
     const probes = vendors({
       backend: () => ({

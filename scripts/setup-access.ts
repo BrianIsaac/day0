@@ -103,6 +103,8 @@ export interface AccessOptions {
   readonly dryRun: boolean;
   /** Answers read from stdin by `./setup.sh install`, which reads it once for both halves. */
   readonly answers?: ReadonlyMap<string, string>;
+  /** Run by `./setup.sh install`, whose check counts a backend dial that did not run as a gap. */
+  readonly install?: boolean;
 }
 
 /** A child process's status and output, as the setup's runner returns it. */
@@ -916,7 +918,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
 
   io.log(`\n${CHECK_ACCESS.join(' ')}    (check every connection)`);
   const [command, ...args] = CHECK_ACCESS;
-  const checked = io.run(command, args, { inherit: true });
+  const checked = io.run(command, [...args, ...(options.install === true ? ['--install'] : [])], {
+    inherit: true,
+  });
   const status = checked.status ?? 1;
   writeRecord(io, options, values, origin, resolved, recorded, status);
   return status;

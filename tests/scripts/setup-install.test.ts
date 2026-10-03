@@ -105,7 +105,7 @@ function installBed(
 function checkOrder(bed: Harness): string[] {
   return bed.commands
     .map((call) => [call.command, ...call.args].join(' '))
-    .map((line) => /^pnpm (?:run )?(check:[a-z-]+|build)$/.exec(line)?.[1])
+    .map((line) => /^pnpm (?:run )?(check:[a-z-]+|build)(?: --install)?$/.exec(line)?.[1])
     .filter((name): name is string => name !== undefined);
 }
 
@@ -130,6 +130,16 @@ describe('setup: the install verb', (): void => {
     expect(printed).not.toContain(CLIENT_SECRET);
     expect(printed).not.toContain(CONFIGURATION_TOKEN);
     expect(printed).toContain('The install passed every check');
+  });
+
+  it("asks check:access to stop the install on a backend dial that did not run (the round review's m10)", async (): Promise<void> => {
+    const bed = installBed();
+    expect(await bed.run(INSTALL)).toBe(0);
+    expect(
+      bed.bed.commands
+        .map((call) => [call.command, ...call.args].join(' '))
+        .filter((line) => line.includes('check:access')),
+    ).toEqual(['pnpm run check:access --install']);
   });
 
   it('stops at the first failing check, says which, and runs nothing after it', async (): Promise<void> => {

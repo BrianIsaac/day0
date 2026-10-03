@@ -94,7 +94,13 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    does. Where the proxy's certificate comes from the customer's own
    certificate authority, this machine's Node must trust it: run the install
    with `NODE_EXTRA_CA_CERTS=<the CA bundle> ./setup.sh install ...`, or the
-   wait never succeeds.
+   wait never succeeds. The backend container needs the same trust for its own
+   calls to each vendor, which step 4's check dials from inside it (a dial
+   that could not run stops the install): where its way out passes such a
+   proxy, the container must be given the bundle (`SSL_CERT_FILE` for the
+   check's dial, `NODE_EXTRA_CA_CERTS` for the deployment's calls), which the
+   kit does not set today, so agree with IT before the day how it reaches the
+   container.
 7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
