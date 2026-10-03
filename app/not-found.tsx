@@ -12,9 +12,7 @@ export default function NotFound() {
   return (
     <div className="mx-auto grid w-full max-w-7xl justify-items-start gap-3 px-4 py-10 sm:px-6">
       <h1 className="text-2xl font-semibold tracking-[-0.02em]">This page is not here</h1>
-      <p className="text-[var(--color-fg-2)]">
-        The address may be mistyped, or the page has moved.
-      </p>
+      <p className="text-[var(--color-fg-2)]">Check the address for a typing slip.</p>
       <ButtonLink href="/" variant="text">
         Back to Day0
       </ButtonLink>

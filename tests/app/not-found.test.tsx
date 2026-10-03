@@ -7,7 +7,7 @@ describe('the page for an address Day0 does not have', (): void => {
 
   it('says so in a heading of its own, on the page and not on a blank sheet', (): void => {
     expect(html).toMatch(/<h1[^>]*>This page is not here<\/h1>/);
-    expect(html).toContain('The address may be mistyped, or the page has moved.');
+    expect(html).toContain('Check the address for a typing slip.');
   });
 
   it('gives one way back, to the home', (): void => {
