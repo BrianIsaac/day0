@@ -6,7 +6,12 @@ import {
   REINSTALL_LABEL,
 } from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
-import { type ScopeValue, type IntakeScope, presentIntakeScope } from '@/surfaces/intake-scope';
+import {
+  type ScopeValue,
+  type IntakeScope,
+  pageScanLine,
+  presentIntakeScope,
+} from '@/surfaces/intake-scope';
 import { useId, useRef, type FormEvent } from 'react';
 import type { AccessRequestReason } from '@/surfaces/access-identity';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
@@ -185,6 +190,24 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
           </p>
         ),
       )}
+    </div>
+  );
+}
+
+/**
+ * Say in one line that intake reads a card older than the approved scope by the page scan (R-S;
+ * the wave 11 review's m5): the upgrade could not tie a team or project on its pages to the role.
+ *
+ * Args:
+ *   props: The surface's display name.
+ *
+ * Returns:
+ *   The line, in the place the scope row takes on a scoped card.
+ */
+export function PageScanRow(props: { readonly system: string }): React.ReactNode {
+  return (
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-warn)]">{pageScanLine(props.system)}</p>
     </div>
   );
 }

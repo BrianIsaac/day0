@@ -17,7 +17,7 @@ import {
   presentBrowserComponent,
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
-import { scopeFieldsFor } from '@/surfaces/intake-scope';
+import { keepsPageScan, scopeFieldsFor } from '@/surfaces/intake-scope';
 import { organisationSystemOf } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
 import { Button } from '../../../components/Button';
@@ -54,6 +54,7 @@ import {
   EvidenceQuote,
   IntakeScopeRow,
   ONE_APPROVER,
+  PageScanRow,
   ProvisioningRow,
   SurfaceLadder,
 } from './SurfaceRows';
@@ -447,6 +448,7 @@ export function SurfaceCard({
             system={surface.displayName}
           />
         ) : null}
+        {keepsPageScan(surface) ? <PageScanRow system={surface.displayName} /> : null}
         <ToolsRow surface={surface} onApprove={actions.approveTools} />
         <ExpiryBlock
           surface={surface}
