@@ -93,7 +93,7 @@ absent                                        (no approved path in the documenta
 
 **Path.** The connection ladder is `SURFACE_PATHS` in `src/surfaces/types.ts`: `mcp`, `documented-api`, `browser-driven`, `escalate`. Orientation writes the chosen `path`, a `fallbackPath` and the `pathCandidates` it considered, each with the endpoint the documentation records; the probe records each attempt's outcome in `probeAttempts`.
 
-**Approvals and credential.** `managerApprovedAt` is the one approval a card needs before its probe runs (Q10); `itApprovedAt` is no longer written or read, and its declaration leaves in the release after 0.6.0. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
+**Approvals and credential.** `managerApprovedAt` is the one approval a card needs before its probe runs (Q10); the IT approval of releases before 0.6.0 was cleared by that release's upgrade, and from 0.16.0 the card no longer declares it. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
 
 **Tool catalogue.** `toolAllowlist` is the list of tools the probe discovered and admitted, and `toolArguments` the argument names it probed per tool. The policy refuses any action naming a tool outside the allowlist, and the executor is shown the probed argument names so a held write is repaired once against them before it is held.
 

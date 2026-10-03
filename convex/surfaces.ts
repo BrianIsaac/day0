@@ -2620,63 +2620,6 @@ export async function backfillWithheldToolsPage(
   };
 }
 
-/**
- * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
- * approval is gone, so a proposed card an older release left with the
- * manager's stamp alone is approved, as the manager's approval now does it,
- * its access running from the upgrade (`accessSetBy: 'upgrade'`); and no card
- * keeps an IT stamp, so the release after this one can remove the
- * declaration. A card whose approval would now be refused (a documented queue
- * it reads changed, or its browser component is absent) stays proposed
- * without the stamp and says why, so the manager approves it once it can be.
- * Run by `migrations:runPending`.
- *
- * @param cursor - Where the previous page stopped, or null for the first.
- * @param now - The upgrade's moment, from which an approved card's access runs.
- * @returns What the page read and changed, and where the next one starts.
- */
-export async function singleApprovalPage(
-  ctx: MutationCtx,
-  cursor: string | null,
-  now: number,
-): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
-  let changed = 0;
-  for (const surface of page.page) {
-    const approvedAt = surface.verdict === 'proposed' ? surface.managerApprovedAt : undefined;
-    if (approvedAt === undefined && surface.itApprovedAt === undefined) continue;
-    if (surface.itApprovedAt !== undefined) {
-      await ctx.db.patch(surface._id, { itApprovedAt: undefined });
-    }
-    if (approvedAt !== undefined) {
-      const check = await approvalCheck(ctx, surface);
-      if (check.refusal === undefined) {
-        await approveInTransaction(ctx, surface, {
-          approvedAt,
-          now,
-          by: 'upgrade',
-          intakeScope: check.intakeScope,
-        });
-      } else {
-        // A browser card refused for its absent driver stores nothing: the card
-        // reads the component live, so it offers Approve again once the driver
-        // runs. A stored absence would block it for good (wave 3.5 review M12).
-        await ctx.db.patch(surface._id, {
-          managerApprovedAt: undefined,
-          ...(check.refusal === INTAKE_QUEUE_CHANGED ? { reason: check.refusal } : {}),
-        });
-      }
-    }
-    changed += 1;
-  }
-  return {
-    read: page.page.length,
-    changed,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
 /** Who set a surface's end date last, by its newest `surface.access-set` event. */
 async function latestAccessSetter(
   ctx: MutationCtx,
