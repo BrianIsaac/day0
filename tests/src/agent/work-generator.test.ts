@@ -173,3 +173,12 @@ describe('the ticket-queue item the generator drafts (round 0141 R-D item 1, the
     );
   });
 });
+
+describe('the role words the out-of-scope item avoids (round 0141 R-D item 2, the bed walk)', (): void => {
+  it("names the role's words in the first draft's brief, so the first draft can keep clear of them", async (): Promise<void> => {
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(prompts[0]).toContain(
+      'The out-of-scope item uses none of these words from the role and its duties: pipeline, hygiene, sales, team, close, routine, tickets, queue.',
+    );
+  });
+});

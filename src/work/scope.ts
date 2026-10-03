@@ -158,13 +158,23 @@ export function sharedCharterWords(
   charter: Charter,
 ): string[] {
   const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
+  return charterWords(charter).filter((token) => bodyTokens.has(token));
+}
+
+/**
+ * The words the lexical eligibility rule reads from the charter: every word of four letters or
+ * more in its role and its willDo clauses, stop words left out, in charter order.
+ *
+ * @param charter - The approved charter.
+ */
+export function charterWords(charter: Charter): string[] {
   const charterTokens = new Set<string>();
   for (const w of tokenise(charter.proposedFunction)) charterTokens.add(w);
   for (const clause of charter.proposedBoundaries.willDo ?? []) {
     for (const w of tokenise(clause)) charterTokens.add(w);
   }
   for (const stop of STOP_WORDS) charterTokens.delete(stop);
-  return [...charterTokens].filter((token) => bodyTokens.has(token));
+  return [...charterTokens];
 }
 
 /**

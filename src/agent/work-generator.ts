@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { log } from '../lib/logger';
 import type { Charter } from './charter';
-import { sharedCharterWords } from '../work/scope';
+import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
 /**
@@ -184,6 +184,10 @@ export async function generateWorkItemsFromCharter(
     '',
     'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
     renderMockSnapshot(mockEnv),
+    '',
+    // Named up front: an item that shares one is judged the role's work, and a re-ask that names
+    // only the last draft's words let the next draft reach for another (the bed walk).
+    `The out-of-scope item uses none of these words from the role and its duties: ${charterWords(charter).join(', ')}.`,
     '',
     'Generate the 3 day-one work items now.',
   ].join('\n');
