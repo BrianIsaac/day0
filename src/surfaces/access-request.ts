@@ -213,9 +213,9 @@ export function accessRequestReason(
   const system = organisationSystemOf(card);
   if (system === undefined) return undefined;
   if (card.managerApprovedAt === undefined || card.credentialId !== undefined) return undefined;
-  if (connection === null) return 'no-connection';
-  // A connection nothing acts through asks IT for nothing: the card takes a key of its own.
+  // A system no issuer acts through asks IT for nothing, connected or not: the card takes a key.
   if (!servedByIssuer(system)) return undefined;
+  if (connection === null) return 'no-connection';
   if (neededScopes?.some((scope: string): boolean => !connection.scopes.includes(scope))) {
     return 'scope-widening';
   }

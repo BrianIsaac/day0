@@ -2282,7 +2282,9 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
   }
   const system = organisationSystemOf(surface);
   if (system === undefined) return {};
-  return (await activeConnectionFor(ctx, system)) === null ? {} : { offer: 'own-identity' };
+  return !servedByIssuer(system) || (await activeConnectionFor(ctx, system)) === null
+    ? {}
+    : { offer: 'own-identity' };
 }
 
 /**

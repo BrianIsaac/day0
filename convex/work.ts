@@ -58,7 +58,11 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { accessRequestReason, organisationSystemOf } from '../src/surfaces/access-request';
+import {
+  accessRequestReason,
+  organisationSystemOf,
+  servedByIssuer,
+} from '../src/surfaces/access-request';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -7569,6 +7573,8 @@ async function connectReadyCards(
       ) {
         return [];
       }
+      // A connection no issuer acts through connects no card (11-AC's item 8).
+      if (!servedByIssuer(system)) return [];
       const connection = await activeConnectionFor(ctx, system);
       if (connection === null || accessRequestReason(surface, connection) !== undefined) return [];
       if (await connectedSince(ctx, surface, request.draftedAt)) return [];

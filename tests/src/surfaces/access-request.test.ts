@@ -168,6 +168,8 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     expect(
       accessRequestReason(notionCard, { ...notion, mode: 'per-employee' as const }),
     ).toBeUndefined();
+    // With no connection either: nothing IT could land for Notion would be acted through.
+    expect(accessRequestReason(notionCard, null)).toBeUndefined();
     expect(servedByIssuer('notion')).toBe(false);
     expect(servedByIssuer('slack')).toBe(true);
     expect(servedByIssuer('linear')).toBe(true);
