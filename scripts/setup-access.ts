@@ -16,7 +16,15 @@
  * Everything is asked and checked before anything is written: a missing answer stops the verb
  * with nothing changed.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { ADMINISTRATORS_VAR, parseAdministrators } from '../src/lib/administrators';
 import {
@@ -47,6 +55,8 @@ import {
   defaultInstallRecordDirectory,
   installRecordMarkdown,
   installRecordName,
+  installRecordRunMarkdown,
+  type InstallRecord,
   type RecordedConnection,
   type RecordedSignIn,
   type RecordedSkip,
@@ -869,7 +879,7 @@ function writeRecord(
       : defaultInstallRecordDirectory(home, project);
   const at = new Date(io.now?.() ?? Date.now());
   const signIn = recordedSignIn(values, origin);
-  const markdown = installRecordMarkdown({
+  const record: InstallRecord = {
     project,
     recordedAt: at,
     publicUrl: origin,
@@ -880,11 +890,16 @@ function writeRecord(
     ...(checkStatus === undefined
       ? {}
       : { check: { command: CHECK_ACCESS.join(' '), status: checkStatus } }),
-  });
+  };
   try {
     mkdirSync(directory, { recursive: true });
     const path = join(directory, installRecordName(at));
-    writeFileSync(path, markdown, { encoding: 'utf8', mode: 0o600 });
+    // A later run the same day is added to the day's record, never in place of it (R41V-12).
+    if (existsSync(path)) {
+      appendFileSync(path, `\n${installRecordRunMarkdown(record)}`, { encoding: 'utf8' });
+    } else {
+      writeFileSync(path, installRecordMarkdown(record), { encoding: 'utf8', mode: 0o600 });
+    }
     io.log(`\nThe install record for the customer's IT: ${path}`);
   } catch (err) {
     io.log(`The install record could not be written to ${directory}: ${errorMessage(err)}`);

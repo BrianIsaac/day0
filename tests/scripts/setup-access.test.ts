@@ -246,6 +246,33 @@ describe('setup: the access verb', (): void => {
     expect(record).toContain('30 days');
   });
 
+  it('adds a second run on the same day to the install record, never replacing the first (R41V-12)', async (): Promise<void> => {
+    const bed = accessBed();
+    // The walk: Linear per employee, then Slack later the same day.
+    await bed.run([
+      'access',
+      '--administrators',
+      'ines@acme.test',
+      '--systems',
+      'linear',
+      '--connect-mode',
+      'linear=per-employee',
+      '--record',
+      bed.record,
+    ]);
+    await bed.run([...ACCESS, '--systems', 'slack', '--record', bed.record]);
+
+    const files = readdirSync(bed.record);
+    expect(files).toHaveLength(1);
+    const record = readFileSync(join(bed.record, files[0]!), 'utf8');
+    expect(record).toContain('Linear, per employee');
+    expect(record).toContain('Slack, per employee');
+    expect(record.indexOf('Linear, per employee')).toBeLessThan(
+      record.indexOf('Slack, per employee'),
+    );
+    expect(record.match(/^# Day0 install record/gm)).toHaveLength(1);
+  });
+
   it('writes the record under HOME by default, and nowhere when HOME is unset and no --record is given', async (): Promise<void> => {
     const home = mkdtempSync(join(tmpdir(), 'day0-home-'));
     const withHome = accessBed({ environment: { HOME: home } });

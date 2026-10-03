@@ -3,6 +3,7 @@ import {
   defaultInstallRecordDirectory,
   installRecordMarkdown,
   installRecordName,
+  installRecordRunMarkdown,
 } from '../../../scripts/lib/install-record';
 
 const AT = new Date('2026-10-02T10:00:00.000Z');
@@ -63,6 +64,25 @@ describe('the install record', (): void => {
     expect(markdown).toContain('- github: keeps the pasted key until Day0 has an issuer for it');
     expect(markdown).toContain('`pnpm run check:access` exited 0: every connection passed.');
     expect(markdown).not.toMatch(/\u2014/);
+  });
+
+  it('heads each run by its time, and a later run carries no title of its own (R41V-12)', (): void => {
+    const run = {
+      project: 'day0-acme',
+      recordedAt: AT,
+      administrators: ['ines@acme.test'],
+      connections: [],
+      skipped: [],
+    };
+    const first = installRecordMarkdown(run);
+    expect(first.startsWith('# Day0 install record: day0-acme\n')).toBe(true);
+    expect(first).toContain('## The run of 2026-10-02T10:00:00.000Z');
+    const later = installRecordRunMarkdown({
+      ...run,
+      recordedAt: new Date('2026-10-02T11:30:00.000Z'),
+    });
+    expect(later.startsWith('## The run of 2026-10-02T11:30:00.000Z\n')).toBe(true);
+    expect(later).not.toContain('# Day0 install record');
   });
 
   it('says so when this run connected nothing', (): void => {

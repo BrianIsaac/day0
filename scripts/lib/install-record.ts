@@ -56,7 +56,7 @@ export interface InstallRecord {
   readonly check?: { readonly command: string; readonly status: number };
 }
 
-/** The record's file name for a day: one per day, a later run the same day replacing it. */
+/** The record's file name for a day: one per day, each later run the same day added to it. */
 export function installRecordName(at: Date): string {
   return `install-record-${at.toISOString().slice(0, 10)}.md`;
 }
@@ -81,16 +81,31 @@ function bullets(entries: ReadonlyArray<readonly [string, string | undefined]>):
 }
 
 /**
- * The record as Markdown.
+ * The record as Markdown, for a day's first run: the title, what it holds, then the run.
  *
  * @param record - What the install registered.
  */
 export function installRecordMarkdown(record: InstallRecord): string {
-  const lines: string[] = [
+  return [
     `# Day0 install record: ${record.project}`,
     '',
-    `Written ${record.recordedAt.toISOString()} by \`./setup.sh access\`. It names what was ` +
-      'registered and where; it holds no secret. Keep it with the customer’s IT.',
+    'Written by `./setup.sh access`, one section per run that day, the latest last. It names ' +
+      'what was registered and where; it holds no secret. Keep it with the customer’s IT.',
+    '',
+    installRecordRunMarkdown(record),
+  ].join('\n');
+}
+
+/**
+ * One run of the access verb as a section of the day's record: a later run the same day is added
+ * below the earlier ones, never in their place (R41V-12: a second run that day replaced the
+ * record, and the connection the first run landed was no longer in it).
+ *
+ * @param record - What this run registered.
+ */
+export function installRecordRunMarkdown(record: InstallRecord): string {
+  const lines: string[] = [
+    `## The run of ${record.recordedAt.toISOString()}`,
     '',
     ...bullets([
       ['Day0’s public address', record.publicUrl],
@@ -103,7 +118,7 @@ export function installRecordMarkdown(record: InstallRecord): string {
   ];
   if (record.signIn !== undefined) {
     lines.push(
-      '## The company sign-in',
+      '### The company sign-in',
       '',
       ...bullets([
         ['Issuer', record.signIn.issuer],
@@ -116,11 +131,11 @@ export function installRecordMarkdown(record: InstallRecord): string {
       '',
     );
   }
-  lines.push('## The organisation’s connections', '');
+  lines.push('### The organisation’s connections', '');
   if (record.connections.length === 0) lines.push('None was connected by this run.', '');
   for (const connection of record.connections) {
     lines.push(
-      `### ${connection.displayName}, ${connection.mode}`,
+      `#### ${connection.displayName}, ${connection.mode}`,
       '',
       ...bullets([
         ['System key', connection.system],
@@ -141,13 +156,13 @@ export function installRecordMarkdown(record: InstallRecord): string {
     );
   }
   if (record.skipped.length > 0) {
-    lines.push('## Named by the documentation, not connected', '');
+    lines.push('### Named by the documentation, not connected', '');
     for (const skip of record.skipped) lines.push(`- ${skip.system}: ${skip.reason}`);
     lines.push('');
   }
   if (record.check !== undefined) {
     lines.push(
-      '## The check',
+      '### The check',
       '',
       `\`${record.check.command}\` exited ${record.check.status}` +
         `${record.check.status === 0 ? ': every connection passed.' : ': see its output for each gap.'}`,
