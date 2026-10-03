@@ -101,4 +101,13 @@ describe('the Linear recipe', (): void => {
     expect(LINEAR_PER_EMPLOYEE_SCOPES).toContain('app:assignable');
     expect(LINEAR_CLIENT_CREDENTIALS_SCOPES).not.toContain('admin');
   });
+
+  it('lands the shared app with app:assignable, without which Linear refuses a ticket delegated to it (decision 5)', (): void => {
+    // Linear, 3 October, a manager delegating a ticket to the shared app user under `read,write`:
+    // "One or more app users lack the required capability." With `app:assignable` held: success.
+    expect(LINEAR_CLIENT_CREDENTIALS_SCOPES).toEqual(['read', 'write', 'app:assignable']);
+    const [shared] = LINEAR_RECIPE.modes;
+    expect(shared.clientCredentialsScopes).toContain('app:assignable');
+    expect(shared.missingScopeWords?.['app:assignable']).toContain('delegated');
+  });
 });

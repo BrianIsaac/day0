@@ -202,12 +202,39 @@ function missing(held: readonly string[], needed: readonly string[]): string[] {
   return needed.filter((scope: string): boolean => !held.includes(scope));
 }
 
+/**
+ * A connection whose fixed client-credentials set lacks a scope of the kit's: the set cannot be
+ * changed in place, since a token requested with another set revokes and replaces every token of
+ * the app (L2), so the cure is to revoke the connection and land it again.
+ */
+function fixedSetCheck(
+  row: ConnectionRow,
+  mode: RecipeMode,
+  lacking: readonly string[],
+): AccessCheck {
+  const costs = lacking
+    .map((scope: string): string | undefined => mode.missingScopeWords?.[scope])
+    .filter((words): words is string => words !== undefined);
+  const cost = costs.length === 0 ? '' : `: ${costs.join('; ')}`;
+  return check(
+    row.system,
+    'scopes',
+    'gap',
+    `${row.displayName} was landed with ${row.clientCredentialsScopes?.join(', ') || 'no scope set'}, ` +
+      `without ${lacking.join(', ')}${cost}. The set cannot be changed in place, since ` +
+      `${row.displayName} revokes every token of the app when one is requested with another set: ` +
+      'revoke the connection on the organisation page, then land it again with `./setup.sh access`.',
+  );
+}
+
 /** The registration's scopes against the kit's for its mode. */
 function scopesCheck(row: ConnectionRow, mode: RecipeMode): AccessCheck {
-  const lacking = [
-    ...missing(row.scopes, mode.scopes),
-    ...missing(row.clientCredentialsScopes ?? [], mode.clientCredentialsScopes ?? []),
-  ];
+  const lackingFixed = missing(
+    row.clientCredentialsScopes ?? [],
+    mode.clientCredentialsScopes ?? [],
+  );
+  if (lackingFixed.length > 0) return fixedSetCheck(row, mode, lackingFixed);
+  const lacking = missing(row.scopes, mode.scopes);
   if (lacking.length > 0) {
     return check(
       row.system,

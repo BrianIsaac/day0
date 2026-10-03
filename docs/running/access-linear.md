@@ -92,6 +92,7 @@ token. `write` is the only scope that changes an issue's state;
 ```text
 read
 write
+app:assignable
 ```
 
 and every client-credentials token is requested with this one fixed set:
@@ -101,10 +102,14 @@ and every client-credentials token is requested with this one fixed set:
 ```text
 read
 write
+app:assignable
 ```
 
 The set never changes after install: Linear revokes and replaces every
-app-actor token of an app when a token is requested with other scopes.
+app-actor token of an app when a token is requested with other scopes. A
+connection landed without `app:assignable` (before v0.15.0, the kit landed
+`read` and `write` only) is changed by revoking it on the organisation page
+and landing it again; `check:access` names it as a gap.
 
 **Per employee.** Each employee's app is authorised with:
 
@@ -116,9 +121,12 @@ write
 app:assignable
 ```
 
-`app:assignable` lets a manager hand the employee a ticket by assigning it to
-the employee's app user; the employee takes the unassigned tickets and those
-assigned to it.
+In both modes `app:assignable` is what lets a manager hand an employee a
+ticket by delegating or assigning it to the app user. Without it Linear
+refuses the ticket ("One or more app users lack the required capability."),
+and the employee takes only unassigned tickets. Linear accepts the scope only
+from a token that acts as the app (`actor=app`, or client credentials), and
+checks it on a live token, which Day0 holds while a card is connected.
 
 ## 4. The allow-list
 
@@ -171,10 +179,12 @@ connection has no organisation secret to rotate.
 |---|---|
 | `status` | `pass`: Linear is connected, shared |
 | `redirect` | `pass`: the registered redirect is `${DAY0_PUBLIC_URL}/api/oauth/linear` |
-| `scopes` | `pass`: `read, write`, and the token Linear grants holds both |
+| `scopes` | `pass`: `read, write, app:assignable`, and the token Linear grants holds all three |
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Linear answers as the app (`viewer`) with a client-credentials token, which the check revokes again |
 
 A `GAP` names what to fix: client credentials not enabled on the app or a
 secret that is no longer the current one (Linear's `invalid_client`), a
-redirect that is not Day0's, or a scope Linear did not grant.
+redirect that is not Day0's, a scope Linear did not grant, or a shared
+connection landed without `app:assignable`, to which no ticket can be
+delegated: revoke it and land it again.

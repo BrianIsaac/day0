@@ -16,16 +16,36 @@ import type { AccessRecipe } from './types';
 export const LINEAR_REDIRECT_PATH = '/api/oauth/linear';
 
 /**
- * The scopes a shared app's client-credentials tokens hold, fixed at install (L2): `read`, and
- * `write`, the only scope that changes an issue's state (`comments:create` covers comments only).
+ * The scope without which Linear refuses a ticket delegated or assigned to the app user ("One or
+ * more app users lack the required capability.", the real-vendor walk, 3 October 2026), and which
+ * Linear accepts only with `actor=app`. Linear checks it on a live app-actor token: the shared
+ * app's set must hold it, or its employees take only unassigned tickets (decision 5).
  */
-export const LINEAR_CLIENT_CREDENTIALS_SCOPES: readonly string[] = ['read', 'write'];
+export const LINEAR_DELEGATE_SCOPE = 'app:assignable';
 
 /**
- * The scopes an employee's own app is authorised with: the shared set, and `app:assignable`, so a
- * manager hands the employee a ticket by assigning it to the employee's app user (AC8).
+ * The scopes a shared app's client-credentials tokens hold, fixed at install (L2): `read`;
+ * `write`, the only scope that changes an issue's state (`comments:create` covers comments only);
+ * and {@link LINEAR_DELEGATE_SCOPE}, so a manager hands a ticket to the shared app user (AL1).
  */
-export const LINEAR_PER_EMPLOYEE_SCOPES: readonly string[] = ['read', 'write', 'app:assignable'];
+export const LINEAR_CLIENT_CREDENTIALS_SCOPES: readonly string[] = [
+  'read',
+  'write',
+  LINEAR_DELEGATE_SCOPE,
+];
+
+/**
+ * The scopes an employee's own app is authorised with: the shared set, `app:assignable` among
+ * them, so a manager hands the employee a ticket by assigning it to the employee's app user (AC8).
+ */
+export const LINEAR_PER_EMPLOYEE_SCOPES: readonly string[] = LINEAR_CLIENT_CREDENTIALS_SCOPES;
+
+/** What a Linear app's employees cannot be handed without {@link LINEAR_DELEGATE_SCOPE}. */
+const LINEAR_MISSING_SCOPE_WORDS: Readonly<Record<string, string>> = {
+  [LINEAR_DELEGATE_SCOPE]:
+    'no ticket can be delegated or assigned to the app user, so its employees take only ' +
+    'unassigned tickets',
+};
 
 /** Linear's create-application page, which a manifest pre-fills. */
 const CREATE_APPLICATION_URL = 'https://linear.app/settings/api/applications/new';
@@ -154,6 +174,7 @@ export const LINEAR_RECIPE: AccessRecipe = {
       kind: 'oauth-app',
       scopes: LINEAR_CLIENT_CREDENTIALS_SCOPES,
       clientCredentialsScopes: LINEAR_CLIENT_CREDENTIALS_SCOPES,
+      missingScopeWords: LINEAR_MISSING_SCOPE_WORDS,
       summary:
         'Create one OAuth app from the manifest, with client credentials enabled, and hand over ' +
         'its client id and client secret: every employee acts as that app.',
@@ -184,6 +205,7 @@ export const LINEAR_RECIPE: AccessRecipe = {
       mode: 'per-employee',
       kind: 'oauth-app',
       scopes: LINEAR_PER_EMPLOYEE_SCOPES,
+      missingScopeWords: LINEAR_MISSING_SCOPE_WORDS,
       summary:
         'Nothing to hand over now: for each employee a Linear administrator creates its own app ' +
         'from the access request and installs it as the app actor.',
