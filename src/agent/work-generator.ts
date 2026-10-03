@@ -10,10 +10,11 @@ import type { MockSurfaceSnapshot } from '../work/types';
  * the agent's actual mock environment.
  *
  * No hardcoded slugs in the prompt - we render the live surface
- * snapshot (slack channels, spreadsheets, docs, tweets, tickets) so the
- * LLM picks real identifiers that exist on the agent's workbench. Each
- * generated work item references concrete surface rows the executor can
- * later mutate.
+ * snapshot (slack channels, spreadsheets, docs, tweets) so the LLM picks
+ * real identifiers that exist on the agent's workbench. Each generated
+ * work item references concrete surface rows the executor can later
+ * mutate. A ticket-queue item is a new ticket, which the office opens
+ * from the item's own words when the batch is seeded.
  *
  * The 3-item mix drives the standard demo narrative:
  *   1. A docs-read item - handled by the builtin `see-internal-docs` skill
@@ -40,11 +41,13 @@ export const WORK_GEN_SYSTEM = [
   '',
   '2. Action item - sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" - pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
   '',
+  'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s willDo as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
+  '',
   "3. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. May or may not reference an existing surface.",
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
-  '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "ticket://<slug>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
+  '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>").',
   '  - Vary priorities: ideally one P1, one P2, one low.',
   "  - requesterLabel is a person's name or role; never the agent itself.",
@@ -118,12 +121,10 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
       lines.push(`  - slug "${t.slug}" by ${t.handle} (${t.author}): "${t.body.slice(0, 140)}"`);
     }
   }
-  if (env.tickets.length) {
-    lines.push('Tickets:');
-    for (const t of env.tickets) {
-      lines.push(`  - slug "${t.slug}" titled "${t.title}" (status: ${t.status})`);
-    }
-  }
+  // The office's seeded tickets are left out: they are another role's work, and a generator that
+  // saw them copied one into every role's queue (a finance close-out employee drew "Add Friday
+  // standup closed-won deals", declined it, and the run stopped). A ticket-queue item is the
+  // role's own new ticket, which the office opens from the item (`openTicketsForDraftedWork`).
   return lines.join('\n');
 }
 

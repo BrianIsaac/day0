@@ -149,3 +149,27 @@ describe('the out-of-scope item the generator drafts (round 0141 R-D item 2)', (
     expect(items[2]).not.toHaveProperty('purpose');
   });
 });
+
+describe('the ticket-queue item the generator drafts (round 0141 R-D item 1, the bed walk)', (): void => {
+  it("shows the generator none of the office's seeded tickets to copy into the role's queue", async (): Promise<void> => {
+    const office = {
+      ...OFFICE,
+      tickets: [
+        {
+          slug: 'REVOPS-203',
+          title: 'Add Friday standup closed-won deals to Q4 Revenue Tracker',
+          status: 'open',
+        },
+      ],
+    };
+    await generateWorkItemsFromCharter(HYGIENE, office as never);
+    expect(prompts.at(-1)).not.toContain('REVOPS-203');
+    expect(prompts.at(-1)).not.toContain('Add Friday standup closed-won deals');
+  });
+
+  it('tells the generator a ticket-queue item is a new ticket the office opens from its own words', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      'An item from the ticket queue is a new ticket filed for this role',
+    );
+  });
+});
