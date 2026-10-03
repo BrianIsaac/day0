@@ -490,7 +490,11 @@ export async function refreshHeld(
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
         }
         if (claims === LEASE_CLAIMS) {
-          if (options.storedTokenLives !== true) throw new RefreshInProgress();
+          // The stored token's life is read again after the wait: one that died meanwhile is
+          // never handed back (the round review's m8).
+          if (options.storedTokenLives !== true || (held.expiresAt ?? 0) <= deps.now()) {
+            throw new RefreshInProgress();
+          }
           return { ok: true, accessToken: await keeper.accessToken(ctx, held.credentialId) };
         }
         break;
@@ -608,14 +612,16 @@ export async function nativeAccessToken(
   if (!held || !refresher || (held.expiresAt ?? 0) - deps.now() > refresher.readRefreshMarginMs) {
     return await deps.keeper.accessToken(ctx, credentialId);
   }
-  const alive = (held.expiresAt ?? 0) > deps.now();
+  // Read again after the refresh, which may wait on a lease or an exchange for longer than the
+  // stored token has left: a token that died meanwhile is never sent (the round review's m8).
+  const alive = (): boolean => (held.expiresAt ?? 0) > deps.now();
   const words = wordsOf(refresher);
   let outcome: RefreshOutcome;
   try {
-    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive });
+    outcome = await refreshHeld(ctx, held, refresher, deps, { storedTokenLives: alive() });
   } catch (error) {
     const reason = words.reason(error);
-    if (!alive) throw words.unreachableWhenExpired(reason);
+    if (!alive()) throw words.unreachableWhenExpired(reason);
     log.warn(`${refresher.name} read-time refresh failed; the stored token still lives`, {
       credentialId,
       reason,
@@ -623,7 +629,7 @@ export async function nativeAccessToken(
     return await deps.keeper.accessToken(ctx, credentialId);
   }
   if (outcome.ok) return outcome.accessToken;
-  if (alive) {
+  if (alive()) {
     log.warn(`${refresher.name} read-time refresh refused; the stored token still lives`, {
       credentialId,
       reason: outcome.refusal,

@@ -339,6 +339,41 @@ describe('the refresh lease (R-S; the wave 11 review’s m11)', (): void => {
     expect(slept).toBeLessThanOrEqual(2 * LIVE_TOKEN_LEASE_POLLS);
   });
 
+  it("never hands back a stored token that died while the read waited behind another holder's lease (the round review's m8)", async (): Promise<void> => {
+    // Three seconds left, and the holder died: its lease never ends while the reader waits.
+    const pair = pairFor({ expiresAt: NOW + 3_000, refreshingUntil: NOW + 80_000 });
+    const keeper = memoryKeeper(pair);
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      throw new Error('no exchange expected');
+    });
+    let clock = NOW;
+    const deps: TokenStoreDeps = {
+      ...storeDeps(keeper, refresher),
+      now: (): number => clock,
+      sleep: async (ms: number): Promise<void> => {
+        clock += ms;
+      },
+    };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
+  });
+
+  it("never hands back a stored token that died while its refresh was refused (the round review's m8)", async (): Promise<void> => {
+    const pair = pairFor({ expiresAt: NOW + 3_000 });
+    const keeper = memoryKeeper(pair);
+    let clock = NOW;
+    const refresher = scriptedRefresher(async (): Promise<IssuedTokens> => {
+      // The exchange takes longer than the token has left, then fails.
+      clock += 30_000;
+      throw new Error('fetch failed');
+    });
+    const deps: TokenStoreDeps = { ...storeDeps(keeper, refresher), now: (): number => clock };
+    await expect(accessTokenFor(ctx, CREDENTIAL, deps)).rejects.toThrow(
+      'The authorisation server could not be reached to refresh the token',
+    );
+  });
+
   it('ends its own lease when the exchange cannot be made, so the next refresh need not wait', async (): Promise<void> => {
     const pair = pairFor();
     const keeper = memoryKeeper(pair);
