@@ -380,6 +380,38 @@ describe('the ends of access on a card (11-AR)', (): void => {
     // The offer is an offer: the key keeps working until the manager moves the card (A27).
     expect((await read(harness, linked.surfaceId))?.credentialId).toBe(linked.key);
   });
+
+  it("offers no move to an own identity where IT's Linear connection is a static key, which no issuer acts through (D6, the round review's m11)", async (): Promise<void> => {
+    const harness = await realHarness();
+    // No connection of the fixture's own: the static key below is Linear's only one.
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    const linked = await pastedLinearCard(harness, leo.agentId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linked.surfaceId, {
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        verdict: 'approved',
+        reason: 'expired',
+        expiresAt: 1,
+      });
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'static-key',
+        mode: 'shared',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.surfaces.setAccessDays, { surfaceId: linked.surfaceId, days: 30 }),
+    ).resolves.toEqual({ expiresAt: expect.any(Number) });
+  });
 });
 
 describe('an organisation connection revoked by the administrator (11-AR over 11-AO; cross-unit test 3)', (): void => {

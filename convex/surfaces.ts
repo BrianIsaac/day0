@@ -834,14 +834,9 @@ async function documentedKeyBinding(
   const unbound = { credentialId: undefined, credentialKind: undefined, actsAs: undefined };
   if (proposal.credentialId === undefined || proposal.credentialKind === undefined) return unbound;
   const system = organisationSystemOf({ endpoint: proposal.endpoint, path: proposal.path });
-  // Only a connection an issuer acts through covers the card (11-AC's item 8).
-  if (
-    system !== undefined &&
-    servedByIssuer(system) &&
-    (await activeConnectionFor({ db }, system)) !== null
-  ) {
-    return unbound;
-  }
+  // Only a connection an issuer acts through covers the card (11-AC's item 8; D6).
+  const active = system === undefined ? null : await activeConnectionFor({ db }, system);
+  if (active !== null && servedByIssuer(active)) return unbound;
   const credential = await db.get(proposal.credentialId);
   return {
     credentialId: proposal.credentialId,
@@ -2349,9 +2344,9 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
   }
   const system = organisationSystemOf(surface);
   if (system === undefined) return {};
-  return !servedByIssuer(system) || (await activeConnectionFor(ctx, system)) === null
-    ? {}
-    : { offer: 'own-identity' };
+  // Only a connection an issuer acts through offers the move (D6).
+  const active = await activeConnectionFor(ctx, system);
+  return active === null || !servedByIssuer(active) ? {} : { offer: 'own-identity' };
 }
 
 /**

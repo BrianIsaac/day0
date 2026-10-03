@@ -292,10 +292,10 @@ export function SurfaceCard({
   const system = organisationSystemOf(surface);
   const connection = system === undefined ? undefined : context.organisation.get(system);
   // Only an active connection an issuer acts through covers the card: `landCredential` refuses a
-  // paste while one is. Another the card cannot use, and it takes a key of its own (11-AC's item 8).
+  // paste while one is. Another the card cannot use, and it takes a key of its own (11-AC's item 8;
+  // D6, by the connection's kind and system).
   const active = connection?.status === 'active' ? connection : undefined;
-  const covering =
-    active !== undefined && system !== undefined && servedByIssuer(system) ? active : undefined;
+  const covering = active !== undefined && servedByIssuer(active) ? active : undefined;
   const unserved = active !== undefined && covering === undefined ? active : undefined;
   const slack = system === 'slack';
   const provisioningPresentation = presentProvisioning({

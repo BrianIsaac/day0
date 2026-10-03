@@ -7627,10 +7627,15 @@ async function connectReadyCards(
       ) {
         return [];
       }
-      // A connection no issuer acts through connects no card (11-AC's item 8).
-      if (!servedByIssuer(system)) return [];
+      // A connection no issuer acts through connects no card (11-AC's item 8; D6, by its kind).
       const connection = await activeConnectionFor(ctx, system);
-      if (connection === null || accessRequestReason(surface, connection) !== undefined) return [];
+      if (
+        connection === null ||
+        !servedByIssuer(connection) ||
+        accessRequestReason(surface, connection) !== undefined
+      ) {
+        return [];
+      }
       if (await connectedSince(ctx, surface, request.draftedAt)) return [];
       return [{ surface, since: Math.max(connection.createdAt, request.draftedAt) }];
     }),

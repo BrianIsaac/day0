@@ -1054,6 +1054,8 @@ export const listForAdministrator = query({
 const managerSystemValidator = v.object({
   system: v.string(),
   displayName: v.string(),
+  /** What IT registered, so a card reads whether an issuer acts through it (D6). */
+  kind: connectionKindValidator,
   mode: connectionModeValidator,
   status: v.union(v.literal('active'), v.literal('needs-attention')),
   connectedAt: v.number(),
@@ -1092,6 +1094,7 @@ export const summaryForManager = query({
       .map((connection) => ({
         system: connection.system,
         displayName: connection.displayName,
+        kind: connection.kind,
         mode: connection.mode,
         status: connection.status,
         connectedAt: connection.createdAt,

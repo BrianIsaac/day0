@@ -1,6 +1,9 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfacePath } from '@/surfaces/types';
-import type { OrganisationConnectionMode } from '@/surfaces/access-identity';
+import type {
+  OrganisationConnectionKind,
+  OrganisationConnectionMode,
+} from '@/surfaces/access-identity';
 import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
@@ -194,6 +197,8 @@ export interface OrganisationSystem {
   /** The system's key, as `organisationSystemOf` reads it off a card. */
   readonly system: string;
   readonly displayName: string;
+  /** What IT registered: only a kind an issuer of Day0's acts through covers a card (D6). */
+  readonly kind: OrganisationConnectionKind;
   readonly mode: OrganisationConnectionMode;
   readonly status: 'active' | 'needs-attention';
   readonly connectedAt: number;

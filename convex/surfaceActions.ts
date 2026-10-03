@@ -1743,12 +1743,12 @@ export const landCredential = action({
     if (refusal) throw new ConvexError(refusal);
     const system = organisationSystemOf(context.surface);
     // Only a connection an issuer acts through refuses a paste: any other covers nothing, and the
-    // card takes a key of its own meanwhile (11-AC's item 8).
+    // card takes a key of its own meanwhile (11-AC's item 8; D6, by the connection's kind).
     const connection =
-      system === undefined || !servedByIssuer(system)
+      system === undefined
         ? null
         : await ctx.runQuery(internal.organisationConnections.activeFor, { system });
-    if (connection !== null)
+    if (connection !== null && servedByIssuer(connection))
       throw new ConvexError(organisationConnectedRefusal(connection.displayName));
     // A value typed into the card is never the product of an OAuth install:
     // on an `oauth` surface it is the shared bot token landed as the fallback,
