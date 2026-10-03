@@ -70,7 +70,7 @@ describe('ProposedSkillsPanel', (): void => {
         />,
       ),
     );
-    await press(view.container, 'Approve · author and verify');
+    await press(view.container, 'Approve · author and verify refresh-the-tile');
     await settle();
     expect(attempts).toEqual([
       null,
@@ -97,15 +97,45 @@ describe('ProposedSkillsPanel', (): void => {
         />,
       ),
     );
-    await press(view.container, 'Approve · author and verify');
+    await press(view.container, 'Approve · author and verify refresh-the-tile');
 
     expect(said(view.container)).toEqual([
       'cannot approve "refresh-the-tile": it is approved, not proposed',
     ]);
     expect(attempts).toEqual([]);
-    expect(focusedName()).toBe('Approve · author and verify');
+    expect(focusedName()).toBe('Approve · author and verify refresh-the-tile');
     view.unmount();
     backend.refusals = {};
+  });
+
+  it('names each Approve by its skill, so two proposals never share one accessible name (round 0141 R-D item 5)', (): void => {
+    const first = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const second = {
+      ...base,
+      _id: 'skill-2',
+      name: 'kanban-comment-and-close',
+      state: 'proposed',
+      requiredScopes: [],
+    } as unknown as Doc<'skills'>;
+    const view = mount(
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[first, second]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+        />,
+      ),
+    );
+    const approves = [...view.container.querySelectorAll('button')].filter((candidate) =>
+      candidate.textContent?.includes('Approve · author and verify'),
+    );
+    expect(approves.map((candidate) => candidate.getAttribute('aria-label'))).toEqual([
+      'Approve · author and verify refresh-the-tile',
+      'Approve · author and verify kanban-comment-and-close',
+    ]);
+    view.unmount();
   });
 
   it('says an approval, then files what the authoring it started came to', async (): Promise<void> => {
@@ -123,7 +153,7 @@ describe('ProposedSkillsPanel', (): void => {
         />,
       ),
     );
-    await press(view.container, 'Approve · author and verify');
+    await press(view.container, 'Approve · author and verify refresh-the-tile');
 
     expect(said(view.container)).toEqual([
       'Approved refresh-the-tile: the employee is authoring it now, and the Skills card says when it is callable.',

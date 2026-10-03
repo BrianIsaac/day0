@@ -85,8 +85,18 @@ export const APPROVE_CHARTER = /^Approve charter\b/;
 export const APPROVE_PLAN = /^Approve plan( with answers)?$/;
 /** Every held action's approval on a work item. */
 export const APPROVE_ALL = 'Approve all';
-/** A proposed skill's approval. */
+/** A proposed skill's approval, as its button reads. */
 export const APPROVE_SKILL = 'Approve · author and verify';
+
+/**
+ * The accessible name of a proposed skill's approval: the button's words, then the skill, as its
+ * Reject beside it is named, so two proposals' approvals are told apart.
+ *
+ * @param skill - The skill's name.
+ */
+export function approveSkillName(skill: string): string {
+  return `${APPROVE_SKILL} ${skill}`;
+}
 
 /**
  * What a manager can do with a proposal that offers a colleague's verified skill (10-A), whose
@@ -358,7 +368,7 @@ export class PlaywrightDashboard implements Dashboard {
     const skill = this.page
       .getByRole('listitem')
       .filter({ has: this.page.getByText(name, { exact: true }) });
-    await skill.getByRole('button', { name: APPROVE_SKILL, exact: true }).click();
+    await skill.getByRole('button', { name: approveSkillName(name), exact: true }).click();
   }
 
   async decideOffer(name: string, choice: OfferChoice): Promise<void> {
