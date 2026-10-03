@@ -128,6 +128,24 @@ export type AccessRequestView = Infer<typeof accessRequestViewValidator>;
 const sentViaValidator = v.union(v.literal('copied'), v.literal('emailed'), v.literal('messaged'));
 
 /**
+ * How long a claim of the manager's DM stands without Slack's timestamp before it is read as
+ * released: past twice the Slack call's own bound, so a send whose action died between the claim
+ * and Slack never leaves the request stuck "being sent" (the code pass's M2).
+ */
+const MESSAGE_CLAIM_STANDS_MS = 10 * 60 * 1000;
+
+/** Whether the request's DM went out, or a claim of it still stands, at `now`. */
+function messageClaimed(
+  request: NonNullable<Doc<'surfaces'>['accessRequest']>,
+  now: number,
+): boolean {
+  if (request.messagedAt === undefined) return false;
+  return (
+    request.messageProviderTs !== undefined || now - request.messagedAt < MESSAGE_CLAIM_STANDS_MS
+  );
+}
+
+/**
  * The view of a current request: once drafted, the words the draft recorded (which the DM sends
  * and the export carries) and how it went out; before, the words built now.
  */
@@ -153,12 +171,15 @@ function viewOf(
           draftedAt: request.draftedAt,
           ...(request.copiedAt === undefined ? {} : { copiedAt: request.copiedAt }),
           ...(request.emailedAt === undefined ? {} : { emailedAt: request.emailedAt }),
-          // The claim of the DM writes `messagedAt`; Slack's timestamp says it went out.
+          // The claim of the DM writes `messagedAt`; Slack's timestamp says it went out, and a
+          // claim with none is shown as on its way only while it stands.
           ...(request.messagedAt === undefined
             ? {}
-            : request.messageProviderTs === undefined
-              ? { messaging: true }
-              : { messagedAt: request.messagedAt }),
+            : request.messageProviderTs !== undefined
+              ? { messagedAt: request.messagedAt }
+              : messageClaimed(request, Date.now())
+                ? { messaging: true }
+                : {}),
         }),
   };
 }
@@ -255,7 +276,7 @@ export const draft = mutation({
     if (current === null) throw new ConvexError(NO_ACCESS_REQUEST);
     const recorded = await recordedRequest(ctx, surface, current.draft);
     if (recorded !== undefined) {
-      if (args.via === 'messaged' && recorded.messagedAt === undefined) {
+      if (args.via === 'messaged' && !messageClaimed(recorded, Date.now())) {
         await scheduleMessage(ctx, surface._id, recorded.draftedAt);
       }
       return await recordedView(ctx, surface, current.draft, recorded);
@@ -411,7 +432,9 @@ const claimedMessageValidator = v.union(
  * (`messagedAt`), so a second press of Send to me in Slack, or a second send scheduled before
  * this one finished, is refused; Slack's timestamp is written once it has the message
  * (`recordMessage`), and a send Slack refused releases the claim (`releaseMessage`), so the
- * manager may ask again.
+ * manager may ask again, as they may once a claim with no timestamp outlives
+ * `MESSAGE_CLAIM_STANDS_MS`. A post Slack took whose answer was lost is released too, and a second
+ * ask then sends a second DM: a duplicate, never a silent loss.
  */
 export const claimMessage = internalMutation({
   args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
@@ -425,7 +448,7 @@ export const claimMessage = internalMutation({
     if (surface === null || recorded === undefined || recorded.draftedAt !== args.draftedAt) {
       return { claimed: false, reason: 'the request was redrafted or is gone' };
     }
-    if (recorded.messagedAt !== undefined) {
+    if (messageClaimed(recorded, Date.now())) {
       return { claimed: false, reason: 'the request was already sent to the manager' };
     }
     const agent = await ctx.db.get(surface.agentId);

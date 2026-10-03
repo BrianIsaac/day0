@@ -614,12 +614,14 @@ const accessRequestOutcomeValidator = v.object({
 });
 
 /**
- * Internal, scheduled by a real-mode `accessRequests.draft`: the access request as a message in
- * the manager's own DM (the access plan, section 4.5; A24), through the employee's Slack card, so
- * the manager can forward it however their IT works. Claimed by `accessRequests.claimMessage`
- * for the draft it was scheduled for, posted with `chat.postMessage` (the card's allowlist names
- * it), and recorded with Slack's timestamp once Slack has it. The words are the card's and the
- * export's. A failed post is logged and not tried again: the card still offers Copy and Email.
+ * Internal, scheduled by a real-mode `accessRequests.draft` when the manager asked for the request
+ * in Slack (11-AC's item 2): the access request as a message in the manager's own DM (the access
+ * plan, section 4.5; A24), through the employee's Slack card, so the manager can forward it
+ * however their IT works. Claimed by `accessRequests.claimMessage` for the draft it was scheduled
+ * for, posted with `chat.postMessage` (the card's allowlist names it), and recorded with Slack's
+ * timestamp once Slack has it. The words are the card's and the export's. A failed post is logged
+ * and its claim released (`accessRequests.releaseMessage`), so the card offers Send to me in Slack
+ * again beside Copy and Email it.
  */
 export const sendAccessRequest = internalAction({
   args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },

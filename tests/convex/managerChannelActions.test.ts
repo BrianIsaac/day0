@@ -1854,6 +1854,36 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     expect(view).toMatchObject({ draftedAt: drafted.draftedAt, messagedAt: expect.any(Number) });
   });
 
+  it("lets the manager ask again once a claimed DM never reached Slack within its bound (the code pass's M2)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'copied',
+    });
+    // A send that claimed the DM and never came back: the action died between the claim and Slack.
+    await harness.mutation(internal.accessRequests.claimMessage, {
+      surfaceId: linearId,
+      draftedAt: drafted.draftedAt ?? 0,
+    });
+    expect(await owner.query(api.accessRequests.forCard, { surfaceId: linearId })).toMatchObject({
+      messaging: true,
+    });
+
+    vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+    expect(
+      await owner.query(api.accessRequests.forCard, { surfaceId: linearId }),
+    ).not.toHaveProperty('messaging');
+    await owner.mutation(api.accessRequests.draft, { surfaceId: linearId, via: 'messaged' });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+
+    expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
   it('lets the manager ask again once a DM Slack refused is released', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
