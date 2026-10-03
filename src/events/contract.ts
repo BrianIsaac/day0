@@ -948,6 +948,11 @@ export interface OrganisationRevokedAtSourcePayload {
   readonly attempt: number;
   /** The vendor's words for a failure. */
   readonly reason?: string;
+  /**
+   * The organisation's own shared app-actor token, revoked at the vendor with its connection's
+   * revoke (R41V-1), not an employee's access.
+   */
+  readonly shared?: true;
 }
 
 /**

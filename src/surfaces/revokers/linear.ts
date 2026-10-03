@@ -7,8 +7,9 @@ import type { RevocationAnswer, RevocationRequest, TokenTypeHint } from './types
  * refresh token is not documented, so each is revoked by its own call. On real Linear the first
  * revoke of a pair ends the whole grant, and the second is answered "Token has already been
  * revoked." (the real-vendor walk, 3 October 2026, R41V-8), which is read as already gone. A
- * client-credentials app-actor token has no documented revocation and is never sent here (L2;
- * `plan.ts`).
+ * client-credentials app-actor token is revoked the same way with no client authentication (the
+ * walk, R41V-1), but only by its connection's own revoke (`convex/organisationSecrets.ts`): one
+ * employee's end never sends it, since the app's other employees share it (L2; `plan.ts`).
  */
 
 /** Linear's one revoke address. */

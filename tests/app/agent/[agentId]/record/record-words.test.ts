@@ -570,6 +570,30 @@ describe('the access request and the organisation connection ledger in the recor
       "Revoking an employee's access at Slack with the organisation's Slack connection failed: invalid_auth.",
     );
   });
+
+  it("says the organisation's shared Linear token was revoked with its connection, not an employee's access (R41V-1)", (): void => {
+    const shared = {
+      credentialId: 'k2',
+      system: 'linear',
+      end: 'organisation-revoked',
+      attempt: 1,
+      shared: true,
+    };
+    const line = (payload: Record<string, unknown>): string =>
+      recordWords(
+        { type: 'organisation.revoked-at-source', payload: { ...shared, ...payload } },
+        subject,
+      );
+    expect(line({ outcome: 'token-revoked' })).toBe(
+      "Day0 revoked the organisation's shared Linear app token at Linear and deleted its copy.",
+    );
+    expect(line({ outcome: 'already-gone' })).toBe(
+      "The organisation's shared Linear app token was already revoked at Linear; Day0 deleted its copy.",
+    );
+    expect(line({ outcome: 'failed', reason: 'Linear answered HTTP 503.' })).toBe(
+      "Revoking the organisation's shared Linear app token at Linear failed: Linear answered HTTP 503; Day0's copy was deleted, and the token lapses 30 days after it was issued.",
+    );
+  });
 });
 
 describe("what Day0's uses of the Slack configuration token and the re-join say in the record (11-AS)", (): void => {
@@ -972,6 +996,19 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
       ended({ system: 'linear', surfaceName: 'Linear', end: 'retire', outcome: 'shared' }),
     ).toBe(
       "Access to the Slack connection ended; its shared app token was not revoked at Linear, since the app's other employees use it.",
+    );
+  });
+
+  it("says the shared token is revoked with the organisation's revoke of its connection, not kept for others (R41V-1)", (): void => {
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'organisation-revoked',
+        outcome: 'shared',
+      }),
+    ).toBe(
+      "Access to the Slack connection ended; its shared app token is revoked at Linear with the organisation's connection.",
     );
   });
 

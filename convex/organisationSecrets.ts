@@ -12,6 +12,7 @@ import { purgeCredential } from './credentials';
 import { appendConnectionEvent } from './connectionEvents';
 import { ORGANISATION_HOLDER } from '../src/lib/organisation-key';
 import type { OrganisationConnectionKind } from '../src/surfaces/access-identity';
+import { readLinearAnswer, linearTokenRevocation } from '../src/surfaces/revokers/linear';
 import { readSlackAnswer, slackTokenRevocation } from '../src/surfaces/revokers/slack';
 import type { RevocationAnswer, RevocationRequest } from '../src/surfaces/revokers/types';
 import { safeFailureMessage } from '../src/surfaces/redact';
@@ -22,22 +23,24 @@ import { safeFailureMessage } from '../src/surfaces/redact';
  * connection's kind: Slack's configuration token, which can create and delete apps in the
  * workspace, is revoked at Slack with `auth.revoke` and the pair's values deleted; an MCP client's
  * secret keeps its value for the 24 hours (F19) the card revocations its connection's revoke
- * scheduled may need it for (AJ6), and is then deleted; any other secret (an app's client secret,
- * a service key, IT's own static key, a shared token) has no call Day0 makes to end it, and its
- * value is deleted at once.
+ * scheduled may need it for (AJ6), and is then deleted; a shared Linear app's app-actor token,
+ * which no employee is left to share once its connection is revoked, is revoked at Linear (`POST
+ * /oauth/revoke {token}`, no client authentication, R41V-1) and its value deleted; any other
+ * secret (an app's client secret, a service key, IT's own static key) has no call Day0 makes to
+ * end it, and its value is deleted at once.
  */
 
 /** How long a taken-out secret may keep its value: F19's bound on a kept ciphertext. */
 export const ORGANISATION_SECRET_HOLD_MS = 24 * 60 * 60 * 1000;
 
-/** How many times Day0 asks Slack to revoke a configuration token before it gives up. */
-const SLACK_REVOKE_ATTEMPTS = 3;
+/** How many times Day0 asks a vendor to revoke an organisation secret before it gives up. */
+const VENDOR_REVOKE_ATTEMPTS = 3;
 
-/** How long Day0 waits before asking Slack again after a failure another attempt may pass. */
-const SLACK_REVOKE_RETRY_MS = 60 * 60 * 1000;
+/** How long Day0 waits before asking the vendor again after a failure another attempt may pass. */
+const VENDOR_REVOKE_RETRY_MS = 60 * 60 * 1000;
 
-/** How long one call to Slack may take. */
-const SLACK_CALL_TIMEOUT_MS = 15_000;
+/** How long one call to the vendor may take. */
+const VENDOR_CALL_TIMEOUT_MS = 15_000;
 
 /** The longest reason a ledger line keeps. */
 const REASON_LIMIT = 300;
@@ -106,7 +109,29 @@ export async function endOrganisationSecrets(
         },
       );
       return;
-    case 'oauth-app':
+    case 'oauth-app': {
+      const sharedTokens = ended.filter(revocableSharedToken);
+      for (const row of sharedTokens) {
+        await ctx.scheduler.runAfter(0, internal.organisationSecrets.revokeSharedAtLinear, {
+          organisationConnectionId: secrets.organisationConnectionId,
+          credentialId: row._id,
+          attempt: 1,
+        });
+      }
+      for (const row of ended) {
+        if (!sharedTokens.includes(row))
+          await purgeCredential(ctx, { ...row, revokedAt: now }, now);
+      }
+      if (sharedTokens.length > 0) {
+        // As for Slack's pair: the value goes after the 24 hours whatever became of the call.
+        await ctx.scheduler.runAfter(
+          ORGANISATION_SECRET_HOLD_MS,
+          internal.organisationSecrets.purge,
+          { credentialIds: sharedTokens.map((row) => row._id) },
+        );
+      }
+      return;
+    }
     case 'service-account':
     case 'static-key':
       for (const row of ended) await purgeCredential(ctx, { ...row, revokedAt: now }, now);
@@ -116,6 +141,19 @@ export async function endOrganisationSecrets(
       throw new Error(`unhandled connection kind ${String(unknown)}`);
     }
   }
+}
+
+/**
+ * Whether a row taken out of use is a shared Linear app's app-actor token holding a value: the
+ * one token of the organisation's that Day0 revokes at Linear when its connection is revoked.
+ */
+function revocableSharedToken(row: Doc<'credentials'>): boolean {
+  return (
+    row.issuedBy?.system === 'linear' &&
+    row.issuedBy.grant === 'client-credentials' &&
+    row.ciphertext !== undefined &&
+    row.iv !== undefined
+  );
 }
 
 /**
@@ -174,8 +212,18 @@ async function bodyOf(response: Response): Promise<unknown> {
   }
 }
 
-/** Send one `auth.revoke` and read Slack's answer; a redirect is never followed. */
-async function sendToSlack(request: RevocationRequest, token: string): Promise<RevocationAnswer> {
+/**
+ * Send one revocation and read the vendor's answer by its reader; a redirect is never followed.
+ *
+ * @param vendor - The vendor's name, for the words when it cannot be reached.
+ * @param read - The vendor's reader of a revocation answer.
+ */
+async function sendRevocation(
+  request: RevocationRequest,
+  token: string,
+  vendor: string,
+  read: (status: number, body: unknown) => RevocationAnswer,
+): Promise<RevocationAnswer> {
   let response: Response;
   try {
     response = await fetch(request.url, {
@@ -183,15 +231,34 @@ async function sendToSlack(request: RevocationRequest, token: string): Promise<R
       headers: request.headers,
       body: request.body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(SLACK_CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
   } catch (error: unknown) {
     return {
       kind: 'retry',
-      words: safeFailureMessage(error, token, 'Could not reach Slack.', REASON_LIMIT),
+      words: safeFailureMessage(error, token, `Could not reach ${vendor}.`, REASON_LIMIT),
     };
   }
-  return readSlackAnswer('auth.revoke', response.status, await bodyOf(response));
+  return read(response.status, await bodyOf(response));
+}
+
+/** A vendor's answer with any echo of the token taken out of its words. */
+function withoutToken(answer: RevocationAnswer, token: string): RevocationAnswer {
+  switch (answer.kind) {
+    case 'revoked':
+    case 'gone':
+      return answer;
+    case 'retry':
+    case 'refused':
+      return {
+        kind: answer.kind,
+        words: safeFailureMessage(new Error(answer.words), token, answer.words, REASON_LIMIT),
+      };
+    default: {
+      const unknown: never = answer;
+      throw new Error(`unhandled revocation answer ${String(unknown)}`);
+    }
+  }
 }
 
 /**
@@ -226,28 +293,16 @@ async function askSlack(
     userId: held.userId,
     keyId: held.keyId,
   });
-  const answer = await sendToSlack(slackTokenRevocation(token), token);
-  switch (answer.kind) {
-    case 'revoked':
-    case 'gone':
-      return answer;
-    case 'retry':
-    case 'refused':
-      return {
-        kind: answer.kind,
-        words: safeFailureMessage(new Error(answer.words), token, answer.words, REASON_LIMIT),
-      };
-    default: {
-      const unknown: never = answer;
-      throw new Error(`unhandled revocation answer ${String(unknown)}`);
-    }
-  }
+  const answer = await sendRevocation(slackTokenRevocation(token), token, 'Slack', (status, body) =>
+    readSlackAnswer('auth.revoke', status, body),
+  );
+  return withoutToken(answer, token);
 }
 
 /**
  * Revoke a Slack configuration token a revoke or a rotation took out of use at Slack
  * (`auth.revoke`), asking again an hour later after a failure another attempt may pass, up to
- * {@link SLACK_REVOKE_ATTEMPTS} times, then delete the pair's values and write the call on the
+ * {@link VENDOR_REVOKE_ATTEMPTS} times, then delete the pair's values and write the call on the
  * connection's ledger (`organisation.configuration-used`, method `auth.revoke`). Internal,
  * scheduled by {@link endOrganisationSecrets}; the token is never written anywhere.
  */
@@ -261,9 +316,9 @@ export const revokeAtSlack = internalAction({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const answer = await askSlack(ctx, args);
-    if (answer.kind === 'retry' && args.attempt < SLACK_REVOKE_ATTEMPTS) {
+    if (answer.kind === 'retry' && args.attempt < VENDOR_REVOKE_ATTEMPTS) {
       await ctx.scheduler.runAfter(
-        SLACK_REVOKE_RETRY_MS,
+        VENDOR_REVOKE_RETRY_MS,
         internal.organisationSecrets.revokeAtSlack,
         {
           ...args,
@@ -314,6 +369,137 @@ export const finishSlackRevocation = internalMutation({
         displayName: connection.displayName,
         method: 'auth.revoke',
         outcome: args.outcome,
+        ...(args.reason !== undefined ? { reason: args.reason.slice(0, REASON_LIMIT) } : {}),
+      },
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * The shared Linear app-actor token a connection's revoke took out of use, while it still holds
+ * its value: the organisation's, revoked, issued by client credentials. Internal, for
+ * {@link revokeSharedAtLinear}; writes nothing.
+ */
+export const heldSharedToken = internalQuery({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<Doc<'credentials'> | null> => {
+    const row = await ctx.db.get(args.credentialId);
+    return row !== null &&
+      row.holder === ORGANISATION_HOLDER &&
+      row.revokedAt !== undefined &&
+      revocableSharedToken(row)
+      ? row
+      : null;
+  },
+});
+
+/**
+ * Open the held shared token and ask Linear to revoke it.
+ *
+ * @returns Linear's answer, or a refusal when Day0 no longer holds the value.
+ */
+async function askLinear(
+  ctx: ActionCtx,
+  credentialId: Id<'credentials'>,
+): Promise<RevocationAnswer> {
+  const held: Doc<'credentials'> | null = await ctx.runQuery(
+    internal.organisationSecrets.heldSharedToken,
+    { credentialId },
+  );
+  if (held === null || held.ciphertext === undefined || held.iv === undefined) {
+    return {
+      kind: 'refused',
+      words:
+        "Day0 no longer held the shared app token's value, so it could not be revoked at Linear.",
+    };
+  }
+  const token = await ctx.runAction(internal.credentialCryptoActions.open, {
+    ciphertext: held.ciphertext,
+    iv: held.iv,
+    userId: held.userId,
+    keyId: held.keyId,
+  });
+  const answer = await sendRevocation(
+    linearTokenRevocation(token, 'access_token'),
+    token,
+    'Linear',
+    readLinearAnswer,
+  );
+  return withoutToken(answer, token);
+}
+
+/**
+ * Revoke a revoked shared Linear connection's app-actor token at Linear (`POST /oauth/revoke
+ * {token}`, which needs no client authentication), asking again an hour later after a failure
+ * another attempt may pass, up to {@link VENDOR_REVOKE_ATTEMPTS} times, then delete its value and
+ * write the call on the connection's ledger (`organisation.revoked-at-source`, `shared`). No
+ * employee is left to share the token once its connection is revoked (R41V-1). Internal,
+ * scheduled by {@link endOrganisationSecrets}; the token is never written anywhere.
+ */
+export const revokeSharedAtLinear = internalAction({
+  args: {
+    organisationConnectionId: v.id('organisationConnections'),
+    credentialId: v.id('credentials'),
+    attempt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const answer = await askLinear(ctx, args.credentialId);
+    if (answer.kind === 'retry' && args.attempt < VENDOR_REVOKE_ATTEMPTS) {
+      await ctx.scheduler.runAfter(
+        VENDOR_REVOKE_RETRY_MS,
+        internal.organisationSecrets.revokeSharedAtLinear,
+        { ...args, attempt: args.attempt + 1 },
+      );
+      return null;
+    }
+    await ctx.runMutation(internal.organisationSecrets.finishSharedRevocation, {
+      organisationConnectionId: args.organisationConnectionId,
+      credentialId: args.credentialId,
+      attempt: args.attempt,
+      ...(answer.kind === 'revoked'
+        ? { outcome: 'token-revoked' as const }
+        : answer.kind === 'gone'
+          ? { outcome: 'already-gone' as const }
+          : { outcome: 'failed' as const, reason: answer.words }),
+    });
+    return null;
+  },
+});
+
+/**
+ * Write the shared token's revocation at Linear on the connection's ledger and delete its value.
+ * Internal, for {@link revokeSharedAtLinear}.
+ */
+export const finishSharedRevocation = internalMutation({
+  args: {
+    organisationConnectionId: v.id('organisationConnections'),
+    credentialId: v.id('credentials'),
+    attempt: v.number(),
+    outcome: v.union(v.literal('token-revoked'), v.literal('already-gone'), v.literal('failed')),
+    reason: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const now = Date.now();
+    const row = await ctx.db.get(args.credentialId);
+    if (row !== null && row.holder === ORGANISATION_HOLDER && row.revokedAt !== undefined) {
+      await purgeCredential(ctx, row, now);
+    }
+    const connection = await ctx.db.get(args.organisationConnectionId);
+    if (connection === null) return null;
+    await appendConnectionEvent(ctx, {
+      organisationConnectionId: connection._id,
+      type: 'organisation.revoked-at-source',
+      payload: {
+        credentialId: args.credentialId,
+        system: connection.system,
+        end: 'organisation-revoked',
+        outcome: args.outcome,
+        attempt: args.attempt,
+        shared: true,
         ...(args.reason !== undefined ? { reason: args.reason.slice(0, REASON_LIMIT) } : {}),
       },
       createdAt: now,
