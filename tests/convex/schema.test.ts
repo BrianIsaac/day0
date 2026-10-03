@@ -624,9 +624,13 @@ describe('skill library schema (10-K, N10: additive and optional)', (): void => 
         state: 'proposed',
         offeredVersionId: versionId,
       });
+      // Re-pinned at 12-S3: by_version had no reader and is removed; rows written with no owner
+      // key are read under an absent key, as `holdersOf` reads them.
       const holders = await ctx.db
         .query('skills')
-        .withIndex('by_version', (q) => q.eq('versionId', versionId))
+        .withIndex('by_owner_version', (q) =>
+          q.eq('ownerKey', undefined).eq('versionId', versionId),
+        )
         .collect();
       return {
         older: await ctx.db.get(olderId),
@@ -1141,5 +1145,18 @@ describe('the round after wave 11 schema step (R-S, N10: additive and optional)'
     });
     expect(read.older).not.toHaveProperty('ownerKey');
     expect(read.holders).toEqual([read.keyed]);
+  });
+});
+
+describe('the wave 12 schema step (12-S3, N10)', (): void => {
+  /** The names of a table's indexes, as the push declares them. */
+  const indexNames = (table: keyof typeof schema.tables): string[] =>
+    schema.tables[table][' indexes']().map((index) => index.indexDescriptor);
+
+  it('removes the two indexes nothing reads: agents.by_bossEmail and skills.by_version', (): void => {
+    expect(indexNames('agents')).not.toContain('by_bossEmail');
+    expect(indexNames('agents')).toContain('by_userId');
+    expect(indexNames('skills')).not.toContain('by_version');
+    expect(indexNames('skills')).toContain('by_owner_version');
   });
 });

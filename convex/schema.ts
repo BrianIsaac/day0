@@ -218,9 +218,7 @@ export default defineSchema({
      * with the deployment's mode. */
     mode: v.optional(v.union(v.literal('mock'), v.literal('real'))),
     createdAt: v.number(),
-  })
-    .index('by_bossEmail', ['bossEmail'])
-    .index('by_userId', ['userId']),
+  }).index('by_userId', ['userId']),
 
   charters: defineTable({
     agentId: v.id('agents'),
@@ -1408,9 +1406,10 @@ export default defineSchema({
   })
     .index('by_agent_name', ['agentId', 'name'])
     .index('by_agent_state', ['agentId', 'state'])
-    /** Every holder of a version: a withdrawal, a newer version's re-check stamp, a transfer. */
-    .index('by_version', ['versionId'])
-    /** A version's holders among one owner's employees, the owner first (`holdersOf`, K-m3). */
+    /**
+     * A version's holders among one owner's employees, the owner first (`holdersOf`, K-m3); an
+     * owner-less employee's rows are read under an absent key.
+     */
     .index('by_owner_version', ['ownerKey', 'versionId']),
 
   /**
