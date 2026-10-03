@@ -230,8 +230,9 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     // nothing ends it but its lapse, not even the row's Delete on api.slack.com, which is not
     // listed after a revoke anyway (R41V-10, R41X-8), so every line says what IT can do.
     const refreshAdvice =
-      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
-      'that generated it closed until then';
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed';
     // A token a renewal was issued after the connection's revoke was kept nowhere: no copy.
     const unkept = p.unkept === true;
     const which = unkept

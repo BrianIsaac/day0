@@ -348,6 +348,7 @@ export function SurfaceCard({
   // Disconnect would (`retireReplaced`), so one press does what Disconnect then Connect did.
   const refusedOwnApp =
     system === 'linear' &&
+    covering?.mode === 'per-employee' &&
     surface.verdict === 'ungranted' &&
     identity.kind === 'own-app' &&
     !identity.planned &&

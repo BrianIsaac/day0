@@ -4,12 +4,13 @@ import type { AccessRecipe } from './types';
 
 /*
  * Linear in the access kit (the access plan, section 4.10; L1 to L3, read 1 October 2026): IT
- * creates an OAuth app in Linear's settings from the manifest below, through a link that pre-fills
- * the create form with the manifest's fields (no API creates an app). In `shared` mode one app serves every
- * employee through client-credentials tokens, app-actor tokens valid 30 days, with a fixed scope
- * set (L2: a request with other scopes revokes and replaces the app's tokens). In `per-employee`
- * mode each employee has its own app, since Linear documents one app user per app per workspace
- * (L1), installed with `actor=app` by a Linear administrator from the access request's link.
+ * creates an OAuth app in Linear's settings from the manifest below, through a link that
+ * pre-fills the create form with the manifest's fields (no API creates an app). In `shared` mode
+ * one app serves every employee through client-credentials tokens, app-actor tokens valid 30
+ * days, with a fixed scope set (L2: a request with other scopes revokes and replaces the app's
+ * tokens). In `per-employee` mode each employee has its own app, since Linear documents one app
+ * user per app per workspace (L1), installed with `actor=app` by a Linear administrator from the
+ * access request's link.
  */
 
 /** The path Linear's authorisation returns to (11-AL's route, `app/api/oauth/linear`). */
@@ -134,10 +135,11 @@ export function linearKitManifest(input: {
  * The link that opens Linear's create-application form pre-filled with a manifest's fields, in
  * Linear's dotted query form (`oauth.client_name=...`). Linear refuses a `?manifest=` link ("The
  * app manifest provided in the URL is not valid", the re-walk, R41X-2), and the dotted form
- * pre-filled an employee's app's form on real Linear. Each value is percent-encoded as that link
- * was, a space as `%20` and never `+`; a list repeats its field, as the shared app's second grant
- * type does. The description and the webhook setting are not in the link: the form is checked
- * against the printed manifest.
+ * pre-filled an employee's app's form on real Linear. Each value is percent-encoded whole
+ * (`encodeURIComponent`): a space is `%20` as in that link, never `+`, and an origin's `:` and `/`
+ * are escaped too, where that link left the origin bare; both decode to the same fields. A list
+ * repeats its field, as the shared app's second grant type does. The description and the webhook
+ * setting are not in the link: the form is checked against the printed manifest.
  *
  * @param manifest - The manifest, from {@link linearKitManifest}.
  */

@@ -777,6 +777,14 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).toMatch(/>Connect<\/button>/);
     expect(chip(markup)).toBe('Not granted');
+    // Only an employee's own app installs again: through a shared connection Connect is not it.
+    expect(
+      render(
+        refused,
+        { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+        { connect: (): void => undefined },
+      ),
+    ).not.toMatch(/>Connect<\/button>/);
   });
 
   it('says whom a disconnected pasted-key card will act as, not the key it no longer holds (code pass, m1)', (): void => {

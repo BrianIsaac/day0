@@ -610,8 +610,9 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
-      'that generated it closed until then.';
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
     expect(revoked({ outcome: 'done' })).toBe(
       "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
         `once it was taken out of use; ${advice}`,
@@ -640,9 +641,10 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
       expect(line, outcome).not.toMatch(/\bdeletes? the token's row\b/);
+      expect(line, outcome).toContain('nothing ends its refresh token but its lapse');
+      expect(line, outcome).toContain('whoever copied it while its row was listed');
       expect(line, outcome).toContain(
-        'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
-          'that generated it closed until then.',
+        'so IT keeps the sign-in of the account that generated it closed.',
       );
     }
   });
@@ -657,8 +659,9 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
-      'that generated it closed until then.';
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
     const notChecked = 'though Slack could not be asked afterwards whether it still works';
     expect(revoked({ outcome: 'done' })).toBe(
       "Day0 revoked the organisation's Slack configuration token at Slack and deleted its copy, " +
@@ -684,8 +687,9 @@ describe("what Day0's uses of the Slack configuration token and the re-join say 
         subject,
       );
     const advice =
-      'nothing ends its refresh token but its lapse, so IT keeps the sign-in of the account ' +
-      'that generated it closed until then.';
+      'nothing ends its refresh token but its lapse: until then whoever copied it while its row ' +
+      'was listed on api.slack.com can mint a token with it, so IT keeps the sign-in of the ' +
+      'account that generated it closed.';
     expect(revoked({ outcome: 'unrecognised', reason: 'Slack answered invalid_auth' })).toBe(
       "Slack did not recognise the organisation's Slack configuration token when Day0 asked to " +
         'revoke it: Slack answered invalid_auth. Day0 cannot tell whether Slack had ended it ' +
