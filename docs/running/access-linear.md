@@ -125,7 +125,7 @@ app:assignable
 
 The set never changes after install: Linear revokes and replaces every
 app-actor token of an app when a token is requested with other scopes. A
-connection landed without `app:assignable` (before v0.15.0, the kit landed
+connection landed without `app:assignable` (up to v0.14.0 the kit landed
 `read` and `write` only) is changed by revoking it on the organisation page
 and landing it again; `check:access` names it as a gap.
 
