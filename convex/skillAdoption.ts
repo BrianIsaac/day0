@@ -217,6 +217,64 @@ export async function recordOffer(
   return next !== undefined;
 }
 
+/** The most of an owner's employees one registration offers its version to. */
+const OFFER_SWEEP_EMPLOYEES = 100;
+
+/** The most rows of the registered name one employee is read for. */
+const OFFER_SWEEP_ROWS = 20;
+
+/**
+ * Offer a newly registered version to the owner's other employees whose proposal of the same name
+ * carries no offer (the 11-FD cockpit's item 2): the offer was looked up only when each proposal
+ * was made, so a proposal filed before a colleague's version existed stayed plain until its item
+ * was evaluated again. Each proposal is offered what a fresh evaluation would offer it
+ * (`offerOf`, then `recordOffer`), in the registration's transaction, so it is offered once and
+ * the employee's record says so. A proposal that already carries an offer, or whose employee the
+ * version does not fit, is left as it is. Bounded: `OFFER_SWEEP_EMPLOYEES` employees, and
+ * `OFFER_SWEEP_ROWS` rows of the name each.
+ *
+ * @param ctx - The registration's mutation context.
+ * @param registered - The row that registered, as the registration read it.
+ * @param now - The clock the surfaces' liveness is read against.
+ * @returns How many proposals were offered the version.
+ */
+export async function offerToPlainProposals(
+  ctx: MutationCtx,
+  registered: Doc<'skills'>,
+  now: number,
+): Promise<number> {
+  const author = await ctx.db.get(registered.agentId);
+  if (!sharedSkillsOn() || author?.userId === undefined) return 0;
+  const owner = author.userId;
+  const colleagues = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', owner))
+    .take(OFFER_SWEEP_EMPLOYEES);
+  let offered = 0;
+  for (const colleague of colleagues) {
+    if (colleague._id === registered.agentId) continue;
+    const rows = await ctx.db
+      .query('skills')
+      .withIndex('by_agent_name', (q) => q.eq('agentId', colleague._id).eq('name', registered.name))
+      .take(OFFER_SWEEP_ROWS);
+    for (const plain of rows) {
+      if (plain.state !== 'proposed' || plain.offeredVersionId !== undefined) continue;
+      const version = await offerOf(
+        ctx.db,
+        colleague,
+        {
+          name: plain.name,
+          surfaceClass: plain.surfaceClass ?? registered.surfaceClass ?? '',
+          operation: plain.operation ?? registered.operation ?? '',
+        },
+        now,
+      );
+      if (version !== undefined && (await recordOffer(ctx, plain, version._id))) offered += 1;
+    }
+  }
+  return offered;
+}
+
 /** The employee's live grants, as scope names. */
 async function grantedScopes(db: DatabaseReader, agentId: Id<'agents'>): Promise<string[]> {
   const grants = await db
