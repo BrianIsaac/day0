@@ -1422,8 +1422,11 @@ it('tells each agent whose card lost a swapped-out credential, naming the page a
 });
 
 describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
-  const OLD_REF = 'runbooks/linear.md#credential=0123456789abcdef0123456789abcdef';
-  const NEW_REF = 'runbooks/linear.md#credential=fedcba9876543210fedcba9876543210';
+  const PAGE = 'runbooks/linear.md';
+  const OLD_REF = `${PAGE}#credential=0123456789abcdef0123456789abcdef`;
+  const NEW_REF = `${PAGE}#credential=fedcba9876543210fedcba9876543210`;
+  const OTHER_REF = `${PAGE}#credential=11111111111111111111111111111111`;
+  const LABEL = 'Linear service token';
 
   afterEach((): void => {
     vi.useRealTimers();
@@ -1437,7 +1440,7 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
   ): Omit<Doc<'credentials'>, '_id' | '_creationTime'> => ({
     userId: 'owner',
     kind: 'value',
-    label: 'Linear service token',
+    label: LABEL,
     source: { sourceId, ref },
     ciphertext: 'sealed',
     iv: 'iv',
@@ -1462,9 +1465,7 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
     credentialLanded: true,
     whereFound: [],
     createdAt: 1,
-    request: {
-      credential: { found: 'value', method: 'api-key', evidenceRef: 'runbooks/linear.md' },
-    },
+    request: { credential: { found: 'value', method: 'api-key', evidenceRef: PAGE } },
     managerApprovedAt: 2,
     probeGeneration: 4,
     lastVerifiedAt: 5,
@@ -1473,80 +1474,182 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
     ...fields,
   });
 
-  /** One sync that lists the page and states only the new value on it. */
-  async function syncNewValue(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+  /** The source's last completed generation, which stated the given credential refs. */
+  async function statedBefore(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    credentialRefs: string[],
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        pagesListed: 1,
+        credentialRefs,
+        pageCount: 1,
+        redactionCount: credentialRefs.length,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+    });
+  }
+
+  /** One sync that lists the page and states the given credential refs on it. */
+  async function syncStating(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    credentialRefs: string[],
+  ): Promise<void> {
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.finishSync, {
       sourceId,
       runId,
-      refs: ['runbooks/linear.md'],
-      credentialRefs: [NEW_REF],
+      refs: [PAGE],
+      credentialRefs,
       pageCount: 1,
-      redactionCount: 1,
+      redactionCount: credentialRefs.length,
     });
   }
 
-  it('re-binds a card the swapped-out value held to the live row of the same label on the page, and checks it at once', async (): Promise<void> => {
+  /** The probes scheduled for the given cards. */
+  async function probesOf(harness: TestConvex<typeof schema>): Promise<unknown[]> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect())
+        .filter((job) => job.name.includes('probeInternal'))
+        .map((job) => job.args[0]),
+    );
+  }
+
+  /** The `credential.superseded` payloads of one employee. */
+  async function supersededOf(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<unknown[]> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) =>
+            q.eq('agentId', agentId).eq('type', 'credential.superseded'),
+          )
+          .collect()
+      ).map((event) => event.payload),
+    );
+  }
+
+  it('re-binds every card the swapped-out value held, of each employee, to the value swapped in, and checks each at once', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
-    const { oldId, newId, surfaceId } = await harness.run(async (ctx) => {
+    await statedBefore(harness, sourceId, [OLD_REF]);
+    const { oldId, newId, priya, mateo, mateoCard } = await harness.run(async (ctx) => {
       const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
       // The new value the page now states under the same label, stored by this sync's batch.
       const newId = await ctx.db.insert(
         'credentials',
         pageRow(sourceId, NEW_REF, { createdAt: 9 }),
       );
-      const surfaceId = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
-      return { oldId, newId, surfaceId };
+      const mateo = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const priya = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
+      const mateoCard = await ctx.db.insert('surfaces', card(mateo, 'linear', oldId));
+      return { oldId, newId, priya, mateo, mateoCard };
     });
 
-    await syncNewValue(harness, sourceId);
+    await syncStating(harness, sourceId, [NEW_REF]);
 
     expect(await harness.run(async (ctx) => await ctx.db.get(oldId))).toMatchObject({
       status: 'superseded',
     });
-    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
-    expect(surface).toMatchObject({
-      credentialId: newId,
-      credentialKind: 'value',
-      credentialLanded: false,
-      verdict: 'approved',
-      managerApprovedAt: 2,
-      probeGeneration: 5,
-      request: { credential: { found: 'value', method: 'api-key' } },
-    });
-    expect(surface?.lastVerifiedAt).toBeUndefined();
-    expect(surface?.toolAllowlist).toBeUndefined();
-    expect(surface?.providerIdentityId).toBeUndefined();
-    // The re-bound card is probed with the new value at once, as a hand landing is.
-    const probes = await harness.run(async (ctx) =>
-      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
-        (job) => job.name.includes('probeInternal') && job.state.kind === 'pending',
-      ),
-    );
-    expect(probes.map((job) => job.args[0])).toEqual([{ surfaceId }]);
-    // The record says the value moved, and the card is not among those sent back to landing.
-    const events = await harness.run(
-      async (ctx) =>
-        await ctx.db
-          .query('events')
-          .withIndex('by_agent_type', (q) =>
-            q.eq('agentId', agentId).eq('type', 'credential.superseded'),
-          )
-          .collect(),
-    );
-    expect(events.map((event) => event.payload)).toEqual([
-      {
-        credentialId: oldId,
-        label: 'Linear service token',
-        sourceId,
-        page: 'runbooks/linear.md',
-        surfaceIds: [],
-        reboundSurfaceIds: [surfaceId],
-      },
+    for (const surfaceId of [priya, mateoCard]) {
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface).toMatchObject({
+        credentialId: newId,
+        credentialKind: 'value',
+        credentialLanded: false,
+        verdict: 'approved',
+        managerApprovedAt: 2,
+        probeGeneration: 5,
+        request: { credential: { found: 'value', method: 'api-key' } },
+      });
+      expect(surface?.lastVerifiedAt).toBeUndefined();
+      expect(surface?.toolAllowlist).toBeUndefined();
+      expect(surface?.providerIdentityId).toBeUndefined();
+    }
+    // Each re-bound card is probed with the new value at once, as a hand landing is.
+    expect(await probesOf(harness)).toEqual([{ surfaceId: priya }, { surfaceId: mateoCard }]);
+    // The record says the value moved, and no card is among those sent back to landing.
+    const payload = { credentialId: oldId, label: LABEL, sourceId, page: PAGE, surfaceIds: [] };
+    expect(await supersededOf(harness, agentId)).toEqual([
+      { ...payload, reboundSurfaceIds: [priya] },
     ]);
+    expect(await supersededOf(harness, mateo)).toEqual([
+      { ...payload, reboundSurfaceIds: [mateoCard] },
+    ]);
+  });
+
+  it('never binds a value the page already stated under the same label, which is another system’s', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    // The page stated two values under one label, each bound to its own system's card.
+    await statedBefore(harness, sourceId, [OLD_REF, OTHER_REF]);
+    const { surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      await ctx.db.insert('credentials', pageRow(sourceId, OTHER_REF, { createdAt: 2 }));
+      const surfaceId = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
+      return { surfaceId };
+    });
+
+    // The edit drops the first value and states nothing new.
+    await syncStating(harness, sourceId, [OTHER_REF]);
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'ungranted', credentialLanded: false });
+    expect(surface?.credentialId).toBeUndefined();
+    expect(await probesOf(harness)).toEqual([]);
+  });
+
+  it('binds nothing when two new values under the label cannot be told apart, or when no earlier sync says what the page held', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await statedBefore(harness, sourceId, [OLD_REF]);
+    const { surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      await ctx.db.insert('credentials', pageRow(sourceId, NEW_REF, { createdAt: 9 }));
+      await ctx.db.insert('credentials', pageRow(sourceId, OTHER_REF, { createdAt: 10 }));
+      const surfaceId = await ctx.db.insert('surfaces', card(agentId, 'linear', oldId));
+      return { surfaceId };
+    });
+
+    await syncStating(harness, sourceId, [NEW_REF, OTHER_REF]);
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'ungranted' });
+    expect(surface?.credentialId).toBeUndefined();
+
+    const fresh = convexTest(schema, allConvexModules());
+    const seeded = await seedSyncedSource(fresh);
+    const unknownBefore = await fresh.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(seeded.sourceId, OLD_REF));
+      await ctx.db.insert('credentials', pageRow(seeded.sourceId, NEW_REF, { createdAt: 9 }));
+      return await ctx.db.insert('surfaces', card(seeded.agentId, 'linear', oldId));
+    });
+    await syncStating(fresh, seeded.sourceId, [NEW_REF]);
+    expect(
+      (await fresh.run(async (ctx) => await ctx.db.get(unknownBefore)))?.credentialId,
+    ).toBeUndefined();
   });
 
   it("re-binds a card its manager has not approved without probing it, keeping the card's own reason", async (): Promise<void> => {
@@ -1554,6 +1657,7 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
+    await statedBefore(harness, sourceId, [OLD_REF]);
     const queueChanged =
       'The documented queue this card reads changed; approve it again once it is right.';
     const { newId, surfaceId } = await harness.run(async (ctx) => {
@@ -1576,19 +1680,89 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
       return { newId, surfaceId };
     });
 
-    await syncNewValue(harness, sourceId);
+    await syncStating(harness, sourceId, [NEW_REF]);
 
     expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toMatchObject({
       credentialId: newId,
       verdict: 'proposed',
       reason: queueChanged,
     });
-    const probes = await harness.run(async (ctx) =>
-      (await ctx.db.system.query('_scheduled_functions').collect()).filter((job) =>
-        job.name.includes('probeInternal'),
-      ),
+    expect(await probesOf(harness)).toEqual([]);
+  });
+
+  it('re-binds a card whose access ended without probing it, so it stays ended until its renewal', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await statedBefore(harness, sourceId, [OLD_REF]);
+    const { newId, ended, lapsed } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      const newId = await ctx.db.insert(
+        'credentials',
+        pageRow(sourceId, NEW_REF, { createdAt: 9 }),
+      );
+      // Ended by the sweep, the pasted key kept for the renewal; and past its end date, not yet swept.
+      const ended = await ctx.db.insert(
+        'surfaces',
+        card(agentId, 'linear', oldId, {
+          verdict: 'approved',
+          reason: 'expired',
+          credentialLanded: false,
+          lastVerifiedAt: undefined,
+        }),
+      );
+      const lapsed = await ctx.db.insert(
+        'surfaces',
+        card(agentId, 'linear-2', oldId, { expiresAt: Date.now() - 1 }),
+      );
+      return { newId, ended, lapsed };
+    });
+
+    await syncStating(harness, sourceId, [NEW_REF]);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(ended))).toMatchObject({
+      credentialId: newId,
+      verdict: 'approved',
+      reason: 'expired',
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(lapsed))).toMatchObject({
+      credentialId: newId,
+      verdict: 'connected',
+    });
+    expect(await probesOf(harness)).toEqual([]);
+  });
+
+  it("sends a card handed to another owner back to landing rather than binding the old owner's new value", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    await statedBefore(harness, sourceId, [OLD_REF]);
+    const { surfaceId } = await harness.run(async (ctx) => {
+      const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
+      await ctx.db.insert('credentials', pageRow(sourceId, NEW_REF, { createdAt: 9 }));
+      // The employee went to another manager; its card keeps the credential for re-approval.
+      const handedOver = await ctx.db.insert('agents', {
+        bossEmail: 'next@example.test',
+        name: 'Ines',
+        userId: 'next-owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert(
+        'surfaces',
+        card(handedOver, 'linear', oldId, { verdict: 'proposed', managerApprovedAt: undefined }),
+      );
+      return { surfaceId };
+    });
+
+    await syncStating(harness, sourceId, [NEW_REF]);
+
+    expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.credentialId).toBe(
+      undefined,
     );
-    expect(probes).toEqual([]);
+    expect(await probesOf(harness)).toEqual([]);
   });
 
   it('sends a card back to landing only where the page holds no live row of the same label', async (): Promise<void> => {
@@ -1596,19 +1770,20 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
+    await statedBefore(harness, sourceId, [OLD_REF]);
     const { oldId, surfaceId } = await harness.run(async (ctx) => {
       const oldId = await ctx.db.insert('credentials', pageRow(sourceId, OLD_REF));
       // The new value carries another label, and a same-label row is revoked or suspect.
       await ctx.db.insert('credentials', pageRow(sourceId, NEW_REF, { label: 'Linear webhook' }));
       await ctx.db.insert(
         'credentials',
-        pageRow(sourceId, 'runbooks/linear.md#credential=11111111111111111111111111111111', {
+        pageRow(sourceId, OTHER_REF, {
           revokedAt: 3,
         }),
       );
       await ctx.db.insert(
         'credentials',
-        pageRow(sourceId, 'runbooks/linear.md#credential=22222222222222222222222222222222', {
+        pageRow(sourceId, `${PAGE}#credential=22222222222222222222222222222222`, {
           status: 'suspect',
         }),
       );
@@ -1616,7 +1791,7 @@ describe('the re-bind on a page swap (N23, M15; 12-S3)', (): void => {
       return { oldId, surfaceId };
     });
 
-    await syncNewValue(harness, sourceId);
+    await syncStating(harness, sourceId, [NEW_REF, OTHER_REF]);
 
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'ungranted', credentialLanded: false });
@@ -2285,9 +2460,9 @@ describe('the documentation store under the transaction limits (step 49)', (): v
   });
 
   // Re-pinned at 12-S3: the finish no longer reads a run's refs (legacyListedRefs). The
-  // sync-runs-refs pass clears them and ends the run, so its finish is refused and nothing it
+  // sync-runs-refs pass clears them and the run's cursor, so its finish is refused and nothing it
   // named is removed; the next sync reads the source from page one.
-  it('keeps the page and mirror a run begun before 0.6.0 named once the clearing pass has ended it, refusing its finish (12-S3)', async (): Promise<void> => {
+  it('keeps the page and mirror a run begun before 0.6.0 named once the clearing pass has cleared its cursor, refusing its finish (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2370,10 +2545,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(left).toEqual({ pages: ['runbook.md'], mirrors: ['runbook.md'] });
   });
 
-  // Re-pinned at 12-S3: the finish no longer reads a run's refs, and the sync-runs-refs pass ends
-  // a run begun before 0.6.0, so its checkpoint over the pages themselves is refused and every
-  // page stays until a sync from page one lists the source again.
-  it('refuses the finish of a run begun before 0.6.0 cut off part-way through its pages once the clearing pass has ended it, and removes nothing (12-S3)', async (): Promise<void> => {
+  // Re-pinned at 12-S3: the finish no longer reads a run's refs, and the sync-runs-refs pass clears
+  // the cursor of a run begun before 0.6.0, so its checkpoint over the pages themselves is refused
+  // and every page stays until a sync from page one lists the source again.
+  it('refuses the finish of a run begun before 0.6.0 cut off part-way through its pages once the clearing pass has cleared its cursor, and removes nothing (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2424,6 +2599,26 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         .sort(),
     );
     expect(left).toEqual(['kept.md', 'page.md', 'stale.md']);
+
+    // The next sync reads from page one; its finish removes what its listing did not name.
+    const fresh = await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
+    await finishGeneration(harness, sourceId, fresh, {
+      refs: ['page.md', 'kept.md'],
+      credentialRefs: [],
+      pageCount: 2,
+      redactionCount: 0,
+    });
+    const relisted = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((page) => page.ref)
+        .sort(),
+    );
+    expect(relisted).toEqual(['kept.md', 'page.md']);
   });
 
   it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
