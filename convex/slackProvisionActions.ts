@@ -25,14 +25,17 @@ import {
 import {
   configurationRenewal,
   configurationTokenRefused,
+  installedBotIssuer,
   KEPT_APP_CONNECTION_REVOKED,
   NO_CONFIGURATION_TOKEN,
   parseTokenRotation,
   rejoinPlan,
   rotationRefusal,
   slackAppManifest,
+  slackClientSecretIssuer,
   SLACK_SYSTEM,
   type SlackAppManifest,
+  type SlackIssuedBy,
   type VisibleChannel,
 } from '../src/surfaces/identity-issuers/slack';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
@@ -67,6 +70,7 @@ const credentialInternal = internal as unknown as {
         plaintext?: string;
         source: { ref: string; sourceId: Id<'docSources'> } | 'entered' | 'oauth';
         userId: string;
+        issuedBy?: SlackIssuedBy;
       },
       CredentialId
     >;
@@ -751,6 +755,13 @@ async function recordCreatedApp(
       plaintext: created.clientSecret,
       source: 'oauth',
       appId: created.appId,
+      issuedBy: slackClientSecretIssuer({
+        appId: created.appId,
+        clientId: created.clientId,
+        ...(created.organisationConnectionId === undefined
+          ? {}
+          : { organisationConnectionId: created.organisationConnectionId }),
+      }),
     },
   );
   const app: RegisteredApp = {
@@ -1136,6 +1147,9 @@ export async function runCompleteInstall(
         plaintext: access.botToken,
         source: 'oauth',
         appId: context.surface.provisioning?.appId,
+        ...(context.surface.provisioning === undefined
+          ? {}
+          : { issuedBy: installedBotIssuer(context.surface.provisioning) }),
       }),
     };
     await ctx.runMutation(internal.surfaces.recordInstalledApp, {

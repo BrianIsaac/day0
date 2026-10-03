@@ -48,9 +48,10 @@ import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import {
+  installedBotIssuer,
+  isIssuedAs,
   KEPT_APP_CONNECTION_REVOKED,
   slackActsAs,
-  slackBotTokenIssuer,
   slackClientSecretIssuer,
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
@@ -1257,11 +1258,20 @@ async function assertInstalledToken(
     await assertCredentialOfOwner(db, surface.agentId, credentialId);
     return;
   }
+  // The install stored the token with the issuer of this card's app (the pre-tag's item 10): a row
+  // the organisation holds for anything else, or one a card already binds, is not it.
+  const provisioning = surface.provisioning;
+  const binders = await db
+    .query('surfaces')
+    .withIndex('by_credentialId', (q) => q.eq('credentialId', credentialId))
+    .take(2);
   if (
     token.userId !== ORGANISATION_OWNER_KEY ||
     token.kind !== 'oauth' ||
-    token.issuedBy !== undefined ||
-    token.revokedAt !== undefined
+    token.revokedAt !== undefined ||
+    provisioning === undefined ||
+    !isIssuedAs(token.issuedBy, installedBotIssuer(provisioning)) ||
+    binders.some((binder) => binder._id !== surface._id)
   ) {
     throw new ConvexError('This bot token is not one an install just landed for this card.');
   }
@@ -1276,7 +1286,8 @@ async function assertInstalledToken(
  *
  * With them, in the same transaction (11-AS; the cockpit's assignment from 11-AK): the bot token's
  * `issuedBy` (`oauth-install`, with the app's ids and its client secret, which an end of access
- * reads to revoke it at Slack, 11-AR) and the client secret's where it has none; whom the card acts
+ * reads to revoke it at Slack, 11-AR) where the token has none (one the organisation holds was
+ * stored with it, the pre-tag's item 10) and the client secret's where it has none; whom the card acts
  * as (`actsAs`: its own app and its bot user, D2); and, for an app the organisation's Slack
  * configuration connection created (`provisioning.organisationConnectionId`), the card's link to
  * that connection (`organisationConnections.linkSurface`; written here while the connection needs
@@ -1284,7 +1295,8 @@ async function assertInstalledToken(
  * whose connection IT revoked is not installed again.
  *
  * Internal, for `slackProvisionActions`. Refuses a bot token that is not one the install just
- * landed (`assertInstalledToken`), before anything is retired.
+ * landed for this card's app (`assertInstalledToken`: its stored issuer, bound by no other card),
+ * before anything is retired.
  *
  * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`, or when the card has no app, or the app's
  *   connection was revoked.
@@ -1319,12 +1331,12 @@ export const recordInstalledApp = internalMutation({
       clientId: provisioning.clientId,
       ...(connectionId === undefined ? {} : { organisationConnectionId: connectionId }),
     };
-    await ctx.db.patch(args.credentialId, {
-      issuedBy: slackBotTokenIssuer({
-        ...app,
-        clientSecretCredentialId: provisioning.clientSecretCredentialId,
-      }),
-    });
+    // A token the organisation holds was stored with this issuer; one stored under an owner's key
+    // before v0.14.0's issuers is stamped here.
+    const token = await ctx.db.get(args.credentialId);
+    if (token !== null && token.issuedBy === undefined) {
+      await ctx.db.patch(args.credentialId, { issuedBy: installedBotIssuer(provisioning) });
+    }
     const secret = await ctx.db.get(provisioning.clientSecretCredentialId);
     if (secret !== null && secret.issuedBy === undefined) {
       await ctx.db.patch(secret._id, { issuedBy: slackClientSecretIssuer(app) });

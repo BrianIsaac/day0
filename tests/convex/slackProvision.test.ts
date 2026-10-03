@@ -236,7 +236,19 @@ describe('the app a card is given', (): void => {
     });
   }
 
-  async function secret(harness: Harness, holder: 'organisation' | 'owner') {
+  /** The client secret's issuer, as the provisioning action stores it with the secret. */
+  const SECRET_ISSUER = {
+    system: 'slack',
+    grant: 'app-created' as const,
+    appId: 'A0APP1',
+    clientId: '1234.1',
+  };
+
+  async function secret(
+    harness: Harness,
+    holder: 'organisation' | 'owner',
+    issuedBy: typeof SECRET_ISSUER = SECRET_ISSUER,
+  ) {
     return await harness.action(internal.credentials.store, {
       userId: holder === 'organisation' ? ORGANISATION_OWNER_KEY : 'owner',
       ...(holder === 'organisation' ? { holder: ORGANISATION_HOLDER } : {}),
@@ -244,6 +256,7 @@ describe('the app a card is given', (): void => {
       label: 'Leo (Day0) client secret',
       plaintext: 'w11as-secret-1',
       source: 'oauth',
+      issuedBy,
     });
   }
 
@@ -268,6 +281,7 @@ describe('the app a card is given', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await card(harness);
     const secretId = await secret(harness, 'organisation');
+    const before = await harness.run(async (ctx) => await ctx.db.get(secretId));
 
     await expect(
       harness.mutation(internal.slackProvision.recordCreatedApp, {
@@ -281,10 +295,24 @@ describe('the app a card is given', (): void => {
       secret: await ctx.db.get(secretId),
     }));
     expect(after.surface?.provisioning).toBeUndefined();
-    expect(after.secret?.issuedBy).toBeUndefined();
+    // The secret was stored with its issuer (the pre-tag's item 10); the refusal wrote nothing.
+    expect(after.secret).toEqual(before);
   });
 
-  it("records the app and stamps its client secret's issuedBy", async (): Promise<void> => {
+  it('refuses a client secret stored for another app, recording nothing (the pre-tag item 10)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await card(harness);
+    const other = await secret(harness, 'organisation', { ...SECRET_ISSUER, appId: 'A0OTHER' });
+
+    await expect(
+      harness.mutation(internal.slackProvision.recordCreatedApp, app(surfaceId, other)),
+    ).rejects.toThrow('not one the organisation holds for it');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.provisioning,
+    ).toBeUndefined();
+  });
+
+  it('records the app over a client secret stored with its issuer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await card(harness);
     const secretId = await secret(harness, 'organisation');

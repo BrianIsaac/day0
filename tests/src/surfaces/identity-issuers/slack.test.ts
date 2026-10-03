@@ -9,6 +9,8 @@ import {
   CONFIGURATION_TOKEN_LIFETIME_MS,
   KEEP_CURRENT_MIN_DELAY_MS,
   configurationRenewal,
+  installedBotIssuer,
+  isIssuedAs,
   keepCurrentAt,
   parseTokenRotation,
   rejoinPlan,
@@ -191,6 +193,33 @@ describe('what an issued row says about how Day0 obtained it (11-AR)', (): void 
       clientId: '1.2',
       clientSecretCredentialId: secret,
     });
+  });
+
+  it("reads the installed bot token's issuer off the card's app, with the connection that made it", (): void => {
+    expect(
+      installedBotIssuer({
+        appId: 'A1',
+        clientId: '1.2',
+        organisationConnectionId: connection,
+        clientSecretCredentialId: secret,
+      }),
+    ).toEqual({
+      system: 'slack',
+      grant: 'oauth-install',
+      appId: 'A1',
+      clientId: '1.2',
+      organisationConnectionId: connection,
+      clientSecretCredentialId: secret,
+    });
+  });
+
+  it('knows a stored row by every field of the issuer it was given, and nothing less (the pre-tag item 10)', (): void => {
+    const expected = slackClientSecretIssuer({ appId: 'A1', clientId: '1.2' });
+    expect(isIssuedAs({ ...expected }, expected)).toBe(true);
+    expect(isIssuedAs(undefined, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, appId: 'A2' }, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, grant: 'oauth-install' }, expected)).toBe(false);
+    expect(isIssuedAs({ ...expected, organisationConnectionId: connection }, expected)).toBe(false);
   });
 
   it('acts as its own app, named by the app and its bot user', (): void => {
