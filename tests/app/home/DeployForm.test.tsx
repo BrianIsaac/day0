@@ -87,9 +87,7 @@ describe('DeployForm', (): void => {
 
   it('says beside the button what happens next, and credits the faces without naming anyone', (): void => {
     expect(html).toMatch(/<button type="submit"[^>]*>Deploy<\/button>/);
-    expect(text).toContain(
-      'Takes a few seconds. worker 1 will then ask you for a Day-1 one-to-one.',
-    );
+    expect(text).toContain('Takes a few seconds, then worker 1 asks you for a Day-1 one-to-one.');
     expect(text).toContain(
       'Avatar art from the product’s own set, the Singapore Codex Pets gallery. No person is named here.',
     );
@@ -150,6 +148,14 @@ describe('DeployForm, deploying', (): void => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
+  it('names no one in the line beside the button once the name field is emptied', (): void => {
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
+    act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, ''));
+    expect(host.textContent).toContain(
+      'Takes a few seconds, then your new employee asks you for a Day-1 one-to-one.',
+    );
+  });
+
   it('deploys the named employee with the chosen face and the unticked sources, then opens its page', async (): Promise<void> => {
     deploy.mockResolvedValue('agent-mira');
     act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
@@ -157,7 +163,7 @@ describe('DeployForm, deploying', (): void => {
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Face 7"]')!.click());
     act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     expect(host.textContent).toContain(
-      'Takes a few seconds. Mira will then ask you for a Day-1 one-to-one.',
+      'Takes a few seconds, then Mira asks you for a Day-1 one-to-one.',
     );
 
     await act(async () => {

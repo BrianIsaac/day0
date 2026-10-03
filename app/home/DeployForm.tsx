@@ -238,8 +238,7 @@ export function DeployForm({
           {submitting ? 'Deploying…' : 'Deploy'}
         </button>
         <span className="text-xs text-[var(--color-muted)]">
-          Takes a few seconds. {trimmed || 'Your new employee'} will then ask you for a Day-1
-          one-to-one.
+          {`Takes a few seconds, then ${trimmed || 'your new employee'} asks you for a Day-1 one-to-one.`}
         </span>
         {onCancel ? (
           <button
