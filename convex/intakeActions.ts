@@ -13,6 +13,7 @@ import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { intakeFailureWords } from '../src/surfaces/intake-failure-words';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../src/surfaces/mcp-address';
 import {
@@ -2063,7 +2064,16 @@ export async function runIntakeSweep(
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          skipReason: `intake failed: ${safeIntakeError(error, credential)}`,
+          skipReason: `intake failed: ${
+            isTimedOut(error)
+              ? PROVIDER_DID_NOT_ANSWER
+              : intakeFailureWords({
+                  system: surface.displayName,
+                  error,
+                  credential,
+                  fallback: 'Provider intake failed.',
+                })
+          }`,
         });
         skipped += 1;
       } finally {

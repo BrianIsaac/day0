@@ -61,6 +61,7 @@ import {
 import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { LIST_ISSUES_SELECTABLE_FIELDS } from '../fixtures/linear/linear-oauth-2026-10-02';
+import { LINEAR_MCP_REVOKED_TOKEN_ERROR } from '../fixtures/real-vendor-walk-2026-10-03';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -4490,6 +4491,57 @@ describe("a provider that does not answer in time (the real-Linear walk's m12)",
   it('keeps every other failure in its own words', async (): Promise<void> => {
     expect(await timedOut(new Error('getaddrinfo ENOTFOUND slack.com'))).toBe(
       'intake failed: getaddrinfo ENOTFOUND slack.com',
+    );
+  });
+});
+
+describe("a card's intake skip in Day0's words, never the MCP client's (R41V-9)", (): void => {
+  const linearCredential = id<'credentials'>('credential-linear');
+  const skipped = async (error: Error): Promise<string | undefined> => {
+    const harness = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+        }),
+      ],
+      [pageRow('linear.md', 'Linear', LINEAR)],
+      new Map([[String(linearCredential), 'lin_oauth_access_1']]),
+    );
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 10_000,
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async (): Promise<never> => {
+          throw error;
+        },
+        toolFromDefinition: async (): Promise<never> => {
+          throw error;
+        },
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    });
+    return harness.records[0]?.skipReason;
+  };
+
+  it("names a token Linear refused as Linear's refusal, and what Day0 does next", async (): Promise<void> => {
+    const reason = await skipped(new Error(LINEAR_MCP_REVOKED_TOKEN_ERROR));
+    expect(reason).toBe(
+      'intake failed: Linear refused the token Day0 holds for this card, so nothing was read; ' +
+        "the card's next check renews the token or ends the card with the reason.",
+    );
+  });
+
+  it('names an MCP server that could not be reached, without the client’s transport text', async (): Promise<void> => {
+    const reason = await skipped(
+      new Error(
+        'Failed to connect to MCP server linear: Error: Could not connect to server with any available HTTP transport',
+      ),
+    );
+    expect(reason).toBe(
+      "intake failed: Linear's MCP server could not be reached, so nothing was read; intake " +
+        'tries again at its next poll.',
     );
   });
 });
