@@ -421,12 +421,18 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
           createdAt: 1,
           ...(status === 'revoked' ? { revokedAt: 2, statusReason: 'moving' } : {}),
         });
-      const card = (slug: string, organisationConnectionId: Id<'organisationConnections'>) =>
+      const card = (
+        slug: string,
+        endpoint: string,
+        organisationConnectionId: Id<'organisationConnections'>,
+      ) =>
         ctx.db.insert('surfaces', {
           agentId,
           slug,
           displayName: slug,
           class: 'kanban',
+          path: 'documented-api',
+          endpoint,
           verdict: 'approved',
           whereFound: [],
           managerApprovedAt: 1,
@@ -437,8 +443,16 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
         });
       return {
         agentId,
-        revokedCard: await card('linear', await connection('revoked', 'linear')),
-        liveCard: await card('github', await connection('active', 'github')),
+        revokedCard: await card(
+          'linear',
+          'https://api.linear.app/graphql',
+          await connection('revoked', 'linear'),
+        ),
+        liveCard: await card(
+          'github',
+          'https://api.github.com',
+          await connection('active', 'github'),
+        ),
       };
     });
 
@@ -448,5 +462,23 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
 
     expect(cards.find((card) => card._id === revokedCard)?.connectionRevoked).toBe(true);
     expect(cards.find((card) => card._id === liveCard)?.connectionRevoked).toBeUndefined();
+
+    // Once IT lands Linear again the card is no longer one a revoke ended (the code pass's m2).
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 3 },
+        status: 'active',
+        createdAt: 3,
+      });
+    });
+    const after = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+    expect(after.find((card) => card._id === revokedCard)?.connectionRevoked).toBeUndefined();
   });
 });

@@ -57,7 +57,11 @@ import {
 } from '../src/surfaces/identity-issuers/slack';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { organisationSystemOf, servedByIssuer } from '../src/surfaces/access-request';
-import { activeConnectionFor, revokedConnectionsAmong } from './organisationConnectionReads';
+import {
+  activeConnectionFor,
+  activeSystemsAmong,
+  revokedConnectionsAmong,
+} from './organisationConnectionReads';
 import {
   listedCardIdentity,
   type CardIdentity,
@@ -416,6 +420,18 @@ export const listForAgent = query({
         surface.organisationConnectionId === undefined ? [] : [surface.organisationConnectionId],
       ),
     );
+    // A system IT has connected again since a revoke is not one the revoke left ended (m2).
+    const activeSystems = await activeSystemsAmong(
+      ctx,
+      surfaces.flatMap((surface) => {
+        const system = organisationSystemOf(surface);
+        return system !== undefined &&
+          surface.organisationConnectionId !== undefined &&
+          revoked.has(surface.organisationConnectionId)
+          ? [system]
+          : [];
+      }),
+    );
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
@@ -440,7 +456,8 @@ export const listForAgent = query({
       const connectionRevoked =
         surface.credentialId === undefined &&
         surface.organisationConnectionId !== undefined &&
-        revoked.has(surface.organisationConnectionId);
+        revoked.has(surface.organisationConnectionId) &&
+        !activeSystems.has(organisationSystemOf(surface) ?? '');
       const { pendingAuthorisation, ...card } = listed;
       return {
         ...card,

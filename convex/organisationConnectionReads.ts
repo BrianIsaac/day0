@@ -38,11 +38,24 @@ export async function systemConnectionRevoked(
   system: string,
 ): Promise<boolean> {
   if ((await activeConnectionFor(ctx, system)) !== null) return false;
-  const revoked = await ctx.db
-    .query('organisationConnections')
-    .withIndex('by_system_status', (index) => index.eq('system', system).eq('status', 'revoked'))
-    .first();
-  return revoked !== null;
+  const [revoked, attention] = await Promise.all(
+    (['revoked', 'needs-attention'] as const).map(
+      async (status) =>
+        await ctx.db
+          .query('organisationConnections')
+          .withIndex('by_system_status', (index) => index.eq('system', system).eq('status', status))
+          .order('desc')
+          .first(),
+    ),
+  );
+  // The latest row decides: a newer connection waiting on IT is not one IT revoked.
+  return (
+    revoked !== null &&
+    revoked !== undefined &&
+    (attention === null ||
+      attention === undefined ||
+      attention._creationTime < revoked._creationTime)
+  );
 }
 
 /**
@@ -57,4 +70,23 @@ export async function revokedConnectionsAmong(
 ): Promise<ReadonlySet<Id<'organisationConnections'>>> {
   const rows = await Promise.all([...new Set(ids)].map(async (id) => await ctx.db.get(id)));
   return new Set(rows.flatMap((row) => (row?.status === 'revoked' ? [row._id] : [])));
+}
+
+/**
+ * The systems among those named that have an active organisation connection, read one by one.
+ *
+ * @param ctx - A query's or a mutation's context.
+ * @param systems - System keys (`organisationSystemOf`).
+ */
+export async function activeSystemsAmong(
+  ctx: Pick<QueryCtx, 'db'>,
+  systems: Iterable<string>,
+): Promise<ReadonlySet<string>> {
+  const named = [...new Set(systems)];
+  const active = await Promise.all(
+    named.map(async (system) =>
+      (await activeConnectionFor(ctx, system)) === null ? [] : [system],
+    ),
+  );
+  return new Set(active.flat());
 }
