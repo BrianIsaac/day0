@@ -11,6 +11,7 @@
 import type * as accessRequests from '../accessRequests.js';
 import type * as agents from '../agents.js';
 import type * as baselineActions from '../baselineActions.js';
+import type * as channelRejoins from '../channelRejoins.js';
 import type * as charters from '../charters.js';
 import type * as config from '../config.js';
 import type * as connectionEvents from '../connectionEvents.js';
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   accessRequests: typeof accessRequests;
   agents: typeof agents;
   baselineActions: typeof baselineActions;
+  channelRejoins: typeof channelRejoins;
   charters: typeof charters;
   config: typeof config;
   connectionEvents: typeof connectionEvents;

@@ -370,6 +370,57 @@ export function slackChannelsGoWords(employee: string, restoredBy: string): stri
   return `Slack: ${employee}'s bot is switched off and removed from its channels. ${restoredBy} turns it back on; it re-joins its public channels itself, and someone in each private channel adds it again.`;
 }
 
+/** A card's latest re-join after a Slack renewal, as `surfaces.listForAgent` lists it. */
+export interface RejoinFacts {
+  readonly joined: readonly string[];
+  readonly needsPerson: readonly string[];
+  /** Slack's words when it refused a join. */
+  readonly reason?: string;
+  /** When the re-join was recorded. */
+  readonly at: number;
+}
+
+/** Channel names as a sentence lists them: "#a", "#a and #b", "#a, #b and #c". */
+function channelList(channels: readonly string[]): string {
+  return channels.length <= 1
+    ? (channels[0] ?? '')
+    : `${channels.slice(0, -1).join(', ')} and ${channels.at(-1) ?? ''}`;
+}
+
+/**
+ * What the latest renewal's re-join did (AS10; 11-AC's item 5): the channels the bot re-joined
+ * itself, and those that need a person in them to add it, with Slack's words for a refused join.
+ * Nothing for a re-join older than the install the card holds now, or one that touched no channel.
+ *
+ * @param rejoin - The card's latest re-join, when a renewal made one.
+ * @param employee - The employee's name.
+ * @param installedAt - When the card's app was last installed.
+ */
+export function rejoinWords(
+  rejoin: RejoinFacts | undefined,
+  employee: string,
+  installedAt: number | undefined,
+): string | undefined {
+  if (rejoin === undefined || (installedAt !== undefined && rejoin.at < installedAt)) {
+    return undefined;
+  }
+  const parts = [
+    ...(rejoin.joined.length > 0
+      ? [`${employee} re-joined ${channelList(rejoin.joined)} itself`]
+      : []),
+    ...(rejoin.needsPerson.length > 0
+      ? [
+          rejoin.needsPerson.length === 1
+            ? `${channelList(rejoin.needsPerson)} needs someone in it to add ${employee}`
+            : `${channelList(rejoin.needsPerson)} need someone in each to add ${employee}`,
+        ]
+      : []),
+  ];
+  if (parts.length === 0) return undefined;
+  const said = rejoin.reason === undefined ? '' : ` Slack said: ${rejoin.reason}.`;
+  return `After the renewal ${parts.join('; ')}.${said}`;
+}
+
 /**
  * The move off a pasted key a card offers at its renewal once IT has connected its system (A27;
  * the access plan, section 8 step 8): whom it would act as instead, and that the key keeps working

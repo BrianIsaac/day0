@@ -627,6 +627,42 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(ended).not.toContain('Ask IT to connect Linear');
   });
 
+  it("says on a renewed Slack card what its bot re-joined and what needs a person (11-AC's item 5)", (): void => {
+    const renewed = {
+      ...SLACK_CARD,
+      verdict: 'connected' as const,
+      credentialLanded: true,
+      credentialId: 'cred-bot' as ListedSurface['credentialId'],
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 80 * DAY,
+      actsAs: { kind: 'own-app' as const, label: 'Maya (Day0)' },
+      provisioning: {
+        appId: 'A1',
+        appName: 'Maya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: 'cred-secret',
+        installUrl: 'https://slack.test/install',
+        redirectUrl: 'https://day0.test/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      } as ListedSurface['provisioning'],
+      lastRejoin: { joined: ['#revops'], needsPerson: ['#revops-leads'], at: 3 },
+    };
+    const markup = render(listed(renewed), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    expect(markup).toContain(
+      'After the renewal Maya re-joined #revops itself; #revops-leads needs someone in it to add Maya.',
+    );
+    const ended = render(listed({ ...renewed, credentialId: undefined }), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    expect(ended).not.toContain('After the renewal');
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);

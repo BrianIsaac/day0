@@ -39,6 +39,7 @@ import {
   slackChannelsGoWords,
   identityChip,
   reachedWords,
+  rejoinWords,
   stateChip,
   type OrganisationSystem,
 } from './card-words';
@@ -276,6 +277,11 @@ export function SurfaceCard({
     surface.channelsNotJoined,
     provisioning?.appName,
   );
+  // The renewal's re-join, while the card holds the token that renewal installed (11-AC's item 5).
+  const rejoined =
+    surface.credentialId === undefined
+      ? undefined
+      : rejoinWords(surface.lastRejoin, context.employeeName, provisioning?.installedAt);
   const reached = reachedWords(surface.path);
   const approvedAt = surface.verdict === 'proposed' ? undefined : surface.managerApprovedAt;
   const proposal = request ? <ProposalFacts request={request} surface={surface} /> : null;
@@ -381,6 +387,13 @@ export function SurfaceCard({
         ) : null}
         {channelsNotJoined ? (
           <p className="text-sm text-[var(--color-warn)]">{channelsNotJoined}</p>
+        ) : null}
+        {rejoined ? (
+          <p
+            className={`text-sm ${surface.lastRejoin?.needsPerson.length ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg-2)]'}`}
+          >
+            {rejoined}
+          </p>
         ) : null}
         {/* A proposed card says it beside its disabled Approve instead. */}
         {browserFloor.absent && surface.verdict !== 'proposed' ? (

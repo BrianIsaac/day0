@@ -39,6 +39,7 @@ import { cardPageRefs } from '../src/docs/card-pages';
 import { PROBE_LEASE_MS, probeInFlight } from '../src/surfaces/probe-lease';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import { latestRejoins, type LastRejoin } from './channelRejoins';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
@@ -265,6 +266,8 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    * manager's words (D D4). Absent while every value is still stated.
    */
   readonly scopeChange?: string;
+  /** The latest re-join a Slack renewal made for the card (11-AC's item 5; `latestRejoins`). */
+  readonly lastRejoin?: LastRejoin;
 }
 
 /**
@@ -401,6 +404,7 @@ export const listForAgent = query({
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .take(CARD_SURFACE_LIMIT);
     const identities = await identitiesOf(ctx, surfaces);
+    const rejoins = await latestRejoins(ctx, args.agentId);
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
@@ -421,6 +425,7 @@ export const listForAgent = query({
           : undefined;
       const identity = identities.get(surface._id);
       if (identity === undefined) throw new Error('A listed card has no identity read.');
+      const rejoin = rejoins.get(surface._id);
       const { pendingAuthorisation, ...card } = listed;
       return {
         ...card,
@@ -435,6 +440,7 @@ export const listForAgent = query({
         ...identity,
         ...(refused === undefined ? {} : { approvalRefusal: refused }),
         ...(scopeChange === undefined ? {} : { scopeChange }),
+        ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
       };
     });
   },
