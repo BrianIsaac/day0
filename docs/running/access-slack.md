@@ -133,6 +133,15 @@ for as long as Day0 keeps renewing it; once Day0 has renewed the pair, the one
 you generated is spent. An administrator rotates or revokes the connection on
 Day0's organisation page.
 
+A revoke, and a rotation, revokes the configuration token Day0 held at Slack
+(`auth.revoke`), which ends that token alone: its refresh token stays usable
+at Slack by whoever holds it, and Slack offers no call that ends a refresh
+token. So after a revoke, IT signs in to <https://api.slack.com/apps> as the
+service account and, under **Your App Configuration Tokens**, deletes the
+workspace's row: deleting it ends the pair. The connection's ledger on the
+organisation page says the same after each revoke, and tells a token Day0
+revoked from one Slack had already ended.
+
 ## 6. What to hand to the setup verb
 
 The verb asks for both values in hidden prompts:
