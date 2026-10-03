@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -146,6 +148,24 @@ describe('the validators a Convex backend reads at the push', (): void => {
     expect(
       ['oneToOne', '_id', '_creationTime', 'a'.repeat(64), 'snake_case2'].flatMap((name) =>
         refusedFieldNames(shape(name), 'x'),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('the generated api a push writes', (): void => {
+  it("lists every module the backend serves, as code generation would (the round review's m18)", (): void => {
+    const convex = join(__dirname, '../../convex');
+    const generated = readFileSync(join(convex, '_generated/api.d.ts'), 'utf8');
+    // Code generation skips the schema and the config files, whose names carry a second dot.
+    const modules = readdirSync(convex)
+      .filter((name) => name.endsWith('.ts') && name !== 'schema.ts' && !/\..*\./.test(name))
+      .map((name) => name.slice(0, -'.ts'.length));
+    expect(
+      modules.filter(
+        (module) =>
+          !generated.includes(`import type * as ${module} from '../${module}.js';`) ||
+          !generated.includes(`  ${module}: typeof ${module};`),
       ),
     ).toEqual([]);
   });

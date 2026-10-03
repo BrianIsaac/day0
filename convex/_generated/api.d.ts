@@ -83,6 +83,7 @@ import type * as slackProvision from '../slackProvision.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
 import type * as sourceRevocation from '../sourceRevocation.js';
 import type * as sourceRevocationActions from '../sourceRevocationActions.js';
+import type * as sourceRevocationSend from '../sourceRevocationSend.js';
 import type * as storedVerification from '../storedVerification.js';
 import type * as surfaceActions from '../surfaceActions.js';
 import type * as surfaceReopen from '../surfaceReopen.js';
@@ -177,6 +178,7 @@ declare const fullApi: ApiFromModules<{
   slackProvisionActions: typeof slackProvisionActions;
   sourceRevocation: typeof sourceRevocation;
   sourceRevocationActions: typeof sourceRevocationActions;
+  sourceRevocationSend: typeof sourceRevocationSend;
   storedVerification: typeof storedVerification;
   surfaceActions: typeof surfaceActions;
   surfaceReopen: typeof surfaceReopen;
