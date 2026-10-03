@@ -63,6 +63,12 @@ function drafted(
 
 const READ = drafted(
   'read-and-answer',
+  "Where is the team's onboarding guide kept?",
+  'Aman asked: "Where is it?"',
+);
+/** A read-and-answer item that shares no word with the role, so the scope rule would skip it. */
+const UNTIED_READ = drafted(
+  'read-and-answer',
   'Where is the onboarding guide kept?',
   'Aman asked: "Where is it?"',
 );
@@ -136,7 +142,7 @@ describe('the out-of-scope item the generator drafts (round 0141 R-D item 2)', (
     const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
     expect(prompts).toHaveLength(GENERATION_ATTEMPTS);
     expect(items.map((item) => item.title)).toEqual([
-      'Where is the onboarding guide kept?',
+      "Where is the team's onboarding guide kept?",
       'Close out the routine tickets this week',
     ]);
   });
@@ -180,5 +186,30 @@ describe('the role words the out-of-scope item avoids (round 0141 R-D item 2, th
     expect(prompts[0]).toContain(
       'The out-of-scope item uses none of these words from the role and its duties: pipeline, hygiene, sales, team, close, routine, tickets, queue.',
     );
+  });
+});
+
+describe('the in-scope items the generator drafts (round 0141 R-D item 1, the second pass)', (): void => {
+  it('asks again when a read or action item shares no word with the role, which the scope rule would skip', async (): Promise<void> => {
+    drafts.push([UNTIED_READ, ACTION, PLAIN_OUT_OF_SCOPE], [READ, ACTION, PLAIN_OUT_OF_SCOPE]);
+    const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The read-and-answer item in your last draft shares no word with the role and its duties',
+    );
+    expect(items.map((item) => item.title)).toContain("Where is the team's onboarding guide kept?");
+  });
+
+  it('keeps an in-scope item that still shares no word after every draft, never leaving it out', async (): Promise<void> => {
+    for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+      drafts.push([UNTIED_READ, ACTION, PLAIN_OUT_OF_SCOPE]);
+    }
+    const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(items).toHaveLength(3);
+  });
+
+  it('no longer asks the model to make the mismatch of the out-of-scope item clear', (): void => {
+    expect(WORK_GEN_SYSTEM).not.toMatch(/make the mismatch clear/i);
+    expect(WORK_GEN_SYSTEM).toContain('the item itself never says so');
   });
 });

@@ -24,9 +24,11 @@ import type { MockSurfaceSnapshot } from '../work/types';
  * Mock mode judges scope on the item's own words (`sharedCharterWords`): one
  * word of the role or its willDo clauses places an item in the job. So an
  * out-of-scope item that shares one, typically a sentence comparing the
- * request with the role, would be judged the role's work and wait on a skill.
- * The generator asks again, naming the shared words, and leaves the item out
- * if every draft still shares one.
+ * request with the role, would be judged the role's work and wait on a skill,
+ * and a read or action item that shares none would be skipped. The generator
+ * names the role's words up front, asks again for a draft that reads against
+ * its purposes, and leaves out an out-of-scope item that still shares a word
+ * after every draft.
  */
 
 export const WORK_GEN_SYSTEM = [
@@ -43,7 +45,7 @@ export const WORK_GEN_SYSTEM = [
   '',
   'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s willDo as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
   '',
-  "3. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. May or may not reference an existing surface.",
+  '3. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its willDo leaves out or its willNotDo excludes, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
@@ -134,21 +136,51 @@ interface RoleReading {
   readonly words: readonly string[];
 }
 
-/** The out-of-scope items in a draft that share a word with the charter's role or willDo. */
-function readAsTheRole(items: readonly DraftedWorkItem[], charter: Charter): RoleReading[] {
-  return items
-    .filter((item) => item.purpose === 'out-of-scope')
-    .map((item) => ({ item, words: sharedCharterWords(item, charter) }))
-    .filter((reading) => reading.words.length > 0);
+/**
+ * How a draft reads against the scope rule mock mode judges by (`sharedCharterWords`): the
+ * out-of-scope items that share a word with the role, which would be judged its work, and the
+ * read-and-answer and action items that share none, which would be skipped.
+ */
+interface DraftReading {
+  readonly asTheRole: readonly RoleReading[];
+  readonly untied: readonly DraftedWorkItem[];
 }
 
-/** What the next draft is told about the last one's out-of-scope item. */
-function askAgain(readings: readonly RoleReading[]): string {
-  const words = [...new Set(readings.flatMap((reading) => reading.words))].join(', ');
-  return [
-    `The out-of-scope item in your last draft shares these words with the charter's role and duties, so it reads as this role's work: ${words}.`,
-    'Draft all three items again. The out-of-scope request uses none of those words and never compares itself with the role: it is only the request as its sender wrote it.',
-  ].join(' ');
+function readDraft(items: readonly DraftedWorkItem[], charter: Charter): DraftReading {
+  return {
+    asTheRole: items
+      .filter((item) => item.purpose === 'out-of-scope')
+      .map((item) => ({ item, words: sharedCharterWords(item, charter) }))
+      .filter((reading) => reading.words.length > 0),
+    untied: items.filter(
+      (item) => item.purpose !== 'out-of-scope' && sharedCharterWords(item, charter).length === 0,
+    ),
+  };
+}
+
+/** Whether a draft reads against the scope rule as its purposes say. */
+function readsAsIntended(reading: DraftReading): boolean {
+  return reading.asTheRole.length === 0 && reading.untied.length === 0;
+}
+
+/** What the next draft is told about the last one's items that read against their purpose. */
+function askAgain(reading: DraftReading): string {
+  const lines: string[] = [];
+  if (reading.asTheRole.length > 0) {
+    const words = [...new Set(reading.asTheRole.flatMap((one) => one.words))].join(', ');
+    lines.push(
+      `The out-of-scope item in your last draft shares these words with the charter's role and duties, so it reads as this role's work: ${words}.`,
+    );
+  }
+  for (const item of reading.untied) {
+    lines.push(
+      `The ${item.purpose} item in your last draft shares no word with the role and its duties, so it reads as another role's work: word it in the charter's own terms.`,
+    );
+  }
+  lines.push(
+    "Draft all three items again. The out-of-scope request uses none of the role's words and never compares itself with the role: it is only the request as its sender wrote it.",
+  );
+  return lines.join(' ');
 }
 
 function withoutPurpose(item: DraftedWorkItem): GeneratedWorkItem {
@@ -199,17 +231,20 @@ export async function generateWorkItemsFromCharter(
     });
   let draft = await ask(brief);
   for (let attempt = 1; attempt < GENERATION_ATTEMPTS; attempt += 1) {
-    const readings = readAsTheRole(draft.items, charter);
-    if (readings.length === 0) return draft.items.map(withoutPurpose);
-    draft = await ask(`${brief}\n\n${askAgain(readings)}`);
+    const reading = readDraft(draft.items, charter);
+    if (readsAsIntended(reading)) return draft.items.map(withoutPurpose);
+    draft = await ask(`${brief}\n\n${askAgain(reading)}`);
   }
-  const readings = readAsTheRole(draft.items, charter);
-  if (readings.length > 0) {
+  // The last draft is taken as it reads, but for an out-of-scope item that still reads as the
+  // role's work, which is left out rather than queued as the role's work with a skill to approve.
+  // An in-scope item is never left out: the queue keeps its read and its action.
+  const reading = readDraft(draft.items, charter);
+  if (reading.asTheRole.length > 0) {
     log.warn('mock work generator left out an out-of-scope item that reads as the role', {
       attempts: GENERATION_ATTEMPTS,
-      words: readings.flatMap((reading) => reading.words),
+      words: reading.asTheRole.flatMap((one) => one.words),
     });
   }
-  const leftOut = new Set(readings.map((reading) => reading.item));
+  const leftOut = new Set(reading.asTheRole.map((one) => one.item));
   return draft.items.filter((item) => !leftOut.has(item)).map(withoutPurpose);
 }
