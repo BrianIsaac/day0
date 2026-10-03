@@ -5,7 +5,11 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schemaModule from '../../convex/schema';
-import { HANDOVER_REAPPROVE_REASON } from '../../convex/surfaces';
+import {
+  HANDOVER_CUT_REPROPOSE_REASON,
+  HANDOVER_REAPPROVE_REASON,
+  KEPT_IDENTITY_ENDED_REASON,
+} from '../../convex/surfaces';
 import { KEPT_IDENTITY_WAIT_MS } from '../../src/agent/manager-transfer';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -241,5 +245,22 @@ describe('a kept identity its new manager has not approved again (the review’s
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the words the sweep knows a kept card by (the round review's m16)", (): void => {
+  it('pins the two reasons the sweep matches, since an edit leaves every card written with the old words unswept', (): void => {
+    expect(HANDOVER_REAPPROVE_REASON).toBe(
+      "Handed over to a new manager: approve this connection again. It keeps acting as the employee's own identity, so there is no credential to land.",
+    );
+    expect(HANDOVER_CUT_REPROPOSE_REASON).toBe(
+      "Handed over to a new manager: the address the previous manager's documentation gave for this connection did not come with it. Reject this card, then propose it again from your own documentation.",
+    );
+  });
+
+  it('says the wait the sweep keeps, in days', (): void => {
+    expect(KEPT_IDENTITY_ENDED_REASON).toContain(
+      `within ${KEPT_IDENTITY_WAIT_MS / (24 * 60 * 60 * 1000)} days`,
+    );
   });
 });
