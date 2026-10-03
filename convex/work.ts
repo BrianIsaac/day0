@@ -970,12 +970,20 @@ export const seedCharterDerived = internalMutation({
   },
 });
 
+/** Why a listing is not written: the employee is gone or changed owner while the poll read its queue. */
+export const LISTING_AFTER_HANDOVER =
+  'the employee was handed over to a new manager, or retired, while this poll read its queue';
+
 /**
  * Bring the row of a ticket intake refused on this poll up to the listing
- * and withdraw it when it is only waiting. Internal; called by intake. A
- * ticket with no row gets none.
+ * and withdraw it when it is only waiting, while the employee is still the
+ * owner the poll read it under. Internal; called by intake. A ticket with no
+ * row gets none. A refused withdraw throws, as a refused seed does, so the
+ * sweep holds its checkpoint and the new owner's first poll reads the ticket
+ * (the wave 10 review's FR-m4).
  *
  * @returns The ticket's row, or null when it never had one.
+ * @throws Error with {@link LISTING_AFTER_HANDOVER} for an employee that is gone or another owner's.
  */
 export const withdrawListedItem = internalMutation({
   args: {
@@ -983,8 +991,17 @@ export const withdrawListedItem = internalMutation({
     ...workItemSeedFields,
     leftQueue: v.string(),
     tracker: v.optional(trackerSnapshot),
+    /** The employee's owner key when the sweep read it; null for an employee with none. */
+    startedUnder: v.union(v.string(), v.null()),
   },
-  handler: async (ctx, { leftQueue, tracker, ...listed }): Promise<Id<'workItems'> | null> => {
+  handler: async (
+    ctx,
+    { leftQueue, tracker, startedUnder, ...listed },
+  ): Promise<Id<'workItems'> | null> => {
+    const agent = await ctx.db.get(listed.agentId);
+    if (agent === null || (agent.userId ?? null) !== startedUnder) {
+      throw new Error(LISTING_AFTER_HANDOVER);
+    }
     const existing = await listedRow(ctx, listed);
     if (!existing) return null;
     await refreshListedItem(ctx, existing, listed, leftQueue);
