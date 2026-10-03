@@ -2934,7 +2934,7 @@ export const disconnect = mutation({
 });
 
 /** The most cards one organisation connection's revoke ends in its transaction. */
-const CONNECTION_CARD_LIMIT = 1_000;
+export const CONNECTION_CARD_LIMIT = 1_000;
 
 /**
  * End every card on an organisation connection the administrator revoked (11-AR for 11-AO's

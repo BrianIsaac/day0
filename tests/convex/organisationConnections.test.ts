@@ -523,6 +523,51 @@ describe('rotating and revoking an organisation connection', (): void => {
   });
 });
 
+describe("how many cards a revoke ends (11-AC's item 3)", (): void => {
+  it('counts the cards on a connection for an administrator, naming none, and refuses a manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await harness.action(
+      internal.organisationConnections.landFromSetup,
+      SLACK,
+    );
+    await harness.run(async (ctx) => {
+      for (const name of ['Maya', 'Leo']) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'sam@acme.test',
+          name,
+          userId: 'sam',
+          state: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          organisationConnectionId: connectionId,
+          createdAt: 1,
+        });
+      }
+    });
+
+    await expect(
+      harness
+        .withIdentity(INES)
+        .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+    ).resolves.toEqual({ cards: 2, atLeast: false });
+    expect(
+      await refusalOf(
+        harness
+          .withIdentity(SAM)
+          .query(api.organisationConnections.cardsOn, { organisationConnectionId: connectionId }),
+      ),
+    ).toBe(NOT_AN_ADMINISTRATOR);
+  });
+});
+
 describe("Slack's configuration token is kept current from its landing (the review's m9)", (): void => {
   /** The renewals queued for the organisation's configuration token, as the scheduler holds them. */
   async function renewals(

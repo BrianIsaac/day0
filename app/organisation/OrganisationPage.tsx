@@ -247,10 +247,14 @@ function RevokeDialog({
   onRevoked: () => void;
 }) {
   const revoke = useMutation(api.organisationConnections.revoke);
+  // How many cards it ends (11-AC's item 3): until the count answers, the words say every card.
+  const counted = useQuery(api.organisationConnections.cardsOn, {
+    organisationConnectionId: connection._id as Id<'organisationConnections'>,
+  });
   const keep = useRef<HTMLButtonElement>(null);
   const change = useChange(keep);
   const [reason, setReason] = useState('');
-  const [first, ...rest] = revokeLines(connection);
+  const [first, ...rest] = revokeLines(connection, counted ?? undefined);
   const ready = reason.trim() !== '' && !change.busy;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();

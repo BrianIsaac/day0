@@ -17,7 +17,7 @@ import { purgeCredential } from './credentials';
 import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { assertAdministrator, callerIsAdministrator, getCallerOrThrow } from './ownership';
-import { endCardsOnConnection } from './surfaces';
+import { CONNECTION_CARD_LIMIT, endCardsOnConnection } from './surfaces';
 import { log } from '../src/lib/logger';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import {
@@ -912,6 +912,30 @@ export const revoke = mutation({
     const { address } = await assertAdministrator(ctx);
     await revokeConnection(ctx, args, { via: 'organisation-page', address });
     return null;
+  },
+});
+
+/**
+ * How many employee cards a revoke of the connection would end (11-AC's item 3), for the revoke's
+ * confirmation: a count and nothing else, so no employee or card is named to an administrator (B8).
+ * `atLeast` says the cards are more than one revoke ends (`CONNECTION_CARD_LIMIT`), which the
+ * revoke refuses. Public, guarded by `assertAdministrator`; writes nothing.
+ */
+export const cardsOn = query({
+  args: { organisationConnectionId: v.id('organisationConnections') },
+  returns: v.object({ cards: v.number(), atLeast: v.boolean() }),
+  handler: async (ctx, args): Promise<{ cards: number; atLeast: boolean }> => {
+    await assertAdministrator(ctx);
+    const cards = await ctx.db
+      .query('surfaces')
+      .withIndex('by_organisation_connection', (q) =>
+        q.eq('organisationConnectionId', args.organisationConnectionId),
+      )
+      .take(CONNECTION_CARD_LIMIT + 1);
+    return {
+      cards: Math.min(cards.length, CONNECTION_CARD_LIMIT),
+      atLeast: cards.length > CONNECTION_CARD_LIMIT,
+    };
   },
 });
 
