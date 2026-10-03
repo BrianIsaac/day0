@@ -33,6 +33,7 @@ import type * as handoverFence from '../handoverFence.js';
 import type * as intakeActions from '../intakeActions.js';
 import type * as intakeIdentity from '../intakeIdentity.js';
 import type * as intakeSeed from '../intakeSeed.js';
+import type * as keptIdentities from '../keptIdentities.js';
 import type * as linearIdentity from '../linearIdentity.js';
 import type * as linearIdentityActions from '../linearIdentityActions.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
@@ -122,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   intakeActions: typeof intakeActions;
   intakeIdentity: typeof intakeIdentity;
   intakeSeed: typeof intakeSeed;
+  keptIdentities: typeof keptIdentities;
   linearIdentity: typeof linearIdentity;
   linearIdentityActions: typeof linearIdentityActions;
   managerChannelActions: typeof managerChannelActions;

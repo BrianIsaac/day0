@@ -3196,6 +3196,44 @@ export const HANDOVER_CREDENTIAL_LOCATION =
 export const HANDOVER_REAPPROVE_REASON =
   "Handed over to a new manager: approve this connection again. It keeps acting as the employee's own identity, so there is no credential to land.";
 
+/**
+ * Why a card whose kept identity ended unapproved is in `proposed` with no credential, on the card
+ * (the wave 11 review's m8): the new manager approves it and connects it afresh.
+ */
+export const KEPT_IDENTITY_ENDED_REASON =
+  'Handed over and not approved again within 14 days, so the identity it kept was ended: approve this connection, then connect it again.';
+
+/**
+ * End the identity a handover kept on a card the new manager has not approved again within the
+ * wait (`KEPT_IDENTITY_WAIT_MS`; A25, the wave 11 review's m8), in the caller's transaction: what
+ * Day0 obtained is revoked at the vendor with the `transfer` end and the system's ledger line, as a
+ * Disconnect revokes it, and the card keeps its app and waits at `proposed` with no credential and
+ * no identity, for an approval that connects it afresh.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param surface - A `proposed` card holding the identity a handover kept.
+ * @param now - When the wait was found passed.
+ */
+export async function endKeptIdentity(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  await endOwnCredentialAtSource(ctx, surface, 'transfer', now);
+  await ctx.db.patch(surface._id, {
+    reason: KEPT_IDENTITY_ENDED_REASON,
+    credentialId: undefined,
+    credentialKind: undefined,
+    credentialLocation: undefined,
+    credentialLanded: false,
+    providerIdentityId: undefined,
+    actsAs: undefined,
+    lastVerifiedAt: undefined,
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
+  });
+}
+
 /** The most surfaces one employee's handover reads, the card's own bound. */
 const HANDOVER_SURFACE_LIMIT = CARD_SURFACE_LIMIT;
 

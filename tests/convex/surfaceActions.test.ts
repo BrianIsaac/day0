@@ -1468,6 +1468,7 @@ describe('the hourly re-probe sweep', (): void => {
       expired: 1,
       noticed: 1,
       scheduled: 2,
+      keptEnded: 0,
     });
 
     const rows = await harness.run(async (ctx) => ({
