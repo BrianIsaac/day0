@@ -53,13 +53,11 @@ export const LINEAR_MCP_REVOKED_TOKEN_ERROR =
   'Failed to connect to MCP server surface: Error: Error POSTing to endpoint: {"error":"invalid_token","error_description":"Invalid access token"}';
 
 /**
- * Linear's GraphQL refusal of a ticket delegated or assigned to an app user whose live token lacks
- * `app:assignable` (decision 5), as the walk quotes it (`INPUT_ERROR`, 400 in-band).
+ * The MCP client's text for a Linear read that could not connect, 36 seconds after a passing probe
+ * on the same token (R41V-5, once), as the walk quotes it.
  */
-export const LINEAR_APP_USER_LACKS_CAPABILITY = {
-  message: 'App user not valid',
-  userPresentableMessage: 'One or more app users lack the required capability.',
-} as const;
+export const LINEAR_MCP_TRANSPORT_ERROR =
+  'Failed to connect to MCP server linear: Error: Could not connect to server with any available HTTP transport';
 
 /** Slack `auth.revoke` of a live configuration access token (R41V-10): `{"ok":true,"revoked":true}`. */
 export const SLACK_CONFIGURATION_REVOKED: WalkAnswer = {

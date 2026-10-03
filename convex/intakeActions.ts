@@ -2061,19 +2061,17 @@ export async function runIntakeSweep(
         if (unseeded.length > 0) skipped += 1;
         else polled += 1;
       } catch (error) {
+        const own = safeIntakeError(error, credential);
+        // The card says what the failure means; the provider's own line stays in the log.
+        log.warn('intake poll failed', { surfaceId: surface._id, reason: own });
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          skipReason: `intake failed: ${
-            isTimedOut(error)
-              ? PROVIDER_DID_NOT_ANSWER
-              : intakeFailureWords({
-                  system: surface.displayName,
-                  error,
-                  credential,
-                  fallback: 'Provider intake failed.',
-                })
-          }`,
+          skipReason: `intake failed: ${intakeFailureWords({
+            system: surface.displayName,
+            error,
+            otherwise: () => own,
+          })}`,
         });
         skipped += 1;
       } finally {
