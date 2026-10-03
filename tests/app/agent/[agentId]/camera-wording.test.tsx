@@ -79,7 +79,7 @@ describe('a plan drafted before autonomous actions were turned on', (): void => 
     expect(markup).toContain(
       'after this plan was drafted; 3 of its 4 actions were applied under it.',
     );
-    expect(markup).toContain('4 changes reached the work environment · 3 applied autonomously');
+    expect(markup).toContain('4 actions reached the work environment · 3 applied autonomously');
   });
 
   it('says nothing on a run the manager approved by hand', (): void => {
@@ -112,7 +112,7 @@ describe('the note typed for a retry', (): void => {
 
   it('leaves the finished card without a reconciliation checklist nobody owes', (): void => {
     const markup = card(aiko, [], false);
-    expect(markup).toContain('2 changes reached the work environment');
+    expect(markup).toContain('2 actions reached the work environment');
     expect(markup).not.toContain('Provider reconciliation required');
     expect(markup).not.toContain('Retry remains disabled');
   });

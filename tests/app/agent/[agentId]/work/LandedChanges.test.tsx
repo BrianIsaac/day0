@@ -22,7 +22,7 @@ describe('what reached the work environment', (): void => {
         decided="approved from Slack"
       />,
     );
-    expect(markup).toContain('1 change reached the work environment</span> · approved from Slack');
+    expect(markup).toContain('1 action reached the work environment</span> · approved from Slack');
     expect(markup).toContain('<span class="sr-only">Landed: </span>Commented on REVOPS-5');
     // The words say what happened; the transport's name is not repeated beneath them.
     expect(markup).not.toContain('linear.save_comment');

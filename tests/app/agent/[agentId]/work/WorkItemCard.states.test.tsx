@@ -302,7 +302,7 @@ describe('landed (work-landed.html)', (): void => {
     const view = card(DRAWN.landed);
     expect(chip(view.container)).toBe('Landed');
     expect(view.text()).toContain(
-      '3 changes reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
+      '3 actions reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
     );
     expect(view.text()).toContain('Landed: Replied in #revops-asks');
     const send = (): HTMLButtonElement | undefined =>
@@ -354,7 +354,7 @@ describe('landed (work-landed.html)', (): void => {
 describe('landed partial (work-landed-partial.html)', (): void => {
   it('keeps the withheld action in the record beside what landed', (): void => {
     const view = card(DRAWN.landedPartial);
-    expect(view.text()).toContain('2 changes reached the work environment · 1 withheld by you');
+    expect(view.text()).toContain('2 actions reached the work environment · 1 withheld by you');
     expect(view.text()).toContain('Not sent: Comment on REVOPS-202');
     expect(view.text()).toContain('withheld by you; never sent, kept in the record');
   });
