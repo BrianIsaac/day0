@@ -9046,7 +9046,8 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
     // item is new work, not refused for good. The claim is a write target, settled at the end.
     await expect(
       harness.mutation(internal.work.claimLoopStep, { workItemId: listed, step: 'evaluation' }),
-    ).resolves.not.toMatchObject({ reason: 'held-elsewhere' });
+    ).resolves.toMatchObject({ claimed: true });
+    expect((await readItem(harness, listed)).verdict).toBeUndefined();
     expect(
       (await harness.run(async (ctx) => await ctx.db.query('externalClaims').collect())).find(
         (claim) => claim.key === 'linear:REVOPS-9',
