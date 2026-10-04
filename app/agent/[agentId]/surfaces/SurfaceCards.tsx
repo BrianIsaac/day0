@@ -297,7 +297,7 @@ export function SurfaceCards({
             );
           },
           {
-            done: `The app-level token is stored: new requests to you through ${surface.displayName} carry Approve and Reject buttons.`,
+            done: `The app-level token is stored; new requests to you through ${surface.displayName} carry Approve and Reject buttons.`,
             refused: 'The app-level token was not stored.',
           },
         ),

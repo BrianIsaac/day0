@@ -409,7 +409,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'Decisions in Slack: buttons are on while the Slack socket service runs',
     );
     expect(words.note).toBe(
-      'Each new request to you arrives with Approve and Reject buttons and a typed code; either one decides it, and the typed code decides it whenever a press cannot reach Day0.',
+      'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -453,7 +453,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     );
     expect(words.title).toBe('Buttons: needs the Slack socket service');
     expect(words.note).toBe(
-      "This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for Mateo (Day0)'s app-level token.",
+      'This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of Mateo (Day0).',
     );
     expect(words.asksForToken).toBe(false);
   });

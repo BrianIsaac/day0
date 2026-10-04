@@ -180,7 +180,7 @@ export function CharterCard({
             <Link href={employeeTabHref(charter.agentId, 'work')} className={INLINE_LINK}>
               Open Work
             </Link>{' '}
-            to start {name} on its queue.
+            to start {name} on the queue; items move on while that page is open.
           </p>
         ) : null}
         {charter.approved ? (

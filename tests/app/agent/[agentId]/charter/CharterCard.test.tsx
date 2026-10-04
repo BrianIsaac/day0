@@ -423,9 +423,9 @@ describe("the synthesiser's notes on the charter card", (): void => {
         <CharterCard charter={charter} name="Priya" pageDrivesWork={pageDrivesWork} />,
       );
     expect(shown(true)).toMatch(
-      /<a[^>]*href="\/agent\/agent-1\/work"[^>]*>Open Work<\/a> to start Priya on its queue\./,
+      /<a[^>]*href="\/agent\/agent-1\/work"[^>]*>Open Work<\/a> to start Priya on the queue; items move on while that page is open\./,
     );
-    expect(shown(false)).not.toContain('to start Priya on its queue');
+    expect(shown(false)).not.toContain('to start Priya on the queue');
   });
 
   it('shows each note under the rules and offers no answer box for it', (): void => {

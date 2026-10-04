@@ -193,7 +193,7 @@ describe('what a pause holds, in both halves (W12-R5, W12-R31)', (): void => {
       half.split('\n').find((text) => text.startsWith(`./setup.sh ${verb} `)) ?? '';
     expect(line(english, 'pause')).toContain('queued work steps hold until unpause');
     expect(line(english, 'unpause')).toContain('held work steps go on');
-    expect(line(chinese, 'pause')).toContain('排队的工作步骤都停住');
+    expect(line(chinese, 'pause')).toContain('排队的工作步骤会停住');
     expect(line(chinese, 'unpause')).toContain('停住的工作步骤继续');
   });
 });

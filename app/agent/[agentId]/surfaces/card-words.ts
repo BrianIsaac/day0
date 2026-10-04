@@ -567,7 +567,7 @@ export function decisionButtonsWords(
       // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
       // before the token landed keeps its typed code alone (W12-R10).
       title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
-      note: 'Each new request to you arrives with Approve and Reject buttons and a typed code; either one decides it, and the typed code decides it whenever a press cannot reach Day0.',
+      note: 'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
       asksForToken: false,
       offersReplacement: true,
     };
@@ -591,7 +591,7 @@ export function decisionButtonsWords(
         'Buttons: needs the Slack socket service',
         buttons.tokenStored
           ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
-          : `This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for ${app}'s app-level token.`,
+          : `This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of ${app}.`,
       );
     case 'no-own-app':
       return typedOnly(

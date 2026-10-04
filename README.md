@@ -1750,7 +1750,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 ./setup.sh backup                  # 把数据卷备份到 ~/day0-backups/<project>/，附带校验和与清单
 ./setup.sh restore <file>          # 把该备份恢复到本项目，然后 resume；除非加 --yes，否则先询问
 ./setup.sh upgrade                 # git pull 之后：先备份，再 pnpm install --frozen-lockfile，然后 resume
-./setup.sh pause                   # 每个定时任务都跳过、排队的工作步骤都停住，直到 unpause；stack 保持运行
+./setup.sh pause                   # 每个定时任务都会跳过，排队的工作步骤会停住，直到 unpause；stack 保持运行
 ./setup.sh unpause                 # 每个定时任务在下一次轮到时恢复运行，停住的工作步骤继续
 ```
 

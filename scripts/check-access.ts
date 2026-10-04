@@ -774,14 +774,14 @@ async function reachCheck(
 function mismatchedTokenWords(names: readonly string[]): string {
   if (names.length === 1) {
     return (
-      `${names[0]}'s card holds the app-level token of another app: generate the token in that ` +
-      "employee's own app and land it on its card again."
+      `${names[0]}'s card holds the app-level token of another app: generate a token in its own ` +
+      'app and land it on that card again.'
     );
   }
   const listed = `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
   return (
-    `The cards of ${listed} each hold the app-level token of another app: generate each token in ` +
-    "that employee's own app and land it on its card again."
+    `The cards of ${listed} each hold the app-level token of another app: generate a token in ` +
+    "each card's own app and land it on that card again."
   );
 }
 
