@@ -1856,6 +1856,102 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     expect(recorded.skillRuns).toEqual([]);
   });
 
+  /** An employee with a held public post asked for, its plan approved and run: `actions-pending`. */
+  async function heldWrite(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    pendingRunId: Id<'events'>;
+  }> {
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'slack:write', createdAt: 1 });
+    });
+    recorded.skillOutput = publicPost;
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-90');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await drain(harness);
+    const row = await readItem(harness, workItemId);
+    if (row.state !== 'actions-pending' || !row.pendingRunId) throw new Error('no held write');
+    return { agentId, workItemId, pendingRunId: row.pendingRunId };
+  }
+
+  async function appliesQueued(harness: Harness): Promise<number> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter(
+      (job) => job.name === 'workActions:applyApprovedActions' && job.state.kind === 'pending',
+    ).length;
+  }
+
+  it('ends the apply recovery timer’s chain while paused instead of rescheduling the held set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, pendingRunId } = await heldWrite(harness);
+    await pause(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId,
+      approvedIndexes: [0],
+    });
+    expect(await appliesQueued(harness)).toBe(0);
+
+    await expect(
+      harness.mutation(internal.work.recoverInterruptedApply, {
+        workItemId,
+        pendingRunId,
+        phase: 'approved',
+        fromTimer: true,
+      }),
+    ).resolves.toEqual({ recovered: 'held' });
+    expect(await appliesQueued(harness)).toBe(0);
+    expect(
+      (
+        await harness.run(
+          async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+        )
+      ).filter(
+        (job) => job.name === 'work:recoverInterruptedApply' && job.state.kind === 'pending',
+      ),
+    ).toEqual([]);
+  });
+
+  it('leaves an approved set whose apply is still queued to it, so the sweep never doubles it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, pendingRunId } = await heldWrite(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId,
+      approvedIndexes: [0],
+    });
+    expect(await appliesQueued(harness)).toBe(1);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await appliesQueued(harness)).toBe(1);
+  });
+
+  it('holds nothing in mock mode, where the page drives each step, whatever either pause says', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-91');
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { pausedAt: 5, pausedBy: 'owner' });
+      await ctx.db.patch(workItemId, { state: 'plan-approved', verdict: { decision: 'claim' } });
+      const skill = await ctx.db.query('skills').first();
+      if (!skill) throw new Error('skill missing');
+      return skill._id;
+    });
+    await expect(
+      harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId }),
+    ).resolves.toMatchObject({ claimed: true });
+  });
+
   it("lets the manager stop a paused employee's working row", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
