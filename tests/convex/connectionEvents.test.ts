@@ -83,6 +83,24 @@ describe('the organisation connections ledger (AC11)', (): void => {
     expect(all.map((row) => row.createdAt)).toEqual([12, 11, 10]);
   });
 
+  it("reads each row by the contract's type, leaving out a row whose type it does not list (the wave 11 review's m17)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await seedLedger(harness, 1);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: connectionId,
+        type: 'organisation.something-a-later-release-writes',
+        payload: { organisationConnectionId: connectionId },
+        createdAt: 20,
+      });
+    });
+
+    const read = await harness.withIdentity(INES).query(api.connectionEvents.forAdministrator, {});
+    expect(read.map((row) => [row.type, row.createdAt])).toEqual([
+      ['organisation.connection-rotated', 10],
+    ]);
+  });
+
   it('bounds the read to the newest lines', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedLedger(harness, connectionEvents.LEDGER_READ_LIMIT + 2);

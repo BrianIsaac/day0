@@ -1,11 +1,12 @@
 import { v } from 'convex/values';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { query, type MutationCtx } from './_generated/server';
 import { assertAdministrator } from './ownership';
-import type {
-  EventPayloads,
-  ConnectionEventType,
-  NewConnectionEvent,
+import {
+  isConnectionEventType,
+  type ConnectionEventType,
+  type EventPayloads,
+  type NewConnectionEvent,
 } from '../src/events/contract';
 
 /*
@@ -48,6 +49,27 @@ export type ConnectionLedgerLine = {
 }[ConnectionEventType];
 
 /**
+ * One stored row as the contract types it, its payload that of its type (the wave 11 review's
+ * m17), or undefined for a row whose type the contract does not list. The table's `payload` is
+ * `v.any()`, as `events.payload` is; only {@link appendConnectionEvent} writes it, typed by the
+ * contract, so the row's type is the check that stands for the payload's shape, here once for
+ * every reader rather than as a cast at each field.
+ *
+ * @param row - A row of `connectionEvents`.
+ */
+export function ledgerLineOf(row: Doc<'connectionEvents'>): ConnectionLedgerLine | undefined {
+  if (!isConnectionEventType(row.type)) return undefined;
+  return {
+    _id: row._id,
+    organisationConnectionId: row.organisationConnectionId,
+    type: row.type,
+    payload: row.payload,
+    ...(row.actorAddress === undefined ? {} : { actorAddress: row.actorAddress }),
+    createdAt: row.createdAt,
+  };
+}
+
+/**
  * The organisation's ledger for its administrators: one connection's lines, or every
  * connection's, newest first and bounded to {@link LEDGER_READ_LIMIT}. Public, guarded by
  * `assertAdministrator`; writes nothing. A ledger line names a connection and an administrator's
@@ -72,18 +94,9 @@ export const forAdministrator = query({
             )
             .order('desc')
             .take(LEDGER_READ_LIMIT);
-    // Only `appendConnectionEvent` writes the table, typed by the contract, so a row's type and
-    // payload are one of its connection types and that type's payload.
-    return rows.map(
-      (row): ConnectionLedgerLine =>
-        ({
-          _id: row._id,
-          organisationConnectionId: row.organisationConnectionId,
-          type: row.type,
-          payload: row.payload,
-          ...(row.actorAddress === undefined ? {} : { actorAddress: row.actorAddress }),
-          createdAt: row.createdAt,
-        }) as ConnectionLedgerLine,
-    );
+    return rows.flatMap((row): ConnectionLedgerLine[] => {
+      const line = ledgerLineOf(row);
+      return line === undefined ? [] : [line];
+    });
   },
 });
