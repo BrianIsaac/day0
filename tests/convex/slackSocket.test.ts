@@ -224,6 +224,40 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
     expect(JSON.stringify(listed)).not.toContain('xapp-');
   });
 
+  it('lists an app however many chat cards the deployment holds before it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx): Promise<void> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'many',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index < 520; index += 1) {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: `chat-${index}`,
+          displayName: 'Chat',
+          class: 'chat',
+          verdict: 'declared',
+          whereFound: [],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+      }
+    });
+    const seeded = await seedButtonedRequest(harness);
+    const response = await harness.fetch('/slack-socket/apps', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${SECRET}` },
+      body: '{}',
+    });
+    expect(await response.json()).toEqual({
+      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS' }],
+    });
+  });
+
   it('opens one app’s connection with its app-level token and answers the URL alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness);

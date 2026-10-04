@@ -23,8 +23,11 @@ import { accessEnded } from '../src/work/surface-access';
  * network, presenting the generated secret every route checks first.
  */
 
-/** The most chat cards the bridge's list reads. */
-const BRIDGE_SCAN = 500;
+/** How many chat cards one page of the bridge's list reads. */
+const BRIDGE_PAGE = 200;
+
+/** The most pages the bridge's list reads (40,000 chat cards), so one call is bounded. */
+const BRIDGE_PAGES = 200;
 
 /** A chat card that carries presses: buttons available, connected, its access not ended. */
 function carriesPresses(surface: Doc<'surfaces'>, now: number): boolean {
@@ -38,23 +41,32 @@ function carriesPresses(surface: Doc<'surfaces'>, now: number): boolean {
 }
 
 /**
- * Internal: the apps whose presses the bridge carries, each by its card and its app id, never its
- * token: every card that can carry buttons (its own app with its app-level token) and is connected
- * with its access running.
+ * Internal: one page of the apps whose presses the bridge carries, each by its card and its app
+ * id, never its token: every card that can carry buttons (its own app with its app-level token)
+ * and is connected with its access running.
  */
 export const appsForBridge = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Array<{ surfaceId: Id<'surfaces'>; appId: string }>> => {
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    apps: Array<{ surfaceId: Id<'surfaces'>; appId: string }>;
+    cursor: string | null;
+  }> => {
     const now = Date.now();
-    const chats = await ctx.db
+    const page = await ctx.db
       .query('surfaces')
       .withIndex('by_class', (q) => q.eq('class', 'chat'))
-      .take(BRIDGE_SCAN);
-    return chats.flatMap((surface) =>
-      carriesPresses(surface, now) && surface.provisioning !== undefined
-        ? [{ surfaceId: surface._id, appId: surface.provisioning.appId }]
-        : [],
-    );
+      .paginate({ cursor: args.cursor, numItems: BRIDGE_PAGE });
+    return {
+      apps: page.page.flatMap((surface) =>
+        carriesPresses(surface, now) && surface.provisioning !== undefined
+          ? [{ surfaceId: surface._id, appId: surface.provisioning.appId }]
+          : [],
+      ),
+      cursor: page.isDone ? null : page.continueCursor,
+    };
   },
 });
 
@@ -205,7 +217,18 @@ async function bodyOf(request: Request): Promise<Record<string, unknown> | undef
 export const bridgeApps = httpAction(async (ctx, request) => {
   const refused = await refusal(request);
   if (refused !== undefined) return refused;
-  return json({ apps: await ctx.runQuery(internal.slackSocket.appsForBridge, {}) });
+  const apps: Array<{ surfaceId: Id<'surfaces'>; appId: string }> = [];
+  let cursor: string | null = null;
+  for (let read = 0; read < BRIDGE_PAGES; read += 1) {
+    const page: { apps: typeof apps; cursor: string | null } = await ctx.runQuery(
+      internal.slackSocket.appsForBridge,
+      { cursor },
+    );
+    apps.push(...page.apps);
+    cursor = page.cursor;
+    if (cursor === null) break;
+  }
+  return json({ apps });
 });
 
 /**
