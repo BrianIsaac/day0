@@ -6372,6 +6372,7 @@ export const approveActionsBatch = mutation({
     ok: true;
     approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }>;
   }> => {
+    await getCallerOrThrow(ctx);
     if (args.members.length === 0) throw new Error('a batch approves at least one item');
     const seen = new Set<string>();
     const approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> = [];

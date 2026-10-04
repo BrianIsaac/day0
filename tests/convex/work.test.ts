@@ -378,6 +378,13 @@ describe('batched decisions', (): void => {
     ).rejects.toThrow('This employee is not yours.');
   });
 
+  it('refuses a caller with no identity before it reads the batch, an empty one included (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.mutation(api.work.approveActionsBatch, { members: [] }),
+    ).rejects.toMatchObject(await guardRefusal());
+  });
+
   async function batchOnChannel(harness: Harness): Promise<{
     agentId: Id<'agents'>;
     surfaceId: Id<'surfaces'>;
