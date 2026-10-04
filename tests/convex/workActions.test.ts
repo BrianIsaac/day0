@@ -5658,11 +5658,14 @@ describe('the autonomous-actions switch through the gate', (): void => {
       }),
     ]);
     const types = (await events(harness, agentId)).map((event) => event.type);
+    // The row the gate refused was held and never sent, so the completion lists it on its own
+    // line under Refused and withheld (wave 12, the wave 6 review's D4 (b)).
     expect(types).toEqual([
       'work.execution-claimed',
       'work.actions-auto-applying',
       'work.actions-applying',
       'work.completed',
+      'work.actions-withheld',
     ]);
     expect(types).not.toContain('work.actions-pending');
     expect(
