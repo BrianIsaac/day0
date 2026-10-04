@@ -289,24 +289,30 @@ interface DecisionsReachProps {
  */
 function DecisionsReach({ reach }: DecisionsReachProps) {
   if (reach === undefined) return null;
+  // Each part stays whole, so a narrow column breaks only between the channel and the mode.
   const words =
     reach.kind === 'dashboard'
       ? {
-          text: 'Here only',
+          parts: ['Here only'],
           title: 'Decisions wait for you in this dashboard; no chat surface carries them yet',
         }
       : reach.buttons
         ? {
-            text: `${reach.channel} DM, buttons`,
+            parts: [`${reach.channel} DM,`, 'buttons'],
             title: `Each request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`,
           }
         : {
-            text: `${reach.channel} DM, typed codes`,
+            parts: [`${reach.channel} DM,`, 'typed codes'],
             title: `Each request also arrives as a ${reach.channel} DM; reply with its typed code`,
           };
   return (
-    <span title={words.title} className="whitespace-nowrap text-[var(--color-fg)]/80">
-      {words.text}
+    <span title={words.title} className="text-[var(--color-fg)]/80">
+      {words.parts.map((part, index) => (
+        <span key={part} className="whitespace-nowrap">
+          {index > 0 ? ' ' : null}
+          {part}
+        </span>
+      ))}
     </span>
   );
 }
