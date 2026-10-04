@@ -4024,3 +4024,101 @@ describe('the anonymous-caller guard before the mode and the card (12-G)', (): v
     },
   );
 });
+
+describe('listForAgent: whether a manager channel’s requests carry buttons (wave 12, 12-M; RM3)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function seedSlackCard(
+    harness: TestConvex<typeof schema>,
+    withToken: boolean,
+  ): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const row = async (label: string): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: 1,
+        });
+      const secret = await row('Mateo (Day0) client secret');
+      const appLevel = withToken ? await row('Mateo (Day0) app-level token') : undefined;
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialLanded: true,
+        provisioning: {
+          appId: 'A0MATEO',
+          appName: 'Mateo (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.example/api/oauth/slack',
+          scopes: [],
+          createdAt: 1,
+          installedAt: 2,
+          ...(appLevel === undefined ? {} : { appLevelTokenCredentialId: appLevel }),
+        },
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'declared',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      });
+      return agentId;
+    });
+  }
+
+  it('says buttons are on for an app with its token where the bridge runs, and why not otherwise', async (): Promise<void> => {
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const withToken = await seedSlackCard(harness, true);
+    const without = await seedSlackCard(harness, false);
+    const buttonsOf = async (agentId: Id<'agents'>): Promise<unknown[]> =>
+      (await owner.query(api.surfaces.listForAgent, { agentId })).map((card) => [
+        card.slug,
+        card.decisionButtons,
+      ]);
+    expect(await buttonsOf(withToken)).toEqual(
+      expect.arrayContaining([
+        ['slack', { available: true }],
+        ['linear', undefined],
+      ]),
+    );
+    expect(await buttonsOf(without)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-app-level-token' },
+    ]);
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    expect(await buttonsOf(withToken)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-bridge' },
+    ]);
+  });
+});

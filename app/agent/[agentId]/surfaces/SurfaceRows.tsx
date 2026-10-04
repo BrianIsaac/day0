@@ -13,11 +13,12 @@ import type { AccessRequestReason } from '@/surfaces/access-identity';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { Button, buttonClass } from '../../../components/Button';
 import { Card } from '../../../components/Card';
+import { Disclosure } from '../../../components/Disclosure';
 import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
-import { calendarDay } from './card-words';
+import { calendarDay, type DecisionButtonsWords } from './card-words';
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
@@ -677,6 +678,89 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
       ) : null}
       {props.error ? (
         <p role="alert" className="mt-1 text-[var(--color-danger)]">
+          {props.error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** The decision-buttons row's words, its landing state and its one control. */
+export interface DecisionButtonsRowProps {
+  readonly words: DecisionButtonsWords;
+  readonly error?: string;
+  /** Land the app-level token the person pasted. */
+  readonly onLand: (token: string) => void;
+  readonly landing: boolean;
+  readonly surfaceSlug: string;
+  /** How many tokens this card landed since the tab opened: the row says so after each. */
+  readonly landings?: number;
+}
+
+/**
+ * Where the manager's decisions reach them on a Slack card (wave 12, 12-M; RM3 (a)): buttons and
+ * typed codes, or the typed code alone and why, with the app-level token's field where its absence
+ * is the reason, or behind a disclosure to replace a landed one. The field is uncontrolled, as the
+ * credential field is: the value goes from the form to the action and never into React state.
+ */
+export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactNode {
+  const fieldId = `app-level-token-${props.surfaceSlug}`;
+  const hintId = `${fieldId}-hint`;
+  const errorId = `${fieldId}-error`;
+  const landed = (props.landings ?? 0) > 0 && !props.landing && props.error === undefined;
+  function onSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const value = new FormData(form).get('appLevelToken');
+    // The secret leaves the page's DOM at once, refused or not; a refusal asks for it again.
+    form.reset();
+    if (typeof value === 'string' && value.trim()) props.onLand(value);
+  }
+  const field = (
+    <form onSubmit={onSubmit} className="mt-3 grid gap-1.5">
+      <label htmlFor={fieldId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
+        App-level token
+      </label>
+      <p id={hintId} className="text-[13px] text-[var(--color-muted)]">
+        Starts with xapp-. It turns the buttons on; it is not the app configuration token.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <input
+          id={fieldId}
+          name="appLevelToken"
+          type="password"
+          autoComplete="new-password"
+          spellCheck={false}
+          required
+          aria-describedby={props.error ? `${hintId} ${errorId}` : hintId}
+          className={`${INPUT_CLASS} min-w-48 flex-1`}
+        />
+        <Button type="submit" size="small" disabled={props.landing}>
+          {props.landing
+            ? 'Checking the token…'
+            : props.words.offersReplacement
+              ? 'Replace token'
+              : 'Turn on buttons'}
+        </Button>
+      </div>
+    </form>
+  );
+  return (
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">{props.words.title}</p>
+      <p className="mt-1 text-[var(--color-fg-2)]">{props.words.note}</p>
+      {props.words.asksForToken ? field : null}
+      {props.words.offersReplacement ? (
+        // Keyed by the landings, so a replace that landed closes its disclosure.
+        <div key={props.landings ?? 0} className="mt-1">
+          <Disclosure summary="Replace the app-level token">{field}</Disclosure>
+        </div>
+      ) : null}
+      <p role="status" className="mt-2 text-[var(--color-fg-2)] empty:hidden">
+        {landed ? 'The app-level token is stored; Approve and Reject buttons are on.' : null}
+      </p>
+      {props.error ? (
+        <p id={errorId} role="alert" className="mt-2 text-[var(--color-danger)]">
           {props.error}
         </p>
       ) : null}

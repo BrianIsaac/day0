@@ -242,8 +242,16 @@ export const FEATHERLESS_SETTINGS: Readonly<Record<string, string>> = {
   OPENAI_REASONING_EFFORT: 'low',
 };
 
-/** The optional components real mode starts on top of `real`, `sandbox` and `redactor`. */
-export const REAL_MODE_PROFILES: readonly string[] = ['docs-notion', 'browser', 'demo'];
+/**
+ * The optional components real mode starts on top of `real`, `sandbox` and `redactor`, the Slack
+ * socket bridge among them (12-M; RM7): its secret is minted with the other real-mode keys.
+ */
+export const REAL_MODE_PROFILES: readonly string[] = [
+  'docs-notion',
+  'browser',
+  'demo',
+  'slack-socket',
+];
 
 /** Where the backend reaches the two components real mode starts. */
 export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
@@ -1758,6 +1766,7 @@ export const SECRET_NAMES: readonly string[] = [
   'DEV_NO_AUTH_SIGNING_KEY',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_SOCKET_BRIDGE_SECRET',
   'DAY0_NANGO_SECRET_KEY',
   'DAY0_NANGO_ENCRYPTION_KEY',
   'DAY0_NANGO_DB_PASSWORD',

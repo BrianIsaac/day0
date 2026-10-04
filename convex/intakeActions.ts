@@ -73,6 +73,10 @@ import {
 } from '../src/work/manager-channel';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { agentZone } from '../src/lib/zone';
+import { compareProviderTs } from '../src/work/provider-ts';
+
+/** Re-exported where the intake's tests and callers have always read it. */
+export { compareProviderTs };
 
 const PROVIDER_TIMEOUT_MS = 10_000;
 /**
@@ -1289,12 +1293,15 @@ function managerMessages(): ManagerMessages {
  * @param surface - The chat surface, for the bot's and the manager's ids.
  * @param messages - The messages this read returned.
  * @param skipTs - A thread's parent, which is Day0's request, not a reply.
+ * @param options.decisionsOnly - Take decisions only, for a thread under Day0's other messages (M10),
+ *   where the manager's other words answer no request.
  */
 function collectManagerMessages(
   found: ManagerMessages,
   surface: Doc<'surfaces'>,
   messages: readonly ChatMessage[],
   skipTs?: string,
+  options: { readonly decisionsOnly?: boolean } = {},
 ): void {
   for (const message of messages) {
     if (message.ts === skipTs) continue;
@@ -1302,7 +1309,7 @@ function collectManagerMessages(
     const reply = parseDecisionReply(message.text);
     if (reply) {
       found.replies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
-    } else if (message.user === surface.managerUserId) {
+    } else if (message.user === surface.managerUserId && options.decisionsOnly !== true) {
       found.unreadable.set(message.ts, { userId: message.user, messageTs: message.ts });
     }
   }
@@ -1601,6 +1608,24 @@ async function pollChatReader(
           unread.push({ what: `the thread of decision ${request.decisionId}`, error });
         }
       }
+      // M10: a reply left under Day0's other recent messages (a decided or replaced request, a
+      // note) is the manager's too. A failed read there is reported and holds no code: those
+      // threads are not where an open request is answered.
+      for (const ts of open.threads ?? []) {
+        try {
+          // Only a decision is taken from there: small talk under a note is no reply to a request.
+          collectManagerMessages(
+            found,
+            surface,
+            await reader.readThread(dm, ts, surface.lastPolledAt),
+            ts,
+            { decisionsOnly: true },
+          );
+        } catch (error) {
+          if (error instanceof ChatReadRefused && error.code === SLACK_THREAD_NOT_FOUND) continue;
+          unread.push({ what: `the thread of Day0's message ${ts}`, error });
+        }
+      }
     }
   }
   const held = heldReplyCodes(open ?? NOTHING_OPEN, unreadThreads);
@@ -1611,22 +1636,6 @@ async function pollChatReader(
     missingThreads,
     unread,
   };
-}
-
-/**
- * Order two provider message timestamps without losing microsecond precision.
- *
- * Slack timestamps are `<seconds>.<fraction>` strings; a float comparison at
- * 1.7e9 seconds rounds the last microsecond, so compare the parts as digits.
- */
-export function compareProviderTs(left: string, right: string): number {
-  const [leftWhole = '', leftFraction = ''] = left.split('.', 2);
-  const [rightWhole = '', rightFraction = ''] = right.split('.', 2);
-  const width = Math.max(leftWhole.length, rightWhole.length);
-  const wholes = leftWhole.padStart(width, '0').localeCompare(rightWhole.padStart(width, '0'));
-  if (wholes !== 0) return wholes;
-  const scale = Math.max(leftFraction.length, rightFraction.length);
-  return leftFraction.padEnd(scale, '0').localeCompare(rightFraction.padEnd(scale, '0'));
 }
 
 /** Poll a connected chat surface by its approved path, independent of provider name. */

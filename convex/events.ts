@@ -557,6 +557,11 @@ const SECTION_PAGES: Readonly<
       .query('managerDecisionNotices')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
+  replacedRequests: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId))
+      .paginate(options),
   events: async (ctx, agentId, options) =>
     await ctx.db
       .query('events')

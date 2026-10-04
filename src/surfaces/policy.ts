@@ -1896,10 +1896,27 @@ export function signsForEmployee(surface: SurfaceRecord, credentialKind: Credent
 }
 
 /**
+ * A message's blocks with the trailer as their last block, for a message that renders with
+ * blocks: Slack shows the blocks and keeps the text for notifications, so a trailer on the text
+ * alone would never be seen. Nothing for a message without blocks.
+ */
+function signedBlocks(body: JsonObject, trailer: string): { blocks?: unknown[] } {
+  const blocks: unknown = body.blocks;
+  if (!Array.isArray(blocks)) return {};
+  return {
+    blocks: [
+      ...(blocks as unknown[]),
+      { type: 'context', elements: [{ type: 'mrkdwn', text: trailer }] },
+    ],
+  };
+}
+
+/**
  * Apply the provenance rules to one action.
  *
  * A comment, a message or the description of a new ticket written through a
- * shared credential ends with the trailer naming the employee and the run; a
+ * shared credential ends with the trailer naming the employee and the run (in its blocks too,
+ * where it renders with blocks); a
  * message through a shared chat credential also carries the employee's name
  * and icon so it stays attributable. Both are added by the server, never by
  * the skill: a skill-supplied trailer or `username` is refused rather than
@@ -1967,6 +1984,7 @@ export function applyProvenance(
     const edited: JsonObject = {
       ...parsed.bodyJson,
       text: `${String(parsed.bodyJson.text)}\n\n${trailer}`,
+      ...signedBlocks(parsed.bodyJson, trailer),
     };
     return { ok: true, action: { ...parsed, bodyJson: edited, body: JSON.stringify(edited) } };
   }
@@ -1978,6 +1996,7 @@ export function applyProvenance(
   const next: JsonObject = {
     ...bodyJson,
     text: `${text}\n\n${trailer}`,
+    ...signedBlocks(bodyJson, trailer),
     username: `${run.agentName} (Day0)`,
     icon_emoji: SHARED_IDENTITY_ICON,
   };

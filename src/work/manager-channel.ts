@@ -1,5 +1,6 @@
 import { summariseAction, type SummaryContext } from '../surfaces/summary';
 import type { SurfaceRecord } from '../surfaces/types';
+import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
 
 /** How many characters a decision code has. */
@@ -102,6 +103,12 @@ export interface OpenDecisions {
    * mistyped code, should still be answered (`DECISION_NOTICE_WINDOW_MS`).
    */
   readonly noticeOwed: boolean;
+  /**
+   * The provider timestamps of Day0's other messages in the DM within the notice window (a decided
+   * or replaced request, a note), whose threads are read as an open request's is (M10): a reply
+   * left under any of them is the manager's all the same. Absent when there are none.
+   */
+  readonly threads?: readonly string[];
 }
 
 /** Nothing open and no notice owed: the decision poll leaves the DM unread. */
@@ -117,10 +124,16 @@ export const DECISION_NOTICE_WINDOW_MS = 60 * 60 * 1000;
  * Whether the decision poll reads the manager DM.
  *
  * @param open - What the channel has open.
- * @returns True when a request or a batch is open or a notice may be owed.
+ * @returns True when a request or a batch is open, a notice may be owed, or a recent message's
+ *   thread is to be read.
  */
 export function readsManagerDm(open: OpenDecisions): boolean {
-  return open.requests.length > 0 || open.batches.length > 0 || open.noticeOwed;
+  return (
+    open.requests.length > 0 ||
+    open.batches.length > 0 ||
+    open.noticeOwed ||
+    (open.threads?.length ?? 0) > 0
+  );
 }
 
 /**
@@ -240,10 +253,16 @@ const SLACK_JSON_HEADERS = JSON.stringify({
   'Content-Type': 'application/json; charset=utf-8',
 });
 
-/** Where in the manager DM a message goes: under Day0's own request, when it answers one. */
+/** Where in the manager DM a message goes, and what it carries beside its text. */
 export interface ManagerMessagePlacement {
   /** The provider timestamp of the message to thread under. */
   readonly threadTs?: string;
+  /**
+   * Block Kit blocks the message renders with (a decision request's text and buttons), its text
+   * kept as the notification fallback. Only the documented API sends them; an MCP chat tool takes
+   * text alone, so the caller never offers it blocks.
+   */
+  readonly blocks?: readonly SlackBlock[];
 }
 
 /**
@@ -278,6 +297,9 @@ export function managerMessageAction(
     ...(thread && placement.threadTs ? { [thread]: placement.threadTs } : {}),
   };
   if (surface.path === 'mcp') {
+    if (placement.blocks !== undefined) {
+      throw new Error('an MCP chat tool takes no blocks; the request goes as text alone');
+    }
     return {
       tool: 'mcp.call',
       args: { surface: surface.slug, tool: postTool, toolArgsJson: JSON.stringify(body) },
@@ -291,7 +313,9 @@ export function managerMessageAction(
         method: 'POST',
         path: postTool,
         headersJson: SLACK_JSON_HEADERS,
-        body: JSON.stringify(body),
+        body: JSON.stringify(
+          placement.blocks === undefined ? body : { ...body, blocks: placement.blocks },
+        ),
       },
     };
   }
@@ -324,14 +348,19 @@ export function canEditManagerMessage(
  * `chat.update`. MCP chat tools advertise no edit, so there is none there.
  *
  * @param ts - The provider timestamp of the message to edit.
+ * @param blocks - The blocks the edited message renders with, for a message that carried blocks:
+ *   Slack's `chat.update` given text and no blocks removes them, so a request that had buttons is
+ *   edited with its blocks stated (its text, no buttons) rather than left to that rule.
  * @returns The action, or undefined when the surface cannot edit a message.
  */
 export function managerMessageUpdateAction(
   surface: SurfaceRecord,
   ts: string,
   text: string,
+  blocks?: readonly SlackBlock[],
 ): MockAction | undefined {
   if (!canEditManagerMessage(surface) || !surface.managerDmChannelId) return undefined;
+  const body = { channel: surface.managerDmChannelId, ts, text };
   return {
     tool: 'http.request',
     args: {
@@ -339,7 +368,7 @@ export function managerMessageUpdateAction(
       method: 'POST',
       path: MESSAGE_EDIT_METHOD,
       headersJson: SLACK_JSON_HEADERS,
-      body: JSON.stringify({ channel: surface.managerDmChannelId, ts, text }),
+      body: JSON.stringify(blocks === undefined ? body : { ...body, blocks }),
     },
   };
 }
@@ -349,6 +378,9 @@ function oneLine(value: unknown, fallback: string): string {
   const line = value.replace(/\s+/g, ' ').trim();
   return line || fallback;
 }
+
+/** How a request with buttons opens its reply line; the line without them opens "Reply ". */
+export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
 
 /**
  * Plain decision request sent when a supervised run parks.
@@ -377,10 +409,13 @@ export function decisionRequestText(args: {
   slackMarkup?: boolean;
   /** For a plan drafted without its ticket or thread: the system and why (P7-18). */
   draftedWithout?: DraftedWithoutLine;
+  /** The request carries Approve and Reject buttons (RM3 (a)); the typed code works beside them. */
+  buttons?: boolean;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
-  const reply = `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`;
+  const typed = `“approve ${args.id}” or “reject ${args.id} <reason>”`;
+  const reply = args.buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
   // A request is read on its own, so its action lines name the ask's channel
   // and quote a body as far as a plan line does (U9 step 24).
   const summary: SummaryContext = {

@@ -98,6 +98,54 @@ describe('the credentials a card binds (11-AK item 1, for the retire and the han
   });
 });
 
+describe('the app-level token a card binds (wave 12, 12-M)', (): void => {
+  it('names the employee app’s app-level token, so a retire or a handover ends it with the app', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const bound = await harness.run(async (ctx) => {
+      const row = async (label: string) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: 1,
+        });
+      const secret = await row('Slack client secret');
+      const appLevel = await row('Maya (Day0) app-level token');
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const slack = await ctx.db.insert('surfaces', {
+        ...SURFACE_BASE,
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        verdict: 'approved',
+        provisioning: {
+          appId: 'A0W12M',
+          appName: 'Maya (Day0)',
+          clientId: '1234.5678',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'http://localhost:3000/api/oauth/slack',
+          scopes: [],
+          createdAt: 1,
+          appLevelTokenCredentialId: appLevel,
+        },
+      });
+      const card = (await ctx.db.get(slack))!;
+      return { walked: [...(await credentialsBoundBy(ctx.db, [card]))], appLevel, secret };
+    });
+    expect([...bound.walked].sort()).toEqual([bound.appLevel, bound.secret].sort());
+  });
+});
+
 describe('the bound on one handover’s surfaces', (): void => {
   it('refuses, in words a dialog can show, an employee with more surfaces than a handover reads', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

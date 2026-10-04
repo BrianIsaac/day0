@@ -34,6 +34,7 @@ const actions: SurfaceCardActions = {
   probe: (): void => undefined,
   land: (): void => undefined,
   provision: (): void => undefined,
+  landSocketToken: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,

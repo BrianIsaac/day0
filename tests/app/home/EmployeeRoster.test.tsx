@@ -31,6 +31,7 @@ const roster = [
       ['2026-09-03', 11],
       ['2026-09-17', 2],
     ]),
+    decisionsReach: { kind: 'dm', channel: 'Slack', buttons: true },
   },
   {
     agentId: 'synthetic-aiko',
@@ -46,6 +47,7 @@ const roster = [
     needsYou: 1,
     docSourceCount: 0,
     landedThisMonth: month([['2026-09-20', 100]], true),
+    decisionsReach: { kind: 'dashboard' },
   },
 ] as unknown as RosterRow[];
 
@@ -108,9 +110,14 @@ describe('EmployeeRoster', (): void => {
     const text = readAs(html);
     expect(html).toContain('href="/agent/synthetic-mira"');
     // Walk m10: the page's words, Supervised or Autonomous, and the Work tab's state words.
-    expect(text).toContain('Mira Active Owns triage for tier-2 asks in #revops-asks Supervised 3');
+    // Re-pinned for 12-M (H D6): where requests reach you is a line under the autonomy pill.
+    expect(text).toContain(
+      'Mira Active Owns triage for tier-2 asks in #revops-asks Supervised Requests: Slack DM, buttons 3',
+    );
     expect(text).toContain('1 2 waiting on a skill · 1 stopped 13');
-    expect(text).toContain('Aiko Charter to review charter pending Autonomous 1 0 100+');
+    expect(text).toContain(
+      'Aiko Charter to review charter pending Autonomous Requests: dashboard only 1 0 100+',
+    );
   });
 
   it('says an employee not yet met is waiting for the one-to-one, in the warn hue the page’s pill uses (review m8)', (): void => {
@@ -167,6 +174,21 @@ describe('EmployeeRoster', (): void => {
     expect(readAs(markup)).toContain('1 2 parked · 1 stopped 13');
   });
 
+  it('says where each employee’s decisions reach you: a DM with buttons or typed codes, or here (12-M; H D6)', (): void => {
+    const text = readAs(html);
+    expect(text).toContain('Requests: Slack DM, buttons');
+    expect(text).toContain('Requests: dashboard only');
+    const typed = renderToStaticMarkup(
+      <EmployeeRoster
+        employees={[
+          { ...roster[0]!, decisionsReach: { kind: 'dm', channel: 'Slack', buttons: false } },
+        ]}
+        waiting={waiting}
+      />,
+    );
+    expect(readAs(typed)).toContain('Requests: Slack DM, typed codes');
+  });
+
   it('heads the card with the headcount and one manager', (): void => {
     expect(readAs(html)).toContain('Roster 2 employees, one manager');
   });
@@ -181,7 +203,8 @@ describe('EmployeeRoster', (): void => {
     const text = readAs(
       renderToStaticMarkup(<EmployeeRoster employees={roster} waiting={undefined} />),
     );
-    expect(text).toContain('Supervised loading 1');
+    // Re-pinned for 12-M: the requests line comes between autonomy and the count.
+    expect(text).toContain('Supervised Requests: Slack DM, buttons loading 1');
   });
 
   it('sets no type below the 12 px floor', (): void => {

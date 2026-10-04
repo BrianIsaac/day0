@@ -215,6 +215,7 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
       </Cell>
       <Cell column="Autonomy">
         <AutonomyBadge autonomous={employee.autonomous} />
+        <DecisionsReach reach={employee.decisionsReach} />
       </Cell>
       <Cell column="Needs you">
         {loaded ? (
@@ -268,6 +269,49 @@ function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
     >
       {/* The page's, the pill's and the deploy form's word (walk m10). */}
       {autonomyLabel(autonomous)}
+    </span>
+  );
+}
+
+/** Where one employee's decision requests reach the manager, under its autonomy on the roster. */
+interface DecisionsReachProps {
+  /** Absent on a row from functions pushed before the line (12-M). */
+  readonly reach: RosterRow['decisionsReach'] | undefined;
+}
+
+/**
+ * Where the employee's decision requests reach the manager (wave 12, 12-M; H D6): this dashboard
+ * only, or also as a DM on its chat channel, with Approve and Reject buttons or with the typed code
+ * alone. A line under the autonomy pill, since a column of its own would push the roster past its
+ * card and its header would read as the page's other decision figures.
+ */
+function DecisionsReach({ reach }: DecisionsReachProps) {
+  if (reach === undefined) return null;
+  // Each part stays whole, so a narrow cell breaks only between the parts.
+  const words =
+    reach.kind === 'dashboard'
+      ? {
+          parts: ['Requests:', 'dashboard only'],
+          title:
+            'Decision requests wait for you in this dashboard; no chat surface carries them yet',
+        }
+      : reach.buttons
+        ? {
+            parts: ['Requests:', `${reach.channel} DM,`, 'buttons'],
+            title: `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`,
+          }
+        : {
+            parts: ['Requests:', `${reach.channel} DM,`, 'typed codes'],
+            title: `Each decision request also arrives as a ${reach.channel} DM; reply with its typed code`,
+          };
+  return (
+    <span title={words.title} className="mt-1.5 block text-xs text-[var(--color-muted)]">
+      {words.parts.map((part, index) => (
+        <span key={part} className="whitespace-nowrap">
+          {index > 0 ? ' ' : null}
+          {part}
+        </span>
+      ))}
     </span>
   );
 }

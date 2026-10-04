@@ -12,13 +12,13 @@ says on the card which component is missing.
 
 Components are compose profiles. `real` is day0 itself and is always on.
 `./setup.sh --route <route>` starts what a real-mode installation needs without
-your naming any of them: `real`, `docs-notion`, `browser` and `demo` in one
-`pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
+your naming any of them: `real`, `docs-notion`, `browser`, `demo` and
+`slack-socket` in one `pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
 each of those two has a first start that has something to report. By hand, that
 is:
 
 ```bash
-pnpm convex:up --profile docs-notion --profile browser --profile demo
+pnpm convex:up --profile docs-notion --profile browser --profile demo --profile slack-socket
 pnpm sandbox:up
 pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
@@ -60,6 +60,7 @@ nothing else on your machine can dial them.
 | `redactor` | `redactor` | none | `http://redactor:8000` |
 | `sandbox` | `sandbox` | none | a unix socket on the `sandbox_socket` volume |
 | `nango-server` | `token-store` | none | `http://nango-server:3003`, on the `nango` network only the backend shares |
+| `slack-socket` | `slack-socket` | none | dials the backend's `http://backend:3211` on the `slack-socket` network, and Slack outbound |
 
 `pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
 `--app-port`), outside Docker.
@@ -422,6 +423,45 @@ endpoints. It is never
 on the default network, where the browser component a model drives lives,
 because its own dashboard runs without a sign-in. The self-hosted edition sends
 nothing to Nango.
+
+---
+
+## `slack-socket` - the Slack socket bridge
+
+**What it is.** A small Node service (`slack-socket/`, on the pinned
+`node:22-alpine` image, no dependencies) that holds Slack's Socket Mode
+connections: one WebSocket per employee Slack app that has an app-level token,
+dialled out from your network, so Slack can deliver a press of a decision
+request's **Approve** or **Reject** button without day0 opening anything to the
+internet. Slack allows ten connections per app; the bridge holds one, and two
+for a moment while Slack refreshes it.
+
+**What day0 uses it for.** Decision buttons in the manager's Slack DM. The
+bridge acknowledges each press at once and hands it to the backend's internal
+route, `/slack-socket/press` on the site port, presenting
+`DAY0_SOCKET_BRIDGE_SECRET`; the backend decides it exactly as it decides a
+typed `approve <code>` reply, with the same checks and the same record. Without
+the bridge the requests carry the typed code alone, which always decides, and
+the employee's Slack card says why there are no buttons.
+
+**When you need it.** When decisions should be one press in Slack. Real-mode
+setup starts it and mints the secret (`pnpm dev:no-auth-key`, which every setup
+runs, writes it to `.env.local`, and `pnpm sync:env` pushes it). Each employee's
+app then needs its app-level token, which a person generates in the app's
+settings (Slack offers no API for it): see `access-slack.md`.
+
+**When you do not.** When the typed code is enough, or Slack is not one of your
+systems. Stop it with `pnpm convex:down --profile slack-socket`; requests keep
+the typed code.
+
+**What it never sees.** The app-level tokens: the backend opens each
+connection with the app's token and hands the bridge only the short-lived URL,
+which the bridge never logs. It publishes no host port and runs read-only as an
+unprivileged user. It reaches the backend on `slack-socket`, an internal
+network with no route out that only the two of them join, and Slack on
+`slack-socket-egress`, which nothing else joins (fake Slack does, on a review
+bed). The egress it needs is outbound WebSocket (`wss://`) to Slack's Socket
+Mode hosts.
 
 ---
 

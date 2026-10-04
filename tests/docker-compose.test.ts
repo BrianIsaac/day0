@@ -169,7 +169,8 @@ describe("the token store's Nango component (11-AT)", (): void => {
     expect(services['nango-db'].networks).toEqual(['nango-store']);
     expect(services['nango-redis'].networks).toEqual(['nango-store']);
     expect(services['nango-server'].networks).toEqual(['nango', 'nango-store', 'nango-egress']);
-    expect(networkNames(services.backend)).toEqual(['default', 'nango']);
+    // The backend also joins the Slack socket bridge's network (12-M), which carries nothing of Nango's.
+    expect(networkNames(services.backend)).toEqual(['default', 'nango', 'slack-socket']);
     const members = (network: string): string[] =>
       Object.entries(services)
         .filter(([, service]) => networkNames(service).includes(network))
@@ -199,5 +200,63 @@ describe("the token store's Nango component (11-AT)", (): void => {
       nango_db: '/var/lib/postgresql/data',
     });
     expect(Object.keys(COMPOSE.volumes)).toContain('nango_db');
+  });
+});
+
+describe('the Slack socket bridge (wave 12, 12-M; RM7)', (): void => {
+  interface BridgeService extends Service {
+    readonly profiles?: readonly string[];
+    readonly image?: string;
+    readonly expose?: readonly string[];
+    readonly healthcheck?: { readonly test?: readonly string[] };
+  }
+  const services = COMPOSE.services as Record<string, BridgeService>;
+  const networks = (COMPOSE as unknown as { networks?: Record<string, { internal?: boolean }> })
+    .networks;
+  const bridge = services['slack-socket'];
+
+  function networkNames(service: Service | undefined): string[] {
+    const joined = service?.networks;
+    if (joined === undefined) return [];
+    return Array.isArray(joined) ? [...joined] : Object.keys(joined);
+  }
+
+  it('runs under its own profile, its image pinned to a digest, publishing nothing', (): void => {
+    expect(bridge?.profiles).toEqual(['slack-socket']);
+    expect(bridge?.image).toMatch(/^node:22-alpine@sha256:[0-9a-f]{64}$/);
+    expect(bridge?.ports).toBeUndefined();
+  });
+
+  it('reaches the backend on a network with no route out, and Slack on one of its own', (): void => {
+    expect(networks?.['slack-socket']).toEqual({ internal: true });
+    expect(networkNames(bridge)).toEqual(['slack-socket', 'slack-socket-egress']);
+    expect(networkNames(services.backend)).toContain('slack-socket');
+    const members = (network: string): string[] =>
+      Object.entries(services)
+        .filter(([, service]) => networkNames(service).includes(network))
+        .map(([name]) => name)
+        .sort();
+    expect(members('slack-socket')).toEqual(['backend', 'slack-socket']);
+    // Fake Slack joins the bridge's way out on a review bed, as Slack itself is reached by it.
+    expect(members('slack-socket-egress')).toEqual(['fake-slack', 'slack-socket']);
+  });
+
+  it('passes the setup-minted secret and the backend address, and nothing else secret', (): void => {
+    expect(envValue(bridge!, 'DAY0_SOCKET_BRIDGE_SECRET')).toBe('${DAY0_SOCKET_BRIDGE_SECRET:-}');
+    expect(envValue(bridge!, 'DAY0_SOCKET_BACKEND_URL')).toBe('http://backend:3211');
+    expect(bridge?.environment?.join('\n')).not.toMatch(/xapp|SLACK_.*TOKEN/);
+  });
+
+  it('runs read-only as an unprivileged user, restarts and checks its health, starting without the backend', (): void => {
+    expect(bridge?.read_only).toBe(true);
+    expect(bridge?.user).toBe('node');
+    expect(bridge?.cap_drop).toEqual(['ALL']);
+    expect(bridge?.security_opt).toEqual(['no-new-privileges:true']);
+    expect(bridge?.restart).toBe('unless-stopped');
+    // A command naming this profile alone must not refuse the file over `real`'s backend.
+    expect(bridge?.depends_on).toBeUndefined();
+    expect(bridge?.volumes).toEqual(['./slack-socket:/app:ro']);
+    expect(bridge?.command).toEqual(['node', '/app/server.js']);
+    expect(bridge?.healthcheck?.test).toEqual(['CMD', 'node', '/app/healthcheck.js']);
   });
 });

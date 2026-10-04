@@ -17,6 +17,7 @@ const SHELL_KEYS = [
   'DEV_NO_AUTH_JWKS',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_SOCKET_BRIDGE_SECRET',
   'DAY0_NANGO_SECRET_KEY',
   'DAY0_NANGO_ENCRYPTION_KEY',
   'DAY0_NANGO_DB_PASSWORD',
@@ -125,6 +126,29 @@ describe('dev-no-auth-key url mode', (): void => {
     const second = runScript(cwd, ['url']);
     expect(second.status).toBe(0);
     expect(readFileSync(envFile, 'utf8')).toBe(written);
+  });
+});
+
+describe('the Slack socket bridge secret (12-M)', (): void => {
+  it('mints it once with the other real-mode keys, without printing it', (): void => {
+    const { cwd, envFile } = envDirectory('NEXT_PUBLIC_DEV_NO_AUTH=false\n');
+    const first = runScript(cwd, ['url']);
+    expect(first.status).toBe(0);
+    const secret = valueOf(envFile, 'DAY0_SOCKET_BRIDGE_SECRET');
+    expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(first.output).not.toContain(secret);
+    runScript(cwd, ['url']);
+    expect(valueOf(envFile, 'DAY0_SOCKET_BRIDGE_SECRET')).toBe(secret);
+  });
+
+  it('mints it without asking a deployment it cannot read, as the Nango keys are', (): void => {
+    const { cwd, envFile } = envDirectory(
+      `NEXT_PUBLIC_DEV_NO_AUTH=false\n${SELF_HOSTED}DAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}\nDAY0_NOTION_MCP_AUTH_TOKEN=${DEPLOYMENT_TOKEN}\n`,
+    );
+    const run = runScript(cwd, ['url'], { unreachable: true });
+    expect(run.status).toBe(0);
+    expect(run.calls).toEqual([]);
+    expect(valueOf(envFile, 'DAY0_SOCKET_BRIDGE_SECRET')).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 });
 

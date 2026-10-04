@@ -11,7 +11,9 @@ import {
   managerMessageAction,
   managerMessageUpdateAction,
   parseDecisionReply,
+  readsManagerDm,
 } from '../../../src/work/manager-channel';
+import { decisionRequestBlocks, settledRequestBlocks } from '../../../src/work/decision-blocks';
 import type { MockAction } from '../../../src/work/types';
 
 const slack: SurfaceRecord = {
@@ -315,6 +317,54 @@ describe('manager channel decision requests', (): void => {
     ).toBeUndefined();
   });
 
+  it('sends the blocks of a request beside its text on the documented API, and refuses them over MCP', (): void => {
+    const blocks = decisionRequestBlocks({ id: 'ab3xyz', text: 'Decide this.', buttons: true });
+    const action = managerMessageAction(slack, 'Decide this.', { blocks });
+    expect(JSON.parse((action.args as { body: string }).body)).toEqual({
+      channel: 'D0MANAGER',
+      text: 'Decide this.',
+      blocks,
+    });
+    expect(() =>
+      managerMessageAction(
+        {
+          ...slack,
+          path: 'mcp',
+          toolAllowlist: ['send_message'],
+          toolArguments: [{ tool: 'send_message', arguments: ['channel', 'text'] }],
+        },
+        'Decide this.',
+        { blocks },
+      ),
+    ).toThrow(/blocks/);
+  });
+
+  it('edits a request with the blocks it is given, so its buttons go with the edit', (): void => {
+    const updating = { ...slack, toolAllowlist: [...slack.toolAllowlist!, 'chat.update'] };
+    const blocks = settledRequestBlocks('Decided.');
+    const action = managerMessageUpdateAction(updating, '1.100', 'Decided.', blocks);
+    expect(JSON.parse((action!.args as { body: string }).body)).toEqual({
+      channel: 'D0MANAGER',
+      ts: '1.100',
+      text: 'Decided.',
+      blocks,
+    });
+  });
+
+  it('names the buttons in the reply line when the request carries them, keeping the typed code', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Comment, then close the issue.' },
+      buttons: true,
+    });
+    expect(text.split('\n').at(-1)).toBe(
+      'Press Approve or Reject below, or reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+    );
+  });
+
   it('can edit a manager DM message only where the gate would allow chat.update', (): void => {
     const withEdit = { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'] };
     expect(canEditManagerMessage(withEdit)).toBe(true);
@@ -390,6 +440,15 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('readsManagerDm (M10)', (): void => {
+  it('reads the DM for the threads of Day0’s other recent messages too', (): void => {
+    expect(readsManagerDm({ requests: [], batches: [], noticeOwed: false })).toBe(false);
+    expect(
+      readsManagerDm({ requests: [], batches: [], noticeOwed: false, threads: ['1.000100'] }),
+    ).toBe(true);
   });
 });
 

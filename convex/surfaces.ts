@@ -1,3 +1,8 @@
+import {
+  decisionButtonsFor,
+  socketBridgeConfigured,
+  type DecisionButtons,
+} from '../src/surfaces/slack-socket';
 import { ConvexError, v } from 'convex/values';
 import {
   action,
@@ -277,6 +282,12 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    * renewing it brings nothing back until IT connects the system again (the pre-tag second pass).
    */
   readonly connectionRevoked?: true;
+  /**
+   * On a chat card that carries the manager's decision requests: whether they carry Approve and
+   * Reject buttons, and why not (wave 12, 12-M; RM3 (a)). Read against this deployment's Socket
+   * Mode bridge, which only the server knows of.
+   */
+  readonly decisionButtons?: DecisionButtons;
 }
 
 /**
@@ -437,6 +448,7 @@ export const listForAgent = query({
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    const bridgeConfigured = socketBridgeConfigured();
     return orderSurfaceWaterfall(surfaces, documented).map((surface): ListedSurface => {
       const listed = withBrowserComponentState(surface, refusal);
       const drift = listed.intakeScope ? restatedScope(listed.intakeScope, pages).drift : [];
@@ -474,10 +486,21 @@ export const listForAgent = query({
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
+        ...(carriesDecisions(surface)
+          ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
+          : {}),
       };
     });
   },
 });
+
+/** A chat card the manager's decision requests go through, or will once it connects. */
+function carriesDecisions(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    (surface.managerDmChannelId !== undefined || surface.provisioning?.installedAt !== undefined)
+  );
+}
 
 /**
  * Seed one declared row per work system named in the approved charter.
@@ -3161,8 +3184,8 @@ export const reorient = action({
 // ---------- The handover's cut (transfer plan 6.3; D5 (a), A25) ----------
 
 /**
- * The credentials surfaces bind: each connection credential and each Slack app's client secret,
- * and, through each bound row, the refresh token paired with it and the client secret of the app
+ * The credentials surfaces bind: each connection credential, each Slack app's client secret and
+ * app-level token, and, through each bound row, the refresh token paired with it and the client secret of the app
  * it was issued to (11-AK item 1), so a retire or a handover that ends a token ends its pair and
  * its app's secret with it. A pointer whose row is gone is still named, as the card's own are.
  *
@@ -3183,6 +3206,8 @@ export async function credentialsBoundBy(
   for (const surface of surfaces) {
     add(surface.credentialId);
     add(surface.provisioning?.clientSecretCredentialId);
+    // The app-level token a person landed for the app's Socket Mode connection (12-M) ends with it.
+    add(surface.provisioning?.appLevelTokenCredentialId);
   }
   for (let id = unread.pop(); id !== undefined; id = unread.pop()) {
     const row = await db.get(id);
