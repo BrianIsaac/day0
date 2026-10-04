@@ -5,6 +5,7 @@ import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { Disclosure } from '../../components/Disclosure';
 import { HeadedSignIn, StepHeading } from '../../HeadedClerk';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
+import { signInHeading } from '../sign-in-words';
 
 /** The tab's title: the hosted demo's way in. */
 export const metadata: Metadata = { title: 'Sign in to Day0' };
@@ -60,13 +61,21 @@ function FoldedNotice() {
  * demo collects and who receives it (N6), beside Clerk's sign-in. In no-auth dev mode there is
  * nothing to sign in to and the page sends the local manager home.
  *
+ * Its heading says the sign-in continues to the page a visitor asked for when Clerk sent them
+ * from one ({@link signInHeading}).
+ *
  * On a wide screen the words are a column beside the card, the notice open. On a phone the
  * column's parts join the page's single column, so the card can come straight after the heading
  * and the folded notice, in the first screen, and the lede and the steps, which hold nothing to
  * press, follow the card; the notice stays before the card in reading order at every width.
  */
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<React.ReactElement> {
   if (DEV_NO_AUTH) redirect('/');
+  const { redirect_url: redirectUrl } = await searchParams;
 
   return (
     <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-6 px-6 py-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
@@ -75,7 +84,7 @@ export default function SignInPage() {
           base="/sign-in"
           className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance"
         >
-          Sign in to deploy an employee
+          {signInHeading(redirectUrl)}
         </StepHeading>
         <div className="order-last grid gap-5 md:order-none">
           <p className="max-w-[60ch] leading-relaxed text-[var(--color-muted)]">
