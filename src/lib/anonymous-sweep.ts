@@ -96,14 +96,37 @@ export function tableOfStringId(field: string, tables: ReadonlySet<string>): str
 const PLACEHOLDER_TEXT = 'anonymous-sweep';
 
 /**
- * Arguments a function's validator accepts, every id naming a row `rowOf` gives (another owner's,
- * in the test) and every id-named string argument naming one too. Every array carries one
- * element, every optional id is filled, and other optional fields are left out, so the call
+ * The two shapes the sweep asks every function in, so neither an argument's emptiness nor which
+ * member of a union it takes can reach a refusal before the guard:
+ *
+ * - `fullest`: one element in every array, a union's first member, every optional id filled and
+ *   every other optional field left out, a string of placeholder text, one for a number;
+ * - `emptiest`: every array and record empty, a union's last member, every optional field filled,
+ *   an empty string, zero for a number and `true` for a boolean.
+ *
+ * In both, every id names a row `rowOf` gives, and so does every string argument named after a
+ * table's id.
+ */
+export const ARGUMENT_SHAPES = ['fullest', 'emptiest'] as const;
+
+/** One of {@link ARGUMENT_SHAPES}. */
+export type ArgumentShape = (typeof ARGUMENT_SHAPES)[number];
+
+/** What building one call's arguments reads. */
+interface BuildContext {
+  readonly rowOf: RowOf;
+  readonly tables: ReadonlySet<string>;
+  readonly shape: ArgumentShape;
+}
+
+/**
+ * Arguments a function's validator accepts, in one of the {@link ARGUMENT_SHAPES}, so the call
  * passes the validator and reaches the handler, where the guard must stand first.
  *
  * @param validator - The function's argument validator.
  * @param rowOf - The row an id of a table names.
  * @param tables - The deployment's table names, for id-named string arguments.
+ * @param shape - Which of the two shapes; `fullest` unless named.
  * @throws Error when an id's table has no row to name: the validator would refuse the call before
  *   its handler ran, which proves nothing about the guard.
  */
@@ -111,32 +134,34 @@ export function argumentsFor(
   validator: ValidatorJson,
   rowOf: RowOf,
   tables: ReadonlySet<string>,
+  shape: ArgumentShape = 'fullest',
 ): unknown {
-  return valueFor(validator, undefined, rowOf, tables);
+  return valueFor(validator, undefined, { rowOf, tables, shape });
 }
 
 function valueFor(
   validator: ValidatorJson,
   field: string | undefined,
-  rowOf: RowOf,
-  tables: ReadonlySet<string>,
+  build: BuildContext,
 ): unknown {
+  const fullest = build.shape === 'fullest';
   switch (validator.type) {
     case 'id': {
-      const row = rowOf(validator.tableName);
+      const row = build.rowOf(validator.tableName);
       if (row === undefined) throw new Error(`no row of ${validator.tableName} to name`);
       return row;
     }
     case 'string': {
-      const table = field === undefined ? undefined : tableOfStringId(field, tables);
-      return (table === undefined ? undefined : rowOf(table)) ?? PLACEHOLDER_TEXT;
+      const table = field === undefined ? undefined : tableOfStringId(field, build.tables);
+      const row = table === undefined ? undefined : build.rowOf(table);
+      return row ?? (fullest ? PLACEHOLDER_TEXT : '');
     }
     case 'number':
-      return 1;
+      return fullest ? 1 : 0;
     case 'bigint':
-      return 1n;
+      return fullest ? 1n : 0n;
     case 'boolean':
-      return false;
+      return !fullest;
     case 'bytes':
       return new ArrayBuffer(0);
     case 'null':
@@ -146,19 +171,19 @@ function valueFor(
     case 'literal':
       return validator.value;
     case 'array':
-      return [valueFor(validator.value, undefined, rowOf, tables)];
+      return fullest ? [valueFor(validator.value, undefined, build)] : [];
     case 'record':
       return {};
     case 'union': {
-      const [first] = validator.value;
-      if (first === undefined) throw new Error('a union with no member admits no value');
-      return valueFor(first, field, rowOf, tables);
+      const member = fullest ? validator.value[0] : validator.value.at(-1);
+      if (member === undefined) throw new Error('a union with no member admits no value');
+      return valueFor(member, field, build);
     }
     case 'object':
       return Object.fromEntries(
         Object.entries(validator.value)
-          .filter(([, member]) => !member.optional || mentionsAnId(member.fieldType))
-          .map(([name, member]) => [name, valueFor(member.fieldType, name, rowOf, tables)]),
+          .filter(([, member]) => !fullest || !member.optional || mentionsAnId(member.fieldType))
+          .map(([name, member]) => [name, valueFor(member.fieldType, name, build)]),
       );
     default: {
       const unknown: never = validator;

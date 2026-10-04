@@ -5,6 +5,7 @@ import { ConvexError } from 'convex/values';
 import schema from '../../convex/schema';
 import { CALLERLESS_FUNCTIONS } from '../../src/lib/anonymous-access';
 import {
+  ARGUMENT_SHAPES,
   argumentsFor,
   judgeUnadmittedCall,
   tableOfStringId,
@@ -287,7 +288,7 @@ describe.each(SHAPES)('the anonymous-caller guard on a $name deployment', (shape
   }
 
   it.each(FUNCTIONS)(
-    '$path refuses a caller with no identity and a token it refuses, whatever the ids name',
+    '$path refuses a caller with no identity and a token it refuses, whatever its arguments name',
     async (fn): Promise<void> => {
       const callers: readonly (readonly [UnadmittedCaller, Caller])[] = [
         ['no-identity', seeded.harness],
@@ -301,18 +302,20 @@ describe.each(SHAPES)('the anonymous-caller guard on a $name deployment', (shape
       const before = await snapshot(seeded.harness, seeded.rows);
       for (const [label, caller] of callers) {
         for (const [which, rows] of idSets) {
-          const args = argumentsFor(fn.args, (table) => rows.get(table), TABLES);
-          const outcome = await call(caller, fn, args);
-          const verdict = judgeUnadmittedCall(
-            fn.path,
-            label,
-            outcome,
-            (refusal) => refusal.data === guardText,
-          );
-          expect(
-            verdict.kept,
-            `${label}, ids naming ${which}: expected ${verdict.expected}; ${shown(outcome)}`,
-          ).toBe(true);
+          for (const shape of ARGUMENT_SHAPES) {
+            const args = argumentsFor(fn.args, (table) => rows.get(table), TABLES, shape);
+            const outcome = await call(caller, fn, args);
+            const verdict = judgeUnadmittedCall(
+              fn.path,
+              label,
+              outcome,
+              (refusal) => refusal.data === guardText,
+            );
+            expect(
+              verdict.kept,
+              `${label}, ${shape} arguments, ids naming ${which}: expected ${verdict.expected}; ${shown(outcome)}`,
+            ).toBe(true);
+          }
         }
       }
       expect(reachedNetwork, 'no unadmitted call reaches a network').toEqual([]);

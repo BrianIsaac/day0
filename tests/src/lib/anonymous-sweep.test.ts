@@ -92,6 +92,40 @@ describe('the arguments the sweep asks a function with', (): void => {
     expect(argumentsFor(validator, rowOf, TABLES)).toEqual({ decision: 'approve' });
   });
 
+  it('asks again with every array empty, the last union member, every optional field and empty values', (): void => {
+    const validator: ValidatorJson = {
+      type: 'object',
+      value: {
+        members: {
+          fieldType: { type: 'array', value: { type: 'id', tableName: 'workItems' } },
+          optional: false,
+        },
+        decision: {
+          fieldType: {
+            type: 'union',
+            value: [
+              { type: 'literal', value: 'approve' },
+              { type: 'literal', value: 'reject' },
+            ],
+          },
+          optional: false,
+        },
+        agentId: { fieldType: { type: 'string' }, optional: false },
+        reason: { fieldType: { type: 'string' }, optional: true },
+        days: { fieldType: { type: 'number' }, optional: true },
+        on: { fieldType: { type: 'boolean' }, optional: false },
+      },
+    };
+    expect(argumentsFor(validator, rowOf, TABLES, 'emptiest')).toEqual({
+      members: [],
+      decision: 'reject',
+      agentId: 'agent-row',
+      reason: '',
+      days: 0,
+      on: true,
+    });
+  });
+
   it('refuses to make up an id for a table with no row, since the validator would refuse it first', (): void => {
     const validator: ValidatorJson = {
       type: 'object',
