@@ -50,9 +50,11 @@ import {
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
 import {
+  answeredEntries,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
+import { landedWritesOf } from '../src/work/landed-writes';
 import {
   isStoppable,
   landedNoteRows,
@@ -74,6 +76,29 @@ import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
  * reconciled, retried or dismissed by the manager. The helpers these share with the rest of the
  * work loop stay in `convex/work.ts`, which this module imports and which never imports it.
  */
+
+/**
+ * The output a retry carries when the manager answered the reconciliation entry by entry: the
+ * landed writes as they answered them (`landedWritesOf` with the answers) kept in `landedWrites`,
+ * which the retried run reads as already on the provider.
+ *
+ * @param output - The output the retry starts from.
+ * @param row - The failed row and its reconciliation.
+ * @returns The output with the carried writes, or undefined when nothing was answered.
+ */
+function carriedAfterReconciliation(
+  output: unknown,
+  row: Doc<'workItems'>,
+): Record<string, unknown> | undefined {
+  const answered = (row.providerReconciliation?.entries ?? []).filter(
+    (entry) => entry.answer !== undefined,
+  );
+  if (answered.length === 0 || !output || typeof output !== 'object') return undefined;
+  return {
+    ...(output as Record<string, unknown>),
+    landedWrites: landedWritesOf(row.output, answered),
+  };
+}
 
 /** Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as feedback for the next run. */
 export const retryFailed = mutation({
@@ -144,12 +169,15 @@ export const retryFailed = mutation({
               .filter((surface) => verdictFor(surface, Date.now()) === 'connected'),
           )
         : undefined;
+    // The writes the manager confirmed on the provider are carried into the retry, so a write
+    // answered landed is never sent again however its row reads (P4-1).
+    const carried = carriedAfterReconciliation(resume ?? row.output, row);
     await ctx.db.patch(args.workItemId, {
       state: next,
       // A retried item begins a new run, which the queue orders by (x4); one sent back to
       // evaluation holds no run.
       claimedAt: next === 'discovered' ? undefined : Date.now(),
-      ...(resume ? { output: resume } : {}),
+      ...(carried ? { output: carried } : resume ? { output: resume } : {}),
       ...(redraft
         ? {
             plan: undefined,
@@ -209,9 +237,27 @@ export const retryFailed = mutation({
   },
 });
 
-/** Public, owner-guarded: records whether the manager confirmed the provider state before a retry. */
+/** The manager's answer for one reconciliation entry, by its place in the run (U17 D1). */
+const entryAnswerValidator = v.object({
+  phase: v.union(v.literal('single'), v.literal('prerequisite'), v.literal('closing')),
+  actionIndex: v.number(),
+  answer: v.union(v.literal('landed'), v.literal('not-sent')),
+});
+
+/**
+ * Public, owner-guarded (`assertOwnsWorkItem`): records the manager's check of the provider before
+ * a retry, entry by entry (U17 D1): for each write the run's ledger names, whether it landed or
+ * was not sent. A write of unknown outcome must be answered; a landed one is taken as landed
+ * unless answered otherwise. Writes `providerReconciliation` with each entry's `answer` and a
+ * `work.provider-reconciled` event, once. Refuses, as a `ConvexError` the card says, a
+ * confirmation that leaves a write of unknown outcome unanswered.
+ */
 export const reconcileFailed = mutation({
-  args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
+  args: {
+    workItemId: v.id('workItems'),
+    confirmed: v.boolean(),
+    answers: v.optional(v.array(entryAnswerValidator)),
+  },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'failed' && row.state !== 'completed') {
@@ -228,10 +274,20 @@ export const reconcileFailed = mutation({
     if (entries.length === 0) {
       throw new Error('the applied ledger does not identify provider effects to reconcile');
     }
+    const answered = answeredEntries(entries, args.answers ?? []);
+    if (!answered.ok) {
+      throw new ConvexError(
+        'Say for each write whose outcome is unknown whether it landed or was not sent.',
+      );
+    }
     const identity = await getCallerOrThrow(ctx);
     const confirmedAt = Date.now();
     // `actor` is the owner key, one per owner, not the person; U13 D2 adds the session.
-    const providerReconciliation = { actor: identity.ownerKey, confirmedAt, entries };
+    const providerReconciliation = {
+      actor: identity.ownerKey,
+      confirmedAt,
+      entries: answered.entries,
+    };
     await ctx.db.patch(args.workItemId, { providerReconciliation });
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -240,7 +296,7 @@ export const reconcileFailed = mutation({
         workItemId: args.workItemId,
         actor: identity.ownerKey,
         confirmedAt,
-        entries,
+        entries: answered.entries,
       },
       createdAt: confirmedAt,
     });

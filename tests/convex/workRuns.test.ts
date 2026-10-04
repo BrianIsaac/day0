@@ -352,3 +352,89 @@ describe('Stop on a working item', (): void => {
     expect(await readItem(harness, working.workItemId)).toMatchObject({ state: 'executing' });
   });
 });
+
+/** An apply stopped after its first write landed: the second write's outcome is unknown. */
+async function stoppedMidApply(harness: Harness): Promise<{
+  agentId: Id<'agents'>;
+  workItemId: Id<'workItems'>;
+}> {
+  const { agentId, workItemId, applyAttemptId } = await applyInFlight(harness);
+  await harness.mutation(internal.workRuns.recordApplyOutcome, {
+    workItemId,
+    applyAttemptId,
+    index: 0,
+    row: landedComment,
+  });
+  await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+  return { agentId, workItemId };
+}
+
+describe('the reconciliation answered per entry (U17 D1)', (): void => {
+  it('refuses a confirmation that leaves a write of unknown outcome unanswered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stoppedMidApply(harness);
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true }),
+    ).rejects.toThrow('Say for each write whose outcome is unknown whether it landed');
+    expect((await readItem(harness, workItemId)).providerReconciliation).toBeUndefined();
+  });
+
+  it('stores the answer of every entry, a landed one taking landed unless told otherwise', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await stoppedMidApply(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [{ phase: 'single', actionIndex: 1, answer: 'not-sent' }],
+    });
+    const recorded = (await readItem(harness, workItemId)).providerReconciliation;
+    expect(
+      recorded?.entries.map((entry) => [entry.actionIndex, entry.outcome, entry.answer]),
+    ).toEqual([
+      [0, 'landed', 'landed'],
+      [1, 'outcome-unknown', 'not-sent'],
+    ]);
+    const event = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.provider-reconciled'))
+          .first(),
+    );
+    expect(
+      (event?.payload as { entries: Array<{ answer?: string }> }).entries.map((e) => e.answer),
+    ).toEqual(['landed', 'not-sent']);
+  });
+});
+
+describe('a retry after the reconciliation (P4-1)', (): void => {
+  it('carries a write answered landed so the retry never sends it again, and leaves out one not sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stoppedMidApply(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [
+        { phase: 'single', actionIndex: 0, answer: 'not-sent' },
+        { phase: 'single', actionIndex: 1, answer: 'landed' },
+      ],
+    });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    // What the retried run's executor reads as already on the provider (`landedWritesOf`).
+    const carried = (
+      row.output as { landedWrites?: Array<{ action: unknown; applied: AppliedAction }> }
+    ).landedWrites;
+    expect(carried?.map((write) => write.action)).toEqual([status]);
+    expect(carried?.[0].applied).toMatchObject({ ok: true });
+    expect(carried?.[0].applied.outcomeUnknown).toBeUndefined();
+  });
+});

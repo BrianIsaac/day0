@@ -13,6 +13,13 @@ export type ReconciliationPhase = 'single' | 'prerequisite' | 'closing';
 /** What the manager must confirm about an entry: it landed, or its outcome is unknown. */
 export type ReconciliationOutcome = 'landed' | 'outcome-unknown';
 
+/**
+ * What the manager found on the provider for one entry (wave 5 U17 D1, built in wave 12): the
+ * write is there, or it was not sent. A retry counts a write answered `landed` as landed and never
+ * sends it again, and sends one answered `not-sent` afresh.
+ */
+export type ReconciliationAnswer = 'landed' | 'not-sent';
+
 /** One ledger entry the manager confirms before a retry, by phase and index. */
 export interface ReconciliationEntry {
   phase: ReconciliationPhase;
@@ -23,6 +30,45 @@ export interface ReconciliationEntry {
   reason?: string;
   providerId?: string;
   idempotencyKey?: string;
+  /** The manager's answer; absent on entries confirmed as a whole, before the per-entry answer. */
+  answer?: ReconciliationAnswer;
+}
+
+/** The manager's answer for one entry, by its place in the run. */
+export interface EntryAnswer {
+  readonly phase: ReconciliationPhase;
+  readonly actionIndex: number;
+  readonly answer?: ReconciliationAnswer;
+}
+
+/** The ledger reason on a write the manager confirmed landed after its outcome was unknown. */
+export const CONFIRMED_LANDED_REASON =
+  'confirmed landed by the manager after its outcome was unknown';
+
+/**
+ * The entries as the manager answered them: an entry whose outcome is unknown takes the answer
+ * given for it and is refused without one; a landed entry takes the answer given, or `landed`.
+ *
+ * @param entries - The entries the run's ledger names.
+ * @param answers - The manager's answers, by phase and index.
+ * @returns The answered entries, or the entries still owed an answer.
+ */
+export function answeredEntries(
+  entries: readonly ReconciliationEntry[],
+  answers: readonly EntryAnswer[],
+): { ok: true; entries: ReconciliationEntry[] } | { ok: false; unanswered: ReconciliationEntry[] } {
+  const answerOf = (entry: ReconciliationEntry): ReconciliationAnswer | undefined =>
+    answers.find(
+      (answer) => answer.phase === entry.phase && answer.actionIndex === entry.actionIndex,
+    )?.answer;
+  const unanswered = entries.filter(
+    (entry) => entry.outcome === 'outcome-unknown' && answerOf(entry) === undefined,
+  );
+  if (unanswered.length > 0) return { ok: false, unanswered };
+  return {
+    ok: true,
+    entries: entries.map((entry) => ({ ...entry, answer: answerOf(entry) ?? 'landed' })),
+  };
 }
 
 interface LedgerEntry {

@@ -3459,10 +3459,18 @@ describe('the exact-action gate', (): void => {
       }),
     ).rejects.toThrow('This employee is not yours.');
 
+    // The write whose response was lost is answered entry by entry (U17 D1, wave 12).
     await expect(
       harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
         workItemId,
         confirmed: true,
+      }),
+    ).rejects.toThrow('Say for each write whose outcome is unknown whether it landed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+        answers: [{ phase: 'single', actionIndex: 2, answer: 'landed' }],
       }),
     ).resolves.toEqual({ ok: true, reconciledEntries: 2 });
 
@@ -3479,6 +3487,7 @@ describe('the exact-action gate', (): void => {
           effect: 'added audit note',
           providerId: 'comment-17',
           idempotencyKey: 'comment',
+          answer: 'landed',
         },
         {
           phase: 'single',
@@ -3487,6 +3496,7 @@ describe('the exact-action gate', (): void => {
           outcome: 'outcome-unknown',
           reason: 'provider accepted the request but the response was lost',
           idempotencyKey: 'transition',
+          answer: 'landed',
         },
       ],
     });

@@ -14,7 +14,7 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { landedEntry, type AppliedAction, type SurfaceRecord } from '../surfaces/types';
 import { messageTexts } from './evidence-claims';
 import { actionIdempotencyKey } from './idempotency';
-import { ledgerPhases } from './reconciliation';
+import { CONFIRMED_LANDED_REASON, ledgerPhases, type EntryAnswer } from './reconciliation';
 import type { LandedWrite, MockAction } from './types';
 import { escapeRegExp } from '../lib/regex';
 
@@ -147,23 +147,49 @@ function parsedWrite(action: MockAction): ParsedSurfaceAction | undefined {
 }
 
 /**
+ * A row whose outcome was unknown, as the manager confirmed it: landed, with no unknown flag.
+ *
+ * @param entry - The ledger row.
+ */
+function confirmedLanded(entry: AppliedAction): AppliedAction {
+  const confirmed: AppliedAction = { ...entry, ok: true, reason: CONFIRMED_LANDED_REASON };
+  delete confirmed.outcomeUnknown;
+  return confirmed;
+}
+
+/**
  * The writes a run's persisted output landed, in either of its shapes,
- * behind the writes it already carried from earlier runs.
+ * behind the writes it already carried from earlier runs. A write the
+ * manager answered `landed` in the reconciliation counts as landed whatever
+ * its row says, and one they answered `not-sent` does not (P4-1).
  *
  * Args:
  *   output: A work item's persisted output, or undefined on a first run.
+ *   answers: The manager's per-entry answers from the reconciliation, if any.
  *
  * Returns:
  *   The landed writes, oldest first, each once.
  */
-export function landedWritesOf(output: unknown): LandedWrite[] {
+export function landedWritesOf(
+  output: unknown,
+  answers: readonly EntryAnswer[] = [],
+): LandedWrite[] {
   if (!output || typeof output !== 'object') return [];
   const carried = (output as { landedWrites?: unknown }).landedWrites;
   const earlier: LandedWrite[] = Array.isArray(carried) ? (carried as LandedWrite[]) : [];
-  const own = ledgerPhases(output).flatMap(({ actions, applied }) =>
+  const own = ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     actions.flatMap((action, index): LandedWrite[] => {
       const entry = applied[index] as AppliedAction | undefined;
-      return landedEntry(entry) && parsedWrite(action) ? [{ action, applied: entry }] : [];
+      if (!entry || !parsedWrite(action)) return [];
+      // The manager's answer on the provider is the last word on a row (P4-1, U17 D1).
+      const answer = answers.find(
+        (row) => row.phase === phase && row.actionIndex === index,
+      )?.answer;
+      if (answer === 'not-sent') return [];
+      if (answer === 'landed' && !landedEntry(entry)) {
+        return [{ action, applied: confirmedLanded(entry) }];
+      }
+      return landedEntry(entry) ? [{ action, applied: entry }] : [];
     }),
   );
   // Every write is its own row, keyed by the idempotency key it was sent
