@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { createGrants } from './grants.js';
 import { createGraphql } from './graphql.js';
 import { formOf, json, presentedToken } from './http.js';
+import { createMcp } from './mcp.js';
 import { createOAuth } from './oauth.js';
 import { createWorkspace } from './workspace.js';
 
@@ -95,6 +96,7 @@ export function createLinear(options) {
           token.scopes.includes('app:assignable'),
       ),
   );
+  const unavailable = { writes: 0 };
   /** @type {import('./linear').LoggedRequest[]} */
   const log = [];
 
@@ -106,6 +108,7 @@ export function createLinear(options) {
   };
   const oauth = createOAuth({ apps, grants, workspace, signedIn, now });
   const graphql = createGraphql(workspace);
+  const mcp = createMcp({ workspace, unavailable });
 
   /**
    * The user a request's token acts as: a person by their personal API key or by a token their own
@@ -144,6 +147,15 @@ export function createLinear(options) {
       for (const name of ['grant_type', 'client_id', 'scope', 'token_type_hint']) {
         const value = form.get(name);
         if (value !== null) asked[name] = value;
+      }
+    }
+    if (request.method === 'POST' && path === '/mcp') {
+      try {
+        const message = JSON.parse(await request.clone().text());
+        if (typeof message.method === 'string') asked.rpc = message.method;
+        if (typeof message.params?.name === 'string') asked.tool = message.params.name;
+      } catch {
+        // Not JSON: the handler answers the parse error; the log keeps the route alone.
       }
     }
     return asked;
@@ -189,6 +201,7 @@ export function createLinear(options) {
           comments: issue.comments.length,
           archived: issue.archivedAt !== null,
         })),
+        unavailableWrites: unavailable.writes,
         log,
       });
     }
@@ -224,6 +237,15 @@ export function createLinear(options) {
       }
       return json(200, { ok: true, expired });
     }
+    if (url.pathname === '/admin/unavailable') {
+      // The next writes answered as Linear's MCP server answered one on 1 October (m1).
+      const writes = Number(params.get('writes') ?? '1');
+      if (!Number.isInteger(writes) || writes < 0) {
+        return json(400, { ok: false, error: 'writes must be a whole number' });
+      }
+      unavailable.writes = writes;
+      return json(200, { ok: true, unavailableWrites: writes });
+    }
     return json(404, { ok: false, error: 'not_found' });
   }
 
@@ -239,6 +261,7 @@ export function createLinear(options) {
     if (path === '/oauth/revoke' && request.method === 'POST') return oauth.revoke(request);
     if (path === '/oauth/authorize') return oauth.authorize(request);
     if (path === '/graphql') return graphql.handle(request, callerOf(request).actor);
+    if (path === '/mcp') return mcp.handle(request, callerOf(request));
     return json(404, { error: 'not_found' });
   }
 
