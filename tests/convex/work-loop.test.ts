@@ -1831,6 +1831,31 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     },
   );
 
+  it('holds an execution queued before the pause even when its skill has gone, parking nothing and proposing nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-89');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.run(async (ctx) => {
+      for (const skill of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(skill._id, { state: 'retired' });
+      }
+    });
+    await pause(harness, agentId);
+    await drain(harness);
+
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('skills').collect())).map(
+        (skill) => skill.state,
+      ),
+    ).toEqual(['retired']);
+    expect(recorded.skillRuns).toEqual([]);
+  });
+
   it("lets the manager stop a paused employee's working row", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

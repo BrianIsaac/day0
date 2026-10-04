@@ -143,6 +143,16 @@ export async function stepMayRun(
 }
 
 /**
+ * Internal: {@link stepMayRun} for a step that starts in an action, read before it does anything
+ * a claim would otherwise have refused (the executor picks a skill, and parks the row behind a
+ * missing one, before its claim). Writes nothing.
+ */
+export const stepPermission = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, { agentId }): Promise<StepPermission> => await stepMayRun(ctx.db, agentId),
+});
+
+/**
  * Claim one step of one row, or report why not.
  *
  * The state check and the stamp share one transaction, so of two runs that

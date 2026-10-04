@@ -910,6 +910,10 @@ async function executeApprovedPlanHandler(
   if (item.state !== 'plan-approved') {
     return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
   }
+  // A paused employee, or a paused deployment, starts nothing (12-P): read before the skill is
+  // picked, since a missing one parks the row and proposes a skill before the claim refuses.
+  const permission = await ctx.runQuery(internal.workLoop.stepPermission, { agentId });
+  if (!permission.mayRun) return { ok: false, reason: permission.reason };
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
     : await ctx.runQuery(api.charters.latest, { agentId });
