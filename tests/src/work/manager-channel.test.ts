@@ -3,6 +3,8 @@ import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
   batchDecisionNoticeText,
+  CLOSE_ONLY_ON_CARD_REASON,
+  closeOnCardNoticeText,
   canEditManagerMessage,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
@@ -639,6 +641,59 @@ describe('the acknowledgement of a decision while a pause holds the step (W12-R1
       }),
     ).toBe(
       'Approval b1 received for 1 of 1 decisions (ab12cd). Scheduled work on this deployment is paused: I’ll apply the approved actions once it runs again.',
+    );
+  });
+});
+
+describe('the acknowledgement of an approval that left a ticket close for its card (12-H)', (): void => {
+  const employee = { by: 'employee', employeeName: 'Priya' } as const;
+
+  it('says what it applies and that the close waits on its card, under a pause too', (): void => {
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'approve',
+        kind: 'actions',
+        hold: undefined,
+        leftForCard: 1,
+      }),
+    ).toBe(
+      'Approval ab12cd received. I’m applying the approved actions now. The ticket close is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.',
+    );
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'approve',
+        kind: 'actions',
+        hold: employee,
+        leftForCard: 2,
+      }),
+    ).toBe(
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. The 2 ticket closes are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.',
+    );
+    // A rejection takes the whole set, the close with it: nothing is left for the card.
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'reject', kind: 'actions', hold: undefined }),
+    ).toBe('Rejection ab12cd received. I won’t apply it.');
+  });
+
+  it('names in a batch acknowledgement each request whose close waits, and one whose close was all it had', (): void => {
+    expect(
+      batchDecisionNoticeText({
+        id: 'b1',
+        verb: 'approve',
+        decided: ['ab12cd', 'ef34gh'],
+        skipped: [{ decisionId: 'jk56mn', reason: CLOSE_ONLY_ON_CARD_REASON }],
+        leftForCard: ['ab12cd', 'ef34gh'],
+      }),
+    ).toBe(
+      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. The ticket closes of ab12cd and ef34gh are not among them: what I wrote says the work was not done, so each waits for you on its card in day0. Left as they were: jk56mn: its ticket close is decided on its card.',
+    );
+  });
+
+  it('answers an approval of a request whose only waiting write is the close with where it is decided', (): void => {
+    expect(closeOnCardNoticeText('ab12cd')).toBe(
+      'Approval ab12cd decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.',
     );
   });
 });

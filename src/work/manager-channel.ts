@@ -664,10 +664,38 @@ export function decisionNoticeText(args: {
   readonly verb: 'approve' | 'reject';
   readonly kind: 'plan' | 'actions';
   readonly hold: RunHold | undefined;
+  /** How many ticket closes Day0 held the approval left for their card (wave 12, 12-H). */
+  readonly leftForCard?: number;
 }): string {
-  return args.verb === 'approve'
-    ? `Approval ${args.id} received. ${approvedStepWords(args.kind, args.hold)}`
-    : `Rejection ${args.id} received. I won’t apply it.`;
+  if (args.verb === 'reject') return `Rejection ${args.id} received. I won’t apply it.`;
+  const left = args.leftForCard ?? 0;
+  return [
+    `Approval ${args.id} received.`,
+    approvedStepWords(args.kind, args.hold),
+    ...(left > 0 ? [closesLeftForCardWords(left)] : []),
+  ].join(' ');
+}
+
+/**
+ * What an approval from Slack says of the ticket closes it left for their card (wave 12, 12-H;
+ * R-12D-1), in the employee's voice. Wording drafts.
+ *
+ * @param count - How many closes it left.
+ */
+export function closesLeftForCardWords(count: number): string {
+  return count === 1
+    ? 'The ticket close is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.'
+    : `The ${count} ticket closes are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.`;
+}
+
+/**
+ * The answer to an approval of a request whose only waiting write is a ticket close Day0 held
+ * (wave 12, 12-H): it decides nothing, and says where the close is decided. Wording draft.
+ *
+ * @param id - The request's code.
+ */
+export function closeOnCardNoticeText(id: string): string {
+  return `Approval ${id} decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.`;
 }
 
 /**
@@ -686,6 +714,8 @@ export function batchDecisionNoticeText(args: {
   decided: readonly string[];
   skipped: ReadonlyArray<{ decisionId: string; reason: string }>;
   hold?: RunHold;
+  /** The decided requests whose ticket close Day0 held was left for its card (wave 12, 12-H). */
+  leftForCard?: readonly string[];
 }): string {
   const noun = args.verb === 'approve' ? 'Approval' : 'Rejection';
   const total = args.decided.length + args.skipped.length;
@@ -695,6 +725,18 @@ export function batchDecisionNoticeText(args: {
       : `${noun} ${args.id} received for ${args.decided.length} of ${total} decisions (${args.decided.join(', ')}). ${
           args.verb === 'approve' ? approvedStepWords('actions', args.hold) : 'I won’t apply them.'
         }`;
+  const closes = args.leftForCard ?? [];
+  const onCard =
+    closes.length === 0
+      ? ''
+      : closes.length === 1
+        ? ` The ticket close of ${closes[0]} is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.`
+        : ` The ticket closes of ${closes.slice(0, -1).join(', ')} and ${closes[closes.length - 1]} are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.`;
   const left = args.skipped.map((member) => `${member.decisionId}: ${member.reason}`);
-  return left.length > 0 ? `${head} Left as they were: ${left.join('; ')}.` : head;
+  return left.length > 0
+    ? `${head}${onCard} Left as they were: ${left.join('; ')}.`
+    : `${head}${onCard}`;
 }
+
+/** Why a batch approval left a request as it was: its one waiting write is a close Day0 held. */
+export const CLOSE_ONLY_ON_CARD_REASON = 'its ticket close is decided on its card';
