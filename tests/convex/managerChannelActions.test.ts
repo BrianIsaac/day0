@@ -419,6 +419,9 @@ describe('the outbound manager-channel action', (): void => {
   });
 
   it('delivers a receipt acknowledgement once and records its provider timestamp', async (): Promise<void> => {
+    // The decision schedules this acknowledgement, which the test sends itself: on fake timers the
+    // scheduled copy never runs, and the file's afterEach discards it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
@@ -492,8 +495,14 @@ describe('the outbound manager-channel action', (): void => {
 });
 
 describe('a decided request in the manager DM (M finding 3)', (): void => {
-  /** A Slack double that answers every call, recording it. */
+  /**
+   * A Slack double that answers every call, recording it. The decision schedules its
+   * acknowledgement and the close, which these tests drive themselves: on fake timers neither runs
+   * on its own, and the file's afterEach discards both, so neither posts through a later test's
+   * fetch.
+   */
   function recordSlack(): void {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
