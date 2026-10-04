@@ -359,8 +359,10 @@ export function WorkItemCard({
       <ItemSection>
         <Note tone="warn" block>
           <Lead>
-            {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}, in {employeeName}’s own
-            words:
+            <span className="font-semibold">
+              {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}
+            </span>
+            , in {employeeName}’s own words:
           </Lead>
           {notDone.statements.length === 1 ? (
             <p className="mt-1.5 text-[15px]">
@@ -450,8 +452,9 @@ export function WorkItemCard({
           zone={zone}
         />
       ) : null}
-      {leadsWithResult ? landedSection : null}
+      {/* Whether the work was done is read before what landed: it is what the manager asks first. */}
       {unfinishedSection}
+      {leadsWithResult ? landedSection : null}
       {item.state === 'completed' ? ticketNow : null}
       {from ? (
         <WorkingFromNote

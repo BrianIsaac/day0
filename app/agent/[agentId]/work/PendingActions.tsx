@@ -45,7 +45,12 @@ export function heldSentence(reason: string): string {
 export function closeAgainstWordsNote(employeeName: string, clause: string): string {
   const sentence = clause.trim();
   const quoted = /[?!]$/.test(sentence) ? `“${sentence}”` : `“${sentence.replace(/\.+$/, '')}”.`;
-  return `${employeeName} answered that the work is done, but its own words say ${quoted} Approve the close only if the work was done.`;
+  return `${employeeName} answered that the work is done, but wrote ${quoted} Approve the close only if the work was done; otherwise withhold it.`;
+}
+
+/** Whether a row's verdict is a close the tripwire held for the manager (12-D). */
+function closeHeldAgainstWords(verdict: ActionVerdict | undefined): boolean {
+  return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
 }
 
 /**
@@ -148,7 +153,11 @@ export function PendingActions({
         .filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
     [actions, verdicts],
   );
-  const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
+  // A close the tripwire held starts unticked: the card asks the manager to approve it only if the
+  // work was done, so Approve selected never sends it without that choice.
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(heldIndexes.filter((index) => !closeHeldAgainstWords(verdicts[index]))),
+  );
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const reasonField = useRef<HTMLInputElement>(null);
@@ -193,11 +202,9 @@ export function PendingActions({
           </p>
         ) : null}
         {closeAgainstWords !== undefined &&
-        heldIndexes.some((index) => {
-          const verdict = verdicts[index];
-          return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
-        }) ? (
+        heldIndexes.some((index) => closeHeldAgainstWords(verdicts[index])) ? (
           <p className="text-[15px] text-[var(--color-fg)]">
+            <span className="font-semibold">Close held:</span>{' '}
             {closeAgainstWordsNote(employeeName, closeAgainstWords)}
           </p>
         ) : null}

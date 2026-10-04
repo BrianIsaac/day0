@@ -711,6 +711,20 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     expect(nell).toContain('The October deal list is not in the tracker.');
   });
 
+  it('says a run was only partly done before what landed, since that is the first thing the manager asks', (): void => {
+    const text = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    ).text();
+    expect(text.indexOf('Partly done, in Mira’s own words')).toBeGreaterThan(-1);
+    expect(text.indexOf('Partly done, in Mira’s own words')).toBeLessThan(
+      text.indexOf('reached the work environment'),
+    );
+  });
+
   it('reads a row recorded before the release, with no answer, as it read before', (): void => {
     const view = card({
       ...DRAWN.landed,

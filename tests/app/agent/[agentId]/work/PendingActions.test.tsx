@@ -127,9 +127,32 @@ describe('a close the tripwire sent to the manager (12-D)', (): void => {
         onReject={resolved}
       />,
     );
+    expect(markup).toContain('Close held:');
     expect(markup).toContain(
-      'Quill answered that the work is done, but its own words say “I could not find a mismatch between the tracker and the ticket&#x27;s figures”. Approve the close only if the work was done.',
+      'Quill answered that the work is done, but wrote “I could not find a mismatch between the tracker and the ticket&#x27;s figures”. Approve the close only if the work was done; otherwise withhold it.',
     );
+  });
+
+  it('leaves the held close unticked, so Approve selected never sends it without a choice', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[
+          close,
+          { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Done.' } },
+        ]}
+        verdicts={[
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+          { disposition: 'held', reason: 'write held for the manager' },
+        ]}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('Approve selected (1)');
+    expect(markup.match(/type="checkbox"[^>]*checked=""/g) ?? []).toHaveLength(1);
   });
 
   it('says nothing of the kind on a set the tripwire did not trip', (): void => {
@@ -148,7 +171,7 @@ describe('a close the tripwire sent to the manager (12-D)', (): void => {
 
   it('keeps the quoted sentence’s own question or exclamation mark', (): void => {
     expect(closeAgainstWordsNote('Moss', 'Where are the deals?')).toBe(
-      'Moss answered that the work is done, but its own words say “Where are the deals?” Approve the close only if the work was done.',
+      'Moss answered that the work is done, but wrote “Where are the deals?” Approve the close only if the work was done; otherwise withhold it.',
     );
   });
 });
