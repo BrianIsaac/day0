@@ -10,13 +10,7 @@ import {
   autonomyTurnedOnAfterDraft,
   autonomyTurnedOnAfterDraftNote,
 } from '@/work/autonomy';
-import {
-  heldStepWords,
-  rejectionOf,
-  waitsAtClaim,
-  workingFrom,
-  type RunHold,
-} from '@/work/item-display';
+import { heldStepWords, rejectionOf, workingFrom, type RunHold } from '@/work/item-display';
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
@@ -260,7 +254,7 @@ export function WorkItemCard({
   // The page runs the mock loop until the deployment says it serves the real one.
   const gate = servedByLoop ? 'real' : 'mock';
   // An approval the manager gave waits at its apply's claim while a pause holds it.
-  const heldApply = hold !== undefined && waitsAtClaim(item) ? heldStepWords(hold) : undefined;
+  const heldApply = hold === undefined ? undefined : heldStepWords(hold, item);
   const skipped =
     item.state === 'skipped' && verdictReason !== undefined && !colleagueHolding(item);
   // The per-action box already names every action that failed, so the

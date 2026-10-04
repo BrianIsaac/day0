@@ -142,7 +142,7 @@ describe('runProgress while a pause holds the next step (wave 12, 12-P)', (): vo
     const held = runProgress(row({ state: 'plan-approved' }), { autonomous: false, hold: PAUSED });
     expect(held).toEqual({
       title: 'Held while Priya is paused',
-      detail: 'Nothing starts until you resume Priya on Manage.',
+      detail: 'Your approval stands: the run starts when you resume Priya.',
       parts: [
         { name: 'Read and draft', status: 'held' },
         { name: 'Automatic writes', status: 'next' },
@@ -184,7 +184,9 @@ describe('runProgress while a pause holds the next step (wave 12, 12-P)', (): vo
       hold: { by: 'deployment' },
     });
     expect(held?.title).toBe("Held while this deployment's scheduled work is paused");
-    expect(held?.detail).toBe('It goes on once the scheduled work runs again.');
+    expect(held?.detail).toBe(
+      "Your approval stands: the run starts once the deployment's scheduled work runs again.",
+    );
   });
 });
 
@@ -220,10 +222,20 @@ describe('runHoldOf', (): void => {
     expect(runHoldOf({ ...base, real: false, employeePaused: true })).toBeUndefined();
   });
 
-  it('words each hold as the card says it', (): void => {
-    expect(heldStepWords({ by: 'employee', employeeName: 'Priya' }).title).toBe(
-      'Held while Priya is paused',
+  it('says what each held step keeps, and never that automatic writes had an approval', (): void => {
+    const hold: RunHold = { by: 'employee', employeeName: 'Priya' };
+    expect(heldStepWords(hold, row({ state: 'claimed' }))?.detail).toBe(
+      'The plan is drafted when you resume Priya.',
     );
+    expect(
+      heldStepWords(hold, row({ state: 'executing', applyPhase: 'auto', approvedIndexes: [0] }))
+        ?.detail,
+    ).toBe('The automatic writes are kept: they are sent when you resume Priya.');
+    expect(heldStepWords(hold, row({ state: 'actions-pending', approvedIndexes: [1] }))).toEqual({
+      title: 'Held while Priya is paused',
+      detail: 'Your approval stands: the approved writes are sent when you resume Priya.',
+    });
+    expect(heldStepWords(hold, row({ state: 'executing' }))).toBeUndefined();
   });
 });
 

@@ -232,7 +232,8 @@ export function VerdictSection({
 /** How each part of a run's progress is drawn, by where it stands. */
 const PART_CLASS: Record<RunProgress['parts'][number]['status'], string> = {
   now: 'border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]',
-  held: 'border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] text-[var(--color-warn)]',
+  // Dashed as well as warn, so a held part differs from the part under way without colour.
+  held: 'border-dashed border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] text-[var(--color-warn)]',
   done: 'border-[var(--color-ok-line)] text-[var(--color-ok)]',
   next: 'border-[var(--color-border)] text-[var(--color-muted)]',
 };
