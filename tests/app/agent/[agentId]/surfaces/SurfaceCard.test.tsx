@@ -824,6 +824,13 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).toMatch(/>Connect<\/button>/);
     expect(chip(markup)).toBe('Not granted');
+    // Its lead says what Connect does for this card, not the first connection's generic words
+    // (the second pre-tag's recorded item).
+    expect(markup).toContain('Connect Linear again');
+    expect(markup).toContain(
+      "Linear refused Maya's own app: Connect installs it again through IT's connection, with nothing to paste.",
+    );
+    expect(markup).not.toContain('Nothing to paste: Connect gives');
     // Only an employee's own app installs again: through a shared connection Connect is not it.
     expect(
       render(

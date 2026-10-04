@@ -537,6 +537,7 @@ export function SurfaceCard({
             connecting={pending === 'connect'}
             error={failed('connect')}
             onConnect={actions.connect}
+            reinstall={refusedOwnApp}
           />
         ) : null}
         {unserved !== undefined && approvedAccess && surface.credentialId === undefined ? (
