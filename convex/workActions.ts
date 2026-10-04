@@ -101,6 +101,13 @@ import { readSurfaceBearer } from './mcpOauthActions';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { reportedRow } from '../src/work/apply-progress';
 import { isClosingState, notDoneStatements, runOwnWords } from '../src/work/not-done';
+import {
+  answerFieldsOf,
+  closingAgainstFact,
+  closingAgainstFactReason,
+  type WorkDoneFact,
+  workDoneFactOf,
+} from '../src/work/work-done';
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
@@ -2037,6 +2044,8 @@ export function dependentTransitionRefusal(args: {
   initialFailure?: string;
   /** The closing set's draft, read with its messages as the run's own words. */
   draft?: string;
+  /** The run's answer on whether the work was done; absent on a set authored before v0.16.0. */
+  workDone?: WorkDoneFact;
 }): string | undefined {
   const statusChange = args.actions.some((action): boolean => {
     const parsed = parseSurfaceAction(action);
@@ -2047,8 +2056,45 @@ export function dependentTransitionRefusal(args: {
       ? 'dependent phase cannot change ticket state after a prerequisite failure'
       : undefined;
   }
-  // A set whose own words say the work was not done never closes the ticket, and leaving the
-  // state alone is its account of why (the 4 October live demo; wave 12, 12-W).
+  // A set whose run answers that the work was not all done never closes the ticket, and leaving
+  // the state alone is its account of why (decision D-1 (b)). Its words never refuse a set whose
+  // run answered done: that is the tripwire's, which sends the set back once
+  // (`runDependentSkill`).
+  if (args.workDone !== undefined) {
+    if (args.workDone.workDone !== 'done') {
+      const closing = closingAgainstFact(args.workDone, args.actions);
+      return closing !== undefined
+        ? `dependent phase ${closingAgainstFactReason(args.workDone, closing)}: a run that did not do all of the work leaves the ticket's state as it is and records the step it could not finish as blocked`
+        : undefined;
+    }
+  } else {
+    // A set authored before the answer existed is read by its words, as the release before did
+    // (the 4 October live demo; wave 12, 12-W).
+    const refusal = unfinishedWordsRefusal(args);
+    if (refusal !== null) return refusal;
+  }
+  if (
+    args.plan.expectedOutputType !== 'ticket-update' ||
+    !transitionPromised(args.plan) ||
+    statusChange ||
+    args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+  ) {
+    return undefined;
+  }
+  return 'dependent phase omitted the approved ticket state transition without a blocked plan step';
+}
+
+/**
+ * The release before's reading of a closing set with no answer: a set whose own words say the
+ * work was not done never closes the ticket, and leaving the state alone is its account of why.
+ *
+ * @returns The refusal, undefined when such a set leaves the state alone, or null when its words
+ *   say nothing of the kind and the plan's own check decides.
+ */
+function unfinishedWordsRefusal(args: {
+  actions: readonly ExecutionOutput['actions'][number][];
+  draft?: string;
+}): string | undefined | null {
   const unfinished = notDoneStatements(runOwnWords({ draft: args.draft, actions: args.actions }));
   if (unfinished.length > 0) {
     const closing = args.actions.flatMap((action): string[] => {
@@ -2060,15 +2106,7 @@ export function dependentTransitionRefusal(args: {
       ? `dependent phase sets the ticket to ${closing[0]} while its own words say the work was not done ("${unfinished[0]}"): leave the ticket's state as it is and record the step as blocked`
       : undefined;
   }
-  if (
-    args.plan.expectedOutputType !== 'ticket-update' ||
-    !transitionPromised(args.plan) ||
-    statusChange ||
-    args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
-  ) {
-    return undefined;
-  }
-  return 'dependent phase omitted the approved ticket state transition without a blocked plan step';
+  return null;
 }
 
 function flattenedDependentOutput(
@@ -2115,6 +2153,8 @@ function flattenedDependentOutput(
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
     ...(output.initial.unsentWrites ? { unsentWrites: output.initial.unsentWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    // The closing set's answer is the run's, the first phase's a prediction made before anything landed.
+    ...answerFieldsOf(output),
     ...((output.openQuestion ?? output.initial.openQuestion)
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
       : {}),
@@ -2653,6 +2693,7 @@ export const authorDependentActions = internalAction({
           planStepOutcomes: candidateOutput.planStepOutcomes,
           initialFailure,
           draft: candidateOutput.draft,
+          workDone: workDoneFactOf(candidateOutput),
         });
         if (transitionRefusal) issues.push(transitionRefusal);
         return issues;
@@ -2813,6 +2854,7 @@ export const authorDependentActions = internalAction({
         planStepOutcomes: held.planStepOutcomes,
         initialFailure,
         draft: held.draft,
+        workDone: workDoneFactOf(held),
       });
       if (repairedTransitionRefusal)
         throw new ClosingGateRefusal([repairedTransitionRefusal], held);

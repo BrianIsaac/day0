@@ -44,6 +44,12 @@ export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
 export const HELD_WITHHELD_TRANSITION =
   'ticket state transition the approved plan leaves to the manager; held for the manager';
+/**
+ * Why a ticket close waits whatever the switch says: the run answered that the work was done, but
+ * its own words said otherwise and it answered done again when asked (the tripwire, 12-D).
+ */
+export const HELD_CLOSE_AGAINST_WORDS =
+  'ticket close held for the manager: the run answered that the work is done, but its own words say otherwise';
 /** Why a write with no more specific class waits for the manager while the switch is off. */
 export const HELD_WRITE = 'write held for the manager';
 /** The outcome of a held action the manager did not approve. */
@@ -1423,14 +1429,20 @@ export interface ReviewScope {
    * for it.
    */
   transitionWithheld?: boolean;
+  /**
+   * Whether the run answered that the work was done while its own words said otherwise, twice
+   * (the tripwire): its ticket state change is then the manager's decision, whatever the switch.
+   */
+  closeAgainstWords?: boolean;
 }
 
 /**
  * Decide at hold time what the gate will do with one action.
  *
  * Refusals come first and are the same whether the toggle is on or off, and
- * so is a ticket state change the approved plan withholds: that decision
- * is the manager's, and the switch does not stand in for it.
+ * so is a ticket state change the approved plan withholds, or that the run
+ * answered done for against its own words: that decision is the manager's,
+ * and the switch does not stand in for it.
  * With autonomous actions off, an applicable row is `auto` when it is a
  * read or the manager DM and `held` for every other write - a public post
  * or thread reply, a system-of-record mutation, a create or a delete, or any
@@ -1460,6 +1472,9 @@ export function reviewAction(
   if (replyRefusal) return { disposition: 'refused', reason: replyRefusal };
   if (scope.transitionWithheld && isStatusChange(refusal.parsed)) {
     return { disposition: 'held', reason: HELD_WITHHELD_TRANSITION };
+  }
+  if (scope.closeAgainstWords && isStatusChange(refusal.parsed)) {
+    return { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS };
   }
   if (scope.autonomousActions) return { disposition: 'auto' };
   switch (actionClass(refusal.parsed, refusal.surface)) {

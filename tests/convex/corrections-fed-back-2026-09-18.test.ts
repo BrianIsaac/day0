@@ -94,7 +94,7 @@ vi.mock('../../src/lib/mastra', () => ({
       }) as T;
     }
     if (name.startsWith('day0-skill-') && name.endsWith('-initial')) {
-      return args.schema.parse({
+      return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
         draft: 'Following up on the customs hold with the notice the manager chose.',
         notes: '',
         needsDependentPhase: false,

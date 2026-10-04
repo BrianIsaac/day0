@@ -101,7 +101,7 @@ vi.mock('../../src/lib/mastra', () => ({
     const { reportModelCall } = await import('../../src/lib/model-call-telemetry');
     await reportModelCall({ agent: name, attempts: 1, startedAt: Date.now(), providerCalls: 0 });
     if (name.endsWith('-dependent') && name.includes('c0c2u2ujutu')) {
-      return args.schema.parse({
+      return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
         draft: 'The tile was refreshed and read back in the same session.',
         notes: '',
         openQuestion: null,
@@ -132,13 +132,11 @@ vi.mock('../../src/lib/mastra', () => ({
       await hook?.();
       const answer = recorded.closingAnswers.shift();
       if (!answer) throw new Error(`no scripted closing answer left for ${name}`);
-      return args.schema.parse(
-        (await import('./fakes/executor-reply')).asCurrentExecutorReply(answer),
-      ) as T;
+      return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, answer) as T;
     }
     if (!name.endsWith('-initial')) throw new Error(`unscripted agent ${name}`);
     const holder = name.includes('c0c2u2ujutu');
-    return args.schema.parse({
+    return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
       draft: holder
         ? 'Signing in to the tile, entering 74%, saving and reading it back.'
         : 'Opening the tile and reading it before anything is written.',

@@ -65,6 +65,12 @@ import {
   type MockAction,
   type PlanStepOutcome,
 } from '../../src/work/types';
+import {
+  FINISHED_WORDS,
+  MOSS_DRAFT,
+  RECORDED_UNFINISHED,
+  UNFINISHED_WORDS,
+} from '../fixtures/work/work-done-corpora';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { versionBodyHash } from '../../src/work/skill-library';
@@ -1373,6 +1379,89 @@ describe('work action completion evidence', (): void => {
         draft: 'Nothing was reconciled: the deal list is not in the tracker.',
       }),
     ).toContain('its own words say the work was not done');
+  });
+
+  it('holds a closing set to the run’s answer: partial or not-done never lands Done, in any wording, and done is not refused for its words', (): void => {
+    const plan = {
+      summary: 'Reconcile the three deals, then close.',
+      steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+      obligations: obligations(
+        [
+          { kind: 'read', reads: ['linear'] },
+          { kind: 'write', writes: ['linear'] },
+        ],
+        'promised',
+        2,
+      ),
+    };
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    const commentOf = (body: string): MockAction => ({
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-204', body }),
+      },
+    });
+    const done = skillOutput.actions[1];
+    for (const { label, text } of [...UNFINISHED_WORDS, ...RECORDED_UNFINISHED]) {
+      for (const workDone of ['partial', 'not-done'] as const) {
+        const fact = { workDone, workDoneWhy: text };
+        expect(
+          dependentTransitionRefusal({
+            plan,
+            actions: [commentOf(text), done],
+            planStepOutcomes: satisfied,
+            draft: text,
+            workDone: fact,
+          }),
+          label,
+        ).toBe(
+          `dependent phase sets the ticket to Done while workDone is "${workDone}" ("${text}"): a run that did not do all of the work leaves the ticket's state as it is and records the step it could not finish as blocked`,
+        );
+        // Leaving the state alone is the run's account of it, as the words were before.
+        expect(
+          dependentTransitionRefusal({
+            plan,
+            actions: [commentOf(text)],
+            planStepOutcomes: satisfied,
+            draft: text,
+            workDone: fact,
+          }),
+          label,
+        ).toBeUndefined();
+      }
+    }
+    for (const { label, text } of FINISHED_WORDS) {
+      expect(
+        dependentTransitionRefusal({
+          plan,
+          actions: [commentOf(text), done],
+          planStepOutcomes: satisfied,
+          draft: text,
+          workDone: { workDone: 'done', workDoneWhy: text },
+        }),
+        label,
+      ).toBeUndefined();
+    }
+    // The words alone never refuse a set whose run answered done: that is the tripwire's, and it
+    // only sends the set back once (`runDependentSkill`).
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [commentOf(MOSS_DRAFT), done],
+        planStepOutcomes: satisfied,
+        draft: MOSS_DRAFT,
+        workDone: { workDone: 'done', workDoneWhy: 'All three deals are reconciled.' },
+      }),
+    ).toBeUndefined();
   });
 
   it('reads the transition from the declared fields, never from the wording of a step', (): void => {

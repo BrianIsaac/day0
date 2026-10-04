@@ -7,6 +7,7 @@ import {
   justLanded,
   landedPlaces,
   TICKET_REREAD_STOP,
+  notDoneOnCard,
   unfinishedInOwnWords,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
@@ -228,5 +229,25 @@ describe('what a finished run says it did not do (the 4 October demo)', (): void
       "I can't find them.",
       'Nothing was reconciled.',
     ]);
+  });
+});
+
+describe('what the card says was not done follows the run’s answer (12-D)', (): void => {
+  it('says nothing for a run that answered done, the why for partial and not-done, and the old reading with no answer', (): void => {
+    const words = 'I could not find a mismatch between the tracker and the export.';
+    expect(
+      notDoneOnCard({ draft: words, notes: '', workDone: 'done', workDoneWhy: 'All match.' }),
+    ).toBeUndefined();
+    expect(
+      notDoneOnCard({ draft: words, notes: '', workDone: 'partial', workDoneWhy: 'Two remain.' }),
+    ).toEqual({ answer: 'partial', statements: ['Two remain.'] });
+    expect(
+      notDoneOnCard({ draft: 'Done.', notes: '', workDone: 'not-done', workDoneWhy: 'No list.' }),
+    ).toEqual({ answer: 'not-done', statements: ['No list.'] });
+    expect(notDoneOnCard({ draft: words, notes: '' })).toEqual({
+      answer: 'not-done',
+      statements: [words],
+    });
+    expect(notDoneOnCard({ draft: 'Reconciled all three.', notes: '' })).toBeUndefined();
   });
 });

@@ -78,6 +78,7 @@ import {
 import { landedNoteText } from '../src/work/manager-notes';
 import type { WithheldRow, WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
+import { closeAgainstWordsOf } from '../src/work/work-done';
 
 /**
  * A work item's runs (F8, E4: the claim, execute, apply, retry, reconcile, dismiss and stop
@@ -793,6 +794,7 @@ export const setActionsPending = internalMutation({
       row,
       actions as MockAction[],
       (args.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes,
+      closeAgainstWordsOf(args.output) !== undefined,
     );
     const autoIndexes = indexesWith(actionVerdicts, 'auto');
     const heldIndexes = indexesWith(actionVerdicts, 'held');

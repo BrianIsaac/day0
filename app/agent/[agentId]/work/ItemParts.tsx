@@ -65,12 +65,22 @@ const NOTE: Readonly<Record<NoteTone, string>> = {
  * stop or a warning (warn), a skip or a rejection (plain).
  *
  * @param tone - The ground.
+ * @param block - The note holds a list or another block, so it is a `div` rather than a `p`.
  */
-export function Note({ tone = 'plain', children }: { tone?: NoteTone; children: ReactNode }) {
-  return (
-    <p className={`rounded-lg border px-3.5 py-3 text-[15px] break-words ${NOTE[tone]}`}>
-      {children}
-    </p>
+export function Note({
+  tone = 'plain',
+  block = false,
+  children,
+}: {
+  tone?: NoteTone;
+  block?: boolean;
+  children: ReactNode;
+}) {
+  const className = `rounded-lg border px-3.5 py-3 text-[15px] break-words ${NOTE[tone]}`;
+  return block ? (
+    <div className={className}>{children}</div>
+  ) : (
+    <p className={className}>{children}</p>
   );
 }
 

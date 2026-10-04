@@ -48,6 +48,7 @@ import {
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
+  HELD_CLOSE_AGAINST_WORDS,
   HELD_NOT_APPROVED,
   HELD_WRITE,
   isAuditComment,
@@ -58,6 +59,7 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { closingChanges } from '../src/work/work-done';
 import {
   accessRequestReason,
   organisationSystemOf,
@@ -5913,6 +5915,9 @@ export const recordManagerDigest = internalMutation({
  *   ctx: Mutation context.
  *   row: The work item being held.
  *   actions: The actions the skill emitted.
+ *   planStepOutcomes: The closing set's step accounting, for a retry note that directs the state change.
+ *   closeAgainstWords: Whether the tripwire sent this set's close to the manager (12-D): its
+ *     state change is then held whatever the switch says.
  *
  * Returns:
  *   The verdicts, one per action, and the toggle they were decided under.
@@ -5922,6 +5927,7 @@ export async function reviewHeldActions(
   row: Doc<'workItems'>,
   actions: MockAction[],
   planStepOutcomes: readonly PlanStepOutcome[] | undefined,
+  closeAgainstWords = false,
 ): Promise<{
   verdicts: ActionVerdict[];
   autonomousActions: boolean;
@@ -5940,8 +5946,15 @@ export async function reviewHeldActions(
   ]);
   if (!agent) throw new Error('agent not found');
   if (SURFACE_MODE === 'mock') {
+    // Every mock write waits for the manager; a close the tripwire sent there says why it does.
+    const closes = new Set(
+      closeAgainstWords ? closingChanges(actions).map((change) => change.index) : [],
+    );
     return {
-      verdicts: actions.map(() => ({ disposition: 'held', reason: HELD_WRITE })),
+      verdicts: actions.map((_, index) => ({
+        disposition: 'held',
+        reason: closes.has(index) ? HELD_CLOSE_AGAINST_WORDS : HELD_WRITE,
+      })),
       autonomousActions: false,
       transitionDirectedByNote: false,
     };
@@ -5967,6 +5980,7 @@ export async function reviewHeldActions(
         autonomousActions,
         replyTarget: replyTargetFor(row),
         transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
+        closeAgainstWords,
       },
     ),
     autonomousActions,

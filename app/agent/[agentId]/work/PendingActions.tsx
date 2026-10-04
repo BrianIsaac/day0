@@ -1,7 +1,11 @@
 'use client';
 
 import type { MockAction, ArgumentRepairAttempt } from '@/work/types';
-import { type ActionVerdict, HELD_WITHHELD_TRANSITION } from '@/surfaces/policy';
+import {
+  type ActionVerdict,
+  HELD_CLOSE_AGAINST_WORDS,
+  HELD_WITHHELD_TRANSITION,
+} from '@/surfaces/policy';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type ReplyTarget, summariseAction } from '@/surfaces/summary';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -28,6 +32,34 @@ export function heldSentence(reason: string): string {
   const text = reason.trim().replace(/\bthe manager\b/g, 'you');
   const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
   return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
+/**
+ * Why a close waits for the manager after the tripwire (12-D): the run answered that the work was
+ * done, twice, while its own words said otherwise. The sentence is quoted, its full stop moved
+ * outside the quotation marks and a question or exclamation mark kept inside them.
+ *
+ * @param employeeName - Who wrote the words.
+ * @param clause - The sentence the tripwire read.
+ */
+export function closeAgainstWordsNote(employeeName: string, clause: string): string {
+  const sentence = clause.trim();
+  const quoted = /[?!]$/.test(sentence) ? `“${sentence}”` : `“${sentence.replace(/\.+$/, '')}”.`;
+  return `${employeeName} answered that the work is done, but wrote ${quoted} Approve the close only if the work was done; otherwise withhold it.`;
+}
+
+/**
+ * The row's toggle: withhold a ticked write, or include one left out, "again" only when it was the
+ * manager who left it out.
+ */
+function toggleLabel(on: boolean, leftOutByDay0: boolean): string {
+  if (on) return 'Withhold this one';
+  return leftOutByDay0 ? 'Include it' : 'Include it again';
+}
+
+/** Whether a row's verdict is a close the tripwire held for the manager (12-D). */
+function closeHeldAgainstWords(verdict: ActionVerdict | undefined): boolean {
+  return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
 }
 
 /**
@@ -73,6 +105,7 @@ export function PendingActions({
   employeeName = 'the employee',
   closing = false,
   gate = 'real',
+  closeAgainstWords,
   onApprove,
   onReject,
   children,
@@ -95,6 +128,8 @@ export function PendingActions({
   closing?: boolean;
   /** The deployment's gate, for what the closing phase applies. */
   gate?: WorkGate;
+  /** The sentence the tripwire read when the run answered done over it twice (12-D). */
+  closeAgainstWords?: string;
   /** Approve the rows; the card says what it came to in its live region. */
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
@@ -127,7 +162,15 @@ export function PendingActions({
         .filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
     [actions, verdicts],
   );
-  const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
+  // A close the tripwire held starts unticked: the card asks the manager to approve it only if the
+  // work was done, so Approve selected never sends it without that choice.
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(heldIndexes.filter((index) => !closeHeldAgainstWords(verdicts[index]))),
+  );
+  // Such a close is Day0's to leave out until the manager touches it, and is not counted as theirs.
+  const [untouched, setUntouched] = useState<Set<number>>(
+    () => new Set(heldIndexes.filter((index) => closeHeldAgainstWords(verdicts[index]))),
+  );
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const reasonField = useRef<HTMLInputElement>(null);
@@ -142,6 +185,12 @@ export function PendingActions({
   }, [rejecting]);
 
   function toggle(index: number, on: boolean): void {
+    setUntouched((current) => {
+      if (!current.has(index)) return current;
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
     setSelected((current) => {
       const next = new Set(current);
       if (on) next.add(index);
@@ -151,7 +200,9 @@ export function PendingActions({
   }
 
   const anyRefused = refusedIndexes.size > 0;
-  const withheld = heldIndexes.filter((index) => !selected.has(index)).length;
+  const withheld = heldIndexes.filter(
+    (index) => !selected.has(index) && !untouched.has(index),
+  ).length;
   return (
     <>
       <ItemSection tone="warn">
@@ -169,6 +220,13 @@ export function PendingActions({
               : autonomousActions
                 ? HELD_BEFORE_AUTONOMY_NOTE
                 : HELD_WHILE_SUPERVISED_NOTE}
+          </p>
+        ) : null}
+        {closeAgainstWords !== undefined &&
+        heldIndexes.some((index) => closeHeldAgainstWords(verdicts[index])) ? (
+          <p className="text-[15px] text-[var(--color-fg)]">
+            <span className="font-semibold">Close held:</span>{' '}
+            {closeAgainstWordsNote(employeeName, closeAgainstWords)}
           </p>
         ) : null}
         {actions.length === 0 ? (
@@ -216,11 +274,13 @@ export function PendingActions({
                     <p className="text-[13px] text-[var(--color-muted)]">
                       {refused
                         ? `Refused by Day0's gate: ${verdict.reason}. It cannot be sent.`
-                        : !on
-                          ? 'Withheld by you: it will not be sent, and stays in the record.'
-                          : verdict?.disposition === 'held' && verdict.reason
-                            ? heldSentence(verdict.reason)
-                            : null}
+                        : !on && untouched.has(index)
+                          ? 'Not ticked: approve it only if the work was done. Until you tick it, it will not be sent.'
+                          : !on
+                            ? 'Withheld by you: it will not be sent, and stays in the record.'
+                            : verdict?.disposition === 'held' && verdict.reason
+                              ? heldSentence(verdict.reason)
+                              : null}
                     </p>
                     <div className="flex flex-wrap items-center gap-x-4">
                       {refused ? null : (
@@ -229,9 +289,9 @@ export function PendingActions({
                           size="small"
                           disabled={busy}
                           onClick={() => toggle(index, !on)}
-                          aria-label={`${on ? 'Withhold this one' : 'Include it again'}: ${summary}`}
+                          aria-label={`${toggleLabel(on, untouched.has(index))}: ${summary}`}
                         >
-                          {on ? 'Withhold this one' : 'Include it again'}
+                          {toggleLabel(on, untouched.has(index))}
                         </Button>
                       )}
                       <Disclosure summary="Exact payload">

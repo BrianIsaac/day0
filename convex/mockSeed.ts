@@ -187,7 +187,7 @@ If the work item that triggered this update came from the ticket queue (the cand
 }
 \`\`\`
 
-Set \`status: "done"\` if you fully closed the work, \`"in-progress"\` if only partial.
+Set \`status: "done"\` only when your \`workDone\` is \`done\`; when it is \`partial\` or \`not-done\`, set \`"in-progress"\` and say in the comment what is left.
 `,
   },
   {
@@ -247,7 +247,7 @@ That is two messages total: one to the manager (the full draft) and one threaded
 
 Two main triggers:
 
-1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire \`ticket.update\` against the originating ticket once you've done the work. \`status: "done"\` for full closure, \`"in-progress"\` for partial; one-line \`comment\` summarising what you did.
+1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire \`ticket.update\` against the originating ticket once you've done the work. \`status: "done"\` for full closure, \`"in-progress"\` for partial; one-line \`comment\` summarising what you did. Set \`status: "done"\` only when your \`workDone\` is \`done\`; when it is \`partial\` or \`not-done\`, set \`"in-progress"\` and say in the comment what is left.
 2. **Cross-linking cited tickets.** If your draft body mentions another ticket slug (e.g. "REVOPS-202 already covers the Looker refresh"), fire a second \`ticket.update\` against that ticket (\`status: "in-progress"\`, one-line cross-link comment) so the cited ticket's audit trail shows the connection.
 
 ## Action shape

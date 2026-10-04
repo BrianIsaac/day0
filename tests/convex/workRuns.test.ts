@@ -19,7 +19,7 @@ import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
+import { HELD_CLOSE_AGAINST_WORDS, HELD_NOT_APPROVED, HELD_WRITE } from '../../src/surfaces/policy';
 import { eventTypesIn } from '../../src/events/record-filters';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -958,5 +958,76 @@ describe('a completion that withheld writes (the wave 6 review’s D4)', (): voi
       )
     ).map((event) => event.type);
     expect(types).not.toContain('work.actions-withheld');
+  });
+});
+
+describe('a close the tripwire sent to the manager (12-D, decision D-1 (b))', (): void => {
+  const tripped = {
+    ...heldOutput,
+    workDone: 'done',
+    workDoneWhy: 'The audit note is posted.',
+    closeAgainstWords: 'I could not find the close summary.',
+  };
+
+  it('holds the Done for the manager even with autonomous actions on, while the comment applies on its own (real mode)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+    });
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: tripped,
+    });
+    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+    ]);
+  });
+
+  it('lands the same set on its own under the switch when the run answered done without tripping it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+    });
+    const clean: Partial<typeof tripped> = { ...tripped };
+    delete clean.closeAgainstWords;
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: clean,
+    });
+    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+    ]);
+  });
+
+  it('gives the mock ticket close its own reason, beside every other write held as always (mock mode)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: {
+        ...tripped,
+        actions: [
+          { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Posted.' } },
+          {
+            tool: 'ticket.update',
+            args: { slug: 'REVOPS-1', status: 'done', comment: 'Posted the audit note.' },
+          },
+        ],
+      },
+    });
+    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
+      { disposition: 'held', reason: HELD_WRITE },
+      { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+    ]);
   });
 });
