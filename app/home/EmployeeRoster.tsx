@@ -281,6 +281,35 @@ interface DecisionsReachProps {
 }
 
 /**
+ * The words of a decision DM: its buttons, its typed code, both, or neither (W12V-7: an app that
+ * takes no messages takes no typed code, so the manager decides here). A row from functions pushed
+ * before the typed code was read carries none and reads as before.
+ */
+function dmWords(reach: Extract<RosterRow['decisionsReach'], { kind: 'dm' }>): {
+  readonly parts: readonly string[];
+  readonly title: string;
+} {
+  const typed = reach.typedCode !== false;
+  if (reach.buttons) {
+    return {
+      parts: ['Requests:', `${reach.channel} DM,`, 'buttons'],
+      title: typed
+        ? `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`
+        : `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons; no typed code reaches the app until it takes messages`,
+    };
+  }
+  return typed
+    ? {
+        parts: ['Requests:', `${reach.channel} DM,`, 'typed codes'],
+        title: `Each decision request also arrives as a ${reach.channel} DM; reply with its typed code`,
+      }
+    : {
+        parts: ['Requests:', `${reach.channel} DM,`, 'decide here'],
+        title: `Each decision request also arrives as a ${reach.channel} DM, but neither a button nor a typed code reaches the app yet: decide here`,
+      };
+}
+
+/**
  * Where the employee's decision requests reach the manager (wave 12, 12-M; H D6): this dashboard
  * only, or also as a DM on its chat channel, with Approve and Reject buttons or with the typed code
  * alone. A line under the autonomy pill, since a column of its own would push the roster past its
@@ -296,15 +325,7 @@ function DecisionsReach({ reach }: DecisionsReachProps) {
           title:
             'Decision requests wait for you in this dashboard; no chat surface carries them yet',
         }
-      : reach.buttons
-        ? {
-            parts: ['Requests:', `${reach.channel} DM,`, 'buttons'],
-            title: `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`,
-          }
-        : {
-            parts: ['Requests:', `${reach.channel} DM,`, 'typed codes'],
-            title: `Each decision request also arrives as a ${reach.channel} DM; reply with its typed code`,
-          };
+      : dmWords(reach);
   return (
     <span title={words.title} className="mt-1.5 block text-xs text-[var(--color-muted)]">
       {words.parts.map((part, index) => (

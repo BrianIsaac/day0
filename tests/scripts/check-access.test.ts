@@ -10,6 +10,7 @@ import {
   type AccessCheck,
   type ConnectionRow,
   type SocketBridgeReading,
+  type MessagesTabReading,
   type VendorProbes,
 } from '../../scripts/check-access';
 import type { ModelDial } from '../../scripts/model-reach';
@@ -61,6 +62,8 @@ function vendors(
     readonly backend?: (url: URL) => ModelDial | undefined;
     /** What the Slack socket service says of itself; running, with no app, by default. */
     readonly socket?: SocketBridgeReading;
+    /** Whether the typed code reaches each employee app; none installed by default (W12V-7). */
+    readonly messages?: MessagesTabReading;
   } = {},
 ): VendorProbes & {
   readonly calls: string[];
@@ -81,6 +84,8 @@ function vendors(
     slackApiBase: new URL('https://slack.com/api/'),
     socketBridge: async (): Promise<SocketBridgeReading> =>
       overrides.socket ?? { state: 'running', synced: true, apps: [] },
+    messagesTab: async (): Promise<MessagesTabReading> =>
+      overrides.messages ?? { state: 'read', apps: [] },
     fromBackend: async (url: URL): Promise<ModelDial> => {
       fromTheBackend.push(url.href);
       return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
@@ -155,6 +160,8 @@ describe('check:access', (): void => {
       'slack reach',
       // Re-pinned for 12-M: Slack's checks end with whether the socket service carries presses.
       'slack socket',
+      // Re-pinned for W12V-7: and whether the typed code reaches each employee app.
+      'slack messages',
       'linear status',
       'linear redirect',
       'linear scopes',
@@ -601,7 +608,7 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
     expect(checks.some((one) => one.subject === 'linear' && one.name === 'socket')).toBe(false);
   });
 
-  it('notes a service that is not running: requests carry the typed code', async (): Promise<void> => {
+  it('notes a service that is not running: requests carry no buttons', async (): Promise<void> => {
     const checks = await accessChecks(
       [SLACK],
       VALUES,
@@ -609,7 +616,10 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
     );
     const socket = only(checks, 'slack', 'socket');
     expect(socket.status).toBe('warn');
-    expect(socket.detail).toContain('typed code');
+    // Re-pinned for W12V-7: the typed code does not always decide; an app that takes no messages
+    // refuses it.
+    expect(socket.detail).toContain('typed code where the employee app takes messages');
+    expect(socket.detail).not.toContain('always decides');
     expect(socket.detail).toContain('pnpm convex:up --profile slack-socket');
     expect(accessExitCode(checks)).toBe(0);
   });
@@ -692,5 +702,73 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
     );
     expect(socket.status).toBe('gap');
     expect(socket.detail).toContain('DAY0_SOCKET_BRIDGE_SECRET');
+  });
+});
+
+describe('check:access: whether the typed code reaches each employee app (W12V-7)', (): void => {
+  it('passes when every installed app takes messages', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ messages: { state: 'read', apps: [{ appName: 'Iris (Day0)', reach: 'open' }] } }),
+    );
+    expect(only(checks, 'slack', 'messages')).toMatchObject({
+      status: 'ok',
+      detail: 'The typed code reaches every employee app (1).',
+    });
+  });
+
+  it('notes an app Day0 opens at its card’s next check', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        messages: { state: 'read', apps: [{ appName: 'Iris (Day0)', reach: 'day0-opens' }] },
+      }),
+    );
+    expect(only(checks, 'slack', 'messages')).toEqual({
+      subject: 'slack',
+      name: 'messages',
+      status: 'warn',
+      detail:
+        "Iris (Day0) takes no messages yet, so no typed code reaches it: Day0 opens its messages tab at its card's next check (Check the connection on the card does it now).",
+    });
+    expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('names each app only a person can open, and the one toggle, as a gap', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        messages: {
+          state: 'read',
+          apps: [
+            { appName: 'Otto (Day0)', reach: 'needs-toggle' },
+            { appName: 'Vela (Day0)', reach: 'needs-toggle' },
+            { appName: 'Iris (Day0)', reach: 'open' },
+          ],
+        },
+      }),
+    );
+    expect(only(checks, 'slack', 'messages')).toEqual({
+      subject: 'slack',
+      name: 'messages',
+      status: 'gap',
+      detail:
+        'Otto (Day0) and Vela (Day0) take no messages, so no typed code reaches them, and Day0 cannot change their settings: someone who manages each in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and the manager says so on its card (It is on in Slack).',
+    });
+  });
+
+  it('says what could not be read, as a note', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ messages: { state: 'absent', detail: 'the deployment did not answer' } }),
+    );
+    expect(only(checks, 'slack', 'messages')).toMatchObject({
+      status: 'warn',
+      detail: 'Not read: the deployment did not answer.',
+    });
   });
 });

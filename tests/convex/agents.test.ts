@@ -1349,6 +1349,7 @@ describe('the employee roster', (): void => {
     const buttons = await deployEmployee(harness, 'owner', 'Mateo');
     const typed = await deployEmployee(harness, 'owner', 'Priya');
     const here = await deployEmployee(harness, 'owner', 'Aiko');
+    const closed = await deployEmployee(harness, 'owner', 'Iris');
     await harness.run(async (ctx): Promise<void> => {
       const secret = await ctx.db.insert('credentials', {
         userId: 'owner',
@@ -1359,8 +1360,13 @@ describe('the employee roster', (): void => {
         source: 'entered',
         createdAt: 1,
       });
-      const slack = async (agentId: Id<'agents'>, withToken: boolean): Promise<void> => {
-        await ctx.db.insert('surfaces', {
+      const slack = async (
+        agentId: Id<'agents'>,
+        withToken: boolean,
+        takesMessages = true,
+      ): Promise<void> => {
+        const appId = `A0${String(agentId).slice(-4)}`;
+        const surfaceId = await ctx.db.insert('surfaces', {
           agentId,
           slug: 'slack',
           displayName: 'Slack',
@@ -1374,7 +1380,7 @@ describe('the employee roster', (): void => {
           credentialLanded: true,
           credentialId: secret,
           provisioning: {
-            appId: `A0${String(agentId).slice(-4)}`,
+            appId,
             appName: 'App (Day0)',
             clientId: '1.2',
             clientSecretCredentialId: secret,
@@ -1387,14 +1393,41 @@ describe('the employee roster', (): void => {
           },
           createdAt: 1,
         });
+        // Re-pinned for W12V-7: an app this release creates takes messages from the start, and
+        // the roster reads that from the employee's record.
+        if (takesMessages) {
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'surface.app-messages-open',
+            payload: { surfaceId, appId, appName: 'App (Day0)', how: 'created' },
+            createdAt: 2,
+          });
+        }
       };
       await slack(buttons, true);
       await slack(typed, false);
+      await slack(closed, false, false);
     });
     const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
     const reach = new Map(rows.map((row) => [row.agentId, row.decisionsReach]));
-    expect(reach.get(buttons)).toEqual({ kind: 'dm', channel: 'Slack', buttons: true });
-    expect(reach.get(typed)).toEqual({ kind: 'dm', channel: 'Slack', buttons: false });
+    expect(reach.get(buttons)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: true,
+      typedCode: true,
+    });
+    expect(reach.get(typed)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: false,
+      typedCode: true,
+    });
+    expect(reach.get(closed)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: false,
+      typedCode: false,
+    });
     expect(reach.get(here)).toEqual({ kind: 'dashboard' });
     vi.unstubAllEnvs();
   });

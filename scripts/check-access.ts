@@ -32,6 +32,7 @@ import {
 } from '../src/surfaces/access-identity';
 import { recipeForSystem, type RecipeMode } from '../src/surfaces/access-kit';
 import { slackKitManifest } from '../src/surfaces/access-kit/slack';
+import { MESSAGES_TAB_TOGGLE, type TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import {
   LINEAR_GRAPHQL_URL,
   LinearIssuerRefusal,
@@ -65,6 +66,7 @@ export const ACCESS_CHECK_NAMES = [
   'identity',
   'reach',
   'socket',
+  'messages',
 ] as const;
 
 /** One of {@link ACCESS_CHECK_NAMES}. */
@@ -116,7 +118,23 @@ export interface VendorProbes {
    * asked inside its container; absent where nothing can ask it.
    */
   socketBridge?(): Promise<SocketBridgeReading>;
+  /**
+   * Whether the manager's typed code reaches each installed employee app (W12V-7), as the
+   * deployment's records say; absent where nothing can read the deployment.
+   */
+  messagesTab?(): Promise<MessagesTabReading>;
 }
+
+/** Whether the typed code reaches each installed employee app, or why that could not be read. */
+export type MessagesTabReading =
+  | {
+      readonly state: 'read';
+      readonly apps: ReadonlyArray<{
+        readonly appName: string;
+        readonly reach: TypedCodeReach['state'];
+      }>;
+    }
+  | { readonly state: 'absent'; readonly detail: string };
 
 /** The Slack socket service's own account of itself, or why it could not be asked. */
 export type SocketBridgeReading =
@@ -788,8 +806,8 @@ function mismatchedTokenWords(names: readonly string[]): string {
 /**
  * Whether the Slack socket service carries the Approve and Reject presses (12-M; RM7): running,
  * reading the backend's app list, and holding a connection for each employee app with an
- * app-level token. Not running is a note, since the typed code always decides; a list it cannot
- * read or an app with no connection is a gap.
+ * app-level token. Not running is a note, since a request is still decided by its typed code where
+ * the app takes messages, or in day0; a list it cannot read or an app with no connection is a gap.
  */
 async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
   if (probes.socketBridge === undefined) {
@@ -802,8 +820,9 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
       'socket',
       'warn',
       `The Slack socket service is not running (${reading.detail}), so decision requests carry ` +
-        'the typed code only, which always decides. Start it with pnpm convex:up --profile ' +
-        'slack-socket for Approve and Reject buttons.',
+        'no buttons: each is decided by its typed code where the employee app takes messages ' +
+        '(the messages row), or in day0. Start it with pnpm convex:up --profile slack-socket for ' +
+        'Approve and Reject buttons.',
     );
   }
   if (!reading.synced) {
@@ -840,8 +859,68 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
     'ok',
     count === 0
       ? 'The Slack socket service is running; no employee app has an app-level token yet, so ' +
-          'requests carry the typed code.'
+          'requests carry no buttons.'
       : `The Slack socket service holds a connection for ${count} employee app${count === 1 ? '' : 's'} with an app-level token.`,
+  );
+}
+
+/** Names in a sentence: "A", "A and B", "A, B and C". */
+function listedNames(names: readonly string[]): string {
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/**
+ * Whether the manager's typed code reaches each installed employee app (W12V-7): an app only a
+ * person can open is a gap, named with Slack's toggle; one Day0 opens at its card's next check is
+ * a note; every app taking messages passes.
+ */
+async function messagesCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
+  if (probes.messagesTab === undefined) {
+    return check(
+      row.system,
+      'messages',
+      'warn',
+      'Not asked: nothing here can read the deployment.',
+    );
+  }
+  const reading = await probes.messagesTab();
+  if (reading.state === 'absent') {
+    return check(row.system, 'messages', 'warn', `Not read: ${reading.detail.replace(/\.$/, '')}.`);
+  }
+  const named = (reach: TypedCodeReach['state']): string[] =>
+    reading.apps.filter((app) => app.reach === reach).map((app) => app.appName);
+  const byHand = named('needs-toggle');
+  if (byHand.length > 0) {
+    const one = byHand.length === 1;
+    return check(
+      row.system,
+      'messages',
+      'gap',
+      `${listedNames(byHand)} take${one ? 's' : ''} no messages, so no typed code reaches ` +
+        `${one ? 'it' : 'them'}, and Day0 cannot change ${one ? 'its' : 'their'} settings: ` +
+        `someone who manages ${one ? 'it' : 'each'} in Slack turns on App Home, ` +
+        `“${MESSAGES_TAB_TOGGLE}”, and the manager says so on its card (It is on in Slack).`,
+    );
+  }
+  const byDay0 = named('day0-opens');
+  if (byDay0.length > 0) {
+    const one = byDay0.length === 1;
+    return check(
+      row.system,
+      'messages',
+      'warn',
+      `${listedNames(byDay0)} take${one ? 's' : ''} no messages yet, so no typed code reaches ` +
+        `${one ? 'it' : 'them'}: Day0 opens ${one ? 'its' : 'their'} messages tab at ` +
+        `${one ? 'its' : 'each'} card's next check (Check the connection on the card does it now).`,
+    );
+  }
+  return check(
+    row.system,
+    'messages',
+    'ok',
+    reading.apps.length === 0
+      ? 'No employee app is installed yet; each app Day0 creates takes messages.'
+      : `The typed code reaches every employee app (${reading.apps.length}).`,
   );
 }
 
@@ -876,7 +955,9 @@ export async function accessChecks(
         ...connectionChecks(row, values),
         ...(await liveChecks(row, values, probes)),
         await reachCheck(row, values, probes, options),
-        ...(row.kind === 'slack-configuration' ? [await socketCheck(row, probes)] : []),
+        ...(row.kind === 'slack-configuration'
+          ? [await socketCheck(row, probes), await messagesCheck(row, probes)]
+          : []),
       ]),
     );
   }
@@ -1192,6 +1273,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
       socketBridge: async (): Promise<SocketBridgeReading> =>
         askSocketBridge(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile),
+      messagesTab: async (): Promise<MessagesTabReading> => await readMessagesTab(admin),
     },
     { install: args.install },
   );
@@ -1215,6 +1297,34 @@ export async function main(argv: readonly string[]): Promise<number> {
   const code = accessExitCode(checks);
   if (args.system !== undefined && rows.length === 0) return 1;
   return code;
+}
+
+/** The most pages of chat cards the messages row reads (40,000 cards), so one check is bounded. */
+const MESSAGES_TAB_PAGES = 200;
+
+/**
+ * Read, page by page, whether the typed code reaches each installed employee app, from the
+ * deployment's `slackMessagesTab:messagesTabReport` (W12V-7).
+ */
+async function readMessagesTab(
+  admin: ReturnType<typeof deploymentAdmin>,
+): Promise<MessagesTabReading> {
+  const apps: Array<{ appName: string; reach: TypedCodeReach['state'] }> = [];
+  let cursor: string | null = null;
+  try {
+    for (let page = 0; page < MESSAGES_TAB_PAGES; page += 1) {
+      const read: {
+        apps: Array<{ appName: string; reach: TypedCodeReach['state'] }>;
+        cursor: string | null;
+      } = await admin.run('query', 'slackMessagesTab:messagesTabReport', { cursor });
+      apps.push(...read.apps);
+      cursor = read.cursor;
+      if (cursor === null) break;
+    }
+  } catch (err) {
+    return { state: 'absent', detail: firstLine(errorMessage(err)) };
+  }
+  return { state: 'read', apps };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
