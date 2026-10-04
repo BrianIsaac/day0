@@ -6,6 +6,7 @@
  */
 import { json } from './http.js';
 import { GraphqlSyntaxError, parseOperation, valueOf } from './graphql-parse.js';
+import { notFound } from './workspace.js';
 
 /**
  * The body real Linear answered a revoked token's `viewer` with, word for word (the re-walk's log,
@@ -112,15 +113,7 @@ export function createGraphql(workspace) {
    */
   function issueOrRefuse(id) {
     const issue = workspace.issueByAny(id);
-    if (!issue) {
-      throw new Refused({
-        message: 'Entity not found: Issue',
-        code: 'INVALID_INPUT',
-        type: 'invalid input',
-        status: 400,
-        userPresentableMessage: 'Could not find referenced Issue.',
-      });
-    }
+    if (!issue) throw new Refused(notFound('Issue'));
     return issue;
   }
 
@@ -211,6 +204,9 @@ export function createGraphql(workspace) {
       comments: ['Connection:Comment', (issue, args) => connection(issue.comments, args)],
       history: ['Connection:IssueHistory', (issue, args) => connection(issue.history, args)],
     },
+    // Seen (the re-walk's log, row 1): `issueUpdate`'s `success` and `issue`. The create, comment and
+    // archive payloads, and the teams, projects and workflow states a bed stages with, follow Linear's
+    // schema, not a walk's log: a real walk must read each back.
     IssuePayload: {
       success: () => true,
       issue: ['Issue', (payload) => payload.issue],
@@ -261,9 +257,11 @@ export function createGraphql(workspace) {
           const input = /** @type {Record<string, unknown>} */ (args.input ?? {});
           const title = text(input.title);
           if (!title) {
+            // Not seen: an issue filed with no title. Words of this fake's own, under the input-error
+            // code a walk saw.
             throw new Refused({
               message: 'Argument Validation Error',
-              code: 'INVALID_INPUT',
+              code: 'INPUT_ERROR',
               type: 'invalid input',
               status: 400,
               userPresentableMessage: 'title must be a string.',
@@ -337,6 +335,51 @@ export function createGraphql(workspace) {
     if (typeof input.description === 'string') change.description = input.description;
     if (typeof input.priority === 'number') change.priority = input.priority;
     return change;
+  }
+
+  /**
+   * Refuse a selection the schema cannot answer before anything runs, as a GraphQL server validates
+   * a document before it executes one: a mutation is never applied under a selection that fails.
+   *
+   * @param {string} type
+   * @param {import('./linear').GraphqlField[]} selections
+   */
+  function validate(type, selections) {
+    const fields = types[type];
+    if (!fields) throw new Error(`no type ${type}`);
+    for (const field of selections) {
+      if (field.name === '__typename') continue;
+      const resolver = fields[field.name];
+      if (!resolver)
+        throw new UnknownField(`Cannot query field "${field.name}" on type "${type}".`);
+      if (typeof resolver === 'function') {
+        if (field.selections) {
+          throw new UnknownField(
+            `Field "${field.name}" must not have a selection since its type has no subfields.`,
+          );
+        }
+        continue;
+      }
+      const [childType] = resolver;
+      if (!field.selections) {
+        throw new UnknownField(
+          `Field "${field.name}" of type "${childType}" must have a selection of subfields.`,
+        );
+      }
+      if (!childType.startsWith('Connection:')) {
+        validate(childType, field.selections);
+        continue;
+      }
+      const nodeType = childType.slice('Connection:'.length);
+      for (const part of field.selections) {
+        if (part.name !== 'nodes' || !part.selections) {
+          throw new UnknownField(
+            `Cannot query field "${part.name}" on type "${nodeType}Connection".`,
+          );
+        }
+        validate(nodeType, part.selections);
+      }
+    }
   }
 
   /**
@@ -434,14 +477,10 @@ export function createGraphql(workspace) {
         ),
         ...variables,
       };
+      const root = operation.type === 'mutation' ? 'Mutation' : 'Query';
       try {
-        const data = select(
-          operation.type === 'mutation' ? 'Mutation' : 'Query',
-          null,
-          operation.selections,
-          filled,
-          actor,
-        );
+        validate(root, operation.selections);
+        const data = select(root, null, operation.selections, filled, actor);
         return json(200, { data });
       } catch (error) {
         if (error instanceof UnknownField) return invalidQuery(error.message);

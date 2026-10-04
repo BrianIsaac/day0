@@ -123,6 +123,7 @@ describe('the fake Linear GraphQL API', (): void => {
       id: ticket.id,
       delegateId: WALK_SHARED_APP_USER.id,
     });
+    // The status was not logged ("400 in-band"); 400 is the fake's, as R-W's bed answered it.
     expect(answer.status).toBe(400);
     const [error] = (
       answer.body as { errors: { message: string; extensions: Record<string, unknown> }[] }
@@ -232,6 +233,40 @@ describe('the fake Linear GraphQL API', (): void => {
           },
         },
       },
+    });
+  });
+
+  it('leaves a field alone when its variable is not sent, as GraphQL reads an absent variable', async (): Promise<void> => {
+    const fake = walkWorkspace();
+    const ticket = await fileTicket(fake);
+    await graphql(
+      fake,
+      SAM_KEY,
+      'mutation ($id: String!, $assigneeId: String) { issueUpdate(id: $id, input: { assigneeId: $assigneeId, title: "Renamed" }) { success } }',
+      { id: ticket.id },
+    );
+    const read = await graphql(
+      fake,
+      SAM_KEY,
+      `{ issue(id: "${ticket.id}") { title assignee { id } } }`,
+    );
+    expect(read.body).toEqual({
+      data: { issue: { title: 'Renamed', assignee: { id: WALK_KEY_PERSON_ID } } },
+    });
+  });
+
+  it('writes nothing for a mutation whose selection names a field its type does not have', async (): Promise<void> => {
+    const fake = walkWorkspace();
+    const ticket = await fileTicket(fake);
+    const answer = await graphql(
+      fake,
+      SAM_KEY,
+      `mutation { issueUpdate(id: "${ticket.id}", input: { title: "Changed" }) { success issue { shoeSize } } }`,
+    );
+    expect(answer.status).toBe(400);
+    const read = await graphql(fake, SAM_KEY, `{ issue(id: "${ticket.id}") { title } }`);
+    expect(read.body).toEqual({
+      data: { issue: { title: '[w11 re-walk] Row 1: delegated to the shared Day0 app' } },
     });
   });
 

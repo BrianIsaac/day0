@@ -280,8 +280,12 @@ export function valueOf(parsed, variables) {
   if ('variable' in parsed) return variables[parsed.variable];
   if ('list' in parsed) return parsed.list.map((item) => valueOf(item, variables));
   if ('object' in parsed) {
+    // An input field whose variable was not sent is absent, not null (GraphQL's coercion of input
+    // objects), so `{ assigneeId: $assigneeId }` with no `$assigneeId` leaves the assignee alone.
     return Object.fromEntries(
-      Object.entries(parsed.object).map(([name, item]) => [name, valueOf(item, variables)]),
+      Object.entries(parsed.object)
+        .filter(([, item]) => !('variable' in item) || item.variable in variables)
+        .map(([name, item]) => [name, valueOf(item, variables)]),
     );
   }
   return parsed.literal;

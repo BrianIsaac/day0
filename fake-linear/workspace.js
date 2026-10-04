@@ -20,7 +20,9 @@ const DEFAULT_STATES = [
 
 /**
  * Words the walk quoted for a delegate or assignee refused for want of the capability (R41V decision
- * 5); the error's other fields follow the shape of the authentication error the re-walk logged whole.
+ * 5): the message, the code and the words. The rest was elided ("...") and the HTTP status not
+ * logged ("400 in-band"): the status is 400 as R-W's bed answered it, and the other fields follow the
+ * shape of the authentication error the re-walk logged whole. A real walk must log the whole answer.
  */
 export const CAPABILITY_REFUSAL = Object.freeze({
   message: 'App user not valid',
@@ -32,15 +34,16 @@ export const CAPABILITY_REFUSAL = Object.freeze({
 
 /**
  * Words for an entity the request names that the workspace does not hold. Not seen by either walk:
- * Linear's own message shape for a missing entity, which a real walk must see.
+ * the message is this fake's, under the one input-error code a walk saw (`INPUT_ERROR`); a real walk
+ * must name an issue, a user and a state Linear does not hold.
  *
  * @param {string} kind
  * @returns {import('./linear').WorkspaceRefusal}
  */
-function notFound(kind) {
+export function notFound(kind) {
   return {
     message: `Entity not found: ${kind}`,
-    code: 'INVALID_INPUT',
+    code: 'INPUT_ERROR',
     type: 'invalid input',
     status: 400,
     userPresentableMessage: `Could not find referenced ${kind}.`,
