@@ -39,6 +39,23 @@ describe('what reached the work environment', (): void => {
     expect(markup).toContain('Applied linear.save_issue');
   });
 
+  it('sets the small print’s parts apart, never run together (the 12-W bed)', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[
+          {
+            ...row(0, 'Posted the first update'),
+            providerId: '1787817600.000001',
+            reusedFrom: 'w:run:0',
+            reusedFromRun: 1,
+          },
+        ]}
+        fresh={new Set()}
+      />,
+    );
+    expect(markup.replace(/<[^>]+>/g, '')).toContain('id 1787817600.000001 · reused from run 1');
+  });
+
   it('raises only the rows that just landed, beneath the rows already there (M7)', (): void => {
     const markup = renderToStaticMarkup(
       <LandedChanges

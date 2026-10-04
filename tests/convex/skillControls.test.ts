@@ -364,6 +364,8 @@ describe('skillControls', (): void => {
 
       const parked = await item(harness, returned);
       expect(parked.state).toBe('needs-skill');
+      // Parked behind a skill is a wait, stamped as every wait is (wave 12, 12-W).
+      expect(parked.waitingSince).toEqual(expect.any(Number));
       expect(parked.proposedSkillId).toBeDefined();
       if (parked.proposedSkillId === undefined) return;
       expect(await skill(harness, parked.proposedSkillId)).toMatchObject({
@@ -846,7 +848,7 @@ describe('skillControls', (): void => {
         plan: APPROVED_PLAN,
       });
 
-      const claim = await harness.mutation(internal.work.claimForExecution, {
+      const claim = await harness.mutation(internal.workRuns.claimForExecution, {
         workItemId: late,
         skillId: office.mateoSkill,
       });

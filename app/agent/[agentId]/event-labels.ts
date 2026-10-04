@@ -368,6 +368,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'voice.finalisation-failed': (payload) =>
     `1:1 wrap-up failed${because(payload.reason)}${payload.retryScheduled === true ? ' · trying again' : ''}`,
   'voice.finalisation-abandoned': (payload) => `1:1 wrap-up given up${because(payload.reason)}`,
+  'voice.restarted': '1:1 held again',
   'skill.authoring-refused': (payload) =>
     `skill ${text(payload.name) ?? 'unnamed'} not moved on: it is ${text(payload.state) ?? 'elsewhere'} now`,
   'skill.builtin-installed': (payload) =>
@@ -626,6 +627,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.cancelled': (payload) =>
     `cancelled${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.dismissed': 'dismissed by the manager',
+  'work.closed-without-retry': 'closed by the manager without a retry',
+  'work.actions-withheld': (payload) =>
+    `${counted(payload.withheld?.length, 'action') ?? 'actions'} held and never sent`,
+  'work.stopped': (payload) => `stopped by the manager${because(payload.reason)}`,
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',
@@ -739,6 +744,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.decision-ignored': 'refused',
   'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
+  'work.actions-withheld': 'withheld',
   'work.skipped': 'withheld',
   'work.withdrawn': 'withheld',
   'work.cancelled': 'withheld',

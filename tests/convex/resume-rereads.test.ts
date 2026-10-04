@@ -353,8 +353,10 @@ async function failAtClosingWithTheTileDown(
 
 /** Reconcile the landed sign-in and Retry: the item resumes at the closing phase under a new run. */
 async function retryAtClosing(t: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
-  await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-  await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+  await t
+    .withIdentity(OWNER)
+    .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+  await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
   recorded.model.length = 0;
   await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
   return await readItem(t, workItemId);
@@ -592,8 +594,10 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     const postsBefore = recorded.http.length;
     const callsBefore = recorded.driver!.calls.length;
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     const carried = (await readItem(t, workItemId)).output as { applied: AppliedAction[] };
     recorded.model.length = 0;
     // The browser driver is absent when the resumed run starts.

@@ -927,6 +927,14 @@ describe('the dashboard ticker', (): void => {
 });
 
 describe('export redaction', (): void => {
+  it('blanks a value under a credential-class key, as the record does (m30)', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    const { CREDENTIAL_VALUE_REDACTION } = await import('../../src/lib/credential-keys');
+    expect(redactForExport({ probe: { api_key: 'plainwordsecret', state: 'connected' } })).toEqual({
+      probe: { api_key: CREDENTIAL_VALUE_REDACTION, state: 'connected' },
+    });
+  });
+
   it('drops the assignee’s address as it drops the manager’s', async (): Promise<void> => {
     const { redactForExport } = await import('../../convex/events');
     expect(

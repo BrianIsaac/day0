@@ -1669,12 +1669,13 @@ describe('the employee roster', (): void => {
     });
     expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
 
-    // The same with nothing to verify against: the card disables both the confirmation and Retry, for good.
+    // The same with nothing to verify against: Retry and the confirmation stay disabled, and
+    // Close without retry is the manager's move (E-8, wave 12; re-pinned from 2, 2).
     await seedParked(harness, aiko, 'LOG-dead-end', 'failed', {
       plan,
       skipReason: INTERRUPTED_APPLY_REASON,
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 3, 3]);
 
     // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
     // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
@@ -1697,17 +1698,17 @@ describe('the employee roster', (): void => {
         output: { actions: [comment] },
         pendingRunId,
       });
-      expect((await counts()).Aiko).toEqual([1, 0, 2 + index, 3]);
+      expect((await counts()).Aiko).toEqual([1, 0, 3 + index, 4]);
       await owner.mutation(api.work.rejectActions, { workItemId, pendingRunId, reason });
     }
-    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
 
     // A cancelled plan, a skip and finished work are not stopped rows.
     await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', {
       plan,
       skipReason: 'plan cancelled by the manager',
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {

@@ -526,8 +526,10 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     recorded.model.length = 0;
 
     // The browser writes landed, so the retry needs the provider reconciled; then it resumes at the closing phase.
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, {
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
       workItemId,
       feedback: 'Move it to Done as the plan says.',
     });
@@ -1025,8 +1027,10 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     recorded.model.length = 0;
 
     // Reconciled and retried, the item resumes at the closing phase; a supported set then lands under autonomy without touching the tile again.
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const resumed = await readItem(t, workItemId);
     expect(resumed.output).toMatchObject({

@@ -672,6 +672,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'voice.finalisation-abandoned': (p) =>
     `The one-to-one's wrap-up was given up${because(p.reason)}`,
+  'voice.restarted': () => 'The one-to-one was held again, from a new conversation',
   'skill.authoring-refused': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} was not moved on: it is ${
       text(p.state) ?? 'elsewhere'
@@ -1037,6 +1038,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia, whose(subject))}${because(p.reason)}`,
   'work.dismissed': (_, subject) =>
     `${decider(subject)} dismissed ${itemOf(subject)} from ${their(subject)} inbox. It stays on the Work tab, where Retry runs it again`,
+  'work.actions-withheld': (p, subject) =>
+    `${subject.name} held ${counted(p.withheld?.length, 'action') ?? 'some actions'}${forItem(subject)} and never sent ${
+      p.withheld?.length === 1 ? 'it' : 'them'
+    }`,
+  'work.closed-without-retry': (_, subject) =>
+    `${decider(subject)} closed ${itemOf(subject)} without a retry. It stays in the record`,
+  'work.stopped': (p, subject) =>
+    `${decider(subject)} stopped ${itemOf(subject)}${because(p.reason)}${
+      p.applyInFlight === true ? '. Some writes may have landed; the card lists them to check' : ''
+    }`,
   'work.execution-claimed': (_, subject) => `${subject.name} started the run${forItem(subject)}`,
   'work.dependent-authoring': (_, subject) =>
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,

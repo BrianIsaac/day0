@@ -67,6 +67,20 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
     }
   });
 
+  it('writes its event, so the record says the one-to-one was held again (m16)', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.withIdentity(managerIdentity()).mutation(api.voice.restart, { sessionId });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'voice.restarted'))
+          .collect(),
+    );
+    expect(events.map((event) => event.payload)).toEqual([{ sessionId, conversation: 1 }]);
+  });
+
   it('refuses while a finisher holds the session, and refuses anyone but the owner', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession('synthesising');
     await expect(

@@ -31,7 +31,7 @@ The entry points a reader is most likely to want:
 | `agents:deploy` | mutation | Creates an agent and seeds its first grants |
 | `charters:approve`, `charters:amend` | mutation | Approves a drafted charter with the manager's strikes; amends an approved one as a new version |
 | `work:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
-| `work:retryFailed`, `work:cancelPlan`, `work:reconcileFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind |
+| `workRuns:retryFailed`, `work:cancelPlan`, `workRuns:reconcileFailed`, `workRuns:dismissFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind, dismiss a failed run from the inbox |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
 | `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |

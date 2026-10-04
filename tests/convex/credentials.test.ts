@@ -947,7 +947,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
               toolArgsJson: JSON.stringify({ issueId: 'REVOPS-1', body: 'Close summary noted.' }),
             },
           };
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: { draft: 'Close summary.', notes: '', actions: [action] },

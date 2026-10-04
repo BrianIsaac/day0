@@ -481,6 +481,13 @@ export interface VoiceFinalisationFailedPayload {
   readonly retryScheduled: boolean;
 }
 
+/** The payload of `voice.restarted`: the manager held the one-to-one again after its draft failed (m16). */
+export interface VoiceRestartedPayload {
+  readonly sessionId: SessionId;
+  /** The conversation the session moved on to; a write for an earlier one is refused. */
+  readonly conversation: number;
+}
+
 /** The payload of `voice.finalisation-abandoned`. */
 export interface VoiceFinalisationAbandonedPayload {
   readonly sessionId: SessionId;
@@ -1366,6 +1373,49 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
 /** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
 export type WorkDismissedPayload = WorkItemNamed;
 
+/**
+ * The payload of `work.closed-without-retry`: the manager closed a failed item whose ledger named
+ * nothing to reconcile, without a retry (E-8; it is dismissed as `work.dismissed` dismisses).
+ */
+export interface WorkClosedWithoutRetryPayload extends WorkItemNamed {
+  /** The owner key of the manager who closed it. */
+  readonly actor: string;
+}
+
+/** One row a finished run held and never sent. */
+export interface WithheldRow {
+  /** The phase of the run the row belongs to: one phase, or the prerequisite or closing one. */
+  readonly phase: 'single' | 'prerequisite' | 'closing';
+  /** The row's index in its phase's actions. */
+  readonly index: number;
+  readonly tool: string;
+  /** Why it was held: the manager left it out, the gate refused it, or a write before it failed. */
+  readonly reason?: string;
+  /** What it would have done, in the ledger's words. */
+  readonly effect?: string;
+}
+
+/**
+ * The payload of `work.actions-withheld`: a run that finished held some of its rows and never sent
+ * them (the wave 6 review's D4 (b)), so the record lists them under "Refused and withheld".
+ */
+export interface WorkActionsWithheldPayload extends WorkItemNamed {
+  readonly runId?: RunId;
+  readonly withheld: readonly WithheldRow[];
+}
+
+/** The payload of `work.stopped`: the manager stopped an item the employee was working (wave 12). */
+export interface WorkStoppedPayload extends WorkItemNamed {
+  /** The state the item was in: `claimed`, `plan-approved` or `executing`. */
+  readonly fromState: Doc<'workItems'>['state'];
+  /** The owner key of the manager who stopped it. */
+  readonly actor: string;
+  /** The manager's reason, when they gave one. */
+  readonly reason?: string;
+  /** Whether an apply was sending the run's writes, so some may have landed. */
+  readonly applyInFlight: boolean;
+}
+
 /** The payload of `work.cancelled`. */
 export interface WorkCancelledPayload extends WorkItemNamed {
   readonly reason: string;
@@ -1554,6 +1604,7 @@ export interface EventPayloads {
   'voice.completed': VoiceCompletedPayload;
   'voice.finalisation-failed': VoiceFinalisationFailedPayload;
   'voice.finalisation-abandoned': VoiceFinalisationAbandonedPayload;
+  'voice.restarted': VoiceRestartedPayload;
   'skill.authoring-refused': SkillAuthoringRefusedPayload;
   'skill.builtin-installed': SkillBuiltinInstalledPayload;
   'skill.proposed': SkillProposedPayload;
@@ -1661,6 +1712,9 @@ export interface EventPayloads {
   'work.provider-reconciled': WorkProviderReconciledPayload;
   'work.cancelled': WorkCancelledPayload;
   'work.dismissed': WorkDismissedPayload;
+  'work.stopped': WorkStoppedPayload;
+  'work.closed-without-retry': WorkClosedWithoutRetryPayload;
+  'work.actions-withheld': WorkActionsWithheldPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1732,6 +1786,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'voice.completed',
   'voice.finalisation-failed',
   'voice.finalisation-abandoned',
+  'voice.restarted',
   'skill.authoring-refused',
   'skill.builtin-installed',
   'skill.proposed',
@@ -1839,6 +1894,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.provider-reconciled',
   'work.cancelled',
   'work.dismissed',
+  'work.stopped',
+  'work.closed-without-retry',
+  'work.actions-withheld',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

@@ -32,6 +32,7 @@ import {
   type ExecutionOutput,
   type MockAction,
   type MockActionArgs,
+  type WorkCandidate,
 } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
@@ -709,6 +710,87 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([
       'the loaded procedure prescribes an originating-reference trail; none is present',
     ]);
+  });
+
+  /** The 4 October demo's ticket: an approved plan to reconcile and close, with no deals to find. */
+  const demoTicket: WorkCandidate = {
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'ticket',
+    externalId: 'REVOPS-204',
+    title: 'Reconcile the three October closed-won deals',
+    contentSummary:
+      'Reconcile the three October closed-won deals against the closed-won tracker and close REVOPS-204.',
+    contentRefs: ['ticket://REVOPS-204'],
+    observedAt: new Date(0),
+  };
+  const demoPlan = {
+    summary: 'Reconcile the three deals and close the ticket.',
+    steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: 'reversible' as const,
+    estimatedMinutes: 10,
+  };
+  /** The run's own words as the demo recorded them, with the status it set. */
+  function demoRun(status: 'done' | 'in-progress') {
+    return {
+      draft:
+        "I could not reconcile the three October closed-won deals: I can't find them in the tracker.",
+      notes: '',
+      needsDependentPhase: false,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      actions: [
+        {
+          tool: 'ticket.update' as const,
+          args: {
+            slug: 'REVOPS-204',
+            status,
+            comment:
+              'Reconciliation of the three October closed-won deals is pending manager confirmation: the deal list is not yet identified in the tracker.',
+          },
+        },
+      ],
+    };
+  }
+
+  it('never takes a ticket to done when the run’s own words say the work was not done (the 4 October demo)', (): void => {
+    expect(
+      mockActionContractIssues(demoRun('done'), demoTicket, demoPlan, ticketProcedureContract),
+    ).toEqual([
+      'prescribed originating-reference transition does not match the work its own words say was not done ("I could not reconcile the three October closed-won deals"): set status "in-progress"',
+    ]);
+  });
+
+  it('accepts the partial status a run whose own words say it was not done sets itself, rather than sending it back to done', (): void => {
+    expect(
+      mockActionContractIssues(
+        demoRun('in-progress'),
+        demoTicket,
+        demoPlan,
+        ticketProcedureContract,
+      ),
+    ).toEqual([]);
+  });
+
+  it('tells the executor never to close a ticket its own words say is not done', (): void => {
+    const prompt = executorInstructions({
+      mode: 'mock',
+      autonomousActions: false,
+      skillBody: '# skill',
+      surfaces: [],
+      mockEnv: {
+        howToGuides: ticketGuides,
+        teamDocs: [],
+        spreadsheets: [],
+        slackChannels: [],
+        tweets: [],
+        tickets: [],
+      } as never,
+      now: 0,
+    });
+    expect(prompt).toContain(
+      'Never use `done` when your own draft, comment or message says any of the work was not done or could not be done: use `in-progress` and say in the comment what is left.',
+    );
   });
 
   it('rejects an in-progress transition when the literal ticket-queue work is fully closed', (): void => {

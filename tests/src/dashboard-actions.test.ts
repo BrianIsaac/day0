@@ -323,7 +323,9 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toContain('closing action 0');
     expect(html).toContain('outcome unknown');
     expect(html).toContain('response lost');
-    expect(html).toMatch(/<input[^>]*type="checkbox"/);
+    // Answered per entry since wave 12 (U17 D1): two answers each, not one tick.
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(2);
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(2);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm reconciliation<\/button>/);
   });
 

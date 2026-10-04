@@ -127,7 +127,7 @@ describe('the settling controls', (): void => {
         busy={false}
         onRetry={(): void => undefined}
         onReconcile={(): void => undefined}
-        dismiss={{ onDismiss: (): void => undefined }}
+        dismiss={{ kind: 'dismiss', onDismiss: (): void => undefined }}
       />,
     );
     expect(open).toMatch(/>Retry<\/button><button[^>]*>Dismiss<\/button>/);
