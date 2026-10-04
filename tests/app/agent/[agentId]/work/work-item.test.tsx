@@ -13,7 +13,10 @@ import {
   ticketRereadStopReason,
   withheldBeforeFirstWrite,
 } from '../../../../../src/work/ticket-ownership';
-import type { ReconciliationEntry } from '../../../../../src/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  type ReconciliationEntry,
+} from '../../../../../src/work/reconciliation';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -158,6 +161,20 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
       }),
     ).toBe(
       'You stopped the run: “The variance note is wrong.” A write landed or may have; confirm the provider below before Retry.',
+    );
+  });
+
+  it('says an interrupted apply in a manager’s words, not the engine’s (W12-R9, from the bed)', (): void => {
+    expect(failedItemReason({ skipReason: INTERRUPTED_APPLY_REASON, output: unknownWrite })).toBe(
+      'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.',
+    );
+    expect(
+      failedItemReason({
+        skipReason: INTERRUPTED_APPLY_REASON,
+        output: { actions: [], applied: [] },
+      }),
+    ).toBe(
+      'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.',
     );
   });
 

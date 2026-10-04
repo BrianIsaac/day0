@@ -17,7 +17,9 @@ import {
 } from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
 import {
+  INTERRUPTED_APPLY_REASON,
   landedRowCount,
+  providerReconciliationEntries,
   reconciliationAnswered,
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
@@ -339,6 +341,12 @@ export function failedItemReason(item: {
   } | null;
   providerReconciliation?: { entries: readonly ReconciliationEntry[] };
 }): string | undefined {
+  // The engine's own reason for an interrupted apply, said to the manager plainly (W12-R9, bed).
+  if (item.skipReason === INTERRUPTED_APPLY_REASON) {
+    return providerReconciliationEntries(item.output).length > 0
+      ? 'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.'
+      : 'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.';
+  }
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
