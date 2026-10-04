@@ -23,7 +23,12 @@
 import { z } from 'zod';
 import { isSurfaceTool, parseSurfaceAction, statusChangeTarget } from '../surfaces/policy';
 import { isClosingState, notDoneStatements, runOwnWords } from './not-done';
-import { type MockAction, WORK_DONE_ANSWERS, type WorkDoneAnswer } from './types';
+import {
+  type MockAction,
+  WORK_DONE_ANSWERS,
+  type WorkDoneAnswer,
+  type WorkDoneFields,
+} from './types';
 
 /** The answer as the model returns it: one of the three, nothing else. */
 export const workDoneSchema = z.enum(WORK_DONE_ANSWERS);
@@ -150,10 +155,6 @@ export function doneAgainstWordsIssue(clause: string, state: string): string {
 /** The audit record of a close the tripwire sent to the manager after the run answered done twice. */
 export const CLOSE_HELD_AGAINST_WORDS = 'close held for the manager against the run’s own words';
 
-/** Why the gate holds a close the tripwire sent to the manager, whatever the autonomy switch says. */
-export const HELD_CLOSE_AGAINST_WORDS =
-  'ticket close the run answered done while its own words say otherwise; held for the manager';
-
 /**
  * The clause a stored output's tripwire recorded, validated.
  *
@@ -163,4 +164,24 @@ export function closeAgainstWordsOf(output: unknown): string | undefined {
   if (typeof output !== 'object' || output === null) return undefined;
   const clause = (output as { closeAgainstWords?: unknown }).closeAgainstWords;
   return typeof clause === 'string' && clause.trim() !== '' ? clause : undefined;
+}
+
+/**
+ * The answer an output carries at its own level, validated, to keep on the row it finishes: the
+ * closing set's answer for a run in two phases, never the first phase's prediction under
+ * `initial`. Empty for an output with no answer.
+ *
+ * @param output - A closing set or a first phase as authored.
+ */
+export function answerFieldsOf(
+  output: unknown,
+): Pick<WorkDoneFields, 'workDone' | 'workDoneWhy' | 'closeAgainstWords'> {
+  const fact = workDoneFactOf(output);
+  if (fact === undefined) return {};
+  const clause = closeAgainstWordsOf(output);
+  return {
+    workDone: fact.workDone,
+    workDoneWhy: fact.workDoneWhy,
+    ...(clause !== undefined ? { closeAgainstWords: clause } : {}),
+  };
 }

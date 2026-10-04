@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  answerFieldsOf,
   closingAgainstFact,
   closingChanges,
   doneAgainstWords,
@@ -169,5 +170,37 @@ describe('doneAgainstWords (the tripwire)', (): void => {
     expect(
       doneAgainstWords({ draft: MOSS_DRAFT, actions: [ticketUpdate(MOSS_DRAFT, 'done')] }),
     ).toBeUndefined();
+  });
+});
+
+describe('answerFieldsOf (what a finished row keeps)', (): void => {
+  it('keeps the closing set’s own answer and the tripwire’s clause, never the first phase’s prediction', (): void => {
+    expect(
+      answerFieldsOf({
+        workDone: 'partial',
+        workDoneWhy: 'Two checks remain.',
+        initial: { workDone: 'done', workDoneWhy: 'Predicted.' },
+      }),
+    ).toEqual({ workDone: 'partial', workDoneWhy: 'Two checks remain.' });
+    expect(
+      answerFieldsOf({
+        workDone: 'done',
+        workDoneWhy: 'All three match.',
+        closeAgainstWords: 'I could not find a mismatch.',
+      }),
+    ).toEqual({
+      workDone: 'done',
+      workDoneWhy: 'All three match.',
+      closeAgainstWords: 'I could not find a mismatch.',
+    });
+  });
+
+  it('keeps nothing from a closing set authored before the release, even when its first phase answered', (): void => {
+    expect(
+      answerFieldsOf({
+        draft: MOSS_DRAFT,
+        initial: { workDone: 'done', workDoneWhy: 'Predicted.' },
+      }),
+    ).toEqual({});
   });
 });
