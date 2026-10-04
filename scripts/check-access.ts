@@ -11,7 +11,8 @@
  * (`src/surfaces/access-kit/`); whether its secret opens under this deployment's key; and whether
  * the vendor answers an identity call with it (Slack's `apps.manifest.validate` with the kit's
  * manifest, Linear's client-credentials grant and `viewer` as the app, an MCP server's
- * authorisation-server metadata). The secret is opened on this machine through the deployment's
+ * authorisation-server metadata); and, for Slack, whether the socket service carries the decision
+ * buttons' presses. The secret is opened on this machine through the deployment's
  * admin key and sent only to its own vendor; nothing of it is printed. It exits 0 when every line
  * passes or is a note, 1 otherwise. `--report` prints the verdicts (names and statuses, no values)
  * as one JSON document for the support bundle.
@@ -63,6 +64,7 @@ export const ACCESS_CHECK_NAMES = [
   'secret',
   'identity',
   'reach',
+  'socket',
 ] as const;
 
 /** One of {@link ACCESS_CHECK_NAMES}. */
@@ -109,7 +111,22 @@ export interface VendorProbes {
    * deployment's own way out to the vendor finds, where every other probe asks from this machine.
    */
   fromBackend(address: URL): Promise<ModelDial>;
+  /**
+   * What the Slack socket service (`slack-socket`, 12-M) says of itself on its health check,
+   * asked inside its container; absent where nothing can ask it.
+   */
+  socketBridge?(): Promise<SocketBridgeReading>;
 }
+
+/** The Slack socket service's own account of itself, or why it could not be asked. */
+export type SocketBridgeReading =
+  | {
+      readonly state: 'running';
+      /** Whether its last read of the backend's app list succeeded. */
+      readonly synced: boolean;
+      readonly apps: ReadonlyArray<{ readonly appId: string; readonly connected: boolean }>;
+    }
+  | { readonly state: 'absent'; readonly detail: string };
 
 /** How long one vendor call may take. */
 const VENDOR_TIMEOUT_MS = 20_000;
@@ -736,6 +753,60 @@ async function reachCheck(
   }
 }
 
+/**
+ * Whether the Slack socket service carries the Approve and Reject presses (12-M; RM7): running,
+ * reading the backend's app list, and holding a connection for each employee app with an
+ * app-level token. Not running is a note, since the typed code always decides; a list it cannot
+ * read or an app with no connection is a gap.
+ */
+async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
+  if (probes.socketBridge === undefined) {
+    return check(row.system, 'socket', 'warn', 'Not asked: nothing here can ask the service.');
+  }
+  const reading = await probes.socketBridge();
+  if (reading.state === 'absent') {
+    return check(
+      row.system,
+      'socket',
+      'warn',
+      `The Slack socket service is not running (${reading.detail}), so decision requests carry ` +
+        'the typed code only, which always decides. Start it with pnpm convex:up --profile ' +
+        'slack-socket for Approve and Reject buttons.',
+    );
+  }
+  if (!reading.synced) {
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      "The Slack socket service cannot read the backend's list of apps: DAY0_SOCKET_BRIDGE_SECRET " +
+        'must be the same in the env file and on the deployment (pnpm sync:env), then restart ' +
+        'the service.',
+    );
+  }
+  const unconnected = reading.apps.filter((app) => !app.connected).map((app) => app.appId);
+  if (unconnected.length > 0) {
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      `No Socket Mode connection for ${unconnected.join(', ')}: the service must reach ` +
+        "Slack's Socket Mode hosts outbound over wss://, and each app needs Socket Mode on with a " +
+        'live app-level token.',
+    );
+  }
+  const count = reading.apps.length;
+  return check(
+    row.system,
+    'socket',
+    'ok',
+    count === 0
+      ? 'The Slack socket service is running; no employee app has an app-level token yet, so ' +
+          'requests carry the typed code.'
+      : `The Slack socket service holds a connection for ${count} employee app${count === 1 ? '' : 's'} with an app-level token.`,
+  );
+}
+
 /** A later verdict on the same check replaces the earlier one (a granted scope after a registered one). */
 function merged(checks: readonly AccessCheck[]): AccessCheck[] {
   const out: AccessCheck[] = [];
@@ -767,6 +838,7 @@ export async function accessChecks(
         ...connectionChecks(row, values),
         ...(await liveChecks(row, values, probes)),
         await reachCheck(row, values, probes, options),
+        ...(row.kind === 'slack-configuration' ? [await socketCheck(row, probes)] : []),
       ]),
     );
   }
@@ -952,6 +1024,61 @@ function dialFromBackend(project: string, envFile: string, address: URL): ModelD
   });
 }
 
+/** What the bridge's health check answers, as `slack-socket/server.js` writes it. */
+function socketReadingOf(stdout: string): SocketBridgeReading {
+  const parsed: unknown = JSON.parse(stdout);
+  const body =
+    parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  const apps = Array.isArray(body.apps) ? body.apps : [];
+  return {
+    state: 'running',
+    synced: body.synced === true,
+    apps: apps.flatMap((app: unknown) => {
+      const row = app !== null && typeof app === 'object' ? (app as Record<string, unknown>) : {};
+      return typeof row.appId === 'string'
+        ? [{ appId: row.appId, connected: row.connected === true }]
+        : [];
+    }),
+  };
+}
+
+/** Ask the Slack socket service of the project the env file names for its health, inside it. */
+function askSocketBridge(project: string, envFile: string): SocketBridgeReading {
+  const run = spawnSync(
+    'docker',
+    [
+      'compose',
+      '-p',
+      project,
+      '--env-file',
+      envFile,
+      '--profile',
+      'slack-socket',
+      'exec',
+      '-T',
+      'slack-socket',
+      'node',
+      '-e',
+      "fetch('http://127.0.0.1:8080/healthz').then(async (r) => process.stdout.write(await r.text()))",
+    ],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  if (run.status !== 0) {
+    return {
+      state: 'absent',
+      detail: firstLine(run.stderr ?? '') || (run.error ? errorMessage(run.error) : 'no answer'),
+    };
+  }
+  try {
+    return socketReadingOf(run.stdout ?? '');
+  } catch (err) {
+    return {
+      state: 'absent',
+      detail: `its health check did not answer JSON: ${errorMessage(err)}`,
+    };
+  }
+}
+
 /** The parsed command line. */
 interface CheckArguments {
   readonly envFile: string;
@@ -1018,6 +1145,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
       fromBackend: async (address: URL): Promise<ModelDial> =>
         dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
+      socketBridge: async (): Promise<SocketBridgeReading> =>
+        askSocketBridge(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile),
     },
     { install: args.install },
   );

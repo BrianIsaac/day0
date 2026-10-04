@@ -231,6 +231,7 @@ redirect URI above.
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token has lapsed, which the refresh token renews at Day0's next use of it |
 | `reach` | `pass`: the backend container reached Slack's Web API (`api.test`, no token sent); a `GAP` names curl's words, cured by opening the deployment's way out to `slack.com` |
+| `socket` | `pass`: the `slack-socket` service runs and holds a Socket Mode connection for each employee app with an app-level token; a `note` when it is not running (requests then carry the typed code only); a `GAP` names an app with no connection (open the service's way out to Slack's Socket Mode hosts over `wss://`) or a secret the service and the deployment do not share |
 
 A `GAP` names what to fix: a redirect that is not Day0's (the public address
 changed since the connection was landed), a scope the connection lacks, a
