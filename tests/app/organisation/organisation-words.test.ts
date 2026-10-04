@@ -10,6 +10,7 @@ import {
   rotateNote,
   secretWords,
   type ConnectionView,
+  zoneLine,
 } from '../../../app/organisation/organisation-words';
 import {
   SLACK_ROTATE_AFTER_EVERY_END,
@@ -178,6 +179,14 @@ describe("the organisation page's words (B8; the access plan, section 4.1)", ():
       } as never),
     ).toBe(
       "The organisation's Slack connection was revoked by an administrator: Moving to a new workspace. By ines@acme.test.",
+    );
+  });
+});
+
+describe('zoneLine', (): void => {
+  it("names the zone the page's times are in as the browser's own", (): void => {
+    expect(zoneLine('Europe/London')).toBe(
+      "Times on this page are in Europe/London, this browser's zone.",
     );
   });
 });
