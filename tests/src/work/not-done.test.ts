@@ -10,7 +10,6 @@ describe('notDoneStatements', () => {
         "I couldn't fully reconcile October vendor charges \u2014 no vendor-charge data or reconciliation runbook is available.",
       ]),
     ).toEqual([
-      'Reconciliation of the three October closed-won deals is pending manager confirmation',
       'the deal list is not yet identified in the tracker.',
       "I can't find the three October deals named anywhere in the office.",
       "I couldn't fully reconcile October vendor charges",
@@ -27,6 +26,14 @@ describe('notDoneStatements', () => {
       'Nothing was reconciled.',
       'No CRM export is available in the office.',
       "I wasn't able to confirm the amounts.",
+      // Rewordings of the demo failure the second pass found missed.
+      'I did not find the three October deals.',
+      "I didn't find any October deals.",
+      'Could not locate the deals.',
+      'The export has no vendor charges, so I did nothing.',
+      "I haven't been able to find the deals.",
+      'Not able to find the deals.',
+      'Nothing is reconciled.',
     ]) {
       expect(notDoneStatements([text]), text).toHaveLength(1);
     }
@@ -41,6 +48,15 @@ describe('notDoneStatements', () => {
       "I can't see any mismatch between the tracker and the CRM.",
       'Ticket closed after the three rows matched.',
       'No errors were found.',
+      // A finished run's results and hand-offs the second pass found read as unfinished.
+      'No duplicate records found in the October export.',
+      'No mismatched records were found.',
+      'Reconciled all three deals. CFO sign-off is pending.',
+      'The follow-up is pending your review.',
+      'I could not find any errors in the ledger.',
+      'The sheet is not yet available to the team so I attached a copy.',
+      'I did not find any discrepancies.',
+      'I did not open a new ticket, as the charter says.',
     ]) {
       expect(notDoneStatements([text]), text).toEqual([]);
     }
