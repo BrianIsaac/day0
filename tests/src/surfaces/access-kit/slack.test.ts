@@ -47,6 +47,27 @@ describe('the Slack recipe', (): void => {
     });
   });
 
+  it('lets a manager send the app a message, so the typed code can be replied in its DM (W12V-7)', (): void => {
+    // The walk on real Slack (5 October): without the App Home messages tab Slack answers the DM
+    // with "Sending messages to this app has been turned off." and offers no composer; the kit's
+    // manifest with exactly this `app_home` was accepted by `apps.manifest.validate`
+    // (`HTTP 200 {"ok":true,"errors":[]}`) and the typed code then decided in 56 s.
+    const { manifest } = slackKitManifest({ employeeName: 'Maya', publicUrl: PUBLIC_URL });
+    expect(manifest.features).toEqual({
+      bot_user: { display_name: 'Maya (Day0)', always_online: false },
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
+    });
+    expect(JSON.parse(slackKitManifestTemplate()).features.app_home).toEqual({
+      home_tab_enabled: false,
+      messages_tab_enabled: true,
+      messages_tab_read_only_enabled: false,
+    });
+  });
+
   it('asks for users:read beside users:read.email, as Slack requires the pair', (): void => {
     expect(SLACK_KIT_BOT_SCOPES).toContain('users:read.email');
     expect(SLACK_KIT_BOT_SCOPES).toContain('users:read');

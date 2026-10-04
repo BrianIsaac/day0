@@ -1,6 +1,7 @@
 import {
   EMPLOYEE_NAME_PLACEHOLDER,
   PUBLIC_URL_PLACEHOLDER,
+  SLACK_APP_HOME,
   SLACK_REDIRECT_PATH,
   buildSlackManifest,
   type BuiltSlackManifest,
@@ -51,6 +52,7 @@ const TEMPLATE: SlackManifest = {
   },
   features: {
     bot_user: { display_name: `${EMPLOYEE_NAME_PLACEHOLDER} (Day0)`, always_online: false },
+    app_home: { ...SLACK_APP_HOME },
   },
   oauth_config: {
     redirect_urls: [`${PUBLIC_URL_PLACEHOLDER}${SLACK_REDIRECT_PATH}`],
