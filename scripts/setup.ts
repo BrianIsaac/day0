@@ -513,7 +513,8 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
                                           form instead of the shared app's (per employee)
     --correct <slack|linear|https://...>  record the redirect Day0 returns to and the kit's
                                           scopes on that system's connection, after IT fixed
-                                          them at the vendor; no secret changes, no card ends
+                                          them at the vendor, and an MCP public client's
+                                          missing issuer; no secret changes, no card ends
   ./setup.sh install --provider entra     the lifecycle target checks, then sign-in, then access,
                                           then check:setup and check:sign-in; stops at the first
                                           that fails and says which. Takes both verbs' flags;
