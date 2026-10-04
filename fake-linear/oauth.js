@@ -272,11 +272,19 @@ export function createOAuth(context) {
       request.method === 'POST' ? await formOf(request) : new URL(request.url).searchParams;
     const checked = checkAuthorise(params);
     if ('refusal' in checked) return checked.refusal;
-    const decision = params.get('decision');
+    // The consent is the page's own posted form: a link that carries a decision is shown the page.
+    const decision = request.method === 'POST' ? params.get('decision') : null;
     if (decision === null) return consent(params, checked.app, checked.scopes);
     if (decision !== 'authorize') {
       // Documented (RFC 6749), not seen: a declined consent.
       return redirectBack(params, { error: 'access_denied' });
+    }
+    const method = params.get('code_challenge_method');
+    const challenge = params.get('code_challenge');
+    // Not seen: a challenge method other than S256 (Day0 sends S256 alone). Refused before the
+    // consent installs anything.
+    if (challenge !== null && method !== 'S256') {
+      return errorPage('Only the S256 code challenge method is supported.');
     }
     const person = signedIn();
     if (!person) return errorPage('Sign in to Linear to continue.');
@@ -289,11 +297,6 @@ export function createOAuth(context) {
     const actor = checked.actorApp
       ? { kind: /** @type {const} */ ('app'), appUserId: workspace.installApp(checked.app).id }
       : { kind: /** @type {const} */ ('person'), personId: person.id };
-    const method = params.get('code_challenge_method');
-    const challenge = params.get('code_challenge');
-    if (challenge !== null && method !== 'S256') {
-      return errorPage('Only the S256 code challenge method is supported.');
-    }
     const code = grants.issueCode({
       clientId: checked.app.clientId,
       redirectUri: params.get('redirect_uri') ?? '',

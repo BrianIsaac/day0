@@ -77,6 +77,25 @@ describe('the fake Linear authorise page', (): void => {
     expect(answer.text).toContain('Admin permissions are required');
   });
 
+  it('refuses a challenge method other than S256 before it installs anything', async (): Promise<void> => {
+    const fake = linear();
+    const link = authoriseUrl(LEO, pkce().challenge, { code_challenge_method: 'plain' });
+    const answer = await call(fake, 'https://linear.app/oauth/authorize', {
+      form: { ...Object.fromEntries(new URL(link).searchParams), decision: 'authorize' },
+    });
+    expect(answer.status).toBe(400);
+    expect(fake.workspace.appUsers.get(LEO.clientId)).toBeUndefined();
+  });
+
+  it('takes the consent only from the posted form: a link carrying the decision shows the page', async (): Promise<void> => {
+    const answer = await call(
+      linear(),
+      authoriseUrl(LEO, pkce().challenge, { decision: 'authorize' }),
+    );
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get('location')).toBeNull();
+  });
+
   it('refuses a redirect the app does not register', async (): Promise<void> => {
     const answer = await call(
       linear(),
