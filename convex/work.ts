@@ -3658,6 +3658,32 @@ export async function rememberReplacedRequest(
   }
 }
 
+/** The most of an agent's recent acknowledgements the already-decided notice reads. */
+const ACKNOWLEDGEMENTS_READ = 50;
+
+/**
+ * Whether the acknowledgement of a decision is queued and not yet sent or failed, so the notice
+ * that the request was already decided waits for it (W12V-10).
+ */
+async function acknowledgementUnsent(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  decisionId: string,
+): Promise<boolean> {
+  const recent = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(ACKNOWLEDGEMENTS_READ);
+  return recent.some(
+    (notice) =>
+      notice.decisionId === decisionId &&
+      notice.kind === 'received' &&
+      notice.providerTs === undefined &&
+      notice.failure === undefined,
+  );
+}
+
 /**
  * Remember the request of a plan the manager turned down before Retry drafts a new one and clears
  * it (W12V-16): an undecided request as `rememberReplacedRequest` does, and a decided one too,
@@ -4598,7 +4624,12 @@ export const recordRequestClose = internalMutation({
 
 /** Claim the one acknowledgement for late or duplicate manager replies. */
 export const prepareDecisionNotice = internalMutation({
-  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    /** Send now, whether or not the acknowledgement it follows was sent (its wait ran out). */
+    afterWait: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (
@@ -4608,6 +4639,14 @@ export const prepareDecisionNotice = internalMutation({
       row.decision.duplicateNoticeClaimedAt
     ) {
       return { prepared: false as const };
+    }
+    // The notice says the request was already decided, so it follows the acknowledgement of that
+    // decision; two presses a few milliseconds apart otherwise race (W12V-10).
+    if (
+      args.afterWait !== true &&
+      (await acknowledgementUnsent(ctx, row.agentId, args.decisionId))
+    ) {
+      return { prepared: false as const, waiting: true as const };
     }
     const [agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(row.agentId),

@@ -400,23 +400,55 @@ export const markRequestReplaced = internalAction({
 });
 
 /** Send the sole acknowledgement claimed for a late or duplicate reply. */
+/** How long the already-decided notice waits between looks for the acknowledgement it follows. */
+const NOTICE_WAIT_MS = 1_000;
+
+/** How many looks it makes before it is sent anyway, so a lost acknowledgement never holds it. */
+const NOTICE_WAITS = 15;
+
+/**
+ * Tell the manager a request they decided again was already decided, once, after the
+ * acknowledgement of that decision (W12V-10): while the acknowledgement is queued and not yet sent,
+ * the notice looks again a second later, up to {@link NOTICE_WAITS} times, and is then sent anyway.
+ */
 export const sendDecisionNotice = internalAction({
-  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    /** How many times this notice already waited for the acknowledgement it follows. */
+    waited: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
-    const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, args);
-    if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
+    const waited = args.waited ?? 0;
+    const target = { workItemId: args.workItemId, decisionId: args.decisionId };
+    const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, {
+      ...target,
+      ...(waited >= NOTICE_WAITS ? { afterWait: true } : {}),
+    });
+    if (!prepared.prepared) {
+      if (!('waiting' in prepared)) return { sent: false, reason: 'notice already claimed' };
+      await ctx.scheduler.runAfter(
+        NOTICE_WAIT_MS,
+        internal.managerChannelActions.sendDecisionNotice,
+        {
+          ...target,
+          waited: waited + 1,
+        },
+      );
+      return { sent: false, reason: 'waits for the acknowledgement it follows' };
+    }
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, prepared.text, {
         threadTs: prepared.threadTs,
       });
       await ctx.runMutation(internal.work.recordDecisionNotice, {
-        ...args,
+        ...target,
         ts: result.providerId,
       });
       return { sent: true };
     } catch (error) {
       const reason = safeFailureMessage(error, '', 'Decision notice failed.');
-      await ctx.runMutation(internal.work.recordDecisionNotice, { ...args, failure: reason });
+      await ctx.runMutation(internal.work.recordDecisionNotice, { ...target, failure: reason });
       return { sent: false, reason };
     }
   },
