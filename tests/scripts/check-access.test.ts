@@ -374,12 +374,23 @@ describe('check:access', (): void => {
     expect(only(narrower, 'mcp:mcp.acme.com', 'scopes')).toMatchObject({ status: 'gap' });
 
     // Every card refuses a connection with no issuer since the review's m4, so the check calls it a
-    // gap with its cure, where it once noted that the first sign-in would discover one.
+    // gap with its cure, where it once noted that the first sign-in would discover one. Since the
+    // round review's m13 a public client's cure is a correction, which ends no card.
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
       status: 'gap',
       detail:
-        "No issuer is recorded, so every employee's authorisation is refused: revoke the connection and land it again; the setup verb finds the issuer from the server's own metadata.",
+        "No issuer is recorded, so every employee's authorisation is refused: ./setup.sh access --correct mcp:mcp.acme.com records the one the server's own metadata names, and ends no card.",
+    });
+    const confidential = await accessChecks(
+      [{ ...mcp, issuer: undefined, secretCredentialId: 'secret-1' }],
+      VALUES,
+      { ...metadata([]), openSecret: async (): Promise<string> => 'mcp-test-secret' },
+    );
+    expect(only(confidential, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
+      status: 'gap',
+      detail:
+        "No issuer is recorded, so every employee's authorisation is refused: a client with a secret takes the issuer IT registered it with, so revoke the connection and land it again with that issuer.",
     });
   });
 

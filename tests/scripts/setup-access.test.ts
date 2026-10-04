@@ -593,6 +593,72 @@ describe('setup: the access verb', (): void => {
     );
   });
 
+  it("records the issuer the server names on an MCP connection landed with none, a public client, ending no card (the round review's m13)", async (): Promise<void> => {
+    const issuer = createIssuer({
+      issuer: 'https://auth.acme.test',
+      clients: [{ id: 'docs-client', redirectUris: ['https://day0.acme.test/api/oauth/mcp'] }],
+      protectedResource: { path: '/mcp', scopes: ['read'] },
+    });
+    const row = {
+      system: 'mcp:auth.acme.test',
+      displayName: 'auth.acme.test',
+      status: 'active',
+      kind: 'mcp-client',
+      mode: 'per-employee',
+      scopes: ['read'],
+      resource: 'https://auth.acme.test/mcp',
+      redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+    };
+    const bed = accessBed({
+      connected: ['mcp:auth.acme.test'],
+      rows: { 'mcp:auth.acme.test': row },
+      vendorFetch: async (url: URL, init: RequestInit): Promise<Response> =>
+        await issuer.handle(new Request(url, init)),
+    });
+    expect(await bed.run(['access', '--correct', 'mcp:auth.acme.test'])).toBe(0);
+    const [correction] = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationCorrections:correctFromSetup',
+    );
+    expect(correction?.args).toMatchObject({
+      system: 'mcp:auth.acme.test',
+      issuer: 'https://auth.acme.test',
+    });
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      'mcp:auth.acme.test: the recorded issuer is now https://auth.acme.test, the authorisation server the server names (none was recorded).',
+    );
+    expect(said).toContain('No secret changed and no card ended.');
+  });
+
+  it("never reads a confidential MCP client's issuer from the server on a correction, and says the cure (the round review's m13)", async (): Promise<void> => {
+    const bed = accessBed({
+      connected: ['mcp:auth.acme.test'],
+      rows: {
+        'mcp:auth.acme.test': {
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          status: 'active',
+          kind: 'mcp-client',
+          mode: 'per-employee',
+          scopes: ['read'],
+          resource: 'https://auth.acme.test/mcp',
+          secretCredentialId: 'secret-1',
+          redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+        },
+      },
+    });
+    expect(await bed.run(['access', '--correct', 'mcp:auth.acme.test'])).toBe(0);
+    const [correction] = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationCorrections:correctFromSetup',
+    );
+    expect(correction?.args).not.toHaveProperty('issuer');
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      'mcp:auth.acme.test: no issuer is recorded, and a client with a secret takes the issuer IT registered it with, never one read from the server.',
+    );
+    expect(said).not.toContain('to see it pass');
+  });
+
   it('corrects one system at a time, refusing a list before it calls anything', async (): Promise<void> => {
     const bed = accessBed({ connected: ['slack'] });
     expect(await bed.run(['access', '--correct', 'slack,linear'])).toBe(1);

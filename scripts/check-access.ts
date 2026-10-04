@@ -518,14 +518,20 @@ function metadataUrls(issuer: string): string[] {
 /** An MCP server: its authorisation server's metadata names it and a token endpoint. */
 async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck[]> {
   if (row.issuer === undefined) {
+    // A public client's issuer is the one its server names, which a correction records in place
+    // (the round review's m13); a confidential client's is IT's to give (M12 f).
+    const cure =
+      row.secretCredentialId === undefined
+        ? `./setup.sh access --correct ${row.system} records the one the server's own metadata ` +
+          'names, and ends no card.'
+        : 'a client with a secret takes the issuer IT registered it with, so revoke the ' +
+          'connection and land it again with that issuer.';
     return [
       check(
         row.system,
         'identity',
         'gap',
-        "No issuer is recorded, so every employee's authorisation is refused: revoke the " +
-          "connection and land it again; the setup verb finds the issuer from the server's own " +
-          'metadata.',
+        `No issuer is recorded, so every employee's authorisation is refused: ${cure}`,
       ),
     ];
   }

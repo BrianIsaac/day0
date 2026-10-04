@@ -204,12 +204,16 @@ function inWords(value: unknown): string | undefined {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-/** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
+/**
+ * What a correction of an organisation connection set: the redirect, the scopes (M12 e), an MCP
+ * connection's missing issuer (the round review's m13), or more than one.
+ */
 function correctedParts(p: Read<'organisation.connection-corrected'>): string {
   const scopes = listed(p.scopes);
   const parts = [
     ...(p.redirectCorrected === true ? ['redirect'] : []),
     ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
+    ...(p.issuerRecorded === true ? ['issuer'] : []),
   ];
   return parts.length === 0 ? 'registration' : parts.join(' and ');
 }

@@ -229,6 +229,25 @@ describe('the live feed labels', (): void => {
     );
     expect(
       eventLabel({
+        type: 'organisation.connection-corrected',
+        payload: { ...named, via: 'setup-cli', redirectCorrected: true, scopes: ['chat:write'] },
+      }),
+    ).toBe("Slack: the organisation connection's recorded redirect and scopes corrected");
+    // The round review's m13: an MCP connection landed with no issuer has it recorded in place.
+    expect(
+      eventLabel({
+        type: 'organisation.connection-corrected',
+        payload: {
+          organisationConnectionId: 'c2',
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          via: 'setup-cli',
+          issuerRecorded: true,
+        },
+      }),
+    ).toBe("auth.acme.test: the organisation connection's recorded issuer corrected");
+    expect(
+      eventLabel({
         type: 'organisation.connection-revoked',
         payload: { ...named, reason: 'the workspace moved' },
       }),
