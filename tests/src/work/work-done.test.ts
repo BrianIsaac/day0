@@ -4,6 +4,7 @@ import {
   closingAgainstFact,
   closingChanges,
   doneAgainstWords,
+  WORK_DONE_WHY_LIMIT,
   workDoneFactOf,
 } from '../../../src/work/work-done';
 import type { MockAction } from '../../../src/work/types';
@@ -46,6 +47,14 @@ describe('workDoneFactOf', (): void => {
       workDone: 'partial',
       workDoneWhy: 'One of the three deals is reconciled. The other two need the CRM export.',
     });
+  });
+
+  it('keeps one line of why to a line: a long answer is cut at a word with an ellipsis', (): void => {
+    const why = `${'The tracker holds two of the three deals and the third is missing. '.repeat(20)}End.`;
+    const fact = workDoneFactOf({ workDone: 'partial', workDoneWhy: why });
+    expect(fact?.workDoneWhy.length).toBeLessThanOrEqual(WORK_DONE_WHY_LIMIT + 1);
+    expect(fact?.workDoneWhy.endsWith('…')).toBe(true);
+    expect(why.startsWith(fact!.workDoneWhy.slice(0, -1).trimEnd())).toBe(true);
   });
 
   it('reads no fact from output recorded before this release, or from an answer that is not one of the three', (): void => {

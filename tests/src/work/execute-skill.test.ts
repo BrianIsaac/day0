@@ -35,6 +35,7 @@ import {
   type MockActionArgs,
   type WorkCandidate,
 } from '../../../src/work/types';
+import { workDoneFactOf } from '../../../src/work/work-done';
 import {
   FINISHED_WORDS,
   PIP_DRAFT,
@@ -794,6 +795,11 @@ describe('executor output contract', (): void => {
     ).toEqual([]);
   });
 
+  /** The why as the output keeps it: one line, cut at the limit (a recorded statement is longer). */
+  function storedWhy(text: string): string {
+    return workDoneFactOf({ workDone: 'partial', workDoneWhy: text })!.workDoneWhy;
+  }
+
   /** A first ticket run on the demo's ticket that answers `workDone` and sets a status. */
   function answeredRun(
     workDone: 'done' | 'partial' | 'not-done',
@@ -841,7 +847,7 @@ describe('executor output contract', (): void => {
         ),
         label,
       ).toEqual([
-        `prescribed originating-reference transition does not match the work it says was only partly done ("${text}"): set status "in-progress"`,
+        `prescribed originating-reference transition does not match the work it says was only partly done ("${storedWhy(text)}"): set status "in-progress"`,
       ]);
       expect(
         mockActionContractIssues(
@@ -852,7 +858,7 @@ describe('executor output contract', (): void => {
         ),
         label,
       ).toEqual([
-        `prescribed originating-reference transition does not match the work it says was not done ("${text}"): set status "in-progress"`,
+        `prescribed originating-reference transition does not match the work it says was not done ("${storedWhy(text)}"): set status "in-progress"`,
       ]);
       expect(
         mockActionContractIssues(

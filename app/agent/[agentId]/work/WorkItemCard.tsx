@@ -65,6 +65,7 @@ import {
   notDoneOnCard,
   waitingLine,
 } from './work-item';
+import { closeAgainstWordsOf } from '@/work/work-done';
 
 /** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
 export const LANDING_MS = 570;
@@ -535,7 +536,7 @@ export function WorkItemCard({
             employeeName={employeeName}
             closing={output.needsDependentPhase === true}
             gate={gate}
-            closeAgainstWords={output.closeAgainstWords}
+            closeAgainstWords={closeAgainstWordsOf(output)}
             onApprove={(approvedIndexes) =>
               decide(
                 () => onApproveActions(approvedIndexes),

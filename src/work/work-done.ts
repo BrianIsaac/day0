@@ -49,7 +49,7 @@ const storedFactSchema = z.object({ workDone: workDoneSchema, workDoneWhy: workD
  *
  * Both fields must be there and well formed; otherwise the output carries no fact and is read by
  * the rule for output recorded before the release (see the module docblock). The why is folded to
- * one line.
+ * one line and cut at {@link WORK_DONE_WHY_LIMIT}.
  *
  * @param output - A model reply, or an output as a row stores it.
  * @returns The fact, or undefined when the output carries none.
@@ -59,8 +59,21 @@ export function workDoneFactOf(output: unknown): WorkDoneFact | undefined {
   if (!parsed.success) return undefined;
   return {
     workDone: parsed.data.workDone,
-    workDoneWhy: parsed.data.workDoneWhy.replace(/\s+/g, ' '),
+    workDoneWhy: oneLine(parsed.data.workDoneWhy.replace(/\s+/g, ' ')),
   };
+}
+
+/**
+ * The most characters of why a card, a repair turn or an event quotes. The prompt asks for one
+ * sentence; a longer answer is cut, not refused, so the run's status is never decided by its length.
+ */
+export const WORK_DONE_WHY_LIMIT = 300;
+
+function oneLine(why: string): string {
+  if (why.length <= WORK_DONE_WHY_LIMIT) return why;
+  const cut = why.slice(0, WORK_DONE_WHY_LIMIT);
+  const word = cut.lastIndexOf(' ');
+  return `${(word > 0 ? cut.slice(0, word) : cut).trimEnd()}…`;
 }
 
 /** One action that lands a closing state on a ticket, by its index in the set. */
