@@ -147,8 +147,12 @@ export async function sweepWithNoIdentity(
     const verdict = judgeUnadmittedCall(fn.path, 'no-identity', outcome, (refusal) =>
       isGuardRefusalData(refusal.data),
     );
-    const said =
-      outcome.kind === 'answered' ? `answered ${JSON.stringify(outcome.value)}` : outcome.message;
+    // A deployment's refusal can carry its stack across several lines; the check prints one each.
+    const said = (
+      outcome.kind === 'answered' ? `answered ${JSON.stringify(outcome.value)}` : outcome.message
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!verdict.kept) {
       checks.push({
         path: fn.path,

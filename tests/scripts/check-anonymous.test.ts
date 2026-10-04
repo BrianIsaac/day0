@@ -128,4 +128,22 @@ describe('the deployment check for a caller with no identity', (): void => {
     expect(anonymousExitCode(checks)).toBe(1);
     expect(anonymousExitCode(checks.filter((check) => check.status !== 'BROKE THE RULE'))).toBe(0);
   });
+
+  it("keeps each line to one line when the deployment's refusal spans several", async (): Promise<void> => {
+    const checks = await sweepWithNoIdentity(
+      [fn('onboarding:synthesiseFromTranscriptForWebhook')],
+      {
+        tables: new Set(),
+        rowOf: (): undefined => undefined,
+        ask: async (): Promise<CallOutcome> => ({
+          kind: 'refused',
+          message: 'Server Error\nUncaught Error: webhook denied\n    at handler (convex/voice.ts)',
+          data: undefined,
+        }),
+      },
+    );
+    expect(checks.map((check) => check.detail)).toEqual([
+      'Server Error Uncaught Error: webhook denied at handler (convex/voice.ts)',
+    ]);
+  });
 });
