@@ -60,7 +60,7 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWritesOf } from '../src/work/landed-writes';
+import { landedWritesOf, unsentWritesOf } from '../src/work/landed-writes';
 import {
   isStoppable,
   landedNoteRows,
@@ -86,7 +86,9 @@ import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
 /**
  * The output a retry carries when the manager answered the reconciliation entry by entry: the
  * landed writes as they answered them (`landedWritesOf` with the answers) kept in `landedWrites`,
- * which the retried run reads as already on the provider.
+ * which the retried run reads as already on the provider, and the writes they answered not sent
+ * in `unsentWrites`, which it sends afresh (W12-R13) and never counts landed (W12-R4). Not-sent
+ * writes an earlier reconciliation carried are replaced: what became of them is in this ledger.
  *
  * @param output - The output the retry starts from.
  * @param row - The failed row and its reconciliation.
@@ -100,9 +102,11 @@ function carriedAfterReconciliation(
     (entry) => entry.answer !== undefined,
   );
   if (answered.length === 0 || !output || typeof output !== 'object') return undefined;
+  const unsentWrites = unsentWritesOf(row.output, answered);
   return {
-    ...(output as Record<string, unknown>),
+    ...Object.fromEntries(Object.entries(output).filter(([key]) => key !== 'unsentWrites')),
     landedWrites: landedWritesOf(row.output, answered),
+    ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
   };
 }
 
@@ -159,8 +163,13 @@ export const retryFailed = mutation({
       : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
         ? 'scope'
         : undefined;
+    // A write the manager says was not sent leaves the ledger a resumed closing set would author
+    // from untrue, so the retry runs the plan again from its first phase.
+    const answeredNotSent = (row.providerReconciliation?.entries ?? []).some(
+      (entry) => entry.answer === 'not-sent',
+    );
     const resume =
-      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
+      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan && !answeredNotSent
         ? closingResume(
             row.output,
             row.plan as ExecutionPlan,

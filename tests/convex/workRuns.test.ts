@@ -13,6 +13,7 @@ import {
   OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   OUTCOME_UNKNOWN_REASON,
 } from '../../src/work/reconciliation';
+import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
@@ -443,6 +444,69 @@ describe('a retry after the reconciliation (P4-1)', (): void => {
     expect(carried?.map((write) => write.action)).toEqual([status]);
     expect(carried?.[0].applied).toMatchObject({ ok: true });
     expect(carried?.[0].applied.outcomeUnknown).toBeUndefined();
+  });
+
+  it('never counts landed, in what the retried executor reads, a landed row the manager answered not sent (W12-R4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stoppedMidApply(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [
+        { phase: 'single', actionIndex: 0, answer: 'not-sent' },
+        { phase: 'single', actionIndex: 1, answer: 'landed' },
+      ],
+    });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    // The executor reads the row's output with no answers (`convex/workActions.ts`, at its claim).
+    const output = (await readItem(harness, workItemId)).output;
+    expect(landedWritesOf(output).map((write) => write.action)).toEqual([status]);
+    expect(unsentWritesOf(output).map((write) => write.action)).toEqual([comment]);
+  });
+  it('runs the plan again from its first phase, never a resumed closing set, when a prerequisite write is answered not sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const read = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-1"}' },
+    };
+    const retried = async (answer: 'landed' | 'not-sent'): Promise<Doc<'workItems'>> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { workItemId } = await seed(harness, 'failed');
+      // A run whose closing gate refused its set: the prerequisites landed, a resume is on offer.
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, {
+          skipReason: 'stopped: the closing gate refused the close',
+          output: {
+            phase: 'dependent-authoring',
+            draft: 'd',
+            notes: '',
+            actions: [read, comment],
+            applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'key-read' }, landedComment],
+            refusedClosing: {
+              actions: [status],
+              planStepOutcomes: [],
+              draft: '',
+              notes: '',
+              reason: 'refused',
+              at: 1,
+            },
+          },
+        });
+      });
+      await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+        answers: [{ phase: 'single', actionIndex: 1, answer }],
+      });
+      await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+      return await readItem(harness, workItemId);
+    };
+    expect((await retried('landed')).output).toMatchObject({ resumedClosing: true });
+    const sentAgain = await retried('not-sent');
+    expect((sentAgain.output as { resumedClosing?: boolean }).resumedClosing).toBeUndefined();
+    expect(unsentWritesOf(sentAgain.output).map((write) => write.action)).toEqual([comment]);
   });
 });
 

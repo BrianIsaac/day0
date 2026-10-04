@@ -16,7 +16,7 @@ import { landedEntry, type AppliedAction, type SurfaceRecord } from '../surfaces
 import { messageTexts } from './evidence-claims';
 import { actionIdempotencyKey } from './idempotency';
 import { CONFIRMED_LANDED_REASON, ledgerPhases, type EntryAnswer } from './reconciliation';
-import type { LandedWrite, MockAction } from './types';
+import type { LandedWrite, MockAction, UnsentWrite } from './types';
 import { escapeRegExp } from '../lib/regex';
 
 /**
@@ -36,6 +36,15 @@ import { escapeRegExp } from '../lib/regex';
  * A status change an earlier run landed is reused the same way (P7-4): the
  * provider takes a second Done without complaint, which is exactly how a
  * Retry used to undo a colleague who had moved the ticket back to Todo.
+ *
+ * Since wave 12 the manager answers each write of a stopped or interrupted
+ * run: it landed, or it was not sent. A write answered not sent is carried
+ * into the retry beside the landed ones (W12-R13), is never counted landed
+ * whatever its row says (W12-R4), and on its target the landed write no
+ * longer stands in for every write: only a write identical to a landed one
+ * there is reused, once, and every other write to that target is sent. On a
+ * target the manager answered nothing not sent, the 16 September rule holds
+ * as before.
  */
 
 /** The most landed writes a retry prompt lists; the row keeps them all. */
@@ -165,11 +174,19 @@ function confirmedLanded(action: MockAction, entry: AppliedAction): AppliedActio
   return confirmed;
 }
 
+/** The keys a ledger row stands for: its own and, for a reuse, the key of the row it reused. */
+function rowKeys(applied: AppliedAction): string[] {
+  const source = reusedFrom(applied);
+  return source === undefined ? [applied.idempotencyKey] : [applied.idempotencyKey, source];
+}
+
 /**
  * The writes a run's persisted output landed, in either of its shapes,
  * behind the writes it already carried from earlier runs. A write the
  * manager answered `landed` in the reconciliation counts as landed whatever
- * its row says, and one they answered `not-sent` does not (P4-1).
+ * its row says, and one they answered `not-sent` does not (P4-1), nor does
+ * one the output carries as not sent from the reconciliation before this
+ * retry (W12-R4), nor the landed row a reuse answered `not-sent` stood for.
  *
  * Args:
  *   output: A work item's persisted output, or undefined on a first run.
@@ -184,7 +201,12 @@ export function landedWritesOf(
 ): LandedWrite[] {
   if (!output || typeof output !== 'object') return [];
   const carried = (output as { landedWrites?: unknown }).landedWrites;
-  const earlier: LandedWrite[] = Array.isArray(carried) ? (carried as LandedWrite[]) : [];
+  const unsent = new Set(unsentWritesOf(output, answers).flatMap((write) => write.idempotencyKeys));
+  const notSent = (applied: AppliedAction): boolean =>
+    rowKeys(applied).some((key) => unsent.has(key));
+  const earlier: LandedWrite[] = (Array.isArray(carried) ? (carried as LandedWrite[]) : []).filter(
+    (write) => !notSent(write.applied),
+  );
   const own = ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     actions.flatMap((action, index): LandedWrite[] => {
       const entry = applied[index] as AppliedAction | undefined;
@@ -194,10 +216,10 @@ export function landedWritesOf(
         (row) => row.phase === phase && row.actionIndex === index,
       )?.answer;
       if (answer === 'not-sent') return [];
-      if (answer === 'landed' && !landedEntry(entry)) {
-        return [{ action, applied: confirmedLanded(action, entry) }];
+      if (answer === 'landed') {
+        return [{ action, applied: landedEntry(entry) ? entry : confirmedLanded(action, entry) }];
       }
-      return landedEntry(entry) ? [{ action, applied: entry }] : [];
+      return landedEntry(entry) && !notSent(entry) ? [{ action, applied: entry }] : [];
     }),
   );
   // Every write is its own row, keyed by the idempotency key it was sent
@@ -224,6 +246,42 @@ export function landedWritesOf(
     }
     return true;
   });
+}
+
+/**
+ * The writes the manager answered were not sent (W12-R13). Given the
+ * answers of a reconciliation of this output's own ledger, the writes it
+ * answered `not-sent`, which replace whatever an earlier reconciliation
+ * carried: that earlier run's writes were offered to this one, and what
+ * became of them is in this ledger. Without answers, the writes the output
+ * carries from the reconciliation before its run.
+ *
+ * Args:
+ *   output: A work item's persisted output, or undefined on a first run.
+ *   answers: The manager's per-entry answers from a reconciliation of this output, if any.
+ *
+ * Returns:
+ *   The writes not sent, in ledger order.
+ */
+export function unsentWritesOf(
+  output: unknown,
+  answers: readonly EntryAnswer[] = [],
+): UnsentWrite[] {
+  if (!output || typeof output !== 'object') return [];
+  if (answers.length === 0) {
+    const carried = (output as { unsentWrites?: unknown }).unsentWrites;
+    return Array.isArray(carried) ? (carried as UnsentWrite[]) : [];
+  }
+  return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
+    actions.flatMap((action, index): UnsentWrite[] => {
+      const entry = applied[index] as AppliedAction | undefined;
+      if (!entry || !parsedWrite(action)) return [];
+      const answer = answers.find(
+        (row) => row.phase === phase && row.actionIndex === index,
+      )?.answer;
+      return answer === 'not-sent' ? [{ action, idempotencyKeys: rowKeys(entry) }] : [];
+    }),
+  );
 }
 
 /** The comment a reply comment sits under, when the action names one. */
@@ -391,6 +449,14 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 
+/** A landed comment or message as a reuse source on its target. */
+interface LandedOnTarget {
+  readonly applied: AppliedAction;
+  readonly kind: 'comment' | 'message';
+  /** The canonical payload it was sent with, which a write must match on a part-landed target. */
+  readonly payload: string | undefined;
+}
+
 function payload(action: MockAction): string | undefined {
   const parsed = parseSurfaceAction(action);
   if (!parsed.ok) return undefined;
@@ -410,6 +476,11 @@ function payload(action: MockAction): string | undefined {
  * the manager's note asked for a correction or a further message, no
  * comment or message is reused by target; a read is never reused.
  *
+ * A write the manager answered not sent is never a source, and on its
+ * target only a write of identical payload to a landed one there is reused,
+ * each landed row once: the target carries some of what was asked for and
+ * not the rest, so every other write to it is sent (W12-R13).
+ *
  * Identical payloads are reused for a resumed closing set alone: the set
  * is re-authored over the same landed prerequisites, so the same closing
  * write again is the same write. Across runs the same payload is not the
@@ -427,9 +498,9 @@ function payload(action: MockAction): string | undefined {
  *   run: The run the reused rows take their identity from.
  *   options: The agent's surfaces (to tell the manager DM from a message),
  *     the manager's note on the retry, whether identical payloads are
- *     reused (a resumed closing set's previous attempt only), and the writes
+ *     reused (a resumed closing set's previous attempt only), the writes
  *     this run landed in an earlier phase, whose status changes end any
- *     reuse on their ticket.
+ *     reuse on their ticket, and the writes the manager answered not sent.
  *
  * Returns:
  *   A reused row for each action that has one, undefined elsewhere.
@@ -443,26 +514,44 @@ export function reusedLedger(
     managerFeedback?: string;
     identicalPayloads?: boolean;
     thisRun?: readonly LandedWrite[];
+    unsent?: readonly UnsentWrite[];
   } = {},
 ): Array<ReusedAppliedAction | undefined> {
   if (sources.length === 0) return actions.map(() => undefined);
   const surfaces = options.surfaces ?? [];
   const correction = correctionRequested(options.managerFeedback);
+  const unsent = options.unsent ?? [];
+  const unsentKeys = new Set(unsent.flatMap((write) => write.idempotencyKeys));
+  // The targets that carry some of what was asked for and not the rest.
+  const partTargets = new Set(
+    unsent.flatMap((write) => {
+      const parsed = parsedWrite(write.action);
+      const target = parsed ? writeTarget(parsed, write.action, surfaces) : undefined;
+      return target ? [target.key] : [];
+    }),
+  );
   const byPayload = new Map<string, AppliedAction>();
-  const byTarget = new Map<string, { applied: AppliedAction; kind: 'comment' | 'message' }>();
+  const byTarget = new Map<string, LandedOnTarget[]>();
   // The last state an earlier run landed on each ticket; sources are oldest first.
   const byStatus = new Map<string, { state: string; applied: AppliedAction }>();
   for (const source of sources) {
     if (!landedEntry(source.applied)) continue;
+    if (rowKeys(source.applied).some((key) => unsentKeys.has(key))) continue;
     const key = options.identicalPayloads ? payload(source.action) : undefined;
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
     const status = parsed ? statusChange(parsed) : undefined;
     if (status) byStatus.set(status.ticketKey, { state: status.state, applied: source.applied });
     const target = parsed ? writeTarget(parsed, source.action, surfaces) : undefined;
-    if (target && !byTarget.has(target.key))
-      byTarget.set(target.key, { applied: source.applied, kind: target.kind });
+    if (target) {
+      byTarget.set(target.key, [
+        ...(byTarget.get(target.key) ?? []),
+        { applied: source.applied, kind: target.kind, payload: payload(source.action) },
+      ]);
+    }
   }
+  // On a part-landed target each landed row is reused by one write at most.
+  const taken = new Set<AppliedAction>();
   // A ticket this run already moved in an earlier phase is in the state this
   // run set, whatever an earlier run left it in.
   for (const write of options.thisRun ?? []) {
@@ -476,10 +565,12 @@ export function reusedLedger(
       runId: run.runId,
       actionIndex: run.actionIndexOffset + index,
     });
-    const key = options.identicalPayloads ? payload(action) : undefined;
+    const parsed = parsedWrite(action);
+    const target = parsed ? writeTarget(parsed, action, surfaces) : undefined;
+    const partLanded = target !== undefined && partTargets.has(target.key);
+    const key = options.identicalPayloads && !partLanded ? payload(action) : undefined;
     const identical = key ? byPayload.get(key) : undefined;
     if (identical) return reuseOf(identical, REUSED_IDENTICAL_NOTE, identity);
-    const parsed = parsedWrite(action);
     const status = parsed ? statusChange(parsed) : undefined;
     const setBefore = status ? byStatus.get(status.ticketKey) : undefined;
     if (
@@ -494,14 +585,21 @@ export function reusedLedger(
     // This run moves the ticket, so from here on no earlier run's state is
     // the ticket's state, and a later change on it is sent (M3).
     if (status) byStatus.delete(status.ticketKey);
-    const target = parsed ? writeTarget(parsed, action, surfaces) : undefined;
-    const prior = target ? byTarget.get(target.key) : undefined;
-    if (!parsed || !prior) return undefined;
+    const landedThere = target ? byTarget.get(target.key) : undefined;
+    if (!parsed || !landedThere) return undefined;
     // The manager asked for the comment to change or for a further one: what
     // the model wrote for that target is sent, by id as a rewrite when it set
     // one, as a second comment when it did not. Only an untouched target is
     // reused.
     if (correction) return undefined;
+    const sent = payload(action);
+    const prior = partLanded
+      ? landedThere.find(
+          (row) => !taken.has(row.applied) && row.payload !== undefined && row.payload === sent,
+        )
+      : landedThere[0];
+    if (!prior) return undefined;
+    if (partLanded) taken.add(prior.applied);
     return reuseOf(prior.applied, reusedLandedNote(prior.applied.providerId, prior.kind), identity);
   });
 }
@@ -536,47 +634,78 @@ function describe(parsed: ParsedSurfaceAction): string {
   return parsed.kind === 'mcp.call' ? parsed.tool : `${parsed.method} ${parsed.path}`;
 }
 
+/** One prompt line naming a write: surface, tool, target, provider id when it has one, and a bounded excerpt. */
+function writeLine(
+  index: number,
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  providerId?: string | null,
+): string {
+  const parsed = parsedWrite(action);
+  if (!parsed) {
+    return `  ${index}. ${action.tool}${providerId === undefined ? '' : ` · provider id ${providerId ?? '(none)'}`}`;
+  }
+  const target = writeTarget(parsed, action, surfaces);
+  const targetText =
+    target?.target ?? targetIssue(parsed) ?? messageTarget(parsed) ?? '(no target)';
+  const body = messageTexts(action)[0];
+  const excerpt = body
+    ? ` · "${body.length > EXCERPT_CHARS ? `${body.slice(0, EXCERPT_CHARS)} ...` : body}"`
+    : '';
+  const provider = providerId === undefined ? '' : ` · provider id ${providerId ?? '(none)'}`;
+  // The row was scrubbed of the owner's exact values when it was persisted;
+  // the structural pass here is the same defence in depth the ledger
+  // prompt applies, so no token shape a body quotes reaches a prompt.
+  return redactTokenShapes(
+    `  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText}${provider}${excerpt}`,
+  );
+}
+
 /**
  * The prompt section that tells a retry's phases which writes earlier runs
- * of this item already landed: one line each with surface, tool, target,
- * provider id and a bounded excerpt of the body, then the rule.
+ * of this item already landed, and which the manager answered were not
+ * sent: one line each with surface, tool, target, provider id (landed
+ * writes only) and a bounded excerpt of the body, each list followed by its
+ * rule.
  *
  * Args:
  *   writes: The landed writes the row carries.
  *   surfaces: The agent's surfaces, to name a message's target.
+ *   unsent: The writes the manager answered were not sent, carried into this retry.
  *
  * Returns:
- *   Prompt lines, empty when nothing landed before.
+ *   Prompt lines, empty when nothing landed before and nothing is owed.
  */
 export function landedWriteLines(
   writes: readonly LandedWrite[] | undefined,
   surfaces: readonly SurfaceRecord[] = [],
+  unsent: readonly UnsentWrite[] = [],
 ): string[] {
-  if (!writes || writes.length === 0) return [];
+  return [...landedLines(writes ?? [], surfaces), ...unsentLines(unsent, surfaces)];
+}
+
+function landedLines(writes: readonly LandedWrite[], surfaces: readonly SurfaceRecord[]): string[] {
+  if (writes.length === 0) return [];
   const shown = shownWrites(writes, surfaces);
-  const rows = shown.map((write, index): string => {
-    const parsed = parsedWrite(write.action);
-    if (!parsed)
-      return `  ${index}. ${write.action.tool} · provider id ${write.applied.providerId ?? '(none)'}`;
-    const target = writeTarget(parsed, write.action, surfaces);
-    const targetText =
-      target?.target ?? targetIssue(parsed) ?? messageTarget(parsed) ?? '(no target)';
-    const body = messageTexts(write.action)[0];
-    const excerpt = body
-      ? ` · "${body.length > EXCERPT_CHARS ? `${body.slice(0, EXCERPT_CHARS)} ...` : body}"`
-      : '';
-    // The row was scrubbed of the owner's exact values when it was persisted;
-    // the structural pass here is the same defence in depth the ledger
-    // prompt applies, so no token shape a landed body quotes reaches a prompt.
-    return redactTokenShapes(
-      `  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText} · provider id ${write.applied.providerId ?? '(none)'}${excerpt}`,
-    );
-  });
   return [
     '',
     `--- Writes earlier runs of this item already landed (${writes.length}${writes.length > shown.length ? `, last ${shown.length} shown` : ''}) ---`,
     'Each line: surface · tool · target · provider id · excerpt of the body. Every one is on the provider now.',
-    ...rows,
+    ...shown.map((write, index) =>
+      writeLine(index, write.action, surfaces, write.applied.providerId ?? null),
+    ),
     "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one. A status change listed here is not sent again either: a person may have moved the ticket since, and the state an earlier run set is satisfied from its landed row.",
+  ];
+}
+
+function unsentLines(unsent: readonly UnsentWrite[], surfaces: readonly SurfaceRecord[]): string[] {
+  if (unsent.length === 0) return [];
+  const shown = unsent.slice(-PROMPT_ROWS);
+  return [
+    '',
+    `--- Writes the manager says earlier runs of this item did not send (${unsent.length}${unsent.length > shown.length ? `, last ${shown.length} shown` : ''}) ---`,
+    'Each line: surface · tool · target · excerpt of the body.',
+    ...shown.map((write, index) => writeLine(index, write.action, surfaces)),
+    'None of these is on the provider: the manager checked. Where the plan still needs one, emit it again, even on a target listed above as already carrying a landed write: on such a target only a write identical to a landed one there is reused, and every other write is sent. Never emit again a write listed above as landed.',
   ];
 }

@@ -114,7 +114,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { browserComponent } from '../src/surfaces/browser';
-import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
+import type { ExecutionOutput, LandedWrite, SkillShape, UnsentWrite } from '../src/work/types';
 import {
   sameSkillShape,
   skillOperationLabel,
@@ -140,6 +140,7 @@ import {
   isReusedRow,
   reusedFrom,
   reusedLedger,
+  unsentWritesOf,
   withReusedRunNumbers,
 } from '../src/work/landed-writes';
 import {
@@ -968,7 +969,12 @@ async function executeApprovedPlanHandler(
   // What earlier runs of this item put on a provider, read from the row's
   // output before this run replaces it: the retry's prompts list these and
   // a comment on a target one of them carries is reused, never sent again.
-  const landedWrites = SURFACE_MODE === 'real' ? landedWritesOf(item.output) : [];
+  // The writes the manager answered not sent ride beside them: the prompts
+  // list them to send again, and their targets reuse only an identical write.
+  const carriedWrites: CarriedWrites =
+    SURFACE_MODE === 'real'
+      ? { landedWrites: landedWritesOf(item.output), unsentWrites: unsentWritesOf(item.output) }
+      : { landedWrites: [], unsentWrites: [] };
   if (SURFACE_MODE === 'real' && resume?.resumedClosing && resume.phase === 'dependent-authoring') {
     // The carried reads were taken before the retry; the closing set is
     // authored from what they read now, or not at all.
@@ -991,7 +997,7 @@ async function executeApprovedPlanHandler(
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId: args.workItemId,
       runId: claim.runId,
-      output: withLandedWrites(reread.output, landedWrites),
+      output: withCarriedWrites(reread.output, carriedWrites),
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
@@ -1009,7 +1015,7 @@ async function executeApprovedPlanHandler(
       internalCaller,
       managerFeedback: liveManagerFeedback(item.managerFeedback),
       managerAnswers: managerAnswersOf(item),
-      landedWrites,
+      ...carriedWrites,
     }),
   );
 }
@@ -1140,12 +1146,22 @@ export function rereadFailure(
   };
 }
 
-/** An output with the writes earlier runs landed on it, when there are any. */
-function withLandedWrites<T extends object>(
+/** What a retried run carries from the runs before it: the writes they landed, and those not sent. */
+interface CarriedWrites {
+  readonly landedWrites: readonly LandedWrite[];
+  readonly unsentWrites: readonly UnsentWrite[];
+}
+
+/** An output with the writes earlier runs landed, and those the manager answered not sent, when there are any. */
+function withCarriedWrites<T extends object>(
   output: T,
-  landedWrites: readonly LandedWrite[],
-): T & { landedWrites?: LandedWrite[] } {
-  return landedWrites.length > 0 ? { ...output, landedWrites: [...landedWrites] } : output;
+  carried: CarriedWrites,
+): T & { landedWrites?: LandedWrite[]; unsentWrites?: UnsentWrite[] } {
+  return {
+    ...output,
+    ...(carried.landedWrites.length > 0 ? { landedWrites: [...carried.landedWrites] } : {}),
+    ...(carried.unsentWrites.length > 0 ? { unsentWrites: [...carried.unsentWrites] } : {}),
+  };
 }
 
 /** The manager's answers at approval, as the executor reads them. */
@@ -1201,6 +1217,8 @@ async function holdDay0Actions(
     managerAnswers?: readonly ManagerAnswer[];
     /** Writes earlier runs of this item landed, for the prompts and the reuse at apply. */
     landedWrites?: readonly LandedWrite[];
+    /** Writes the earlier run attempted that the manager answered were not sent. */
+    unsentWrites?: readonly UnsentWrite[];
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -1247,6 +1265,7 @@ async function holdDay0Actions(
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
+      unsentWrites: args.unsentWrites,
       heldElsewhere,
       appliedCorrections,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
@@ -1261,11 +1280,11 @@ async function holdDay0Actions(
         });
       },
     });
-    const staged = withLandedWrites(
+    const staged = withCarriedWrites(
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
         : { ...output, needsDependentPhase: false },
-      args.landedWrites ?? [],
+      { landedWrites: args.landedWrites ?? [], unsentWrites: args.unsentWrites ?? [] },
     );
     // A write whose argument names the probed schema refuses is re-authored
     // once here, so the payload the manager approves is one the provider
@@ -2089,6 +2108,7 @@ function flattenedDependentOutput(
     prerequisiteCount:
       output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
+    ...(output.initial.unsentWrites ? { unsentWrites: output.initial.unsentWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
     ...((output.openQuestion ?? output.initial.openQuestion)
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
@@ -2672,6 +2692,7 @@ export const authorDependentActions = internalAction({
             resumedClosing: prerequisites.resumedClosing,
             refusedClosing: prerequisites.refusedClosing,
             landedWrites: prerequisites.landedWrites,
+            unsentWrites: prerequisites.unsentWrites,
             heldElsewhere: held,
             closingGate,
             onAuditCorrection: async (removedIndices, reason) => {
@@ -3026,7 +3047,11 @@ async function reusedRows(
   const resumed = dependent && output.initial.resumedClosing;
   if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
-  const options = { surfaces, managerFeedback: liveManagerFeedback(item?.managerFeedback) };
+  const options = {
+    surfaces,
+    managerFeedback: liveManagerFeedback(item?.managerFeedback),
+    unsent: (dependent ? output.initial.unsentWrites : output.unsentWrites) ?? [],
+  };
   const fromResume = resumed
     ? resumedClosingLedger(
         output.actions,

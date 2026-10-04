@@ -6,10 +6,11 @@ import {
   landedWriteLines,
   landedWritesOf,
   reusedLedger,
+  unsentWritesOf,
   withReusedRunNumbers,
   writeTarget,
 } from '../../../src/work/landed-writes';
-import type { LandedWrite, MockAction } from '../../../src/work/types';
+import type { LandedWrite, MockAction, UnsentWrite } from '../../../src/work/types';
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
   tool: 'mcp.call',
@@ -537,6 +538,103 @@ describe('the writes earlier runs landed', () => {
         managerFeedback: 'Do not move it to Done yet; fix the comment.',
       })[0]?.reason,
     ).toContain('reused landed status change');
+  });
+
+  it('sends the writes the manager answered not sent on a thread that carries a landed one, and reuses only the landed one (W12-R13)', () => {
+    const replies = Array.from({ length: 8 }, (_, n) =>
+      post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: `Deal ${n + 1} reconciled.` }),
+    );
+    const sources: LandedWrite[] = [
+      { action: replies[0]!, applied: row({ idempotencyKey: 'work:first:0' }) },
+    ];
+    const unsent: UnsentWrite[] = replies
+      .slice(1)
+      .map((action, n) => ({ action, idempotencyKeys: [`work:first:${n + 1}`] }));
+
+    const ledger = reusedLedger(replies, sources, run, { surfaces, unsent });
+
+    expect(ledger.map((entry) => entry?.reusedFrom)).toEqual([
+      'work:first:0',
+      ...Array.from({ length: 7 }, () => undefined),
+    ]);
+    expect(ledger[0]?.reason).toContain('reused landed message');
+    // The landed reply is reused once: a second copy of it in the set is a further write, and is sent.
+    expect(reusedLedger([replies[0]!, replies[0]!], sources, run, { surfaces, unsent })).toEqual([
+      expect.objectContaining({ reusedFrom: 'work:first:0' }),
+      undefined,
+    ]);
+    // The 16 September rule stands where the manager answered nothing not sent:
+    // a rewritten audit comment on a ticket that carries one is reused, never posted.
+    const rewritten = call('linear', 'save_comment', {
+      issueId: 'REVOPS-5',
+      body: 'Audit note, second form.',
+    });
+    const landedComment: LandedWrite = {
+      action: comment,
+      applied: row({ providerId: 'comment-1', idempotencyKey: 'work:first:9' }),
+    };
+    expect(
+      reusedLedger([rewritten], [landedComment, ...sources], run, { surfaces, unsent })[0]?.reason,
+    ).toContain('reused landed comment comment-1');
+  });
+
+  it('never reuses a row the manager answered not sent, even by identical payload in a resumed closing set (W12-R4)', () => {
+    const reply = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Deal 2 reconciled.' });
+    // The ledger recorded the row as landed; the manager found it is not on the provider.
+    const sources: LandedWrite[] = [
+      { action: reply, applied: row({ providerId: '1789.3', idempotencyKey: 'work:first:1' }) },
+    ];
+    const unsent: UnsentWrite[] = [{ action: reply, idempotencyKeys: ['work:first:1'] }];
+    expect(
+      reusedLedger([reply], sources, run, { surfaces, unsent, identicalPayloads: true }),
+    ).toEqual([undefined]);
+  });
+
+  it('leaves out of the landed list a row the manager answered not sent, carried or answered now, and the landed row a reuse stood for (W12-R4)', () => {
+    const second = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Deal 2 reconciled.' });
+    // A retry's carried output: the earlier run's ledger, with its not-sent row as the reconciliation left it.
+    const carried = {
+      landedWrites: [{ action: comment, applied: row({ idempotencyKey: 'work:first:0' }) }],
+      unsentWrites: [{ action: second, idempotencyKeys: ['work:first:1'] }],
+      actions: [comment, second],
+      applied: [
+        row({ idempotencyKey: 'work:first:0' }),
+        row({ providerId: '1789.3', idempotencyKey: 'work:first:1' }),
+      ],
+    };
+    expect(landedWritesOf(carried).map((write) => write.applied.idempotencyKey)).toEqual([
+      'work:first:0',
+    ]);
+    // A reuse answered not sent takes the landed row it stood for out with it.
+    const [reused] = reusedLedger([comment], carried.landedWrites, run, { surfaces });
+    const retried = { landedWrites: carried.landedWrites, actions: [comment], applied: [reused] };
+    expect(
+      landedWritesOf(retried, [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]),
+    ).toEqual([]);
+    expect(
+      unsentWritesOf(retried, [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]),
+    ).toEqual([{ action: comment, idempotencyKeys: ['work:retry:6', 'work:first:0'] }]);
+  });
+
+  it('lists the writes the manager answered not sent after the landed ones, with the rule that sends them', () => {
+    const second = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Deal 2 reconciled.' });
+    const lines = landedWriteLines(
+      [{ action: reply, applied: row({ providerId: '1789.2' }) }],
+      surfaces,
+      [{ action: second, idempotencyKeys: ['work:first:1'] }],
+    );
+    const heading = lines.indexOf(
+      '--- Writes the manager says earlier runs of this item did not send (1) ---',
+    );
+    expect(heading).toBeGreaterThan(0);
+    expect(lines[heading + 2]).toBe(
+      '  0. slack · POST /chat.postMessage · C0REVOPS/1789.1 · "Deal 2 reconciled."',
+    );
+    expect(lines[heading + 3]).toContain('None of these is on the provider');
+    // Not-sent writes alone still reach the prompt.
+    expect(
+      landedWriteLines([], surfaces, [{ action: second, idempotencyKeys: ['k'] }]).length,
+    ).toBeGreaterThan(0);
   });
 
   it('lists each landed write on one bounded line for the prompt, with the rule after them', () => {

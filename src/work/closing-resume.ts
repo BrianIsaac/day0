@@ -14,12 +14,15 @@ import type {
   LandedWrite,
   PlanStepOutcome,
   RefusedClosing,
+  UnsentWrite,
 } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
   /** The writes earlier runs landed, carried from the failed row so the resumed closing set still sees them. */
   landedWrites?: LandedWrite[];
+  /** The writes the manager answered an earlier run did not send, carried the same way. */
+  unsentWrites?: UnsentWrite[];
   applied: AppliedAction[];
   resumedClosing: true;
   initialFailure: string;
@@ -83,13 +86,19 @@ function carriedQuestions(row: {
   };
 }
 
-/** The landed writes a failed row carries, to ride on the resume it becomes. */
-function carriedWrites(row: {
-  landedWrites?: unknown;
-}): { landedWrites: LandedWrite[] } | Record<string, never> {
-  return Array.isArray(row.landedWrites) && row.landedWrites.length > 0
-    ? { landedWrites: row.landedWrites as LandedWrite[] }
-    : {};
+/** The landed and not-sent writes a failed row carries, to ride on the resume it becomes. */
+function carriedWrites(row: { landedWrites?: unknown; unsentWrites?: unknown }): {
+  landedWrites?: LandedWrite[];
+  unsentWrites?: UnsentWrite[];
+} {
+  return {
+    ...(Array.isArray(row.landedWrites) && row.landedWrites.length > 0
+      ? { landedWrites: row.landedWrites as LandedWrite[] }
+      : {}),
+    ...(Array.isArray(row.unsentWrites) && row.unsentWrites.length > 0
+      ? { unsentWrites: row.unsentWrites as UnsentWrite[] }
+      : {}),
+  };
 }
 
 function gateRefusalResume(
@@ -224,7 +233,11 @@ export function resumedClosingLedger(
   actions: ExecutionOutput['actions'],
   previous: ClosingResume['previousClosing'] | undefined,
   run: { workItemId: string; runId: string; actionIndexOffset: number },
-  options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string } = {},
+  options: {
+    surfaces?: readonly SurfaceRecord[];
+    managerFeedback?: string;
+    unsent?: readonly UnsentWrite[];
+  } = {},
 ): Array<AppliedAction | undefined> {
   const sources: LandedWrite[] = (previous?.actions ?? []).flatMap(
     (action, index): LandedWrite[] => {
