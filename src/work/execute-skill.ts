@@ -65,6 +65,7 @@ import {
   type HeldExternalItem,
 } from './claim-key';
 import { notDoneStatements, runOwnWords } from './not-done';
+import { type WorkDoneFact, workDoneFactOf } from './work-done';
 import { escapeRegExp } from '../lib/regex';
 
 export { replyTargetLine };
@@ -1594,6 +1595,11 @@ function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): b
   const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
   const assertedWork = approvedWork.replace(HYPOTHETICAL_CLAUSE, ' ');
   if (PARTIAL_WORK.test(assertedWork) && !NO_PARTIAL_WORK.test(assertedWork)) return true;
+  return planKeepsTicketOpen(candidate, plan);
+}
+
+/** Whether the approved plan, in its own asserted words, keeps the originating ticket open. */
+function planKeepsTicketOpen(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
   const plannedWork = [plan.summary, ...plan.steps].join('\n').replace(HYPOTHETICAL_CLAUSE, ' ');
   return keepsTicketOpen(plannedWork, referencedDestination(candidate, 'ticket://'));
 }
@@ -2451,6 +2457,54 @@ export function deferralAudit(
   return issues;
 }
 
+/**
+ * The status a mock run's originating ticket must carry, and the work the repair turn names.
+ *
+ * The run's answer decides (decision D-1 (b), engineering, flagged): `partial` or `not-done`
+ * never closes, whatever the plan expected; `done` closes unless the ask names another status or
+ * the approved plan keeps the ticket open in so many words, which are the manager's instructions
+ * on the ticket's state rather than a reading of whether the work was done. The plan-based
+ * reading of words such as "remaining" or "partial" (`approvedWorkIsPartial`) guesses the same
+ * question the run now answers, so it decides only for output with no answer, with the lexical
+ * reading of the run's words, as the release before did.
+ */
+function expectedTicketStatus(args: {
+  fact: WorkDoneFact | undefined;
+  unfinished: readonly string[];
+  explicitStatus: string | undefined;
+  full: string;
+  partial: string;
+  candidate: WorkCandidate;
+  plan: ExecutionPlan;
+}): { expectedStatus: string; work: string } {
+  const { fact, unfinished, explicitStatus, full, partial } = args;
+  const notFull =
+    explicitStatus !== undefined && explicitStatus !== full ? explicitStatus : partial;
+  if (fact !== undefined && fact.workDone !== 'done') {
+    const said = fact.workDone === 'partial' ? 'was only partly done' : 'was not done';
+    return { expectedStatus: notFull, work: `work it says ${said} ("${fact.workDoneWhy}")` };
+  }
+  if (fact !== undefined) {
+    const keptOpen = planKeepsTicketOpen(args.candidate, args.plan);
+    return {
+      expectedStatus: explicitStatus ?? (keptOpen ? partial : full),
+      work: `${keptOpen ? 'partial' : 'completed'} work`,
+    };
+  }
+  // No answer: the release before's reading, by the run's words and then the plan's.
+  if (unfinished.length > 0) {
+    return {
+      expectedStatus: notFull,
+      work: `work its own words say was not done ("${unfinished[0]}")`,
+    };
+  }
+  const partialWork = approvedWorkIsPartial(args.candidate, args.plan);
+  return {
+    expectedStatus: explicitStatus ?? (partialWork ? partial : full),
+    work: `${partialWork ? 'partial' : 'completed'} work`,
+  };
+}
+
 /** The contract violations in a mock-mode output: actions the draft describes but does not carry, and the reverse. */
 export function mockActionContractIssues(
   output: ExecutionOutput,
@@ -2464,7 +2518,10 @@ export function mockActionContractIssues(
   const explicitStatus = candidate.contentSummary.match(
     /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
   )?.[1];
-  const unfinished = notDoneStatements(runOwnWords(output));
+  // The run's answer decides whether the work was done (decision D-1 (b)); output recorded
+  // before the release carries none and is read by its words, as the release before read it.
+  const fact = workDoneFactOf(output);
+  const unfinished = fact === undefined ? notDoneStatements(runOwnWords(output)) : [];
   for (const trail of contract.trails) {
     if (!procedureTrailApplies(trail, candidate)) continue;
     const matchingDestination = matchingProcedureActions(trail, output, candidate).map(
@@ -2493,15 +2550,15 @@ export function mockActionContractIssues(
     }
     if (trail.effect.statusTransition) {
       const { full, partial } = trail.effect.statusTransition;
-      // The run's own words are the last word on whether the work was done: a run that says it
-      // could not do the work never closes the ticket, whatever the ask and the plan expected
-      // (the 4 October live demo; wave 12, 12-W).
-      const expectedStatus =
-        unfinished.length > 0
-          ? explicitStatus !== undefined && explicitStatus !== full
-            ? explicitStatus
-            : partial
-          : (explicitStatus ?? (approvedWorkIsPartial(candidate, plan) ? partial : full));
+      const { expectedStatus, work } = expectedTicketStatus({
+        fact,
+        unfinished,
+        explicitStatus,
+        full,
+        partial,
+        candidate,
+        plan,
+      });
       if (
         !matchingDestination.some(
           (action) =>
@@ -2509,11 +2566,6 @@ export function mockActionContractIssues(
             expectedStatus,
         )
       ) {
-        // The status is named, so the one repair round knows what the approved work calls for.
-        const work =
-          unfinished.length > 0
-            ? `work its own words say was not done ("${unfinished[0]}")`
-            : `${approvedWorkIsPartial(candidate, plan) ? 'partial' : 'completed'} work`;
         issues.push(
           trail.effect.destination.kind === 'originating-reference'
             ? `prescribed originating-reference transition does not match the ${work}: set ${trail.effect.statusTransition.argument} "${expectedStatus}"`

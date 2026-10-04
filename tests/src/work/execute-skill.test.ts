@@ -35,6 +35,12 @@ import {
   type MockActionArgs,
   type WorkCandidate,
 } from '../../../src/work/types';
+import {
+  FINISHED_WORDS,
+  RECORDED_UNFINISHED,
+  ROOK_COMMENT,
+  UNFINISHED_WORDS,
+} from '../../fixtures/work/work-done-corpora';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -771,6 +777,113 @@ describe('executor output contract', (): void => {
         ticketProcedureContract,
       ),
     ).toEqual([]);
+  });
+
+  /** A first ticket run on the demo's ticket that answers `workDone` and sets a status. */
+  function answeredRun(
+    workDone: 'done' | 'partial' | 'not-done',
+    words: string,
+    status: 'done' | 'in-progress',
+  ) {
+    return {
+      draft: words,
+      notes: '',
+      needsDependentPhase: false,
+      workDone,
+      workDoneWhy: words,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      actions: [
+        {
+          tool: 'ticket.update' as const,
+          args: { slug: 'REVOPS-204', status, comment: words },
+        },
+      ],
+    };
+  }
+
+  it('closes the ticket of a run answering done over finished words, whatever the detector reads in them (the review corpus, Quill and Rook)', (): void => {
+    for (const { label, text } of FINISHED_WORDS) {
+      expect(
+        mockActionContractIssues(
+          answeredRun('done', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([]);
+    }
+  });
+
+  it('never closes the ticket of a run answering partial or not-done, in any wording (the review corpus, Moss, Nell, Pip and nine recorded runs)', (): void => {
+    for (const { label, text } of [...UNFINISHED_WORDS, ...RECORDED_UNFINISHED]) {
+      expect(
+        mockActionContractIssues(
+          answeredRun('partial', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([
+        `prescribed originating-reference transition does not match the work it says was only partly done ("${text}"): set status "in-progress"`,
+      ]);
+      expect(
+        mockActionContractIssues(
+          answeredRun('not-done', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([
+        `prescribed originating-reference transition does not match the work it says was not done ("${text}"): set status "in-progress"`,
+      ]);
+      expect(
+        mockActionContractIssues(
+          answeredRun('not-done', text, 'in-progress'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([]);
+    }
+  });
+
+  it('holds a run answering done to the plan only where the plan keeps the ticket open in so many words, not where it says "remaining"', (): void => {
+    const remaining = {
+      ...demoPlan,
+      steps: [
+        'Match the three deals in the tracker.',
+        'Comment any remaining gaps and close REVOPS-204.',
+      ],
+    };
+    expect(
+      mockActionContractIssues(
+        answeredRun('done', ROOK_COMMENT, 'done'),
+        demoTicket,
+        remaining,
+        ticketProcedureContract,
+      ),
+    ).toEqual([]);
+    const keptOpen = {
+      ...demoPlan,
+      steps: [
+        'Match the three deals in the tracker.',
+        'Comment the result and leave the ticket open.',
+      ],
+    };
+    expect(
+      mockActionContractIssues(
+        answeredRun('done', ROOK_COMMENT, 'done'),
+        demoTicket,
+        keptOpen,
+        ticketProcedureContract,
+      ),
+    ).toEqual([
+      'prescribed originating-reference transition does not match the partial work: set status "in-progress"',
+    ]);
   });
 
   it('tells the executor never to close a ticket its own words say is not done', (): void => {
