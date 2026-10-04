@@ -99,7 +99,9 @@ that issues an app-level token, so a person generates one per app:
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page; presses then
 stop reaching Day0 until a new token is landed on the card, and each request is
-decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last. The `slack-socket` component must run (real-mode setup starts
+decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last, and the `slack-socket` component dials
+with it at its next read of the app list, within half a minute, so a token of
+another app shows in `check:access` (the `socket` row) by then. The `slack-socket` component must run (real-mode setup starts
 it) and reach Slack's Socket Mode hosts outbound over `wss://`; nothing
 inbound is opened.
 
