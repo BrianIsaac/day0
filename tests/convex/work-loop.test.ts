@@ -36,6 +36,8 @@ const recorded = vi.hoisted(() => ({
   planCalls: [] as string[],
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
+  /** Thrown by the planner once its gate opens, instead of its plan. */
+  planFailure: undefined as Error | undefined,
   skillRuns: [] as string[],
   /** Holds the skill run open until the test releases it. */
   skillGate: undefined as Promise<void> | undefined,
@@ -73,6 +75,9 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
     draftExecutionPlan: async (args: { candidate: { title: string } }) => {
       recorded.planCalls.push(args.candidate.title);
       await recorded.planGate;
+      const failure = recorded.planFailure;
+      recorded.planFailure = undefined;
+      if (failure) throw failure;
       return {
         summary: 'Tell the manager the close summary is ready.',
         steps: ['DM the manager that the close summary is ready.'],
@@ -140,6 +145,7 @@ afterEach((): void => {
   recorded.scopeOutcome = undefined;
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
+  recorded.planFailure = undefined;
   recorded.skillRuns.length = 0;
   recorded.skillGate = undefined;
   recorded.skillOutput = undefined;
@@ -413,6 +419,37 @@ describe('the server-side steps', (): void => {
     expect(recorded.planCalls).toHaveLength(2);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
     expect(await eventsOf(harness, 'work.plan-drafted')).toHaveLength(1);
+  });
+
+  it('fails nothing when a draft the manager stopped fails its model call after Retry queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-17');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The class the Convex modules load, as workActions.test.ts takes it.
+    const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
+    recorded.planFailure = new ModelReplyCutError('day0-plan', '{"summary":"Comment');
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    release();
+    await stale;
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    // The draft Retry queued holds the claim, and its plan is the one stored.
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
   });
 
   it('leaves a failed step claimed until the lease passes, then lets the next run take it', async (): Promise<void> => {

@@ -757,7 +757,7 @@ async function draftPlanHandler(
   const corrections =
     SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
-  const plan = await draftOrFail(ctx, args.workItemId, () =>
+  const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
       draftExecutionPlan({
         candidate,
@@ -812,17 +812,24 @@ async function draftPlanHandler(
  * with the reason on its card and Retry drafts again. A rate limit, an outage
  * or a bad key is left to the sweep, since the item is not what failed.
  *
+ * A real-mode draft fails the row only while it still holds the claim it
+ * took (`draftClaimedAt`), as only that draft stores its plan (`setPlan`): a
+ * draft the manager stopped, whose row Retry sent back with a new draft
+ * queued, fails nothing.
+ *
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The row being drafted.
+ *   draftClaimedAt: The claim the draft took, in real mode; undefined for the page's mock draft.
  *   draft: The drafting call.
  *
  * Returns:
- *   The plan, or undefined when the row was failed.
+ *   The plan, or undefined when the row was failed or the failure was not this draft's to write.
  */
 async function draftOrFail<T>(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
+  draftClaimedAt: number | undefined,
   draft: () => Promise<T>,
 ): Promise<T | undefined> {
   try {
@@ -833,6 +840,7 @@ async function draftOrFail<T>(
     await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: `plan draft failed: ${failure}`,
+      ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
     });
     return undefined;
   }

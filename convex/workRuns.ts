@@ -589,10 +589,16 @@ export const setFailed = internalMutation({
      */
     stopped: v.optional(v.boolean()),
     onlyIfStalled: v.optional(v.boolean()),
+    /**
+     * The claim of the draft that failed (`draftClaimedAt`): a draft fails only the row that
+     * still carries its claim, so a draft stopped and superseded by a Retry fails nothing.
+     */
+    draftClaimedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) return;
     if (args.runId && row.executionRunId !== args.runId) return;
     // A pre-claim failure (such as no matching skill) cannot stop a run
     // another scheduled caller claimed after the failing caller read the row.
