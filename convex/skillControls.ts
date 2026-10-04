@@ -617,7 +617,7 @@ const STOPPED_BY_WITHDRAW: readonly Doc<'workItems'>['state'][] = ['executing', 
 
 /**
  * Stop the runs of one holder of a withdrawn version, as a handover's deadline stops a run
- * (`work.stopRunsInTransaction`; decision 3 (b), the wave 10 review, M4): every item executing
+ * (`workRuns.stopRunsInTransaction`; decision 3 (b), the wave 10 review, M4): every item executing
  * the row, and every item holding for the manager's approval the actions a run of it drafted,
  * fails as stopped with {@link withdrawnRunReason} and offers Retry, so the body the manager has
  * withdrawn as wrong writes nothing more. A Retire stops nothing: its dialog says a run already

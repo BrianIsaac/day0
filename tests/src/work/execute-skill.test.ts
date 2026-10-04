@@ -24,6 +24,7 @@ import {
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   ACTION_TOOLS,
   CLOSING_SET_CAP,
@@ -1880,28 +1881,40 @@ describe('advisory plan steps in the closing phase', (): void => {
 describe('frozen prompt text', (): void => {
   // The hosted demo and the frozen evaluation beds run the mock executor.
   // Its preamble, and the surface list rendered without probed argument
-  // names, are byte-for-byte what they were when those beds were recorded.
+  // names, are pinned byte for byte, and a change re-pins with its cause:
+  // v0.16.0 took the preamble's own dashes out and gave it the punctuation
+  // rule (the v0.15.0 walk's finding 2), after those beds were recorded.
+  it("asks for plain punctuation in every field and carries no dash to copy, in both modes (the v0.15.0 walk's finding 2)", (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const preamble = executorPreamble(mode);
+      expect(preamble).not.toContain('\u2014');
+      expect(preamble).toContain(`  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`);
+      expect(preamble).toMatch(/^ {2}3\. Actions: typed /m);
+    }
+  });
+
   it('keeps the mock executor preamble byte-identical', (): void => {
     expect(executorPreamble('mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
       A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
       Apply the skill to the candidate. Produce three things:
-        1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.
-        2. Notes — short assumptions or open questions (single sentence).
-        3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
-        4. Procedure trails — one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+        1. A draft (human-readable): the deliverable the manager reads and decides whether to ratify.
+        2. Notes: short assumptions or open questions (single sentence).
+        3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
+        4. Procedure trails: one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
         - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a \`slack.postMessage\` in this response says it.
         - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in \`notes\` rather than describing the work as finished.
+        - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
 
       Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
-        - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }
-        - slack.postMessage    — { channelSlug, threadKey: string or null, body }
-        - twitter.reply        — { tweetSlug, body }
-        - ticket.update        — { slug, status: value or null, comment: string or null }
+        - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }
+        - slack.postMessage:    { channelSlug, threadKey: string or null, body }
+        - twitter.reply:        { tweetSlug, body }
+        - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
         - Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.

@@ -713,6 +713,7 @@ async function draftPlanHandler(
   if (item.state !== 'claimed') {
     return { ok: false, reason: `state is ${item.state}; expected claimed` };
   }
+  let draftClaimedAt: number | undefined;
   if (SURFACE_MODE === 'real') {
     const claim = await ctx.runMutation(internal.work.claimLoopStep, {
       workItemId: args.workItemId,
@@ -727,6 +728,7 @@ async function draftPlanHandler(
             : `${claim.reason}; expected claimed`,
       };
     }
+    draftClaimedAt = claim.claimedAt;
   }
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
@@ -755,7 +757,7 @@ async function draftPlanHandler(
   const corrections =
     SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
-  const plan = await draftOrFail(ctx, args.workItemId, () =>
+  const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
       draftExecutionPlan({
         candidate,
@@ -780,11 +782,22 @@ async function draftPlanHandler(
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
+    ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
   });
   // Its system connected while it was drafting, so it is being drafted again.
   if (stored.redrafting) return { ok: true };
+  if (stored.superseded) {
+    return { ok: false, reason: 'this draft no longer holds the work item; a later draft does' };
+  }
   if (!stored.stored) {
-    return { ok: false, reason: 'another draft stored a plan for this work item first' };
+    return {
+      ok: false,
+      // A plan pending is another draft's, stored first; any other state is the manager's move.
+      reason:
+        stored.movedOn === undefined || stored.movedOn === 'plan-pending'
+          ? 'another draft stored a plan for this work item first'
+          : `the work item moved on to ${stored.movedOn}; this draft's plan is not stored`,
+    };
   }
   const decision = await ctx.runMutation(internal.work.decidePlan, {
     workItemId: args.workItemId,
@@ -806,17 +819,24 @@ async function draftPlanHandler(
  * with the reason on its card and Retry drafts again. A rate limit, an outage
  * or a bad key is left to the sweep, since the item is not what failed.
  *
+ * A real-mode draft fails the row only while it still holds the claim it
+ * took (`draftClaimedAt`), as only that draft stores its plan (`setPlan`): a
+ * draft the manager stopped, whose row Retry sent back with a new draft
+ * queued, fails nothing.
+ *
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The row being drafted.
+ *   draftClaimedAt: The claim the draft took, in real mode; undefined for the page's mock draft.
  *   draft: The drafting call.
  *
  * Returns:
- *   The plan, or undefined when the row was failed.
+ *   The plan, or undefined when the row was failed or the failure was not this draft's to write.
  */
 async function draftOrFail<T>(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
+  draftClaimedAt: number | undefined,
   draft: () => Promise<T>,
 ): Promise<T | undefined> {
   try {
@@ -827,6 +847,7 @@ async function draftOrFail<T>(
     await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: `plan draft failed: ${failure}`,
+      ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
     });
     return undefined;
   }

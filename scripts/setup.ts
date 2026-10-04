@@ -4642,8 +4642,9 @@ async function switchScheduledJobs(
     io.log(
       verb === 'pause'
         ? `Paused ${project}'s scheduled jobs: the intake and decision polls, the digests, the sweeps and ` +
-            `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. Work they ` +
-            'scheduled before now runs to its end.'
+            `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. A step ` +
+            'already under way runs to its next gate and holds there, and a documentation sync stops ' +
+            'at its next batch; each goes on from where it stopped once the jobs run again.'
         : `Lifted the pause on ${project}'s scheduled jobs: each runs again at its next turn, and the ` +
             'polls start from where they stopped.',
     );

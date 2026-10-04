@@ -9,6 +9,7 @@ import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
 import type { AutonomyChange } from '@/work/autonomy';
+import type { RunHold } from '@/work/item-display';
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
 import { Button } from '../../../components/Button';
@@ -238,14 +239,20 @@ export function WorkQueue({
   autonomyChanges = [],
   loading = false,
   employeeName = 'the employee',
+  managerKey,
   needsYou = NO_ITEMS,
   refusedSkills = NO_REFUSED_SKILLS,
+  hold,
 }: {
   agentId: Id<'agents'>;
+  /** What holds the employee's next step (`runHoldOf`), for the cards; undefined while nothing does. */
+  hold?: RunHold;
   /** The employee's skills whose draft failed Day0's check, by id, for the cards waiting on one. */
   refusedSkills?: ReadonlyMap<string, RefusedSkill>;
   /** The employee's name, for the cards' sentences. */
   employeeName?: string;
+  /** The employee's manager's owner key (`agents.userId`), for who reconciled a run. */
+  managerKey?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
   needsYou?: ReadonlySet<string>;
   workItems: Doc<'workItems'>[];
@@ -446,7 +453,9 @@ export function WorkQueue({
                   }
                   onCloseWithoutRetry={() => closeWithoutRetry({ workItemId: item._id })}
                   employeeName={employeeName}
+                  managerKey={managerKey}
                   servedByLoop={surfaceMode === 'real'}
+                  hold={hold}
                   {...refusedSkillOf(item, refusedSkills)}
                 />
               ))}

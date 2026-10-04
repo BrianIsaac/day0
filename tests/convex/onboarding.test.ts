@@ -25,13 +25,29 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
-/** What the mocked generator adds after its three items, when a test needs a bad one. */
-const generator = vi.hoisted(() => ({ extra: [] as unknown[] }));
+/**
+ * What the mocked generator adds after its three items, when a test needs a bad one; whether it
+ * was called; and a gate it waits on first, when a test holds the model call open.
+ */
+const generator = vi.hoisted(() => ({
+  extra: [] as unknown[],
+  calls: 0,
+  gate: undefined as Promise<void> | undefined,
+}));
 
 vi.mock('../../src/agent/work-generator', () => ({
   generateWorkItemsFromCharter: async (): Promise<
     import('../../src/agent/work-generator').GeneratedWorkItem[]
-  > => [
+  > => {
+    generator.calls += 1;
+    await generator.gate;
+    return generatedItems();
+  },
+}));
+
+/** The three items the mocked generator drafts, and any extra a test gave it. */
+function generatedItems(): import('../../src/agent/work-generator').GeneratedWorkItem[] {
+  return [
     ...['REVOPS-1', 'REVOPS-2', 'REVOPS-3'].map((externalId, index) => ({
       sourceCategory: 'ticket-queue',
       sourceSystem: 'tickets',
@@ -43,11 +59,13 @@ vi.mock('../../src/agent/work-generator', () => ({
       requesterLabel: 'Manager',
     })),
     ...(generator.extra as import('../../src/agent/work-generator').GeneratedWorkItem[]),
-  ],
-}));
+  ];
+}
 
 afterEach((): void => {
   generator.extra = [];
+  generator.calls = 0;
+  generator.gate = undefined;
   drafter.reply = undefined;
   drafter.prompts.length = 0;
   restoreSurfaceMode();
@@ -279,6 +297,48 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     expect(result.workItems).toBe(0);
     expect(result.events).not.toContain('work.charter-derived');
   });
+
+  /**
+   * Approve a charter (the caller sets mock mode) and hold its seeding at the model call, which never answers: a
+   * seeding Convex ends at its 600 s limit runs no catch, which leaves the deployment as it is
+   * here, mid-call (the 12-FX bed: two of five). Eleven minutes pass on the clock.
+   */
+  async function seedingHeldAtItsModelCall(): Promise<{
+    harness: TestConvex<typeof schema>;
+    agentId: Id<'agents'>;
+  }> {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    generator.gate = new Promise<void>(() => undefined);
+    void harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }); // never settles; the platform ends it
+    await vi.waitFor(() => expect(generator.calls).toBe(1), { timeout: 20_000 });
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    return { harness, agentId };
+  }
+
+  it("reaches the approved charter's model call with nothing seeded yet, the state a seeding killed at the limit leaves", async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { harness, agentId } = await seedingHeldAtItsModelCall();
+    const result = await outcome(harness, agentId);
+    expect(result.workItems).toBe(0);
+    expect(result.events).not.toContain('work.charter-derived');
+  });
+
+  it.fails(
+    // until wave 13 designs the cure (12-J item 6): a seeding Convex ends at its 600 s limit runs no catch, so nothing records it or tries again
+    'records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent',
+    async (): Promise<void> => {
+      useSurfaceMode('mock');
+      const { harness, agentId } = await seedingHeldAtItsModelCall();
+      const result = await outcome(harness, agentId);
+      const scheduled = await harness.run(
+        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+      );
+      const retried = scheduled.some((job) => job.name === 'onboarding:postCharterApproval');
+      expect(retried || result.events.includes('charter.seeding-failed')).toBe(true);
+    },
+  );
 
   it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
     useSurfaceMode('mock');

@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -271,6 +271,13 @@ describe('the test issuer’s TLS material (make-tls.sh)', (): void => {
           encoding: 'utf8',
         });
         expect(made.status, made.stderr).toBe(0);
+        // The CA's serial goes with its key, never into the directory a bed mounts (12-FL).
+        expect(readdirSync(directory).sort()).toEqual([
+          'bundle.pem',
+          'ca.pem',
+          'cert.pem',
+          'key.pem',
+        ]);
         const text = spawnSync(
           'openssl',
           ['x509', '-in', join(directory, 'cert.pem'), '-noout', '-text'],

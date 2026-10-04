@@ -9,7 +9,7 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
 import { Help, ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { NotSentLedger } from './LandedChanges';
-import { ProviderReconciliationControl } from './RunDetails';
+import { ProviderReconciliationControl, type RecordedReconciliation } from './RunDetails';
 import {
   ANSWER_AND_RETRY,
   SKIP_RETRY_NOTE,
@@ -39,7 +39,7 @@ function capitalised(name: string): string {
 export interface RetryReconciliation {
   readonly needed: boolean;
   readonly entries: readonly ReconciliationEntry[];
-  readonly recorded?: { actor: string; confirmedAt: number };
+  readonly recorded?: RecordedReconciliation;
 }
 
 /**

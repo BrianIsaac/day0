@@ -36,6 +36,8 @@ const recorded = vi.hoisted(() => ({
   planCalls: [] as string[],
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
+  /** Thrown by the planner once its gate opens, instead of its plan. */
+  planFailure: undefined as Error | undefined,
   skillRuns: [] as string[],
   /** Holds the skill run open until the test releases it. */
   skillGate: undefined as Promise<void> | undefined,
@@ -73,6 +75,9 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
     draftExecutionPlan: async (args: { candidate: { title: string } }) => {
       recorded.planCalls.push(args.candidate.title);
       await recorded.planGate;
+      const failure = recorded.planFailure;
+      recorded.planFailure = undefined;
+      if (failure) throw failure;
       return {
         summary: 'Tell the manager the close summary is ready.',
         steps: ['DM the manager that the close summary is ready.'],
@@ -127,12 +132,20 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = managerIdentity();
 
+/**
+ * How long a test waits, in real time, for an action held at a gate to reach its model call. The
+ * first action a file runs imports every Convex module, which takes longer than `vi.waitFor`'s
+ * one-second default when the test runs alone (`-t`) or first.
+ */
+const COLD_ACTION_MS = 20_000;
+
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
   recorded.scopeOutcome = undefined;
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
+  recorded.planFailure = undefined;
   recorded.skillRuns.length = 0;
   recorded.skillGate = undefined;
   recorded.skillOutput = undefined;
@@ -363,7 +376,7 @@ describe('the server-side steps', (): void => {
     });
 
     const first = harness.action(internal.workActions.draftPlanInternal, { workItemId });
-    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await expect(
       harness.action(internal.workActions.draftPlanInternal, { workItemId }),
     ).resolves.toEqual({ ok: false, reason: 'another draft of this work item is running' });
@@ -371,6 +384,97 @@ describe('the server-side steps', (): void => {
     await expect(first).resolves.toEqual({ ok: true });
 
     expect(recorded.planCalls).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+  });
+
+  it('stores no plan from a draft the manager stopped once Retry has queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-14');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    release();
+    await expect(stale).resolves.toMatchObject({ ok: false });
+    const afterStale = await readItem(harness, workItemId);
+    expect(afterStale.state).toBe('claimed');
+    expect(afterStale.plan).toBeUndefined();
+    expect(await eventsOf(harness, 'work.plan-drafted')).toEqual([]);
+
+    // The draft Retry queued holds the claim now, and its plan is the one stored.
+    await drain(harness);
+    expect(recorded.planCalls).toHaveLength(2);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.plan-drafted')).toHaveLength(1);
+  });
+
+  it('says a draft the manager stopped found its item moved on, never that another draft stored first', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-18');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    release();
+
+    await expect(stale).resolves.toEqual({
+      ok: false,
+      reason: "the work item moved on to failed; this draft's plan is not stored",
+    });
+    expect((await readItem(harness, workItemId)).plan).toBeUndefined();
+  });
+
+  it('fails nothing when a draft the manager stopped fails its model call after Retry queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-17');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The class the Convex modules load, as workActions.test.ts takes it.
+    const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
+    recorded.planFailure = new ModelReplyCutError('day0-plan', '{"summary":"Comment');
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    release();
+    await stale;
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    // The draft Retry queued holds the claim, and its plan is the one stored.
+    await drain(harness);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
   });
 
@@ -591,7 +695,9 @@ describe('the server drives the work loop in real mode', (): void => {
 
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-26');
     vi.advanceTimersByTime(0);
-    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1), {
+      timeout: COLD_ACTION_MS,
+    });
 
     const second = await harness.action(internal.workActions.evaluateWorkItemInternal, {
       workItemId,
@@ -1703,7 +1809,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     const running = drain(harness);
-    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await pause(harness, agentId);
     release();
     await running;
@@ -2014,7 +2120,7 @@ describe("the deployment's pause holds queued steps too (12-P; crons.ts)", (): v
       release = resolve;
     });
     const running = drain(harness);
-    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
     vi.stubEnv('DAY0_CRONS_PAUSED', 'restore from backup');
     release();
     await running;

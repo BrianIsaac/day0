@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import { PUBLIC_URL_VAR } from './customer-oidc';
+import { publicOrigin, serverEnv } from './customer-sign-in-settings';
+import type { EnvReader } from './hosted-markers';
 
 /**
  * The two checks a browser-called POST route makes before it trusts a request:
@@ -23,19 +26,44 @@ export type JsonBody = { ok: true; value: unknown } | { ok: false; refusal: Next
  * request it makes; a request with neither was not made by a page, so it cannot
  * be a page riding this browser's session.
  *
- * @param request - The incoming request; its own URL gives this app's origin.
+ * This app's pages are served on the origin people reach it on
+ * (`DAY0_PUBLIC_URL`) and on the request's own. Under `next start` the
+ * request's URL is built on `http://localhost:<port>` whatever the `Host` or
+ * forwarded headers say, so without the public origin every page served
+ * through a proxy, or on `127.0.0.1`, was refused (wave 12, G-F5). A forwarded
+ * header is never read for it: any client can send one.
+ *
+ * @param request - The incoming request; its own URL gives one of this app's origins.
+ * @param read - Reads `DAY0_PUBLIC_URL`; the process's environment unless a test passes one.
  */
-export function crossOriginRefusal(request: Request): NextResponse | undefined {
-  const own = new URL(request.url).origin;
+export function crossOriginRefusal(
+  request: Request,
+  read: EnvReader = serverEnv,
+): NextResponse | undefined {
   const origin = request.headers.get('origin');
   const site = request.headers.get('sec-fetch-site');
   const refused =
-    origin !== null ? origin !== own : site !== null && site !== 'same-origin' && site !== 'none';
+    origin !== null
+      ? !ownOrigins(request, read).includes(origin)
+      : site !== null && site !== 'same-origin' && site !== 'none';
   if (!refused) return undefined;
   return NextResponse.json(
     { error: 'this route accepts requests from the pages of this app only' },
     { status: 403 },
   );
+}
+
+/**
+ * The origins this app's pages are served on: the request's own and, when
+ * `DAY0_PUBLIC_URL` is an origin, that one. A value that is not an origin adds
+ * nothing (`check:setup` names it), so it cannot widen what is accepted.
+ */
+function ownOrigins(request: Request, read: EnvReader): readonly string[] {
+  const own = new URL(request.url).origin;
+  const configured = read(PUBLIC_URL_VAR)?.trim();
+  if (!configured) return [own];
+  const configuredOrigin = publicOrigin(configured);
+  return 'origin' in configuredOrigin ? [own, configuredOrigin.origin] : [own];
 }
 
 /**

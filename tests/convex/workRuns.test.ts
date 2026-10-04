@@ -8,7 +8,11 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
-import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  OUTCOME_UNKNOWN_AFTER_STOP_REASON,
+  OUTCOME_UNKNOWN_REASON,
+} from '../../src/work/reconciliation';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
@@ -317,7 +321,8 @@ describe('Stop on a working item', (): void => {
     expect(row.state).toBe('failed');
     expect(row.skipReason).toBe(`${STOPPED_PREFIX}stopped by the manager`);
     expect(applied[0]).toMatchObject({ ok: true, providerId: 'comment-1' });
-    expect(applied[1]).toMatchObject({ ok: false, reason: OUTCOME_UNKNOWN_REASON });
+    // Stopped, not interrupted: the reason says which ended the apply (12-W's second pass).
+    expect(applied[1]).toMatchObject({ ok: false, reason: OUTCOME_UNKNOWN_AFTER_STOP_REASON });
     expect(row.applyAttemptId).toBeUndefined();
     // The apply's next report is refused, so it sends nothing more.
     await expect(

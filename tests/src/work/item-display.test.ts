@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc } from '../../../convex/_generated/dataModel';
 import {
+  heldStepWords,
   rejectionOf,
+  runHoldOf,
   runProgress,
   skipSentence,
   sourceLine,
   ticketNowSentence,
   workingFrom,
+  waitsAtClaim,
   writesWhenRunFinishes,
+  type RunHold,
 } from '../../../src/work/item-display';
 
 /** A work item row with only the fields a test names. */
@@ -81,16 +85,16 @@ describe('skipSentence', (): void => {
 
 describe('runProgress', (): void => {
   it('says a claimed item is drafting its plan, which comes to the manager first', (): void => {
-    const progress = runProgress(row({ state: 'claimed' }), false);
+    const progress = runProgress(row({ state: 'claimed' }), { autonomous: false });
     expect(progress?.title).toBe('Drafting a plan');
     expect(progress?.parts.map((part) => part.status)).toEqual(['now', 'next', 'next']);
   });
 
   it('follows a run through its parts as the row records them, and never counts steps', (): void => {
-    expect(runProgress(row({ state: 'plan-approved' }), false)?.title).toBe(
+    expect(runProgress(row({ state: 'plan-approved' }), { autonomous: false })?.title).toBe(
       'Starting the approved plan',
     );
-    const reading = runProgress(row({ state: 'executing' }), false);
+    const reading = runProgress(row({ state: 'executing' }), { autonomous: false });
     expect(reading?.title).toBe('Reading and drafting');
     expect(reading?.parts).toEqual([
       { name: 'Read and draft', status: 'now' },
@@ -101,16 +105,15 @@ describe('runProgress', (): void => {
     );
     const applying = runProgress(
       row({ state: 'executing', applyPhase: 'auto', approvedIndexes: [0, 2] }),
-      true,
+      { autonomous: true },
     );
     expect(applying?.title).toBe('Applying 2 actions autonomously');
     expect(applying?.detail).toContain(
       'then the writes the gate allows apply on their own, and any it holds wait for you.',
     );
-    const closing = runProgress(
-      row({ state: 'executing', output: { initial: { applied: [] } } }),
-      false,
-    );
+    const closing = runProgress(row({ state: 'executing', output: { initial: { applied: [] } } }), {
+      autonomous: false,
+    });
     expect(closing?.title).toBe('Writing the closing actions from what landed');
     expect(closing?.parts).toEqual([
       { name: 'Prerequisites', status: 'done' },
@@ -119,7 +122,7 @@ describe('runProgress', (): void => {
   });
 
   it('says the mock gate holds every write, and draws no automatic part it never runs', (): void => {
-    const mock = runProgress(row({ state: 'executing' }), false, 'mock');
+    const mock = runProgress(row({ state: 'executing' }), { autonomous: false, gate: 'mock' });
     expect(mock?.detail).toBe(
       'Nothing reaches a surface while it reads and drafts; then every write waits for your approval.',
     );
@@ -128,7 +131,111 @@ describe('runProgress', (): void => {
   });
 
   it('has nothing to say of an item that is not working', (): void => {
-    expect(runProgress(row({ state: 'plan-pending' }), false)).toBeUndefined();
+    expect(runProgress(row({ state: 'plan-pending' }), { autonomous: false })).toBeUndefined();
+  });
+});
+
+describe('runProgress while a pause holds the next step (wave 12, 12-P)', (): void => {
+  const PAUSED: RunHold = { by: 'employee', employeeName: 'Priya' };
+
+  it('says a plan approved and not started is held while the employee is paused', (): void => {
+    const held = runProgress(row({ state: 'plan-approved' }), { autonomous: false, hold: PAUSED });
+    expect(held).toEqual({
+      title: 'Held while Priya is paused',
+      detail: 'Your approval stands: the run starts when you resume Priya.',
+      parts: [
+        { name: 'Read and draft', status: 'held' },
+        { name: 'Automatic writes', status: 'next' },
+      ],
+    });
+  });
+
+  it('says an automatic write not yet sent is held, and one already on its way is under way', (): void => {
+    const waiting = row({ state: 'executing', applyPhase: 'auto', approvedIndexes: [0] });
+    expect(runProgress(waiting, { autonomous: false, hold: PAUSED })?.parts).toEqual([
+      { name: 'Read and draft', status: 'done' },
+      { name: 'Automatic writes', status: 'held' },
+    ]);
+    const sending = row({ ...waiting, applyAttemptId: 'attempt-1' });
+    expect(runProgress(sending, { autonomous: false, hold: PAUSED })?.title).toBe(
+      'Applying 1 action automatically',
+    );
+  });
+
+  it('says a draft not yet started is held, and one already drafting is under way', (): void => {
+    expect(runProgress(row({ state: 'claimed' }), { autonomous: false, hold: PAUSED })?.title).toBe(
+      'Held while Priya is paused',
+    );
+    expect(
+      runProgress(row({ state: 'claimed', draftClaimedAt: 5 }), { autonomous: false, hold: PAUSED })
+        ?.title,
+    ).toBe('Drafting a plan');
+  });
+
+  it('leaves a run reading and drafting under way, since it runs to its next gate', (): void => {
+    expect(
+      runProgress(row({ state: 'executing' }), { autonomous: false, hold: PAUSED })?.title,
+    ).toBe('Reading and drafting');
+  });
+
+  it("says the deployment's own pause where it holds the step", (): void => {
+    const held = runProgress(row({ state: 'plan-approved' }), {
+      autonomous: false,
+      hold: { by: 'deployment' },
+    });
+    expect(held?.title).toBe("Held while this deployment's scheduled work is paused");
+    expect(held?.detail).toBe(
+      "Your approval stands: the run starts once the deployment's scheduled work runs again.",
+    );
+  });
+});
+
+describe('waitsAtClaim', (): void => {
+  it('reads an approved write not yet claimed as waiting, and one being sent as under way', (): void => {
+    expect(waitsAtClaim(row({ state: 'actions-pending', approvedIndexes: [1] }))).toBe(true);
+    expect(
+      waitsAtClaim(row({ state: 'actions-pending', approvedIndexes: [1], applyAttemptId: 'a' })),
+    ).toBe(false);
+    expect(waitsAtClaim(row({ state: 'actions-pending' }))).toBe(false);
+    expect(waitsAtClaim(row({ state: 'plan-pending' }))).toBe(false);
+  });
+});
+
+describe('runHoldOf', (): void => {
+  const base = {
+    real: true,
+    employeeName: 'Priya',
+    employeePaused: false,
+    scheduledWorkPaused: false,
+  };
+
+  it("names the employee's own pause before the deployment's, as the claim does", (): void => {
+    expect(runHoldOf({ ...base, employeePaused: true, scheduledWorkPaused: true })).toEqual({
+      by: 'employee',
+      employeeName: 'Priya',
+    });
+    expect(runHoldOf({ ...base, scheduledWorkPaused: true })).toEqual({ by: 'deployment' });
+    expect(runHoldOf(base)).toBeUndefined();
+  });
+
+  it('holds nothing in mock mode, where the page drives every step', (): void => {
+    expect(runHoldOf({ ...base, real: false, employeePaused: true })).toBeUndefined();
+  });
+
+  it('says what each held step keeps, and never that automatic writes had an approval', (): void => {
+    const hold: RunHold = { by: 'employee', employeeName: 'Priya' };
+    expect(heldStepWords(hold, row({ state: 'claimed' }))?.detail).toBe(
+      'The plan is drafted when you resume Priya.',
+    );
+    expect(
+      heldStepWords(hold, row({ state: 'executing', applyPhase: 'auto', approvedIndexes: [0] }))
+        ?.detail,
+    ).toBe('The automatic writes are kept: they are sent when you resume Priya.');
+    expect(heldStepWords(hold, row({ state: 'actions-pending', approvedIndexes: [1] }))).toEqual({
+      title: 'Held while Priya is paused',
+      detail: 'Your approval stands: the approved writes are sent when you resume Priya.',
+    });
+    expect(heldStepWords(hold, row({ state: 'executing' }))).toBeUndefined();
   });
 });
 

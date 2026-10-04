@@ -10,12 +10,13 @@ import {
   autonomyTurnedOnAfterDraft,
   autonomyTurnedOnAfterDraftNote,
 } from '@/work/autonomy';
-import { rejectionOf, workingFrom } from '@/work/item-display';
+import { heldStepWords, rejectionOf, workingFrom, type RunHold } from '@/work/item-display';
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
-  OUTCOME_UNKNOWN_REASON,
+  isOutcomeUnknownReason,
   providerReconciliationEntries,
+  reconcilerOf,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
@@ -151,6 +152,7 @@ export function WorkItemCard({
   surfaces,
   autonomousActions,
   employeeName = 'the employee',
+  managerKey,
   questions = [],
   corrections = [],
   autonomyChanges = [],
@@ -165,6 +167,7 @@ export function WorkItemCard({
   onStop,
   onCloseWithoutRetry,
   servedByLoop = false,
+  hold,
   refusedSkill,
 }: {
   item: Doc<'workItems'>;
@@ -172,6 +175,8 @@ export function WorkItemCard({
   autonomousActions: boolean;
   /** The employee's name, for the sentences that say who does what next. */
   employeeName?: string;
+  /** The employee's manager's owner key (`agents.userId`), to say who reconciled a run. */
+  managerKey?: string;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
@@ -194,6 +199,8 @@ export function WorkItemCard({
   onCloseWithoutRetry?: () => Promise<unknown>;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
   servedByLoop?: boolean;
+  /** What holds the employee's next step (`runHoldOf`, real mode), undefined while nothing does. */
+  hold?: RunHold;
   /** The skill the item waits on, when its draft failed Day0's check (D3). */
   refusedSkill?: RefusedSkill;
 }) {
@@ -229,8 +236,7 @@ export function WorkItemCard({
   // account for, may have landed: it is not listed as never reaching anything.
   const unknown = unlanded.filter(
     (row) =>
-      !refused.includes(row) &&
-      (row.outcomeUnknown === true || row.reason === OUTCOME_UNKNOWN_REASON),
+      !refused.includes(row) && (row.outcomeUnknown === true || isOutcomeUnknownReason(row.reason)),
   );
   const failed = unlanded.filter((row) => !refused.includes(row) && !unknown.includes(row));
   const landedAutonomously = landed.filter((row) => row.authority === 'autonomous').length;
@@ -247,6 +253,8 @@ export function WorkItemCard({
   const waiting = servedByLoop ? waitingLine(item, zone) : undefined;
   // The page runs the mock loop until the deployment says it serves the real one.
   const gate = servedByLoop ? 'real' : 'mock';
+  // An approval the manager gave waits at its apply's claim while a pause holds it.
+  const heldApply = hold === undefined ? undefined : heldStepWords(hold, item);
   const skipped =
     item.state === 'skipped' && verdictReason !== undefined && !colleagueHolding(item);
   // The per-action box already names every action that failed, so the
@@ -405,7 +413,7 @@ export function WorkItemCard({
         />
       ) : null}
       {WORKING_STATES.has(item.state) ? (
-        <ProgressSection item={item} autonomous={autonomousActions} gate={gate} />
+        <ProgressSection item={item} autonomous={autonomousActions} gate={gate} hold={hold} />
       ) : null}
       {stopping && onStop ? (
         <StopDialog
@@ -497,9 +505,15 @@ export function WorkItemCard({
         </>
       ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
         <ItemSection>
-          <Note tone="accent">
-            <Lead>Applying the approved actions…</Lead>
-          </Note>
+          {heldApply ? (
+            <Note tone="warn">
+              <Lead>{heldApply.title}.</Lead> {heldApply.detail}
+            </Note>
+          ) : (
+            <Note tone="accent">
+              <Lead>Applying the approved actions…</Lead>
+            </Note>
+          )}
         </ItemSection>
       ) : null}
       {leadsWithResult || holding ? null : landedSection}
@@ -525,7 +539,14 @@ export function WorkItemCard({
           reconciliation={{
             needed: retryRequiresProviderReconciliation(output, item.skipReason),
             entries: item.providerReconciliation?.entries ?? providerReconciliationEntries(output),
-            ...(item.providerReconciliation ? { recorded: item.providerReconciliation } : {}),
+            ...(item.providerReconciliation
+              ? {
+                  recorded: {
+                    confirmedAt: item.providerReconciliation.confirmedAt,
+                    by: reconcilerOf(item.providerReconciliation.actor, managerKey),
+                  },
+                }
+              : {}),
           }}
           employeeName={employeeName}
           autonomous={autonomousActions}

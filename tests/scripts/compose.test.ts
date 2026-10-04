@@ -78,9 +78,10 @@ describe('the profile list and the compose file agree', (): void => {
     expect([...defined].sort()).toEqual(Object.keys(PROFILES).sort());
   });
 
-  it('says what every profile starts, the test issuer beside fake Slack included (10-S)', (): void => {
+  it('says what every profile starts, the test issuer and the fake Linear beside fake Slack included (10-S, 12-FL)', (): void => {
     expect(PROFILES.test).toContain('fake Slack');
     expect(PROFILES.test).toContain('test OpenID Connect issuer');
+    expect(PROFILES.test).toContain('fake Linear');
     const components = readFileSync(
       new URL('../../docs/running/components.md', import.meta.url),
       'utf8',

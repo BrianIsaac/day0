@@ -151,7 +151,7 @@ describe("the employee's day on the page (N12, review M8)", (): void => {
       <AgentZoneContext value="Asia/Singapore">
         <ProviderReconciliationControl
           entries={[]}
-          reconciliation={{ actor: 'boss@day0.local', confirmedAt: AT }}
+          reconciliation={{ by: 'you', confirmedAt: AT }}
           onConfirm={async () => undefined}
         />
       </AgentZoneContext>,

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
-import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
 import { useLightUpOnce } from './office-light-up';
 import {
@@ -401,7 +400,7 @@ function idleOffice(layout: OfficeLayout): Record<string, OfficePlace> {
 
 /**
  * Split the roster into the employees at their desks and the ones standing: an employee in its
- * one-to-one or with work open sits at the desk its place on the roster gives it.
+ * one-to-one, with work open or paused sits at the desk its place on the roster gives it.
  *
  * @param agents - The roster, in order.
  */
@@ -411,7 +410,7 @@ function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
   const phoneSeated: OfficePoint[] = [];
   const idle: IdleFigure[] = [];
   agents.forEach((agent, index) => {
-    if (agentIsWorking(agent.state, agent.openCount)) {
+    if (agentSits(agent)) {
       const seat = OFFICE_DESKS[deskFor(index)];
       working.add(agent.agentId);
       seated.push({ x: seat.seatX, y: seat.seatY });
@@ -462,17 +461,22 @@ function OfficeAgent({
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
-      title={`${agent.name}, ${working ? 'working at a desk' : 'roaming the office'}`}
+      title={`${agent.name}, ${agent.paused ? 'paused at a desk' : working ? 'working at a desk' : 'roaming the office'}`}
     >
       <div className={working ? 'day0-office-agent-working' : 'day0-office-agent-roaming'}>
         <AgentPixelAvatar
           avatar={avatarById(agent.avatarId)}
           state={agent.state}
           phase={agent.phase}
+          paused={agent.paused}
           label={agent.name}
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center max-sm:max-w-none">
-          <div className="truncate text-xs text-[var(--color-fg)]">{agent.name}</div>
+          <div className="truncate text-xs text-[var(--color-fg)]">
+            {agent.name}
+            {/* The link is named by its text, so the pause is said in it, not only in a title. */}
+            {agent.paused ? <span className="sr-only">, paused</span> : null}
+          </div>
           {/* A phone figure is a third of the office wide, too narrow for a role cut to a few
             letters: the roster beneath prints it whole (the pre-tag pass's minor 10). */}
           <div
@@ -502,6 +506,11 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-function agentIsWorking(state: Doc<'agents'>['state'], openWorkCount = 0) {
-  return state === 'day-one-in-progress' || openWorkCount > 0;
+/**
+ * Whether the employee sits at its desk: in its one-to-one, with work open, or paused. A seated
+ * figure stands still, and a paused one is held there, its face framed Paused as the roster's chip
+ * says (12-P): a roaming figure would read as free, a working one as busy.
+ */
+function agentSits(agent: Pick<RosterRow, 'state' | 'openCount' | 'paused'>): boolean {
+  return agent.paused || agent.state === 'day-one-in-progress' || agent.openCount > 0;
 }

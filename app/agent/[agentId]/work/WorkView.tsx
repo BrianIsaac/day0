@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { autonomousActionsOn } from '@/work/autonomy';
+import { runHoldOf } from '@/work/item-display';
+import { isPaused } from '@/work/pause';
 import { needsYouItemIds } from '@/work/state-display';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
@@ -23,9 +25,15 @@ import { WorkQueue } from './WorkQueue';
  * manager asked it to keep (real mode) and the page's rail.
  */
 export function WorkView() {
-  const { agent, charter, surfaceMode, surfaces, arriving } = useEmployee();
+  const { agent, charter, surfaceMode, scheduledWorkPaused, surfaces, arriving } = useEmployee();
   const agentId = agent._id;
   const real = surfaceMode === 'real';
+  const employeePaused = isPaused(agent);
+  // What the cards say holds a step, in place of the step under way (12-P's words).
+  const hold = useMemo(
+    () => runHoldOf({ real, employeeName: agent.name, employeePaused, scheduledWorkPaused }),
+    [real, agent.name, employeePaused, scheduledWorkPaused],
+  );
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
@@ -76,8 +84,10 @@ export function WorkView() {
         autonomyChanges={autonomyChanges ?? []}
         loading={workItems === undefined}
         employeeName={agent.name}
+        managerKey={agent.userId}
         needsYou={needsYou}
         refusedSkills={refusedSkills}
+        hold={hold}
       />
       <StateGlossary />
     </Columns>

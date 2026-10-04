@@ -108,7 +108,11 @@ import {
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
-import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../src/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  outcomeUnknownReasonFor,
+  type ApplyEnd,
+} from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
   digestDue,
@@ -3057,17 +3061,37 @@ async function withAppliedCorrections(
  * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
  * plan drafted while its system was down, which is connected by now, is not
  * stored: the row goes straight back to drafting (`redrafting`).
+ *
+ * `draftClaimedAt` is the claim a real-mode draft took before its model call
+ * (`claimLoopStep`). Only the draft that still holds that claim stores its
+ * plan: a draft the manager stopped, whose row Retry sent back to `claimed`
+ * with the claim cleared, finds the row ready again and would otherwise land
+ * the plan drafted before the Retry over its successor's (`superseded`; wave
+ * 12, 12-W and 12-P Findings 3). A caller that took no claim (the page's
+ * mock-mode draft) is fenced by the state alone.
  */
 export const setPlan = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     plan: v.any(),
     draftedWithout: v.optional(planDraftedWithoutValidator),
+    draftClaimedAt: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{ stored: boolean; redrafting?: true }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    stored: boolean;
+    redrafting?: true;
+    superseded?: true;
+    movedOn?: Doc<'workItems'>['state'];
+  }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    if (row.state !== 'claimed') return { stored: false };
+    if (row.state !== 'claimed') return { stored: false, movedOn: row.state };
+    if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) {
+      return { stored: false, superseded: true };
+    }
     // The system the draft could not read connected while the model drafted:
     // a connection that landed first found no plan to send back, so this does.
     if (args.draftedWithout?.cause === 'not-connected') {
@@ -6781,10 +6805,13 @@ export interface InterruptedApplyLedger {
  *
  * @param row - The work item, `executing` with an apply claimed.
  * @param pendingRunId - The run the approval belongs to.
+ * @param end - What ended the apply: an interruption the recovery found, or a stop; the unreported
+ *   rows' reason says which (`outcomeUnknownReasonFor`).
  */
 export function interruptedApplyLedger(
   row: Doc<'workItems'>,
   pendingRunId: Id<'events'>,
+  end: ApplyEnd,
 ): InterruptedApplyLedger {
   const output = (row.output ?? {}) as {
     actions?: Array<{ tool?: unknown }>;
@@ -6823,7 +6850,7 @@ export function interruptedApplyLedger(
       tool: typeof action.tool === 'string' ? action.tool : 'unknown',
       ok: !approved.has(index),
       ...(approved.has(index)
-        ? { reason: OUTCOME_UNKNOWN_REASON }
+        ? { reason: outcomeUnknownReasonFor(end) }
         : { held: true, reason: heldReasonFor(index) }),
       idempotencyKey: actionIdempotencyKey({
         workItemId: row._id,
@@ -6878,7 +6905,7 @@ export const recoverInterruptedApply = internalMutation({
     if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
-    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId);
+    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId, 'interrupted');
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',

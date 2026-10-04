@@ -63,8 +63,9 @@ const scheduledJobNames = Object.keys(SCHEDULED_JOBS) as ScheduledJob[];
  * same switch at its claim (`stepMayRun`), so a queued evaluation, draft,
  * execution or apply starts nothing and its row waits, ready, for the stalled-
  * step sweep's first run after the pause. A step that had already claimed runs
- * to its next claim; the documentation sync's own chain is not a step and is
- * not held.
+ * to its next claim. The documentation sync's own chain reads it too, at each
+ * batch (`docSyncActions.syncBatch`): the run ends short at its cursor, and
+ * this job's first sync after the pause goes on from there.
  */
 export const runScheduledJob = internalAction({
   args: { job: v.union(...scheduledJobNames.map((job) => v.literal(job))) },
