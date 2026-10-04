@@ -24,6 +24,29 @@ export function oneToOneWaitsOnManager(agent: Pick<Doc<'agents'>, 'state'>): boo
   return agent.state === 'deployed';
 }
 
+/**
+ * The states a row waits in, for the manager or for what only they can give: a plan, a held set,
+ * a deferral, a skill, a stopped or failed run. Every transition into one stamps `waitingSince`
+ * (wave 12, 12-W; H D11, D12), which the inbox dates the wait by.
+ */
+export const WAITING_STATES: ReadonlySet<string> = new Set([
+  'plan-pending',
+  'actions-pending',
+  'deferred',
+  'needs-skill',
+  'failed',
+]);
+
+/**
+ * The stamp a transition into a state writes: `waitingSince` when the state waits, nothing else.
+ *
+ * @param state - The state the row enters.
+ * @param now - The transition's time.
+ */
+export function waitingStamp(state: string, now: number): { waitingSince?: number } {
+  return WAITING_STATES.has(state) ? { waitingSince: now } : {};
+}
+
 /** The open states that wait on the manager: a plan to approve, a held action set. */
 export const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set([
   'plan-pending',

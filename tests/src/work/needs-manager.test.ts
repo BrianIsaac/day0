@@ -10,6 +10,7 @@ import {
   skillsWaitingOnManager,
   stoppedRowNeedsManager,
   failedRowMove,
+  waitingStamp,
 } from '../../../src/work/needs-manager';
 
 const NOW = 1_000_000_000;
@@ -158,5 +159,16 @@ describe('skillsWaitingOnManager (the Skills tab badge, C-m1)', (): void => {
       skill('f', { state: 'retired' }),
     ];
     expect(skillsWaitingOnManager(rows, now)).toBe(3);
+  });
+});
+
+describe('waitingStamp (wave 12, H D11)', (): void => {
+  it('stamps a transition into every state that waits, and no other', (): void => {
+    for (const state of ['plan-pending', 'actions-pending', 'deferred', 'needs-skill', 'failed']) {
+      expect(waitingStamp(state, 7)).toEqual({ waitingSince: 7 });
+    }
+    for (const state of ['discovered', 'claimed', 'plan-approved', 'executing', 'completed']) {
+      expect(waitingStamp(state, 7)).toEqual({});
+    }
   });
 });

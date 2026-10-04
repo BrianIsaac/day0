@@ -520,3 +520,53 @@ describe('Close without retry (E-8)', (): void => {
     ).rejects.toThrow('Only a stopped or failed item can be closed');
   });
 });
+
+describe('waitingSince (H D11, D12)', (): void => {
+  it('is stamped as a run parks for the manager and again as it stops, and the inbox dates the wait by it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.setSystemTime(Date.UTC(2026, 9, 4, 9));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    vi.setSystemTime(Date.UTC(2026, 9, 4, 9, 5));
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: heldOutput,
+    });
+    expect((await readItem(harness, workItemId)).waitingSince).toBe(Date.UTC(2026, 9, 4, 9, 5));
+
+    // The wait as the inbox reads it: the stamp, not the event.
+    await harness.run(async (ctx) => {
+      for (const event of await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .collect()) {
+        await ctx.db.delete(event._id);
+      }
+    });
+    const entries = async () =>
+      (await harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId })).entries;
+    expect((await entries()).map((entry) => [entry.kind, entry.waitingSince])).toEqual([
+      ['held', Date.UTC(2026, 9, 4, 9, 5)],
+    ]);
+
+    vi.setSystemTime(Date.UTC(2026, 9, 4, 9, 30));
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId,
+      pendingRunId: runId,
+      reason: 'Not now.',
+    });
+    expect((await readItem(harness, workItemId)).waitingSince).toBe(Date.UTC(2026, 9, 4, 9, 30));
+  });
+
+  it('is stamped as a run is stopped', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.setSystemTime(Date.UTC(2026, 9, 4, 10));
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    expect((await readItem(harness, workItemId)).waitingSince).toBe(Date.UTC(2026, 9, 4, 10));
+  });
+});

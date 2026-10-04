@@ -20,6 +20,7 @@ import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
+  waitingStamp,
 } from '../src/work/needs-manager';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import {
@@ -2769,6 +2770,7 @@ export async function applyVerdict(
   await ctx.db.patch(workItemId, {
     verdict: effective,
     state: nextState,
+    ...waitingStamp(nextState, Date.now()),
     ...(nextState === 'claimed' ? { claimedAt: Date.now() } : {}),
     ...(skipReason ? { skipReason } : {}),
     // The verdict ends the evaluation step; a row queued at the cap must be
@@ -3078,6 +3080,7 @@ export const setPlan = internalMutation({
       state: 'plan-pending',
       planDraftedWithout: args.draftedWithout,
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
+      waitingSince: Date.now(),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
     await appendEvent(ctx, {
@@ -3624,6 +3627,7 @@ export async function returnApprovalsForHandover(
     await ctx.db.patch(row._id, {
       state: 'plan-pending',
       planPendingAt: now,
+      waitingSince: now,
       decision: undefined,
       managerAnswers: undefined,
     });
@@ -3640,6 +3644,8 @@ export async function returnApprovalsForHandover(
       approvedIndexes: undefined,
       applyPhase: undefined,
       decision: undefined,
+      // The set waits on the manager again, from now.
+      waitingSince: now,
     });
   }
   return approvedPlans.length + approvedSets.length;
@@ -5084,6 +5090,7 @@ export async function failInTransaction(
   await settleWriteTargetClaims(ctx, row._id, Date.now());
   await ctx.db.patch(row._id, {
     state: 'failed',
+    waitingSince: Date.now(),
     skipReason: reason,
     pendingRunId: undefined,
     approvedIndexes: undefined,
@@ -5684,6 +5691,7 @@ export const setAwaitingApproval = internalMutation({
     }));
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
+      waitingSince: Date.now(),
       output: args.output,
       approvedIndexes: undefined,
       applyPhase: undefined,
@@ -5972,6 +5980,7 @@ async function rejectActionsInTransaction(
   await settleWriteTargetClaims(ctx, args.workItemId, now);
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
+    waitingSince: Date.now(),
     skipReason,
     ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now } : {}),
     ...(output !== undefined ? { output } : {}),
@@ -6361,6 +6370,7 @@ export async function parkOnConnection(
   };
   await ctx.db.patch(row._id, {
     state: 'deferred',
+    waitingSince: Date.now(),
     verdict,
     // Returned to evaluation, the item is planned again, as a send-back to drafting plans it.
     plan: undefined,
@@ -6500,6 +6510,7 @@ export const recoverInterruptedApply = internalMutation({
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
+      waitingSince: Date.now(),
       skipReason: INTERRUPTED_APPLY_REASON,
       output: { ...output, applied },
       applyPhase: undefined,
@@ -7047,6 +7058,8 @@ export async function needsYouOfEmployee(
   now: number,
 ): Promise<NeedsYouEntry[]> {
   const waiting = await waitingRowsOf(ctx, agent._id, now);
+  // Only a row that entered its wait before the stamp existed is dated by reading events.
+  const unstamped = (row: Doc<'workItems'>): boolean => row.waitingSince === undefined;
   const [
     oneToOneSince,
     questions,
@@ -7072,16 +7085,21 @@ export async function needsYouOfEmployee(
       ctx,
       agent._id,
       ['work.plan-drafted'],
-      waiting.plans.filter((row) => row.planPendingAt === undefined),
+      waiting.plans.filter((row) => row.planPendingAt === undefined && unstamped(row)),
     ),
-    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
+    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held.filter(unstamped)),
     enteredAtByRow(
       ctx,
       agent._id,
       ['work.evaluated', 'work.evaluation-parked'],
-      waiting.parked.map(({ row }) => row),
+      waiting.parked.map(({ row }) => row).filter(unstamped),
     ),
-    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.failed', 'work.actions-interrupted'],
+      waiting.stopped.filter(unstamped),
+    ),
     enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
   ]);
 
@@ -7096,8 +7114,15 @@ export async function needsYouOfEmployee(
     waitingAtLeast: entered.atLeast,
   });
   const exact = (at: number): EnteredAt => ({ at, atLeast: false });
-  const enteredOf = (dates: Map<string, EnteredAt>, row: DatedRow): EnteredAt =>
-    dates.get(row._id) ?? exact(row._creationTime);
+  // A row stamped as it entered its wait is dated by the stamp; one that entered before the
+  // stamp existed, by its entering event as before.
+  const enteredOf = (
+    dates: Map<string, EnteredAt>,
+    row: DatedRow & Pick<Doc<'workItems'>, 'waitingSince'>,
+  ): EnteredAt =>
+    row.waitingSince !== undefined
+      ? exact(row.waitingSince)
+      : (dates.get(row._id) ?? exact(row._creationTime));
 
   return [
     ...(oneToOneSince !== null
@@ -7121,7 +7146,9 @@ export async function needsYouOfEmployee(
       ...base(
         `plan:${row._id}`,
         row.title,
-        row.planPendingAt !== undefined ? exact(row.planPendingAt) : enteredOf(planEntered, row),
+        row.waitingSince === undefined && row.planPendingAt !== undefined
+          ? exact(row.planPendingAt)
+          : enteredOf(planEntered, row),
       ),
       workItemId: row._id,
       questions: questions[index] ?? 0,

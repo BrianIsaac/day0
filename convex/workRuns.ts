@@ -732,6 +732,7 @@ export const setActionsPending = internalMutation({
     }
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
+      waitingSince: Date.now(),
       output: args.output,
       pendingRunId: pendingId,
       approvedIndexes: undefined,

@@ -396,6 +396,7 @@ async function parkSpentEvaluations(
     const reason = unavailable ? SCOPE_JUDGEMENT_UNAVAILABLE : EVALUATION_ATTEMPTS_SPENT;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason, attempts, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
@@ -489,6 +490,7 @@ async function parkForCharter(
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
