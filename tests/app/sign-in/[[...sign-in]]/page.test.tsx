@@ -51,6 +51,9 @@ describe('the sign-in page', () => {
       redirect_url: 'https://dayzer0.dev/agent/k57abc/work?from=review',
     });
     expect(returning).toMatch(/<h1[^>]*>Sign in to continue<\/h1>/);
+    // The new manager's first steps are not this visitor's (the second pass's design reader).
+    expect(returning).not.toContain('Give your first employee a name.');
+    expect(await render('/sign-in')).toContain('Give your first employee a name.');
     for (const home of ['https://dayzer0.dev/', 'https://dayzer0.dev/home', '/']) {
       expect(await render('/sign-in', { redirect_url: home })).toMatch(
         /<h1[^>]*>Sign in to deploy an employee<\/h1>/,

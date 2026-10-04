@@ -5,7 +5,7 @@ import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { Disclosure } from '../../components/Disclosure';
 import { HeadedSignIn, StepHeading } from '../../HeadedClerk';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
-import { signInHeading } from '../sign-in-words';
+import { DEPLOY_HEADING, signInHeading } from '../sign-in-words';
 
 /** The tab's title: the hosted demo's way in. */
 export const metadata: Metadata = { title: 'Sign in to Day0' };
@@ -76,6 +76,9 @@ export default async function SignInPage({
 }): Promise<React.ReactElement> {
   if (DEV_NO_AUTH) redirect('/');
   const { redirect_url: redirectUrl } = await searchParams;
+  const heading = signInHeading(redirectUrl);
+  // A visitor continuing to a page they asked for is no new manager: the first steps are not theirs.
+  const newManager = heading === DEPLOY_HEADING;
 
   return (
     <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-6 px-6 py-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
@@ -84,7 +87,7 @@ export default async function SignInPage({
           base="/sign-in"
           className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance"
         >
-          {signInHeading(redirectUrl)}
+          {heading}
         </StepHeading>
         <div className="order-last grid gap-5 md:order-none">
           <p className="max-w-[60ch] leading-relaxed text-[var(--color-muted)]">
@@ -92,19 +95,21 @@ export default async function SignInPage({
             The hosted office is a seeded, synthetic workplace: a Slack, a tracker, a wiki, a ticket
             queue and one social mention.
           </p>
-          <ol className="grid gap-1.5 text-[15px]">
-            {FIRST_STEPS.map((step, index) => (
-              <li key={step} className="grid grid-cols-[28px_minmax(0,1fr)] items-baseline gap-2">
-                <span
-                  aria-hidden="true"
-                  className="text-[13px] tabular-nums text-[var(--color-muted)]"
-                >
-                  {index + 1}
-                </span>
-                {step}
-              </li>
-            ))}
-          </ol>
+          {newManager ? (
+            <ol className="grid gap-1.5 text-[15px]">
+              {FIRST_STEPS.map((step, index) => (
+                <li key={step} className="grid grid-cols-[28px_minmax(0,1fr)] items-baseline gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="text-[13px] tabular-nums text-[var(--color-muted)]"
+                  >
+                    {index + 1}
+                  </span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          ) : null}
         </div>
         <FoldedNotice />
         <div className="hidden md:block">
