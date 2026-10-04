@@ -140,12 +140,14 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { typedCodeReachOf } from './slackMessagesTab';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -3571,6 +3573,9 @@ export const prepareDecisionRequest = internalMutation({
       withButtons:
         (args.kind === 'plan' || heldIndexes.length > 0) &&
         decisionButtonsFor(chat, socketBridgeConfigured()).available,
+      // Read where the request is claimed too: a typed code is offered only to an app that takes
+      // messages (W12V-7).
+      typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     };
   },
 });
@@ -5661,6 +5666,8 @@ async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
   return {
     agentId,
     agentName: agent.name,
+    // Whether a typed code reaches the app these messages come from (W12V-7).
+    typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     surface: toSurfaceRecord(chat),
     surfaces: surfaceRows.map(toSurfaceRecord),
     grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
@@ -5916,6 +5923,7 @@ export const prepareManagerDigest = internalMutation({
         zone: agentZone(agent),
         notes,
         owed: await owedDecisions(ctx, args.agentId),
+        typedCode: delivery.typedCode,
       }),
     };
   },

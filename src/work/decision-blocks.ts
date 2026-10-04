@@ -1,5 +1,7 @@
 import {
+  BUTTONS_DAY0_LEAD,
   BUTTONS_REPLY_LEAD,
+  DAY0_ONLY_LEAD,
   DECISION_ID_ALPHABET,
   DECISION_ID_LENGTH,
   type DecisionReply,
@@ -61,9 +63,9 @@ function plain(text: string): SlackText {
 /**
  * The blocks of a decision request (wave 12, 12-M; RM3 (a)): the request's text, and, where the
  * employee's Slack app carries presses to Day0 over Socket Mode, Approve and Reject buttons whose
- * value is the code. The text keeps its typed-code line, so the code decides whether or not a
- * button ever reaches Day0. Reject asks to confirm, since a press gives no reason and the typed
- * reply does.
+ * value is the code. The text keeps its typed-code line where the app takes messages, so the code
+ * decides whether or not a button ever reaches Day0. Reject asks to confirm, since a press gives no
+ * reason and the typed reply, or day0 for an app that takes no messages (W12V-7), does.
  *
  * @param args.id - The request's decision code.
  * @param args.text - The request's text as {@link decisionRequestText} words it.
@@ -73,6 +75,8 @@ export function decisionRequestBlocks(args: {
   readonly id: string;
   readonly text: string;
   readonly buttons: boolean;
+  /** Whether the manager's typed code reaches the app (W12V-7); true unless said otherwise. */
+  readonly typedCode?: boolean;
 }): SlackBlock[] {
   if (!args.buttons) return sections(args.text);
   const actions: SlackActionsBlock = {
@@ -95,7 +99,9 @@ export function decisionRequestBlocks(args: {
         confirm: {
           title: plain('Reject this request?'),
           text: plain(
-            `Day0 will not do it. To say why, reply “reject ${args.id} <reason>” instead.`,
+            args.typedCode === false
+              ? 'Day0 will not do it. To say why, reject it in day0 instead.'
+              : `Day0 will not do it. To say why, reply “reject ${args.id} <reason>” instead.`,
           ),
           confirm: plain('Reject'),
           deny: plain('Keep it open'),
@@ -119,10 +125,15 @@ export function settledRequestBlocks(text: string): SlackBlock[] {
 
 /**
  * A request's text as it reads once its buttons are gone (decided, or replaced): the reply line
- * that named the buttons becomes the typed one, so the edited message never asks for a press.
+ * that named the buttons becomes the typed one, or day0 alone for an app that takes no messages
+ * (W12V-7), so the edited message never asks for a press.
  */
 export function pressFreeText(text: string): string {
-  return text.split(BUTTONS_REPLY_LEAD).join('Reply ');
+  return text
+    .split(BUTTONS_REPLY_LEAD)
+    .join('Reply ')
+    .split(BUTTONS_DAY0_LEAD)
+    .join(DAY0_ONLY_LEAD);
 }
 
 /** What a pressed button carries, as a `block_actions` payload names it. */

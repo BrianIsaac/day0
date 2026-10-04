@@ -166,13 +166,18 @@ export function digestText(args: {
   zone: string;
   notes: ReadonlyArray<{ text: string; createdAt: number }>;
   owed?: readonly OwedDecision[];
+  /**
+   * Whether the manager's typed code reaches the employee's app (W12V-7): an app that takes no
+   * messages is never named a code to reply with. True unless the caller says otherwise.
+   */
+  typedCode?: boolean;
 }): string {
   const count = args.notes.length;
   const owed = args.owed ?? [];
   const shown = owed
     .slice(0, DIGEST_OWED_SHOWN)
     .map((decision) =>
-      decision.decisionId === undefined
+      decision.decisionId === undefined || args.typedCode === false
         ? `- ${quoted(decision.title)}: decide in day0`
         : `- ${quoted(decision.title)}: reply “approve ${decision.decisionId}” or “reject ${decision.decisionId} <reason>”`,
     );

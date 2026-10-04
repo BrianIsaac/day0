@@ -385,6 +385,22 @@ function oneLine(value: unknown, fallback: string): string {
 export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
 
 /**
+ * The line of a request with buttons from an app that takes no messages (W12V-7): the buttons or
+ * day0, never a typed reply. Once the buttons are gone it reads {@link DAY0_ONLY_LEAD}.
+ */
+export const BUTTONS_DAY0_LEAD = 'Press Approve or Reject below, or decide in day0.';
+
+/** The line of a request no press or reply can decide: day0 alone. */
+export const DAY0_ONLY_LEAD = 'Decide in day0.';
+
+/**
+ * Why a request from an app that takes no messages offers no typed code (W12V-7): Slack answers the
+ * manager's DM with such an app with "Sending messages to this app has been turned off."
+ */
+export const TYPED_CODE_UNREACHABLE =
+  'Slack does not let you message this app yet, so a typed reply cannot reach it.';
+
+/**
  * Plain decision request sent when a supervised run parks.
  *
  * A run with a result-dependent phase asks twice: once for the prerequisite
@@ -414,6 +430,11 @@ export function decisionRequestText(args: {
   /** The request carries Approve and Reject buttons (RM3 (a)); the typed code works beside them. */
   buttons?: boolean;
   /**
+   * Whether the manager's typed code reaches the employee's app (W12V-7; `typedCodeReachOf`): an
+   * app that takes no messages is never asked for a reply. True unless the caller says otherwise.
+   */
+  typedCode?: boolean;
+  /**
    * The ticket closes the tripwire held, which no approval here sends (wave 12, 12-H; R-12D-1):
    * named after the held list with the run's sentence, and decided on their card. With no held
    * action left beside them the request asks nothing a reply or a press could decide.
@@ -426,8 +447,7 @@ export function decisionRequestText(args: {
   }
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
-  const typed = `“approve ${args.id}” or “reject ${args.id} <reason>”`;
-  const reply = args.buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
+  const reply = replyLine(args.id, args.buttons === true, args.typedCode !== false);
   // A request is read on its own, so its action lines name the ask's channel
   // and quote a body as far as a plan line does (U9 step 24).
   const summary: SummaryContext = {
@@ -465,7 +485,11 @@ export function decisionRequestText(args: {
     // A Slack approval approves every held index; the card can approve some.
     if (held.length > 1) {
       const covers = held.length === 2 ? 'both actions' : `all ${held.length} actions`;
-      scope = `“approve ${args.id}” applies ${covers} listed; to approve only some, decide in day0.`;
+      const approval =
+        args.typedCode !== false ? `“approve ${args.id}”` : args.buttons ? 'Approve' : undefined;
+      if (approval !== undefined) {
+        scope = `${approval} applies ${covers} listed; to approve only some, decide in day0.`;
+      }
     }
   }
   const frame = (shown: readonly string[], omitted: number): string =>
@@ -503,6 +527,18 @@ export function decisionRequestText(args: {
     shown -= 1;
   }
   return frame(lines.slice(0, shown), lines.length - shown);
+}
+
+/**
+ * A request's last line: how it is decided. The typed code only where the employee's app takes
+ * messages (W12V-7), the buttons only where it carries presses, and day0 always.
+ */
+function replyLine(id: string, buttons: boolean, typedCode: boolean): string {
+  if (typedCode) {
+    const typed = `“approve ${id}” or “reject ${id} <reason>”`;
+    return buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
+  }
+  return `${buttons ? BUTTONS_DAY0_LEAD : DAY0_ONLY_LEAD} ${TYPED_CODE_UNREACHABLE}`;
 }
 
 /**

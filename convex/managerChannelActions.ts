@@ -233,10 +233,13 @@ export const requestDecision = internalAction({
       slackMarkup:
         prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
       buttons: prepared.withButtons,
+      typedCode: prepared.typedCode,
     });
     // Other held action sets are already waiting on this channel: offer one
-    // code that decides them all, each named with its own.
+    // code that decides them all, each named with its own; only where a typed
+    // code reaches the app (W12V-7), since the batch has no button.
     if (
+      prepared.typedCode &&
       args.kind === 'actions' &&
       prepared.heldIndexes.length > 0 &&
       prepared.openActionDecisions.length > 0 &&
@@ -273,7 +276,12 @@ export const requestDecision = internalAction({
         decisionId: prepared.decisionId,
         ...(prepared.withButtons
           ? {
-              blocks: decisionRequestBlocks({ id: prepared.decisionId, text, buttons: true }),
+              blocks: decisionRequestBlocks({
+                id: prepared.decisionId,
+                text,
+                buttons: true,
+                typedCode: prepared.typedCode,
+              }),
             }
           : {}),
       });

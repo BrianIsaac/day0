@@ -47,6 +47,20 @@ describe('decisionRequestBlocks', (): void => {
     expect(reject!.confirm!.text.text).toContain('reject ab3xyz <reason>');
   });
 
+  it('asks for no typed reason in Reject’s dialog when the app takes no messages (W12V-7)', (): void => {
+    const blocks = decisionRequestBlocks({
+      id: 'uacgcm',
+      text: 'Decide this.',
+      buttons: true,
+      typedCode: false,
+    });
+    const [actions] = actionsOf(blocks);
+    const reject = actions!.elements[1]!;
+    expect(reject.confirm!.text.text).toBe(
+      'Day0 will not do it. To say why, reject it in day0 instead.',
+    );
+  });
+
   it('carries no actions block when the app has no buttons', (): void => {
     const blocks = decisionRequestBlocks({ id: 'ab3xyz', text: 'Decide this.', buttons: false });
     expect(actionsOf(blocks)).toEqual([]);
@@ -133,5 +147,15 @@ describe('pressFreeText', (): void => {
       ),
     ).toBe('Decide this.\n\nReply “approve ab3xyz” or “reject ab3xyz <reason>”.');
     expect(pressFreeText('Reply “approve ab3xyz”.')).toBe('Reply “approve ab3xyz”.');
+  });
+
+  it('leaves day0 as the only way on once the buttons of an app that takes no messages are gone (W12V-7)', (): void => {
+    expect(
+      pressFreeText(
+        'Decide this.\n\nPress Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      ),
+    ).toBe(
+      'Decide this.\n\nDecide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
   });
 });

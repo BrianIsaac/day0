@@ -119,4 +119,17 @@ describe('the notes the gate writes for the manager', (): void => {
       'Still waiting',
     );
   });
+
+  it('names no code to reply with when the employee’s app takes no messages (W12V-7)', (): void => {
+    const note = { text: 'one', createdAt: Date.UTC(2026, 8, 27, 9, 5) };
+    const text = digestText({
+      agentName: 'Iris',
+      zone: 'UTC',
+      notes: [note],
+      owed: [{ title: 'Close REVOPS-7', decisionId: 'ab3xyz' }],
+      typedCode: false,
+    });
+    expect(text).not.toContain('reply “approve');
+    expect(text.split('\n').at(-1)).toBe('- “Close REVOPS-7”: decide in day0');
+  });
 });
