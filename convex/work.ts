@@ -1521,6 +1521,8 @@ async function liveClaimOn(
       await releaseClaim(ctx, claim, now);
       continue;
     }
+    // A write-target claim whose holder finished gives way to work created after (M9).
+    if (!holdsAgainst(claim, row)) continue;
     const agent = await ctx.db.get(claim.agentId);
     return {
       holder: {
@@ -1879,7 +1881,8 @@ export const claimLandedTicketWrites = internalMutation({
     if (row.state !== 'executing' || row.executionRunId !== args.runId) return [];
     const userId = (await ctx.db.get(row.agentId))?.userId;
     if (!userId) return [];
-    const keys = new Set<string>();
+    // Each key with the ticket it names, so the claim is a write target that settles (M9).
+    const keys = new Map<string, { surface: string; field: string }>();
     for (const write of args.writes) {
       const surface = await ctx.db
         .query('surfaces')
@@ -1894,14 +1897,19 @@ export const claimLandedTicketWrites = internalMutation({
           { sourceSystem: surface.slug, externalId: target },
           SURFACE_MODE,
         );
-        if (key !== undefined && key !== row.externalClaimKey && key !== row.externalClaimAlias) {
-          keys.add(key);
+        if (
+          key !== undefined &&
+          key !== row.externalClaimKey &&
+          key !== row.externalClaimAlias &&
+          !keys.has(key)
+        ) {
+          keys.set(key, { surface: surface.slug, field: target });
         }
       }
     }
     const now = Date.now();
     const taken: string[] = [];
-    for (const key of keys) {
+    for (const [key, writeTarget] of keys) {
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
@@ -1913,6 +1921,7 @@ export const claimLandedTicketWrites = internalMutation({
         key,
         agentId: row.agentId,
         workItemId: row._id,
+        writeTarget,
         claimedAt: now,
       });
       taken.push(key);

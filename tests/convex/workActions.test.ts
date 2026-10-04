@@ -8978,7 +8978,7 @@ describe('an execution that fails on the model (P7-18, U9 step 20)', (): void =>
 });
 
 describe('a write to a ticket no work item was discovered from (P8-2)', (): void => {
-  it('leaves the writer holding the ticket, so a colleague’s item for it is refused and told who holds it', async (): Promise<void> => {
+  it('leaves the writer a settling claim on the ticket, so a colleague’s item raised after it finished is not refused (M9)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     recorded.skillOutput = {
@@ -9041,12 +9041,19 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
       contentSummary: 'Follow up.',
       contentRefs: [],
     });
+    // Re-pinned for M9 (wave 12, 12-M; the wave 3.5 review names this assertion as the defect):
+    // the writer finished before the colleague's item was raised, so its claim has settled and the
+    // item is new work, not refused for good. The claim is a write target, settled at the end.
     await expect(
       harness.mutation(internal.work.claimLoopStep, { workItemId: listed, step: 'evaluation' }),
-    ).resolves.toMatchObject({ claimed: false, reason: 'held-elsewhere' });
-    expect((await readItem(harness, listed)).verdict).toMatchObject({
-      decision: 'skip',
-      reason: expect.stringContaining('Priya holds it (Add the close-summary audit note)'),
+    ).resolves.not.toMatchObject({ reason: 'held-elsewhere' });
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('externalClaims').collect())).find(
+        (claim) => claim.key === 'linear:REVOPS-9',
+      ),
+    ).toMatchObject({
+      writeTarget: { surface: 'linear', field: 'REVOPS-9' },
+      settledAt: expect.any(Number),
     });
   });
 });
