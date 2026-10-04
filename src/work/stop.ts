@@ -54,6 +54,39 @@ export function isStoppable(state: string): state is StoppableState {
   return (STOPPABLE_STATES as readonly string[]).includes(state);
 }
 
+/** What a work item carries that says whether the manager can stop it. */
+export interface StopCandidate {
+  readonly state: string;
+  readonly approvedIndexes?: readonly number[];
+  readonly applyAttemptId?: unknown;
+}
+
+/**
+ * Whether the manager approved a held set whose apply has not claimed it yet: the writes wait, for
+ * a moment or for as long as a pause holds them, and none of them has been sent.
+ *
+ * @param item - The work item.
+ */
+export function approvedNotStarted(item: StopCandidate): boolean {
+  return (
+    item.state === 'actions-pending' &&
+    item.approvedIndexes !== undefined &&
+    item.applyAttemptId === undefined
+  );
+}
+
+/**
+ * Whether the manager can stop a work item as it stands: the employee is working it
+ * ({@link isStoppable}), or it holds an approval whose apply has not started
+ * ({@link approvedNotStarted}). Stopping that takes the approval back; nothing of it was sent, so
+ * no reconciliation is owed (the wave 12 review's W12-R14, decision D-7 (b), a product call).
+ *
+ * @param item - The work item.
+ */
+export function isStoppableItem(item: StopCandidate): boolean {
+  return isStoppable(item.state) || approvedNotStarted(item);
+}
+
 /**
  * The manager's own words on a stop they made: their reason, the empty string when they gave
  * none, or undefined when the stop was not theirs.

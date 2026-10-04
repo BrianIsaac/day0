@@ -22,7 +22,7 @@ import {
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
-import { isStopped } from '@/work/stop';
+import { approvedNotStarted, isStoppableItem, isStopped } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
@@ -41,7 +41,7 @@ import { type ItemPlan, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
-import { StopDialog, stopWhy } from './StopDialog';
+import { StopDialog, stopWhy, type StopMoment } from './StopDialog';
 import { TicketNowLine } from './TicketNowLine';
 import {
   type ItemVerdict,
@@ -262,6 +262,12 @@ export function WorkItemCard({
   // The per-action box already names every action that failed, so the
   // row-level reason only earns its space for the other failures: no
   // registered skill, a model error, a mid-run throw.
+  // An apply sending writes holds both; a closing phase being written holds only the claim.
+  const stopMoment: StopMoment = approvedNotStarted(item)
+    ? 'approved'
+    : item.applyAttemptId !== undefined && item.pendingRunId !== undefined
+      ? 'applying'
+      : 'working';
   const stopReason =
     item.state === 'failed' && !rejection && failed.length === 0
       ? failedItemReason(item)
@@ -421,8 +427,7 @@ export function WorkItemCard({
         <StopDialog
           title={item.title}
           employeeName={employeeName}
-          // An apply sending writes holds both; a closing phase being written holds only the claim.
-          applying={item.applyAttemptId !== undefined && item.pendingRunId !== undefined}
+          moment={stopMoment}
           onStop={onStop}
           onClose={() => setStopping(false)}
           onDone={(words) => {
@@ -605,8 +610,8 @@ export function WorkItemCard({
         />
       ) : null}
       {/* A run under way is stopped from the card's foot, where every card keeps its controls. */}
-      {WORKING_STATES.has(item.state) && onStop ? (
-        <ItemFoot why={stopWhy(employeeName)}>
+      {isStoppableItem(item) && onStop ? (
+        <ItemFoot why={stopWhy(employeeName, stopMoment)}>
           <Button variant="danger" disabled={deciding} onClick={() => setStopping(true)}>
             Stop
           </Button>

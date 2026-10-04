@@ -64,7 +64,7 @@ import {
 } from '../src/work/reconciliation';
 import { landedWritesOf, unsentWritesOf } from '../src/work/landed-writes';
 import {
-  isStoppable,
+  isStoppableItem,
   landedNoteRows,
   landedWork,
   managerStopReason,
@@ -1013,7 +1013,8 @@ async function cancelQueuedStep(ctx: MutationCtx, row: Doc<'workItems'>): Promis
 
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): the manager stops an item the employee is working
- * (`claimed`, `plan-approved`, `executing`; wave 6 B D3, built in wave 12).
+ * (`claimed`, `plan-approved`, `executing`; wave 6 B D3, built in wave 12), or a set they approved
+ * whose apply has not claimed it, which takes the approval back (W12-R14, D-7 (b)).
  *
  * The queued step is cancelled, and the run ends through the stop every run's end shares
  * (`stopRunsInTransaction`, the handover's and the withdraw's): its run id and apply claim are
@@ -1027,7 +1028,7 @@ export const stopRun = mutation({
   args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (!isStoppable(row.state)) {
+    if (!isStoppableItem(row)) {
       throw new ConvexError('Only work under way can be stopped; this item has moved on.');
     }
     const identity = await getCallerOrThrow(ctx);

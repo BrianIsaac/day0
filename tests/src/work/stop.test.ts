@@ -15,6 +15,7 @@ import {
   STOPPED_PREFIX,
   stopDetail,
   isStoppable,
+  isStoppableItem,
   managerStopNote,
   managerStopReason,
   stoppedReason,
@@ -339,6 +340,19 @@ describe('a gate refusal stop, scrubbed like every failure path (step 42)', (): 
 });
 
 describe('a stop the manager made (wave 12)', () => {
+  it('stops an approval whose apply has not started, and never a set still waiting or one sending (W12-R14)', () => {
+    const held = { state: 'actions-pending' };
+    expect(isStoppableItem({ ...held, approvedIndexes: [0] })).toBe(true);
+    expect(isStoppableItem(held)).toBe(false);
+    expect(
+      isStoppableItem({ state: 'executing', approvedIndexes: [0], applyAttemptId: 'apply-1' }),
+    ).toBe(true);
+    expect(isStoppableItem({ ...held, approvedIndexes: [0], applyAttemptId: 'apply-1' })).toBe(
+      false,
+    );
+    expect(isStoppableItem({ state: 'failed', approvedIndexes: [0] })).toBe(false);
+  });
+
   it('stops only work under way', () => {
     expect(['claimed', 'plan-approved', 'executing'].every(isStoppable)).toBe(true);
     expect(['plan-pending', 'actions-pending', 'failed', 'completed'].some(isStoppable)).toBe(

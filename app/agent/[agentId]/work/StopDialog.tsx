@@ -14,25 +14,40 @@ function capitalised(name: string): string {
 }
 
 /**
+ * Where the item is when the manager stops it: being worked, sending the writes they approved, or
+ * holding an approval whose writes have not started (the wave 12 review's W12-R14, D-7 (b)).
+ */
+export type StopMoment = 'working' | 'applying' | 'approved';
+
+/**
  * What stopping does, said before the manager decides (wave 12, 12-W; wording drafts).
  *
  * @param employeeName - Who is working the item.
- * @param applying - Whether the run is sending the writes the manager approved, so one may land.
+ * @param moment - Where the item is; a write may land only while it is applying.
  */
-export function stopDialogDescription(employeeName: string, applying: boolean): string {
+export function stopDialogDescription(employeeName: string, moment: StopMoment): string {
   const name = capitalised(employeeName);
-  return applying
-    ? `${name} is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.`
-    : `${name} stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.`;
+  switch (moment) {
+    case 'applying':
+      return `${name} is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.`;
+    case 'approved':
+      return `${name} has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.`;
+    case 'working':
+      return `${name} stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.`;
+  }
 }
 
 /**
- * What the Stop control of a working card does, said under it.
+ * What the Stop control of a card does, said under it.
  *
  * @param employeeName - Who is working the item.
+ * @param moment - Where the item is.
  */
-export function stopWhy(employeeName: string): string {
-  return `${capitalised(employeeName)}, once stopped, sends nothing more, and the item waits for you with Retry.`;
+export function stopWhy(employeeName: string, moment: StopMoment = 'working'): string {
+  const name = capitalised(employeeName);
+  return moment === 'approved'
+    ? `${name} has not sent the writes you approved yet. Stop takes your approval back and sends none of them.`
+    : `${name}, once stopped, sends nothing more, and the item waits for you with Retry.`;
 }
 
 /**
@@ -52,7 +67,7 @@ export function stoppedOutcome(title: string): string {
  *
  * @param title - The item's title, which the heading names.
  * @param employeeName - Who is working it.
- * @param applying - Whether the run is sending the writes the manager approved.
+ * @param moment - Where the item is: being worked, applying, or holding an approval not started.
  * @param onStop - Stop the run with the reason as typed (empty when none).
  * @param onClose - Close the dialog without stopping.
  * @param onDone - The stop landed, with what the card's live region says.
@@ -60,14 +75,14 @@ export function stoppedOutcome(title: string): string {
 export function StopDialog({
   title,
   employeeName,
-  applying,
+  moment,
   onStop,
   onClose,
   onDone,
 }: {
   title: string;
   employeeName: string;
-  applying: boolean;
+  moment: StopMoment;
   onStop: (reason: string) => Promise<unknown> | void;
   onClose: () => void;
   onDone: (words: string) => void;
@@ -79,7 +94,7 @@ export function StopDialog({
     <Dialog
       role="alertdialog"
       title={`Stop work on “${title}”?`}
-      description={stopDialogDescription(employeeName, applying)}
+      description={stopDialogDescription(employeeName, moment)}
       onClose={onClose}
       initialFocus={keep}
       busy={change.busy}
@@ -113,7 +128,7 @@ export function StopDialog({
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button ref={keep} size="large" disabled={change.busy} onClick={onClose}>
-            Keep working
+            {moment === 'approved' ? 'Keep the approval' : 'Keep working'}
           </Button>
           <Button type="submit" variant="danger" size="large" disabled={change.busy}>
             {change.busy ? 'Stopping…' : 'Stop the run'}

@@ -347,6 +347,45 @@ describe('Stop on a working item', (): void => {
     expect(stopped?.payload).toMatchObject({ applyInFlight: true });
   });
 
+  it('takes back an approval a pause holds: the set is stopped before its apply claims and sends nothing (W12-R14, D-7 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: heldOutput,
+    });
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1],
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'actions-pending',
+      approvedIndexes: [0, 1],
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.stopRun, { workItemId, reason: 'Not this quarter.' });
+
+    const row = await readItem(harness, workItemId);
+    expect(row).toMatchObject({
+      state: 'failed',
+      skipReason: `${STOPPED_PREFIX}stopped by the manager: Not this quarter.`,
+    });
+    expect(row.approvedIndexes).toBeUndefined();
+    // Nothing was sent, so nothing is owed a check before a retry.
+    expect(providerReconciliationEntries(row.output)).toEqual([]);
+    // The resume that would have sent the set finds nothing to send.
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    await expect(
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ claimed: false });
+  });
+
   it('refuses an item that is not under way, and another manager’s item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'plan-pending');

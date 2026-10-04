@@ -268,6 +268,33 @@ describe('Stop on a working card (wave 12)', (): void => {
   });
 });
 
+describe('Stop on an approval that has not started (W12-R14, D-7 (b))', (): void => {
+  it('offers Stop on a set you approved that waits, and says the approval is taken back', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.held,
+      approvedIndexes: [1, 2],
+      applyPhase: 'approved',
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain(
+      'Mira has not sent the writes you approved yet. Stop takes your approval back and sends none of them.',
+    );
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep the approval');
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([['stop', '']]);
+  });
+
+  it('offers no Stop on a held set still waiting for your decision', (): void => {
+    const view = card(DRAWN.held);
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Stop',
+    );
+  });
+});
+
 describe('write held for you (work-held.html, work-held-withheld.html)', (): void => {
   it('ticks every held write, withholds one, counts the ticks on Approve and sends only what is ticked', async (): Promise<void> => {
     const view = card(DRAWN.held);

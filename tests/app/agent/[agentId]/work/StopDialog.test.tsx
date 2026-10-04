@@ -6,18 +6,19 @@ import {
   stopDialogDescription,
   stoppedOutcome,
   stopWhy,
+  type StopMoment,
 } from '../../../../../app/agent/[agentId]/work/StopDialog';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 
 /** The dialog over an empty page, with every call it makes recorded. */
-function opened(options: { applying?: boolean; refuse?: boolean } = {}) {
+function opened(options: { moment?: StopMoment; refuse?: boolean } = {}) {
   const calls: Array<[string, unknown]> = [];
   const view = mount(
     <StopDialog
       title="Close the Q3 audit note"
       employeeName="Mira"
-      applying={options.applying ?? false}
+      moment={options.moment ?? 'working'}
       onStop={async (reason): Promise<void> => {
         calls.push(['stop', reason]);
         if (options.refuse) throw new Error('Only work under way can be stopped.');
@@ -40,7 +41,7 @@ describe('StopDialog', (): void => {
     expect(dialog?.querySelector('h2')?.textContent).toBe(
       'Stop work on “Close the Q3 audit note”?',
     );
-    expect(dialog?.textContent).toContain(stopDialogDescription('Mira', false));
+    expect(dialog?.textContent).toContain(stopDialogDescription('Mira', 'working'));
     expect(focusedName()).toBe('Keep working');
     view.unmount();
   });
@@ -69,7 +70,7 @@ describe('StopDialog', (): void => {
   });
 
   it('has no axe violation and gives every control a 44 px target', async (): Promise<void> => {
-    const view = opened({ applying: true });
+    const view = opened({ moment: 'applying' });
     const dialog = document.body.querySelector('[role="alertdialog"]')!;
     expect(await axeViolations(dialog, ['region'])).toEqual([]);
     for (const control of dialog.querySelectorAll('button, input')) {
@@ -85,6 +86,19 @@ describe('StopDialog', (): void => {
     );
     expect(stoppedOutcome('Close the Q3 audit note')).toBe(
       'Stopped: Close the Q3 audit note. It waits for you with Retry.',
+    );
+  });
+
+  it('says an approval not yet started is taken back and none of its writes is sent (W12-R14, D-7 (b))', (): void => {
+    const view = opened({ moment: 'approved' });
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain(
+      'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep the approval');
+    view.unmount();
+    expect(stopWhy('Mira', 'approved')).toBe(
+      'Mira has not sent the writes you approved yet. Stop takes your approval back and sends none of them.',
     );
   });
 });
