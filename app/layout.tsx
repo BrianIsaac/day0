@@ -7,7 +7,7 @@ import { MainTransition } from './MainTransition';
 import { BrandMark } from './marketing/BrandMark';
 import { HERO } from './marketing/copy';
 import { SiteNav } from './marketing/SiteNav';
-import { Providers } from './Providers';
+import { Providers, SessionGate } from './Providers';
 import { RetiredNoticeProvider } from './RetiredNotice';
 import { SESSION_HINT_SCRIPT } from './session-hint';
 
@@ -69,7 +69,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </Link>
               <SiteNav />
               <div className="flex items-center gap-4">
-                <DocumentationLink />
+                {/* The link asks the deployment its mode, which only a signed-in caller is told
+                    (the anonymous-caller guard, 12-G). */}
+                <SessionGate fallback={null} closed={null}>
+                  <DocumentationLink />
+                </SessionGate>
                 <HeaderAccount />
               </div>
             </div>
