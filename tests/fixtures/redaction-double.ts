@@ -162,6 +162,72 @@ export class ScriptedSpanModel implements SpanModel {
   }
 }
 
+/** One request to the double, as both of its transports see it. */
+interface SpanRequest {
+  readonly method: string;
+  readonly path: string;
+  /** Reads the request's body; called only for a span request. */
+  readonly readBody: () => Promise<string>;
+}
+
+/** A reply from the double: an HTTP status and the JSON body it carries. */
+interface SpanReply {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+/**
+ * Answer one request to the span model the way the compose component does:
+ * `GET /healthz`, `POST /v1/spans`, and a 404 for anything else.
+ *
+ * @param model - The double that answers.
+ */
+async function answerSpanRequest(
+  model: SpanModel,
+  { method, path, readBody }: SpanRequest,
+): Promise<SpanReply> {
+  if (method === 'GET' && path === '/healthz') {
+    return { status: 200, body: { ok: true, model: model.name, device: 'test', manifest: 'verified' } };
+  }
+  if (method !== 'POST' || path !== '/v1/spans') {
+    return { status: 404, body: { error: 'not found' } };
+  }
+  try {
+    const parsed = JSON.parse(await readBody()) as { text: string; labels: string[]; threshold: number };
+    return { status: 200, body: { spans: await model.spans(parsed.text, parsed.labels, parsed.threshold) } };
+  } catch (error) {
+    return { status: 503, body: { error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+/**
+ * Answer the span model's HTTP requests in-process, for a test whose `fetch`
+ * stub routes the component's address here instead of to a socket.
+ *
+ * No socket is opened, so a test that fakes `setTimeout` cannot hold the
+ * call: from undici 6.28 (Node 22.23) a pooled keep-alive socket is reused
+ * only after a zero-delay timer fires, and a faked clock that nothing
+ * advances never fires it.
+ *
+ * @param model - The double to answer with.
+ * @returns A `fetch`-shaped handler for requests to the component's address.
+ */
+export function spanModelFetch(
+  model: SpanModel = new RecordedSpanModel(),
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const reply = await answerSpanRequest(model, {
+      method: request.method,
+      path: new URL(request.url).pathname,
+      readBody: (): Promise<string> => request.text(),
+    });
+    return new Response(JSON.stringify(reply.body), {
+      status: reply.status,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+}
+
 /**
  * Serve a span model over HTTP the way the compose component does, for the
  * Convex action tests that reach it through `DAY0_REDACTOR_URL`.
@@ -177,34 +243,31 @@ export async function serveSpanModel(model: SpanModel = new RecordedSpanModel())
   close: () => Promise<void>;
 }> {
   const server: Server = createServer((request: IncomingMessage, response: ServerResponse): void => {
-    if (request.method === 'GET' && request.url === '/healthz') {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ ok: true, model: model.name, device: 'test', manifest: 'verified' }));
-      return;
-    }
-    if (request.method !== 'POST' || request.url !== '/v1/spans') {
-      response.writeHead(404, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: 'not found' }));
-      return;
-    }
-    let body = '';
-    request.setEncoding('utf8');
-    request.on('data', (chunk: string): void => {
-      body += chunk;
-    });
-    request.on('end', (): void => {
-      void (async (): Promise<void> => {
-        try {
-          const parsed = JSON.parse(body) as { text: string; labels: string[]; threshold: number };
-          const spans = await model.spans(parsed.text, parsed.labels, parsed.threshold);
-          response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ spans }));
-        } catch (error) {
-          response.writeHead(503, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-        }
-      })();
-    });
+    const readBody = (): Promise<string> =>
+      new Promise<string>((resolve, reject): void => {
+        let body = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk: string): void => {
+          body += chunk;
+        });
+        request.on('end', (): void => resolve(body));
+        request.on('error', reject);
+      });
+    // The server's callback returns nothing; a failure to answer ends the response with a 500.
+    void answerSpanRequest(model, {
+      method: request.method ?? 'GET',
+      path: request.url ?? '/',
+      readBody,
+    }).then(
+      (reply: SpanReply): void => {
+        response.writeHead(reply.status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(reply.body));
+      },
+      (error: unknown): void => {
+        response.writeHead(500, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      },
+    );
   });
   await new Promise<void>((resolve): void => {
     server.listen(0, '127.0.0.1', resolve);

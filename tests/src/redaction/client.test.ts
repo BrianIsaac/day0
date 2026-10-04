@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpSpanModel, RedactorUnavailableError } from '../../../src/redaction/client';
 import { redactText } from '../../../src/redaction/redact';
+import { serveSpanModel, spanModelFetch } from '../../fixtures/redaction-double';
 
 describe('span response validation', () => {
   it.each([
@@ -81,5 +82,59 @@ describe('one more try for the redaction component', () => {
     );
     await expect(model.spans('hunter2', ['password'], 0.4)).rejects.toThrow('HTTP 413');
     expect(calls).toBe(1);
+  });
+});
+
+describe('the span model double answered in-process (the test transport)', () => {
+  const BASE = 'http://redactor.test:8000';
+  const viaHandler = (answer: (request: Request) => Promise<Response>): HttpSpanModel =>
+    new HttpSpanModel(BASE, (input: URL, init: RequestInit) => answer(new Request(input, init)));
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('reads the spans with setTimeout faked and the clock never advanced', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const spans = await viaHandler(spanModelFetch()).spans(
+      'the password is hunter2',
+      ['password'],
+      0.5,
+    );
+    expect(spans).toEqual([{ start: 16, end: 23, label: 'password', score: 0.9 }]);
+  });
+
+  it('answers every request as the served double does', async () => {
+    const served = await serveSpanModel();
+    const answer = spanModelFetch();
+    try {
+      const requests: ReadonlyArray<readonly [string, RequestInit]> = [
+        [
+          '/v1/spans',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              text: 'reach Priya on +65 9123 4567',
+              labels: ['person', 'phone number'],
+              threshold: 0.5,
+            }),
+          },
+        ],
+        ['/v1/spans', { method: 'POST', body: 'not json' }],
+        ['/healthz', { method: 'GET' }],
+        ['/v1/unknown', { method: 'GET' }],
+      ];
+      for (const [path, init] of requests) {
+        const overSocket = await fetch(`${served.url}${path}`, init);
+        const inProcess = await answer(new Request(`${BASE}${path}`, init));
+        expect([inProcess.status, await inProcess.json()]).toEqual([
+          overSocket.status,
+          await overSocket.json(),
+        ]);
+      }
+    } finally {
+      await served.close();
+    }
   });
 });
