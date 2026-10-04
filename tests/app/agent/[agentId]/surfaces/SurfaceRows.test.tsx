@@ -495,7 +495,10 @@ describe('DecisionButtonsRow (wave 12, 12-M; RM3)', (): void => {
       landings: 1,
     });
     expect(markup).toContain('role="status"');
-    expect(markup).toContain('The app-level token is stored; Approve and Reject buttons are on.');
+    // Re-pinned for W12-R10 and W12-R16: only a new request carries the buttons.
+    expect(markup).toContain(
+      'The app-level token is stored; new requests carry Approve and Reject buttons.',
+    );
     expect(markup).not.toMatch(/<details[^>]* open/);
   });
 

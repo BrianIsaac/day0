@@ -400,11 +400,16 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 });
 
 describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
-  it('says buttons are on, with the typed code beside them', (): void => {
+  // Re-pinned for the wave 12 review: the card no longer says the buttons are on whether the
+  // bridge runs or not (W12-R16, D-6 (b)), nor that a request asked before they were on has them
+  // (W12-R10).
+  it('says buttons are on while the socket service runs, on each new request, with the typed code beside them', (): void => {
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
-    expect(words.title).toBe('Decisions in Slack: buttons are on');
+    expect(words.title).toBe(
+      'Decisions in Slack: buttons are on while the Slack socket service runs',
+    );
     expect(words.note).toBe(
-      'Each request to you arrives with Approve and Reject buttons and a typed code; either one decides it.',
+      'Each new request to you arrives with Approve and Reject buttons and a typed code; either one decides it, and the typed code decides it whenever a press cannot reach Day0.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);

@@ -564,8 +564,10 @@ export function decisionButtonsWords(
   const app = appName ?? "the employee's app";
   if (buttons.available) {
     return {
-      title: 'Decisions in Slack: buttons are on',
-      note: 'Each request to you arrives with Approve and Reject buttons and a typed code; either one decides it.',
+      // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
+      // before the token landed keeps its typed code alone (W12-R10).
+      title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
+      note: 'Each new request to you arrives with Approve and Reject buttons and a typed code; either one decides it, and the typed code decides it whenever a press cannot reach Day0.',
       asksForToken: false,
       offersReplacement: true,
     };

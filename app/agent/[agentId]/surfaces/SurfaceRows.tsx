@@ -766,7 +766,9 @@ export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactN
         </div>
       ) : null}
       <p role="status" className="mt-2 text-[var(--color-fg-2)] empty:hidden">
-        {landed ? 'The app-level token is stored; Approve and Reject buttons are on.' : null}
+        {landed
+          ? 'The app-level token is stored; new requests carry Approve and Reject buttons.'
+          : null}
       </p>
       {props.error ? (
         <p id={errorId} role="alert" className="mt-2 text-[var(--color-danger)]">
