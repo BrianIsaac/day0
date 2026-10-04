@@ -707,6 +707,19 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     expect(view.text()).toContain('Not done, in Mira’s own words');
     expect(view.text()).toContain('I could not find a mismatch');
   });
+
+  it('sets the list of what was not done in a block, never a list inside a paragraph (a hydration error on the bed)', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: { ...(DRAWN.landed.output as object), draft: QUILL_COMMENT },
+    } as unknown as Doc<'workItems'>);
+    expect(view.container.querySelector('p ul, p li')).toBeNull();
+    expect(
+      [...view.container.querySelectorAll('div > ul')].some((list) =>
+        list.textContent?.includes('I could not find a mismatch'),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('plan to approve, attempt two (work-retried.html)', (): void => {

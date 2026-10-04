@@ -357,7 +357,7 @@ export function WorkItemCard({
   const unfinishedSection =
     notDone !== undefined ? (
       <ItemSection>
-        <Note tone="warn">
+        <Note tone="warn" block>
           <Lead>
             {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}, in {employeeName}’s own
             words:
