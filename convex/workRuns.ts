@@ -652,8 +652,41 @@ export async function stopRunsForHandover(
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
     .collect();
-  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
+  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON, { tellManager: true });
   return running.length;
+}
+
+/**
+ * Tell the manager, in their channel, that a stop met an apply in flight: the rows it reported and
+ * each row whose outcome is now unknown, with the stop's reason, for them to check on the provider
+ * before a retry.
+ *
+ * @param ctx - The stop's mutation context.
+ * @param row - The item as it stood before the stop.
+ * @param output - The stopped run's output with its ledger.
+ * @param reason - Why it stopped.
+ */
+async function noteApplyStopped(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  output: Record<string, unknown>,
+  reason: string,
+): Promise<void> {
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .take(100)
+  ).map(toSurfaceRecord);
+  await queueManagerNote(ctx, row, 'landed', (agentName) =>
+    landedNoteText({
+      agentName,
+      title: row.title,
+      rows: landedNoteRows(output, surfaces, replyTargetFor(row)),
+      outcome: 'failed',
+      reason: stopDetail(reason),
+    }),
+  );
 }
 
 /**
@@ -665,16 +698,21 @@ export async function stopRunsForHandover(
  * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
  * nothing it ran landed. A handover's deadline stops an employee's runs this way
  * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
- * (`skillControls.withdraw`; the wave 10 review, M4).
+ * (`skillControls.withdraw`; the wave 10 review, M4). A stop the manager did not make themselves
+ * tells them in their channel of an apply it met, naming each row whose outcome is now theirs to
+ * check, as the apply's dead-man switch does (W12-R12); their own Stop is made at the card that
+ * lists the rows, so it sends nothing.
  *
  * @param ctx - The caller's mutation context.
  * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
  * @param reason - Why, in the words the item and the record carry after `stopped: `.
+ * @param options - Whether the manager is told of an apply in flight: not when they stopped it.
  */
 export async function stopRunsInTransaction(
   ctx: MutationCtx,
   rows: readonly Doc<'workItems'>[],
   reason: string,
+  options: { readonly tellManager: boolean },
 ): Promise<void> {
   for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
@@ -684,6 +722,7 @@ export async function stopRunsInTransaction(
         output: { ...output, applied },
         stopped: false,
       });
+      if (options.tellManager) await noteApplyStopped(ctx, row, { ...output, applied }, reason);
     } else {
       await failInTransaction(ctx, row, {
         reason,
@@ -1035,7 +1074,7 @@ export const stopRun = mutation({
     const note = managerText(args.reason);
     const applyInFlight = row.applyAttemptId !== undefined && row.pendingRunId !== undefined;
     await cancelQueuedStep(ctx, row);
-    await stopRunsInTransaction(ctx, [row], managerStopReason(note));
+    await stopRunsInTransaction(ctx, [row], managerStopReason(note), { tellManager: false });
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.stopped',

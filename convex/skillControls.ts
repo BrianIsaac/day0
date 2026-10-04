@@ -634,7 +634,7 @@ async function stopRunsOf(ctx: MutationCtx, holder: Doc<'skills'>): Promise<numb
       .take(APPROVED_SCAN);
     runs.push(...items.filter((item) => item.skillId === holder._id));
   }
-  await stopRunsInTransaction(ctx, runs, withdrawnRunReason(holder.name));
+  await stopRunsInTransaction(ctx, runs, withdrawnRunReason(holder.name), { tellManager: true });
   return runs.length;
 }
 

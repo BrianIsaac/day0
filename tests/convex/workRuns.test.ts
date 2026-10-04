@@ -17,6 +17,7 @@ import {
 } from '../../src/work/reconciliation';
 import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
+import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
 import { eventTypesIn } from '../../src/events/record-filters';
@@ -399,6 +400,70 @@ describe('Stop on a working item', (): void => {
         .mutation(api.workRuns.stopRun, { workItemId: working.workItemId }),
     ).rejects.toThrow();
     expect(await readItem(harness, working.workItemId)).toMatchObject({ state: 'executing' });
+  });
+});
+
+describe('a stop that meets an apply in flight, told in Slack (W12-R12)', (): void => {
+  /** Give the employee a manager channel, so a note has somewhere to go. */
+  async function withManagerChannel(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        credentialLanded: true,
+        credentialId,
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+  }
+
+  const notes = async (harness: Harness): Promise<Doc<'managerNotes'>[]> =>
+    await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+
+  it('names the rows whose outcome is unknown when a handover stops the apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, applyAttemptId } = await applyInFlight(harness);
+    await withManagerChannel(harness, agentId);
+    await harness.mutation(internal.workRuns.recordApplyOutcome, {
+      workItemId,
+      applyAttemptId,
+      index: 0,
+      row: landedComment,
+    });
+
+    await harness.run(async (ctx) => {
+      await stopRunsForHandover(ctx, agentId);
+    });
+
+    const [note] = await notes(harness);
+    expect(note).toMatchObject({ kind: 'landed', workItemId });
+    expect(note?.text).toContain('the employee was handed over to a new manager');
+    expect(note?.text).toContain('(outcome unknown)');
+  });
+
+  it('sends nothing for the manager’s own Stop: they are at the card that lists each row', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await applyInFlight(harness);
+    await withManagerChannel(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    expect(await notes(harness)).toEqual([]);
   });
 });
 
