@@ -1422,6 +1422,7 @@ describe('holdings: what a deletion would remove, read before its control is pre
     handoverWords: false,
     retiredBoundaries: false,
     documentation: false,
+    credentials: false,
   };
 
   afterEach((): void => {
@@ -1478,6 +1479,36 @@ describe('holdings: what a deletion would remove, read before its control is pre
       });
     });
   }
+
+  it("holds a credential the manager landed and kept, and the deletion with the unlink choice takes it (the wave 11 review's m15)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Notion integration token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('credentials', {
+        userId: 'rival',
+        kind: 'value',
+        label: 'Rival token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+    });
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, credentials: true });
+
+    await owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+  });
 
   it('answers an anonymous caller with nothing to read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

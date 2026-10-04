@@ -1131,6 +1131,8 @@ const holdingsValidator = v.object({
   handoverWords: v.boolean(),
   retiredBoundaries: v.boolean(),
   documentation: v.boolean(),
+  /** A credential the owner stored that still holds its value: the unlink choice purges it. */
+  credentials: v.boolean(),
 });
 
 /**
@@ -1138,7 +1140,9 @@ const holdingsValidator = v.object({
  * employee (evaluation agents included), a version in the owner's skill library, a handover
  * request carrying words the scrub clears (one the owner asked, or one naming their verified
  * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
- * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * releases; and the documentation and the stored credentials only the unlink choice takes (the
+ * wave 11 review's m15: an owner holding only a credential read "Nothing of yours is stored now",
+ * and no control could reach it). Each read stops at its first
  * match, the handover reads scanning the party's requests of one state until one carries words,
  * and the retirements read stops at their cap, so the home page can subscribe to it.
  *
@@ -1150,7 +1154,7 @@ async function deletionHoldings(
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<Infer<typeof holdingsValidator>> {
   const { ownerKey, address } = party;
-  const [employee, version, source, requests, retirements] = await Promise.all([
+  const [employee, version, source, credential, requests, retirements] = await Promise.all([
     db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
@@ -1162,6 +1166,12 @@ async function deletionHoldings(
     db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+      .first(),
+    // A purged row keeps its record with no value; the read stops at the first that holds one.
+    db
+      .query('credentials')
+      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+      .filter((q) => q.neq(q.field('ciphertext'), undefined))
       .first(),
     Promise.all(
       MANAGER_TRANSFER_STATES.flatMap((state) => [
@@ -1201,6 +1211,7 @@ async function deletionHoldings(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
     ),
     documentation: source !== null,
+    credentials: credential !== null,
   };
 }
 

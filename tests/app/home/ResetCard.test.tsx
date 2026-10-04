@@ -10,6 +10,7 @@ interface Holdings {
   handoverWords: boolean;
   retiredBoundaries: boolean;
   documentation: boolean;
+  credentials: boolean;
 }
 
 const reset = vi.hoisted(() => vi.fn());
@@ -28,6 +29,7 @@ const NOTHING: Holdings = {
   handoverWords: false,
   retiredBoundaries: false,
   documentation: false,
+  credentials: false,
 };
 
 /** What the deletion's read answers for the owner, as the page subscribes to it. */
@@ -145,6 +147,51 @@ describe('ResetCard', (): void => {
     expect(heldNow(holding({ employees: true, documentation: true }), true)).toBe(
       'Stored for you now: your employees. Your linked documentation goes too.',
     );
+  });
+
+  it("says the credentials the manager stored, which go only with the box ticked, never that nothing is stored (the wave 11 review's m15)", (): void => {
+    expect(heldNow(holding({ credentials: true }), false)).toBe(
+      'Only the credentials you stored are kept now: tick the box below to delete them.',
+    );
+    expect(heldNow(holding({ credentials: true }), true)).toBe(
+      'Only the credentials you stored are kept now, and they go with the box ticked.',
+    );
+    expect(heldNow(holding({ documentation: true, credentials: true }), false)).toBe(
+      'Only your linked documentation and the credentials you stored are kept now: tick the box below to remove them.',
+    );
+    expect(heldNow(holding({ employees: true, credentials: true }), false)).toBe(
+      'Stored for you now: your employees. The credentials you stored stay unless you tick the box below.',
+    );
+    expect(
+      heldNow(holding({ employees: true, documentation: true, credentials: true }), true),
+    ).toBe(
+      'Stored for you now: your employees. Your linked documentation and the credentials you stored go too.',
+    );
+    expect(deletionWarning(holding({ credentials: true }), true)).toBe(
+      'This deletes the credentials you stored. Your sign-in stays. It cannot be undone.',
+    );
+    expect(
+      deletionWarning(holding({ employees: true, documentation: true, credentials: true }), true),
+    ).toBe(
+      'This deletes every employee and its data, unlinks every documentation source and deletes the credentials you stored. Your sign-in stays. It cannot be undone.',
+    );
+    expect(deletionWarning(holding({ employees: true, credentials: true }), true)).toBe(
+      'This deletes every employee and its data, and deletes the credentials you stored. Your sign-in stays. It cannot be undone.',
+    );
+    expect(deletionWarning(holding({ employees: true, credentials: true }), false)).toBe(
+      'This deletes every employee and its data. The credentials you stored stay. Your sign-in stays. It cannot be undone.',
+    );
+    read.holdings = holding({ credentials: true });
+    const view = mount(<ResetCard />);
+    expect(view.container.textContent).toContain(
+      'Also unlink your documentation sources and delete the credentials you stored',
+    );
+    act(() => view.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    expect(
+      [...view.container.querySelectorAll('button')].find(
+        (control) => control.textContent === 'Delete my data…',
+      )?.disabled,
+    ).toBe(false);
   });
 
   it('ties the button to the line that says what it would take', (): void => {
