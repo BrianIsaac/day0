@@ -693,6 +693,8 @@ export interface DecisionButtonsRowProps {
   readonly onLand: (token: string) => void;
   readonly landing: boolean;
   readonly surfaceSlug: string;
+  /** How many tokens this card landed since the tab opened: the row says so after each. */
+  readonly landings?: number;
 }
 
 /**
@@ -703,10 +705,14 @@ export interface DecisionButtonsRowProps {
  */
 export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactNode {
   const fieldId = `app-level-token-${props.surfaceSlug}`;
+  const hintId = `${fieldId}-hint`;
+  const errorId = `${fieldId}-error`;
+  const landed = (props.landings ?? 0) > 0 && !props.landing && props.error === undefined;
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = event.currentTarget;
     const value = new FormData(form).get('appLevelToken');
+    // The secret leaves the page's DOM at once, refused or not; a refusal asks for it again.
     form.reset();
     if (typeof value === 'string' && value.trim()) props.onLand(value);
   }
@@ -715,6 +721,9 @@ export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactN
       <label htmlFor={fieldId} className="text-[13px] font-medium text-[var(--color-fg-2)]">
         App-level token
       </label>
+      <p id={hintId} className="text-[13px] text-[var(--color-muted)]">
+        Starts with xapp-. It turns the buttons on; it is not the app configuration token.
+      </p>
       <div className="flex flex-wrap gap-2">
         <input
           id={fieldId}
@@ -723,13 +732,14 @@ export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactN
           autoComplete="new-password"
           spellCheck={false}
           required
+          aria-describedby={props.error ? `${hintId} ${errorId}` : hintId}
           className={`${INPUT_CLASS} min-w-48 flex-1`}
         />
         <Button type="submit" size="small" disabled={props.landing}>
           {props.landing
             ? 'Checking the token…'
             : props.words.offersReplacement
-              ? 'Replace'
+              ? 'Replace token'
               : 'Turn on buttons'}
         </Button>
       </div>
@@ -741,12 +751,16 @@ export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactN
       <p className="mt-1 text-[var(--color-fg-2)]">{props.words.note}</p>
       {props.words.asksForToken ? field : null}
       {props.words.offersReplacement ? (
-        <div className="mt-1">
+        // Keyed by the landings, so a replace that landed closes its disclosure.
+        <div key={props.landings ?? 0} className="mt-1">
           <Disclosure summary="Replace the app-level token">{field}</Disclosure>
         </div>
       ) : null}
+      <p role="status" className="mt-2 text-[var(--color-fg-2)] empty:hidden">
+        {landed ? 'The app-level token is stored; Approve and Reject buttons are on.' : null}
+      </p>
       {props.error ? (
-        <p role="alert" className="mt-1 text-[var(--color-danger)]">
+        <p id={errorId} role="alert" className="mt-2 text-[var(--color-danger)]">
           {props.error}
         </p>
       ) : null}

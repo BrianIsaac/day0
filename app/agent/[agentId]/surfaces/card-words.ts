@@ -535,8 +535,8 @@ export function decisionButtonsWords(
   const app = appName ?? "the employee's app";
   if (buttons.available) {
     return {
-      title: 'Decisions in Slack: buttons and typed codes',
-      note: `Requests to you carry Approve and Reject buttons, which reach Day0 over the Socket Mode connection of ${app}; the typed code beside them always decides too.`,
+      title: 'Decisions in Slack: buttons are on',
+      note: 'Each request to you arrives with Approve and Reject buttons and a typed code; either one decides it.',
       asksForToken: false,
       offersReplacement: true,
     };
@@ -551,24 +551,24 @@ export function decisionButtonsWords(
     case 'no-app-level-token':
       return {
         title: "Buttons: needs this app's socket token",
-        note: `Requests carry the typed code only. Someone who manages ${app} turns on Socket Mode in its settings, generates an app-level token under Basic Information with the connections:write scope, and pastes it here; requests then carry Approve and Reject buttons too.`,
+        note: `Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages ${app} in Slack turns on Socket Mode, creates an app-level token with the connections:write scope (Basic Information, App-Level Tokens) and pastes it below.`,
         asksForToken: true,
         offersReplacement: false,
       };
     case 'no-bridge':
       return typedOnly(
         'Buttons: needs the Slack socket service',
-        `${app}'s app-level token is stored, but this deployment does not run the Slack socket service that carries a press, so requests carry the typed code only. IT runs ./setup.sh again, which starts it.`,
+        `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`,
       );
     case 'no-own-app':
       return typedOnly(
-        'Decisions in Slack: typed codes',
-        'Requests carry the typed code only: buttons need a Slack app Day0 created for this employee, and this card connects through another token.',
+        'Decisions in Slack: typed codes only',
+        'Buttons need the Slack app Day0 creates for this employee, and this card uses a different connection.',
       );
     case 'not-slack-api':
       return typedOnly(
-        'Decisions in Slack: typed codes',
-        "Requests carry the typed code only: this chat connection sends text, and buttons need Slack's own API.",
+        'Decisions in Slack: typed codes only',
+        "This connection can only send plain messages; buttons need Slack's own API.",
       );
     default: {
       const unknown: never = buttons.why;

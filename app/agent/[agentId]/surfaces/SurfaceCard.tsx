@@ -153,6 +153,8 @@ export interface SurfaceCardContext {
    * request can be sent there (`accessRequests`'s `managerDmCardOf`, without its grant check).
    */
   readonly managerDmReachable: boolean;
+  /** How many app-level tokens each card landed since the tab opened, by card id (12-M). */
+  readonly socketTokenLandings?: ReadonlyMap<string, number>;
 }
 
 /** What a card's controls do, each bound to the card's own change. */
@@ -530,6 +532,7 @@ export function SurfaceCard({
             error={failed('socket-token')}
             onLand={actions.landSocketToken}
             landing={pending === 'socket-token'}
+            landings={context.socketTokenLandings?.get(String(surface._id))}
             surfaceSlug={surface.slug}
           />
         ) : null}

@@ -119,6 +119,10 @@ export function SurfaceCards({
   // One change per card at a time, and each card's own: a card's refusal or pending state
   // outlives a change made on another card meanwhile.
   const [operations, setOperations] = useState<Readonly<Record<string, Operation>>>({});
+  // How many app-level tokens each card landed since the tab opened, so its row can say so.
+  const [socketTokenLandings, setSocketTokenLandings] = useState<ReadonlyMap<string, number>>(
+    new Map(),
+  );
   // Where focus goes when the control that made a change leaves with it (the Approve buttons
   // become the card's verdict): the card, set per change.
   const cardFocus = useRef<HTMLElement | null>(null);
@@ -139,6 +143,7 @@ export function SurfaceCards({
       installRedirectConfigured: installRedirectConfigured === true,
       browserPresent: componentStatus?.browser,
       employeeName,
+      socketTokenLandings,
       managerDmReachable: (surfaces ?? []).some(
         (surface) =>
           surface.class === 'chat' &&
@@ -158,6 +163,7 @@ export function SurfaceCards({
       componentStatus,
       credentialRows,
       employeeName,
+      socketTokenLandings,
       installRedirectConfigured,
       now,
       organisationSummary,
@@ -280,7 +286,16 @@ export function SurfaceCards({
         operate(
           'socket-token',
           surface,
-          () => landAppLevelToken({ surfaceId: surface._id, token }),
+          async (): Promise<void> => {
+            await landAppLevelToken({ surfaceId: surface._id, token });
+            setSocketTokenLandings(
+              (landed) =>
+                new Map([
+                  ...landed,
+                  [String(surface._id), (landed.get(String(surface._id)) ?? 0) + 1],
+                ]),
+            );
+          },
           {
             done: `The app-level token is stored: requests to you through ${surface.displayName} carry Approve and Reject buttons.`,
             refused: 'The app-level token was not stored.',
