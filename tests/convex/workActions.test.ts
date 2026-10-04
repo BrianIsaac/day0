@@ -24,6 +24,8 @@ import {
 } from '../../convex/workActions';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
+import { CLOSE_ONLY_ON_CARD_REASON } from '../../src/work/manager-channel';
+import { NOT_APPLIED_AFTER_APPROVED_FAILURE } from '../../convex/workActions';
 import {
   LOG_1_RETRY_NOTE as SITTING_4_RETRY_NOTE,
   LOG_1_SECOND_SITTING_STOP,
@@ -9499,9 +9501,20 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
   };
   const CLOSE = 1;
 
+  // Every job an approval or a park schedules (the apply, the close edit, the acknowledgement, the
+  // close's own ask) runs only when a test drains it, so none outlives its test (standard 11.5).
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
   afterEach((): void => {
     vi.unstubAllEnvs();
   });
+
+  /** Run every job due now, and every job those schedule. */
+  async function drain(harness: Harness): Promise<void> {
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  }
 
   interface OnChannel extends Seeded {
     readonly runId: Id<'events'>;
@@ -9617,7 +9630,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       await approveInSlack(harness, surfaceId, route);
       expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
       expect(await acknowledgement(harness, surfaceId)).toBe(
-        'Approval gh6npq received. I’m applying the approved actions now. The ticket close is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.',
+        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
       );
 
       // The comment and the post land; the close does not, and waits on its card alone.
@@ -9719,13 +9732,13 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       }),
     ).resolves.toMatchObject({
       status: 'ignored',
-      reason: 'its ticket close is decided on its card',
+      reason: CLOSE_ONLY_ON_CARD_REASON,
     });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('actions-pending');
     expect(row.approvedIndexes).toBeUndefined();
     expect(await acknowledgement(harness, surfaceId, '1789000003.000100')).toBe(
-      'Approval jm8uvw decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.',
+      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
     );
   });
 
@@ -9786,7 +9799,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
     expect((await readItem(harness, second.workItemId)).approvedIndexes).toEqual([0]);
     expect(await acknowledgement(harness, surfaceId)).toBe(
-      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. The ticket close of gh6npq is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.',
+      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
     );
     const approved = (await events(harness, agentId)).filter(
       (event) => event.type === 'work.actions-approved',
@@ -9860,15 +9873,8 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     });
 
     await approveInSlack(harness, surfaceId, 'typed code');
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-    // The park asks about the close alone in an action it scheduled, which runs in real time.
-    await vi.waitFor(
-      () =>
-        expect(postedToManager().some((text) => text.startsWith('Priya’s ticket close'))).toBe(
-          true,
-        ),
-      { timeout: 10_000 },
-    );
+    // The apply, then the close's own ask that its park schedules.
+    await drain(harness);
     const parked = await readItem(harness, workItemId);
     expect(parked.state).toBe('actions-pending');
     expect(parked.decision).toMatchObject({ kind: 'actions' });
@@ -10020,6 +10026,46 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       pendingRunId: parked.pendingRunId!,
       approvedIndexes: [1],
     });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment', 'save_issue'],
+    );
+  });
+
+  it('fails the run with the close unsent when a write the approval sent beside it fails', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await approveInSlack(harness, surfaceId, 'typed code');
+    recorded.failedMcpTool = 'save_comment';
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(recorded.mcp.some((call) => call.tool === 'save_issue')).toBe(false);
+    expect(ledger(row)[CLOSE]).toMatchObject({
+      held: true,
+      reason: NOT_APPLIED_AFTER_APPROVED_FAILURE,
+    });
+  });
+
+  it('never parks a close for its card on the card’s own approval, whatever an earlier approval left on the set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await heldOnChannel(harness);
+    // A mark a set returned to held kept from an approval that was taken back.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        output: { ...(row?.output as Record<string, unknown>), leftForCard: [CLOSE] },
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, CLOSE, 3],
+    });
+    expect((await readItem(harness, workItemId)).output).not.toHaveProperty('leftForCard');
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(

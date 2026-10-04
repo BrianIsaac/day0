@@ -479,9 +479,15 @@ export function decisionRequestText(args: {
       ...(closes.length > 0
         ? [
             '',
-            'Left out of this request, for its card in day0:',
+            closes.length === 1
+              ? 'Not sent by approving here, as it waits on its card in day0:'
+              : 'Not sent by approving here, as each waits on its card in day0:',
             ...closeLines(args.actions ?? [], closes, args.surfaces ?? [], summary),
-            `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} Approving here does not send this close: decide it on its card, where you can read the run first.`,
+            `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} ${
+              closes.length === 1
+                ? 'Day0 held this close for that reason, so approving here does not send it, and rejecting here rejects everything, the close included. Decide it on its card, where you can read the run first.'
+                : 'Day0 held these closes for that reason, so approving here does not send them, and rejecting here rejects everything, the closes included. Decide each on its card, where you can read the run first.'
+            }`,
           ]
         : []),
       ...(refused.length > 0 ? ['', ...refused] : []),
@@ -519,7 +525,11 @@ function closeOnlyRequestText(
     ...(args.item ? itemLines(args.item) : []),
     '',
     ...closeLines(args.actions ?? [], args.closes, args.surfaces ?? [], summary),
-    `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done.`,
+    `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} ${
+      args.closes.length === 1
+        ? 'Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done, or finish without it.'
+        : 'Day0 held the closes for that reason, so they are decided on their cards, not here: approve each there only if the work was done, or finish without it.'
+    }`,
   ].join('\n');
 }
 
@@ -691,14 +701,12 @@ export function batchRequestLines(args: {
     ...args.members.map(
       (member, index) =>
         `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId}${
-          member.leavesCloseForCard === true ? '; its ticket close is left for its card' : ''
+          member.leavesCloseForCard === true ? '; its ticket close waits on its card' : ''
         })`,
     ),
-    `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.${
-      closes
-        ? ' A ticket close Day0 held is not among the approved: it is decided on its card in day0.'
-        : ''
-    }`,
+    closes
+      ? `Reply “approve ${args.id}” to approve every held action in all ${count} but any ticket close Day0 held, which is decided on its card in day0, or “reject ${args.id} <reason>” to reject them all, any such close included. A request decided since is left as decided.`
+      : `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
   ];
 }
 
@@ -735,15 +743,22 @@ export function decisionNoticeText(args: {
   readonly verb: 'approve' | 'reject';
   readonly kind: 'plan' | 'actions';
   readonly hold: RunHold | undefined;
-  /** How many ticket closes Day0 held the approval left for their card (wave 12, 12-H). */
-  readonly leftForCard?: number;
+  /**
+   * How many ticket closes Day0 held the set carried (wave 12, 12-H): an approval left them for
+   * their card, a rejection took them with the rest.
+   */
+  readonly closesHeld?: number;
 }): string {
-  if (args.verb === 'reject') return `Rejection ${args.id} received. I won’t apply it.`;
-  const left = args.leftForCard ?? 0;
+  const closes = args.closesHeld ?? 0;
+  if (args.verb === 'reject') {
+    return closes === 0
+      ? `Rejection ${args.id} received. I won’t apply it.`
+      : `Rejection ${args.id} received. I won’t apply any of it, the ticket ${closes === 1 ? 'close' : 'closes'} included.`;
+  }
   return [
     `Approval ${args.id} received.`,
     approvedStepWords(args.kind, args.hold),
-    ...(left > 0 ? [closesLeftForCardWords(left)] : []),
+    ...(closes > 0 ? [closesLeftForCardWords(closes)] : []),
   ].join(' ');
 }
 
@@ -755,8 +770,8 @@ export function decisionNoticeText(args: {
  */
 export function closesLeftForCardWords(count: number): string {
   return count === 1
-    ? 'The ticket close is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.'
-    : `The ${count} ticket closes are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.`;
+    ? 'I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.'
+    : `I won’t send the ${count} ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.`;
 }
 
 /**
@@ -766,7 +781,7 @@ export function closesLeftForCardWords(count: number): string {
  * @param id - The request's code.
  */
 export function closeOnCardNoticeText(id: string): string {
-  return `Approval ${id} decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.`;
+  return `Approval ${id} received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.`;
 }
 
 /**
@@ -801,8 +816,8 @@ export function batchDecisionNoticeText(args: {
     closes.length === 0
       ? ''
       : closes.length === 1
-        ? ` The ticket close of ${closes[0]} is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.`
-        : ` The ticket closes of ${closes.slice(0, -1).join(', ')} and ${closes[closes.length - 1]} are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.`;
+        ? ` I won’t send the ticket close of ${closes[0]} with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.`
+        : ` I won’t send the ticket closes of ${closes.slice(0, -1).join(', ')} and ${closes[closes.length - 1]} with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.`;
   const left = args.skipped.map((member) => `${member.decisionId}: ${member.reason}`);
   return left.length > 0
     ? `${head}${onCard} Left as they were: ${left.join('; ')}.`
@@ -810,4 +825,5 @@ export function batchDecisionNoticeText(args: {
 }
 
 /** Why a batch approval left a request as it was: its one waiting write is a close Day0 held. */
-export const CLOSE_ONLY_ON_CARD_REASON = 'its ticket close is decided on its card';
+export const CLOSE_ONLY_ON_CARD_REASON =
+  'nothing to send: its only write is a ticket close, which waits on its card';

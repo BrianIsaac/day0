@@ -656,10 +656,10 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         verb: 'approve',
         kind: 'actions',
         hold: undefined,
-        leftForCard: 1,
+        closesHeld: 1,
       }),
     ).toBe(
-      'Approval ab12cd received. I’m applying the approved actions now. The ticket close is not among them: what I wrote says the work was not done, so it waits for you on its card in day0.',
+      'Approval ab12cd received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
     );
     expect(
       decisionNoticeText({
@@ -667,12 +667,21 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         verb: 'approve',
         kind: 'actions',
         hold: employee,
-        leftForCard: 2,
+        closesHeld: 2,
       }),
     ).toBe(
-      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. The 2 ticket closes are not among them: what I wrote says the work was not done, so each waits for you on its card in day0.',
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. I won’t send the 2 ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.',
     );
     // A rejection takes the whole set, the close with it: nothing is left for the card.
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'reject',
+        kind: 'actions',
+        hold: undefined,
+        closesHeld: 1,
+      }),
+    ).toBe('Rejection ab12cd received. I won’t apply any of it, the ticket close included.');
     expect(
       decisionNoticeText({ id: 'ab12cd', verb: 'reject', kind: 'actions', hold: undefined }),
     ).toBe('Rejection ab12cd received. I won’t apply it.');
@@ -688,13 +697,13 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         leftForCard: ['ab12cd', 'ef34gh'],
       }),
     ).toBe(
-      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. The ticket closes of ab12cd and ef34gh are not among them: what I wrote says the work was not done, so each waits for you on its card in day0. Left as they were: jk56mn: its ticket close is decided on its card.',
+      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. I won’t send the ticket closes of ab12cd and ef34gh with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0. Left as they were: jk56mn: nothing to send: its only write is a ticket close, which waits on its card.',
     );
   });
 
   it('answers an approval of a request whose only waiting write is the close with where it is decided', (): void => {
     expect(closeOnCardNoticeText('ab12cd')).toBe(
-      'Approval ab12cd decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.',
+      'Approval ab12cd received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
     );
   });
 });
@@ -743,12 +752,12 @@ describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', ():
     });
     const lines = text.split('\n');
     expect(lines.filter((line) => /^\d+\. /.test(line))).toHaveLength(2);
-    expect(text).toContain('Left out of this request, for its card in day0:');
+    expect(text).toContain('Not sent by approving here, as it waits on its card in day0:');
     expect(text).toContain(
-      'Priya answered that the work is done, but wrote “I could not find the close summary”. Approving here does not send this close: decide it on its card, where you can read the run first.',
+      'Priya answered that the work is done, but wrote “I could not find the close summary”. Day0 held this close for that reason, so approving here does not send it, and rejecting here rejects everything, the close included. Decide it on its card, where you can read the run first.',
     );
     expect(text).toContain('“approve gh6npq” applies both actions listed');
-    expect(text.indexOf('Left out of this request')).toBeLessThan(text.indexOf('Press Approve'));
+    expect(text.indexOf('Not sent by approving here')).toBeLessThan(text.indexOf('Press Approve'));
     expect(text.length).toBeLessThanOrEqual(3_000);
     expect(text).not.toContain('—');
   });
@@ -764,7 +773,7 @@ describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', ():
       'Priya’s ticket close on “Post the close-summary audit note” waits for you on its card in day0.',
     );
     expect(text).toContain(
-      'Priya answered that the work is done, but wrote “Did the deals sync?” Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done.',
+      'Priya answered that the work is done, but wrote “Did the deals sync?” Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done, or finish without it.',
     );
     expect(text).not.toContain('approve gh6npq');
     expect(text).not.toContain('Press Approve');
@@ -779,7 +788,8 @@ describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', ():
     });
     expect(text.length).toBeLessThanOrEqual(3_000);
     const sentence = text.split('\n').find((line) => line.startsWith('Priya answered'))!;
-    expect(sentence.length).toBeLessThanOrEqual(600);
+    // The quotation is cut at 400 characters; the line around it says why and where it is decided.
+    expect(sentence.length).toBeLessThanOrEqual(800);
     expect(sentence).toContain('…”');
   });
 });
@@ -797,9 +807,9 @@ describe('the batch lines when a member leaves a ticket close for its card (12-H
     ).toEqual([
       '',
       '2 held action sets are waiting, each shown in its own request:',
-      '1. Post the audit note (gh6npq; its ticket close is left for its card)',
+      '1. Post the audit note (gh6npq; its ticket close waits on its card)',
       '2. Post the second note (hk7rst)',
-      'Reply “approve bq2wxy” to approve every held action in all 2, or “reject bq2wxy <reason>” to reject them all. A request decided since is left as decided. A ticket close Day0 held is not among the approved: it is decided on its card in day0.',
+      'Reply “approve bq2wxy” to approve every held action in all 2 but any ticket close Day0 held, which is decided on its card in day0, or “reject bq2wxy <reason>” to reject them all, any such close included. A request decided since is left as decided.',
     ]);
   });
 });

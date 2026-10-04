@@ -150,10 +150,10 @@ describe('the Needs you batch and a close Day0 held (12-H, R-12D-1)', (): void =
     );
     const text = view.container.textContent ?? '';
     expect(text).toContain(
-      'Its ticket close is left for its card: Day0 held it because the run’s own words say the work was not done.',
+      'Day0 held its ticket close because the run’s own words say the work was not done: decide it on its card.',
     );
     expect(text).toContain(
-      '1 ticket close Day0 held is left for its card; approve it there only if the work was done.',
+      '1 ticket close that Day0 held is not in this batch: decide it on its card, and approve it there only if the work was done.',
     );
     await press(view.container, 'Approve 2 held actions across 2 items');
     expect(sent).toEqual([
@@ -165,6 +165,31 @@ describe('the Needs you batch and a close Day0 held (12-H, R-12D-1)', (): void =
     expect(said(view.container)).toEqual([
       'Approved 2 held actions across 2 items: they apply now. The ticket close waits on its card.',
     ]);
+    view.unmount();
+  });
+
+  it('offers no button when every waiting write is a close Day0 held, and says where each is decided', (): void => {
+    const members = pendingDecisionMembers([
+      row(
+        'w1',
+        [comment, close],
+        [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS],
+        [{ tool: 'mcp.call', ok: true, authority: 'manager' }],
+      ),
+      row(
+        'w2',
+        [comment, close],
+        [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS],
+        [{ tool: 'mcp.call', ok: true, authority: 'manager' }],
+      ),
+    ]);
+    const view = mount(
+      <PendingDecisionsPanel members={members} surfaces={[]} onApproveBatch={async () => {}} />,
+    );
+    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    expect(view.container.textContent).toContain(
+      'Nothing here can be approved from this list: each ticket close waits on its card.',
+    );
     view.unmount();
   });
 });

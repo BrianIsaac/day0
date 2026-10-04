@@ -4830,9 +4830,7 @@ async function resolveChannelBatch(
           pendingRunId: member.pendingRunId,
           approvedIndexes: [...approval.approve],
         },
-        'channel',
-        args.messageTs,
-        'whole-set',
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
       );
     } else {
       await rejectActionsInTransaction(
@@ -6105,7 +6103,9 @@ function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
  * Called too after an approved phase whose approval, from Slack or the Needs
  * you batch, left a close the tripwire held for its card (12-H, R-12D-1): the
  * approved rows have landed and the close waits alone, asked about again on
- * its own. The decided request stays on the row until that ask replaces it.
+ * its own. The decided request leaves the row as in the auto phase, so the
+ * close reads as not yet asked (review M5): the stall sweep and the card's
+ * ask control see it, and the card's head stamps no decision over it.
  */
 export const setAwaitingApproval = internalMutation({
   args: {
@@ -6140,9 +6140,8 @@ export const setAwaitingApproval = internalMutation({
       applyPhase: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
-      // The held rows of this set have not been asked about (review M5); after an approval, the
-      // decided request stays until the close's own ask replaces it.
-      ...(afterApproval ? {} : { decision: undefined }),
+      // The held rows of this set have not been asked about (review M5).
+      decision: undefined,
     });
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -6186,7 +6185,7 @@ export const approveActions = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    return await approveActionsInTransaction(ctx, row, args, 'dashboard');
+    return await approveActionsInTransaction(ctx, row, args, { via: 'dashboard' });
   },
 });
 
@@ -6225,14 +6224,10 @@ export const approveActionsBatch = mutation({
       seen.add(member.workItemId);
       const row = await assertOwnsWorkItem(ctx, member.workItemId);
       // The batch shows no tripped close's sentence: such a close is left for its card (12-H).
-      const result = await approveActionsInTransaction(
-        ctx,
-        row,
-        member,
-        'dashboard',
-        undefined,
-        'whole-set',
-      );
+      const result = await approveActionsInTransaction(ctx, row, member, {
+        via: 'dashboard',
+        scope: 'whole-set',
+      });
       approved.push({ workItemId: member.workItemId, approvedIndexes: result.approvedIndexes });
     }
     return { ok: true, approved };
@@ -6299,6 +6294,15 @@ export const prepareDecisionBatch = internalMutation({
  */
 type ApprovalScope = 'card' | 'whole-set';
 
+/** How an approval of held actions was made: where, by which reply or press, and how much of the set. */
+interface ApprovalMade {
+  readonly via: DecisionVia;
+  /** The channel reply or press that decided, when one did. */
+  readonly messageTs?: string;
+  /** Absent: the card's own choice, row by row. */
+  readonly scope?: ApprovalScope;
+}
+
 /** Why a whole-set approval refuses a close the tripwire held: it is decided on its card. */
 export const CLOSE_DECIDED_ON_CARD = 'is a ticket close Day0 held, so it is decided on its card';
 
@@ -6313,9 +6317,8 @@ export const CLOSE_DECIDED_ON_CARD = 'is a ticket close Day0 held, so it is deci
  * @param ctx - The decision's transaction.
  * @param row - The parked item.
  * @param args - The run the approval was shown and the rows it approves.
- * @param via - Where the decision was made.
- * @param messageTs - The channel reply or press that decided, when one did.
- * @param scope - How much of the set the approval decides.
+ * @param decision - Where the decision was made, the channel reply or press that made it, and how
+ *   much of the set it decides.
  */
 async function approveActionsInTransaction(
   ctx: MutationCtx,
@@ -6325,10 +6328,9 @@ async function approveActionsInTransaction(
     pendingRunId: Id<'events'>;
     approvedIndexes: number[];
   },
-  via: DecisionVia,
-  messageTs?: string,
-  scope: ApprovalScope = 'card',
+  decision: ApprovalMade,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
+  const { via, messageTs, scope = 'card' } = decision;
   if (row.state !== 'actions-pending') {
     throw new Error(`workItem state is ${row.state}; expected actions-pending`);
   }
@@ -6698,7 +6700,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     return { status: 'already-decided' as const, notified: false };
   }
 
-  let leftForCard = 0;
+  let closesHeld = 0;
   if (row.decision.kind === 'plan') {
     if (args.reply.verb === 'approve') {
       await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
@@ -6707,13 +6709,14 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     }
   } else {
     if (!row.pendingRunId) return await ignored('actions decision has no pending run');
+    // A Slack approval never shows the sentence a tripped close carries, so it decides every
+    // other held write and leaves that close for its card; a rejection takes it too (12-H).
+    const approval = wholeSetApproval(
+      verdictList(row.actionVerdicts, actionsOf(row.output).length),
+      ledgerOf(row.output),
+    );
+    closesHeld = approval.leftForCard.length;
     if (args.reply.verb === 'approve') {
-      // A Slack approval never shows the sentence a tripped close carries, so it decides every
-      // other held write and leaves that close for its card (12-H, R-12D-1).
-      const approval = wholeSetApproval(
-        verdictList(row.actionVerdicts, actionsOf(row.output).length),
-        ledgerOf(row.output),
-      );
       if (approval.approve.length === 0 && approval.leftForCard.length > 0) {
         const notified = await queueManagerReplyNotice(ctx, {
           surfaceId: surface._id,
@@ -6725,7 +6728,6 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
         });
         return { ...(await ignored(CLOSE_ONLY_ON_CARD_REASON)), notified };
       }
-      leftForCard = approval.leftForCard.length;
       await approveActionsInTransaction(
         ctx,
         row,
@@ -6734,9 +6736,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
           pendingRunId: row.pendingRunId,
           approvedIndexes: [...approval.approve],
         },
-        'channel',
-        args.messageTs,
-        'whole-set',
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
       );
     } else {
       await rejectActionsInTransaction(
@@ -6760,7 +6760,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     verb: args.reply.verb,
     kind: row.decision.kind,
     hold: args.reply.verb === 'approve' ? await stepHoldOf(ctx.db, row.agentId) : undefined,
-    leftForCard,
+    closesHeld,
   });
   await queueManagerReplyNotice(ctx, {
     surfaceId: surface._id,

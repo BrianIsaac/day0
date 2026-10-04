@@ -551,7 +551,7 @@ export function WorkItemCard({
                 () => onApproveActions(approvedIndexes),
                 approvedIndexes.length === 0
                   ? decidedEarlier.length > 0
-                    ? `Nothing more sent: ${item.title} is finished, and what you left out stays withheld.`
+                    ? `Finished without the ticket close: nothing more is sent on ${item.title}, and the close stays withheld.`
                     : `Approved with nothing selected: ${item.title} lands nothing.`
                   : approvedIndexes.length === 1
                     ? 'Approved 1 action: it applies now.'

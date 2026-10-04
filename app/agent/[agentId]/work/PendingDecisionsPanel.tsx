@@ -120,10 +120,9 @@ export function PendingDecisionsPanel({
               </p>
             ) : null}
             {member.leftForCard.length > 0 ? (
-              <p className="text-[13px] text-[var(--color-muted)]">
-                {member.heldIndexes.length === 0
-                  ? 'Its ticket close is decided on its card: Day0 held it because the run’s own words say the work was not done.'
-                  : 'Its ticket close is left for its card: Day0 held it because the run’s own words say the work was not done.'}
+              <p className="text-[13px] text-[var(--color-fg-2)]">
+                Day0 held its ticket close because the run’s own words say the work was not done:
+                decide it on its card.
               </p>
             ) : null}
             <ul className="ml-3 grid gap-1">
@@ -140,45 +139,54 @@ export function PendingDecisionsPanel({
         ))}
       </ul>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Button
-          variant="approve"
-          disabled={change.busy || eligible.length === 0}
-          onClick={() =>
-            change.run(
-              () =>
-                onApproveBatch(
-                  eligible.map((member) => ({
-                    workItemId: member.workItemId,
-                    pendingRunId: member.pendingRunId,
-                    approvedIndexes: member.heldIndexes,
-                  })),
-                ),
-              {
-                done: `Approved ${heldCount} held ${heldCount === 1 ? 'action' : 'actions'} across ${eligible.length} ${eligible.length === 1 ? 'item' : 'items'}: they apply now.${
-                  closesLeft === 0
-                    ? ''
-                    : closesLeft === 1
-                      ? ' The ticket close waits on its card.'
-                      : ` The ${closesLeft} ticket closes wait on their cards.`
-                }`,
-                refused: 'Nothing was approved.',
-              },
-            )
-          }
-        >
-          Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
-          {eligible.length === 1 ? 'item' : 'items'}
-        </Button>
-        <span className="text-[13px] text-[var(--color-muted)]">
-          Each item is approved exactly as shown; if one has moved on, nothing is approved and the
-          list refreshes.
-        </span>
-        {closesLeft > 0 ? (
-          <span className="basis-full text-[13px] text-[var(--color-fg-2)]">
+        {eligible.length === 0 && closesLeft > 0 ? (
+          // Nothing here is the batch's to send: a button that could only ever be disabled says less.
+          <p className="text-[13px] text-[var(--color-fg-2)]">
+            Nothing here can be approved from this list: each ticket close waits on its card.
+          </p>
+        ) : (
+          <>
+            <Button
+              variant="approve"
+              disabled={change.busy || eligible.length === 0}
+              onClick={() =>
+                change.run(
+                  () =>
+                    onApproveBatch(
+                      eligible.map((member) => ({
+                        workItemId: member.workItemId,
+                        pendingRunId: member.pendingRunId,
+                        approvedIndexes: member.heldIndexes,
+                      })),
+                    ),
+                  {
+                    done: `Approved ${heldCount} held ${heldCount === 1 ? 'action' : 'actions'} across ${eligible.length} ${eligible.length === 1 ? 'item' : 'items'}: they apply now.${
+                      closesLeft === 0
+                        ? ''
+                        : closesLeft === 1
+                          ? ' The ticket close waits on its card.'
+                          : ` The ${closesLeft} ticket closes wait on their cards.`
+                    }`,
+                    refused: 'Nothing was approved.',
+                  },
+                )
+              }
+            >
+              Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across{' '}
+              {eligible.length} {eligible.length === 1 ? 'item' : 'items'}
+            </Button>
+            <span className="text-[13px] text-[var(--color-muted)]">
+              Each item is approved exactly as shown; if one has moved on, nothing is approved and
+              the list refreshes.
+            </span>
+          </>
+        )}
+        {closesLeft > 0 && eligible.length > 0 ? (
+          <p className="basis-full text-[13px] text-[var(--color-fg-2)]">
             {closesLeft === 1
-              ? '1 ticket close Day0 held is left for its card; approve it there only if the work was done.'
-              : `${closesLeft} ticket closes Day0 held are left for their cards; approve each there only if the work was done.`}
-          </span>
+              ? '1 ticket close that Day0 held is not in this batch: decide it on its card, and approve it there only if the work was done.'
+              : `${closesLeft} ticket closes that Day0 held are not in this batch: decide each on its card, and approve it there only if the work was done.`}
+          </p>
         ) : null}
       </div>
       <StatusRegion outcome={change.outcome} />

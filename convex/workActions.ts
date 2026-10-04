@@ -4296,7 +4296,7 @@ export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic actio
 
 /** Why a close left for its card stays unapplied when the approved writes beside it fail (12-H). */
 export const NOT_APPLIED_AFTER_APPROVED_FAILURE =
-  'not applied because a write you approved beside it failed';
+  'not sent: a write you approved beside it failed and the run stopped, so the close never reached its card';
 
 /**
  * Record the outcome of an applied phase.

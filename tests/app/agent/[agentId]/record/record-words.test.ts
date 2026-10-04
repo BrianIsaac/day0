@@ -1240,7 +1240,7 @@ describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)'
         subject,
       ),
     ).toBe(
-      'You approved 2 held actions on “Draft response for new tier-two RevOps ask” from your DMs. The ticket close Day0 held was left out, to be decided on its card.',
+      'You approved 2 held actions on “Draft response for new tier-two RevOps ask” from your DMs. The ticket close Day0 held was left out and waits on its card.',
     );
     expect(
       recordWords(
@@ -1251,7 +1251,7 @@ describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)'
         subject,
       ),
     ).toBe(
-      'Mira holds the ticket close on “Draft response for new tier-two RevOps ask” for you: the rest you approved was sent, and the close waits on its card.',
+      'Mira holds the ticket close on “Draft response for new tier-two RevOps ask” for you: the earlier approval has been applied, and the close waits on its card.',
     );
   });
 });

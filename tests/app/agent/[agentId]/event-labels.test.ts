@@ -758,6 +758,6 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         type: 'work.actions-pending',
         payload: { heldIndexes: [1], leftForCard: true },
       }),
-    ).toBe('ticket close held for your card');
+    ).toBe('ticket close held, waiting on its card');
   });
 });

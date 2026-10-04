@@ -932,11 +932,16 @@ describe('a close Day0 held, after an approval in Slack sent the rest (12-H, R-1
     expect(view.text()).toContain('Landed: Replied in #revops-asks');
     expect(view.container.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
     expect(view.text()).toContain('Close held:');
-    expect(view.text()).toContain('the ticket close Day0 held among them');
-    await press(view.container, 'Send nothing more');
+    expect(view.text()).toContain(
+      'Your earlier approval has been applied; only the close is left.',
+    );
+    expect(view.text()).toContain(
+      'Approve all sends the close, so use it only if the work was done.',
+    );
+    await press(view.container, 'Finish without the close');
     expect(view.calls).toEqual([['approveActions', []]]);
     expect(said(view.container)).toContain(
-      'Nothing more sent: Draft response for new tier-two RevOps ask is finished, and what you left out stays withheld.',
+      'Finished without the ticket close: nothing more is sent on Draft response for new tier-two RevOps ask, and the close stays withheld.',
     );
   });
 });

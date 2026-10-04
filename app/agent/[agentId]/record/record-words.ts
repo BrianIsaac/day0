@@ -1074,9 +1074,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.actions-pending': (p, subject) =>
     // Parked again after an approval from Slack or the Needs you batch left a close for its card (12-H).
     p.leftForCard === true
-      ? `${subject.name} holds the ticket close${onItem(subject)} for ${addressee(subject)}: the rest ${they(
-          subject,
-        )} approved was sent, and the close waits on its card`
+      ? `${subject.name} holds the ticket close${onItem(subject)} for ${addressee(subject)}: the earlier approval has been applied, and the close waits on its card`
       : `${subject.name} held ${counted(p.heldIndexes?.length, 'action') ?? 'actions'}${onItem(
           subject,
         )} for ${addressee(subject)}. Nothing has reached a surface`,
@@ -1085,7 +1083,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       subject,
     )}${decidedFrom(p.decidedVia, their(subject))}${
       (p.leftForCard?.length ?? 0) > 0
-        ? '. The ticket close Day0 held was left out, to be decided on its card'
+        ? '. The ticket close Day0 held was left out and waits on its card'
         : ''
     }`,
   'work.actions-rejected': (p, subject) =>

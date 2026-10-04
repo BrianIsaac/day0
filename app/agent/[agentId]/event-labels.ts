@@ -656,7 +656,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'work.actions-pending': (payload) =>
     payload.leftForCard === true
-      ? 'ticket close held for your card'
+      ? 'ticket close held, waiting on its card'
       : `${counted(payload.heldIndexes?.length, 'action') ?? 'actions'} held for your approval`,
   'work.actions-approved': (payload) =>
     `${counted(payload.approvedIndexes?.length, 'action') ?? 'actions'} approved${decidedFrom(payload.decidedVia)}${
