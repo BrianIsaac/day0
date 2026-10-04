@@ -491,6 +491,163 @@ describe('the outbound manager-channel action', (): void => {
   });
 });
 
+/**
+ * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), and the
+ * deployment its Socket Mode bridge's secret, so its requests can carry buttons.
+ */
+async function landAppLevelToken(
+  harness: TestConvex<typeof schema>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+  await harness.run(async (ctx): Promise<void> => {
+    const surface = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+      .unique();
+    const secret = await ctx.db.insert('credentials', {
+      userId: 'organisation',
+      kind: 'oauth',
+      label: 'Ops (Day0) client secret',
+      ciphertext: 'ciphertext',
+      iv: 'iv',
+      source: 'oauth',
+      createdAt: 1,
+    });
+    const appLevel = await ctx.db.insert('credentials', {
+      userId: 'organisation',
+      kind: 'value',
+      label: 'Ops (Day0) app-level token',
+      ciphertext: 'ciphertext',
+      iv: 'iv',
+      source: 'entered',
+      createdAt: 1,
+    });
+    // The employee's own app, installed: it posts as itself, so no trailer is added.
+    await ctx.db.patch(surface!._id, {
+      credentialKind: 'oauth',
+      toolAllowlist: ['chat.postMessage', 'chat.update'],
+      provisioning: {
+        appId: 'A0OPS',
+        appName: 'Ops (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: secret,
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.example/api/oauth/slack',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+        appLevelTokenCredentialId: appLevel,
+      },
+    });
+  });
+}
+
+describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  function recordSlack(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  it('sends Approve and Reject buttons with the typed code where the app has its app-level token', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, { workItemId, kind: 'plan' }),
+    ).resolves.toEqual({ sent: true });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!;
+    const body = JSON.parse(sent[0]!.body) as {
+      text: string;
+      blocks: Array<{ type: string; elements?: Array<{ action_id: string; value: string }> }>;
+    };
+    expect(body.text).toContain(`reply “approve ${decision.id}”`);
+    const actions = body.blocks.find((block) => block.type === 'actions');
+    expect(actions?.elements?.map((button) => [button.action_id, button.value])).toEqual([
+      ['day0.decision.approve', decision.id],
+      ['day0.decision.reject', decision.id],
+    ]);
+    expect(decision.withButtons).toBe(true);
+  });
+
+  it('sends the typed code only where the app has no app-level token', async (): Promise<void> => {
+    recordSlack();
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const body = JSON.parse(sent[0]!.body) as { text: string; blocks?: unknown };
+    expect(body.blocks).toBeUndefined();
+    expect(body.text).toMatch(/Reply “approve [a-z0-9]{6}”/);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.withButtons,
+    ).toBeUndefined();
+  });
+
+  it('sends the typed code only where the deployment runs no Socket Mode bridge', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    expect((JSON.parse(sent[0]!.body) as { blocks?: unknown }).blocks).toBeUndefined();
+  });
+
+  it('closes a request that had buttons with its text as blocks and no buttons', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    const decisionId = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!
+      .id;
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768407.000100',
+      reply: { verb: 'approve', id: decisionId },
+    });
+    await harness.action(internal.managerChannelActions.closeDecisionRequest, {
+      workItemId,
+      decisionId,
+    });
+    const update = sent.find((call) => call.url.endsWith('/chat.update'));
+    const body = JSON.parse(update!.body) as {
+      text: string;
+      blocks: Array<{ type: string; text?: { text: string } }>;
+    };
+    expect(body.blocks.map((block) => block.type)).toEqual(['section']);
+    expect(body.blocks[0]!.text!.text).toBe(body.text);
+    expect(body.text).toContain(`Decided: approved in this DM (${decisionId}).`);
+  });
+});
+
 describe('a decided request in the manager DM (M finding 3)', (): void => {
   /** A Slack double that answers every call, recording it. */
   function recordSlack(): void {

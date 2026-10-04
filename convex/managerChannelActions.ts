@@ -32,6 +32,8 @@ import {
   managerMessageUpdateAction,
   type DecisionKind,
 } from '../src/work/manager-channel';
+import { decisionRequestBlocks, settledRequestBlocks } from '../src/work/decision-blocks';
+import type { SlackBlock } from '../src/work/slack-blocks';
 import type { MockAction } from '../src/work/types';
 import { log } from '../src/lib/logger';
 
@@ -79,22 +81,29 @@ interface ManagerDelivery {
  * Deliver one message to the manager DM through the gate.
  *
  * @param options - The decision request it sends, when it is one, which the
- *   gate checks is still current; and the request it answers, whose thread it
- *   goes in.
+ *   gate checks is still current; the request it answers, whose thread it
+ *   goes in; and the blocks a request with buttons renders with.
  */
 async function deliverManagerMessage(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   text: string,
-  options: { readonly decisionId?: string; readonly threadTs?: string } = {},
+  options: {
+    readonly decisionId?: string;
+    readonly threadTs?: string;
+    readonly blocks?: readonly SlackBlock[];
+  } = {},
 ) {
-  const { decisionId, threadTs } = options;
+  const { decisionId, threadTs, blocks } = options;
   return await applyManagerAction(
     ctx,
     workItemId,
     delivery,
-    managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {}),
+    managerMessageAction(delivery.surface, text, {
+      ...(threadTs ? { threadTs } : {}),
+      ...(blocks ? { blocks } : {}),
+    }),
     decisionId ? { decisionId } : {},
   );
 }
@@ -222,6 +231,7 @@ export const requestDecision = internalAction({
       closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       slackMarkup:
         prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
+      buttons: prepared.withButtons,
     });
     // Other held action sets are already waiting on this channel: offer one
     // code that decides them all, each named with its own.
@@ -258,12 +268,18 @@ export const requestDecision = internalAction({
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, {
         decisionId: prepared.decisionId,
+        ...(prepared.withButtons
+          ? {
+              blocks: decisionRequestBlocks({ id: prepared.decisionId, text, buttons: true }),
+            }
+          : {}),
       });
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
         ts: result.providerId,
         text,
+        ...(prepared.withButtons ? { withButtons: true } : {}),
       });
       return { sent: true };
     } catch (error) {
@@ -296,7 +312,12 @@ export const closeDecisionRequest = internalAction({
     const prepared = await ctx.runMutation(internal.work.prepareRequestClose, args);
     if (!prepared.prepared) return { closed: false };
     const claim = { ...args, claimedAt: prepared.claimedAt };
-    const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
+    const action = managerMessageUpdateAction(
+      prepared.surface,
+      prepared.ts,
+      prepared.text,
+      prepared.withButtons ? settledRequestBlocks(prepared.text) : undefined,
+    );
     if (!action) {
       await ctx.runMutation(internal.work.recordRequestClose, {
         ...claim,

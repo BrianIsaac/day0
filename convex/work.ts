@@ -134,6 +134,7 @@ import { handedOverSince } from './handoverFence';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
 
 /**
  * How long an apply may go unfinished before the recovery timer acts on it: an
@@ -3468,6 +3469,8 @@ export const prepareDecisionRequest = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       pendingRunId: row.pendingRunId,
       openActionDecisions,
+      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)).
+      withButtons: decisionButtonsFor(chat, socketBridgeConfigured()).available,
     };
   },
 });
@@ -3969,6 +3972,8 @@ export const recordDecisionRequest = internalMutation({
     ts: v.optional(v.string()),
     /** The text the request carried, kept for the edit that marks it decided. */
     text: v.optional(v.string()),
+    /** The request went out with Approve and Reject buttons, which its edits remove. */
+    withButtons: v.optional(v.boolean()),
     failure: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -3982,6 +3987,7 @@ export const recordDecisionRequest = internalMutation({
         ...(args.ts && args.text
           ? { requestText: redactTokenShapes(args.text).slice(0, REQUEST_TEXT_KEPT) }
           : {}),
+        ...(args.ts && args.withButtons === true ? { withButtons: true } : {}),
         ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
       },
     });
@@ -4090,6 +4096,7 @@ export const prepareRequestClose = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       channel: decision.channel,
       ts: decision.ts,
+      withButtons: decision.withButtons === true,
       text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
     };
   },
