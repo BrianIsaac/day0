@@ -1001,7 +1001,7 @@ describe('real surface intake', (): void => {
     );
     const replacedTs = '1787770600.000100';
     harness.openDecisions.set('surface-slack', {
-      requests: [],
+      requests: [{ decisionId: 'zz9xyz', ts: '1787770900.000100' }],
       batches: [],
       noticeOwed: true,
       threads: [replacedTs],
@@ -1011,6 +1011,9 @@ describe('real surface intake', (): void => {
       const url = new URL(String(input));
       if (url.pathname.endsWith('/conversations.replies')) {
         replyCalls.push(url);
+        if (url.searchParams.get('ts') !== replacedTs) {
+          return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+        }
         return slackResponse({
           ok: true,
           messages: [
@@ -1021,6 +1024,8 @@ describe('real surface intake', (): void => {
               user: 'UMANAGER',
               text: 'approve ab3xyz',
             },
+            // Small talk under Day0's other messages is no decision and is not answered as one.
+            { ts: '1787770803.000100', thread_ts: replacedTs, user: 'UMANAGER', text: 'thanks!' },
           ],
           response_metadata: { next_cursor: '' },
         });
@@ -1031,7 +1036,12 @@ describe('real surface intake', (): void => {
     await expect(
       runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
     ).resolves.toMatchObject({ polled: 1 });
-    expect(replyCalls.map((url) => url.searchParams.get('ts'))).toEqual([replacedTs]);
+    expect(replyCalls.map((url) => url.searchParams.get('ts'))).toEqual([
+      '1787770900.000100',
+      replacedTs,
+    ]);
+    // A request is open, so an unreadable reply in its own thread or the DM would be answered.
+    expect(harness.unreadableReplies).toEqual([]);
     expect(harness.decisions).toEqual([
       {
         surfaceId: id<'surfaces'>('surface-slack'),

@@ -1293,12 +1293,15 @@ function managerMessages(): ManagerMessages {
  * @param surface - The chat surface, for the bot's and the manager's ids.
  * @param messages - The messages this read returned.
  * @param skipTs - A thread's parent, which is Day0's request, not a reply.
+ * @param options.decisionsOnly - Take decisions only, for a thread under Day0's other messages (M10),
+ *   where the manager's other words answer no request.
  */
 function collectManagerMessages(
   found: ManagerMessages,
   surface: Doc<'surfaces'>,
   messages: readonly ChatMessage[],
   skipTs?: string,
+  options: { readonly decisionsOnly?: boolean } = {},
 ): void {
   for (const message of messages) {
     if (message.ts === skipTs) continue;
@@ -1306,7 +1309,7 @@ function collectManagerMessages(
     const reply = parseDecisionReply(message.text);
     if (reply) {
       found.replies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
-    } else if (message.user === surface.managerUserId) {
+    } else if (message.user === surface.managerUserId && options.decisionsOnly !== true) {
       found.unreadable.set(message.ts, { userId: message.user, messageTs: message.ts });
     }
   }
@@ -1610,11 +1613,13 @@ async function pollChatReader(
       // threads are not where an open request is answered.
       for (const ts of open.threads ?? []) {
         try {
+          // Only a decision is taken from there: small talk under a note is no reply to a request.
           collectManagerMessages(
             found,
             surface,
             await reader.readThread(dm, ts, surface.lastPolledAt),
             ts,
+            { decisionsOnly: true },
           );
         } catch (error) {
           if (error instanceof ChatReadRefused && error.code === SLACK_THREAD_NOT_FOUND) continue;

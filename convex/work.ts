@@ -4100,6 +4100,8 @@ async function recentThreadsOn(
       .withIndex('by_agent_edit_open', (q) =>
         q.eq('agentId', surface.agentId).gte('editedAt', since),
       )
+      // Newest edits first, so a window with more than one poll reads keeps the latest.
+      .order('desc')
       .take(RECENT_THREADS_READ),
     ctx.db
       .query('managerNotes')

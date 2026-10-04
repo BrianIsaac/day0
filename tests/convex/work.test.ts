@@ -1412,8 +1412,26 @@ describe('manager channel request claims', (): void => {
         providerTs: '1787770650.000100',
       });
     });
+    // More replaced messages edited in the window than one poll reads: the newest are kept.
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 12; index += 1) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          kind: 'plan',
+          surfaceSlug: 'slack',
+          channel,
+          decisionId: `old${String(index).padStart(3, '0')}`,
+          ts: `1787770${String(100 + index)}.000100`,
+          replacedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+          editClaimedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+          editedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+        });
+      }
+    });
     const open = await harness.query(internal.work.openDecisions, { surfaceId });
-    expect(open.threads).toEqual(['1787770650.000100', '1787770600.000100']);
+    expect(open.threads?.slice(0, 2)).toEqual(['1787770650.000100', '1787770600.000100']);
+    expect(open.threads).toHaveLength(10);
     vi.useRealTimers();
   });
 
