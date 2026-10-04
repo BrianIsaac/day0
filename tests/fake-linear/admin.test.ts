@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TOKEN_INVALID_GRANT } from '../fixtures/linear/linear-oauth-2026-10-02';
 import { LINEAR_REFRESH_TOKEN_REVOKED_400 } from '../fixtures/real-vendor-rewalk-2026-10-03';
 import { LEO, SHARED, appActorToken, call, installPair, linear, refresh, viewer } from './double';
 
@@ -90,6 +91,13 @@ describe('the fake Linear admin controls', (): void => {
     expect((await state(fake)).tokens.find((token) => token.value === shared)?.state).toBe(
       'expired',
     );
+  });
+
+  it("refuses a refresh token once it has lapsed, in Linear's documented words", async (): Promise<void> => {
+    const fake = linear();
+    const pair = await installPair(fake);
+    await call(fake, `${ADMIN}/expire?token=${pair.refresh}`, { method: 'POST' });
+    expect((await refresh(fake, pair.refresh)).body).toEqual(JSON.parse(TOKEN_INVALID_GRANT.body));
   });
 
   it('refuses an admin change by GET, and an app it does not hold', async (): Promise<void> => {

@@ -247,7 +247,7 @@ export interface FakeGrants {
     value: string,
   ):
     | { readonly access: FakeToken; readonly refresh: FakeToken }
-    | { readonly refused: 'unknown' | 'revoked' | 'spent' };
+    | { readonly refused: 'unknown' | 'revoked' | 'expired' | 'spent' };
   revokeApp(clientId: string): number;
   expire(value: string): boolean;
 }

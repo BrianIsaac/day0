@@ -204,6 +204,9 @@ export function createGrants(now) {
       // Seen: a refresh token whose grant an administrator's "Revoke access", or a revoke of its
       // access token, ended is refused as revoked, whatever its grace (the re-walk, row 3; W-L5).
       if (held.revokedAt !== null) return { refused: 'revoked' };
+      // Not seen: a refresh token that lapsed (only a bed's /admin/expire lapses one). Answered as
+      // Linear documents a refresh token it no longer takes; a real walk must see one lapse.
+      if (stateOf(held) === 'expired') return { refused: 'expired' };
       if (held.spentAt !== null && held.replay !== null) {
         // Seen (R41V P7): a replay inside the grace returns the same new pair, its `expires_in` the
         // new access token's remaining life.
