@@ -756,10 +756,13 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
   if (row.draftClaimedAt !== undefined) {
     const resumed = await draftResumesSinceRetry(ctx, row);
     if (resumed >= MAX_DRAFT_RESUMES) {
+      // The dead draft's claim rides with the stop, so a Stop and Retry before the job runs
+      // leave the new draft's row alone (W12-R7; 12-J's fence).
       await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         reason: `the plan draft died ${resumed + 1} times without an answer; Retry drafts it again`,
         stopped: true,
+        draftClaimedAt: row.draftClaimedAt,
       });
       return true;
     }
