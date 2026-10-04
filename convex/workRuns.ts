@@ -55,6 +55,7 @@ import {
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
 import { actionIdempotencyKey } from '../src/work/idempotency';
+import { describeAction } from '../src/surfaces/policy';
 import type { AppliedAction } from '../src/surfaces/types';
 import {
   answeredEntries,
@@ -1058,10 +1059,21 @@ export const recordUnsentAfterStop = internalMutation({
   args: { workItemId: v.id('workItems'), runId: v.id('events'), firstUnsent: v.number() },
   handler: async (ctx, args): Promise<number> => {
     const item = await ctx.db.get(args.workItemId);
-    if (!item || item.state !== 'failed' || !item.output || typeof item.output !== 'object') {
+    // Once the manager has reconciled the row, their answers stand and the ledger is not rewritten.
+    if (
+      !item ||
+      item.state !== 'failed' ||
+      item.providerReconciliation !== undefined ||
+      !item.output ||
+      typeof item.output !== 'object'
+    ) {
       return 0;
     }
-    const output = item.output as { applied?: AppliedAction[]; actionIndexOffset?: unknown };
+    const output = item.output as {
+      actions?: MockAction[];
+      applied?: AppliedAction[];
+      actionIndexOffset?: unknown;
+    };
     const offset =
       typeof output.actionIndexOffset === 'number' && Number.isInteger(output.actionIndexOffset)
         ? output.actionIndexOffset
@@ -1081,11 +1093,14 @@ export const recordUnsentAfterStop = internalMutation({
         return row;
       }
       recorded += 1;
+      const action = output.actions?.[index];
       return {
         tool: row.tool,
         ok: true,
         held: true,
         reason: NOT_SENT_AFTER_STOP_REASON,
+        // The ledger's words for the write, which the card's not-sent list names it by.
+        ...(action ? { effect: describeAction(action) } : {}),
         idempotencyKey: row.idempotencyKey,
       };
     });

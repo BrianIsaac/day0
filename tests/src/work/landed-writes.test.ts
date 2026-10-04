@@ -616,6 +616,56 @@ describe('the writes earlier runs landed', () => {
     ).toEqual([{ action: comment, idempotencyKeys: ['work:retry:6', 'work:first:0'] }]);
   });
 
+  it('keeps a landed row a reuse stood for when another reuse of it is answered landed, and lets an answer win over a not-sent record (second pass)', () => {
+    // Two reuses of one landed comment; the manager answers one landed and the other not sent.
+    const first = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit, take one.' });
+    const second = call('linear', 'save_comment', {
+      issueId: 'REVOPS-5',
+      body: 'Audit, take two.',
+    });
+    const source: LandedWrite = {
+      action: comment,
+      applied: row({ providerId: 'comment-1', idempotencyKey: 'work:first:0' }),
+    };
+    const [one, two] = reusedLedger([first, second], [source], run, { surfaces });
+    const retried = { landedWrites: [source], actions: [first, second], applied: [one, two] };
+    const answers = [
+      { phase: 'single' as const, actionIndex: 0, answer: 'landed' as const },
+      { phase: 'single' as const, actionIndex: 1, answer: 'not-sent' as const },
+    ];
+    expect(notSentWritesOf(retried, answers)).toEqual([
+      { action: second, idempotencyKeys: ['work:retry:7'] },
+    ]);
+    const landed = landedWritesOf(retried, answers);
+    expect(landed.map((write) => write.applied.providerId)).toEqual(['comment-1']);
+    // The comment itself, emitted again, is still reused on the ticket.
+    expect(
+      reusedLedger(
+        [comment],
+        landed,
+        { ...run, runId: 'third' },
+        {
+          surfaces,
+          unsent: notSentWritesOf(retried, answers),
+        },
+      )[0]?.reason,
+    ).toContain('reused landed comment comment-1');
+    // A row recorded not sent after a stop that the manager answered landed is landed.
+    const stopped = {
+      actions: [comment],
+      applied: [
+        row({
+          held: true,
+          reason: 'not sent: the run was stopped before this write went out',
+          idempotencyKey: 'work:first:3',
+        }),
+      ],
+    };
+    expect(
+      notSentWritesOf(stopped, [{ phase: 'single', actionIndex: 0, answer: 'landed' }]),
+    ).toEqual([]);
+  });
+
   it('lists the writes the manager answered not sent after the landed ones, with the rule that sends them', () => {
     const second = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Deal 2 reconciled.' });
     const lines = landedWriteLines(
@@ -631,6 +681,8 @@ describe('the writes earlier runs landed', () => {
       '  0. slack · POST /chat.postMessage · C0REVOPS/1789.1 · "Deal 2 reconciled."',
     );
     expect(lines[heading + 3]).toContain('None of these is on the provider');
+    // The landed list's rule names the exception, so the two rules never contradict (second pass).
+    expect(lines[heading - 2]).toContain('The one exception is a target that also carries a write');
     // Not-sent writes alone still reach the prompt.
     expect(
       landedWriteLines([], surfaces, [{ action: second, idempotencyKeys: ['k'] }]).length,

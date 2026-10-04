@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { HELD_NOT_APPROVED } from '@/surfaces/policy';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
+import { NOT_SENT_AFTER_STOP_REASON } from '@/work/reconciliation';
 import { Lead, Note } from './ItemParts';
 import { PhaseLabel, RepairNote, SessionRestoreNote } from './RunDetails';
 import { clipLedgerRow, landedHeadline, type PhasedLedgerRow } from './work-item';
@@ -176,6 +177,8 @@ export function LandedChanges({
 export function notSentWords(reason: string | undefined): string {
   if (reason === HELD_NOT_APPROVED) return 'withheld by you; never sent, kept in the record';
   if (reason?.startsWith(MANAGER_REJECTION_PREFIX)) return 'rejected with the run; never sent';
+  // A row a stopped apply never reached (W12-R11): said once, plainly.
+  if (reason === NOT_SENT_AFTER_STOP_REASON) return 'not sent: the run stopped before it went out';
   return `held${reason ? `: ${reason}` : ''}; never sent`;
 }
 

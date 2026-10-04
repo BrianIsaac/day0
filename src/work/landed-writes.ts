@@ -286,15 +286,32 @@ export function notSentWritesOf(
   answers: readonly EntryAnswer[] = [],
 ): UnsentWrite[] {
   if (!output || typeof output !== 'object') return [];
-  return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
+  const answerOf = (phase: string, index: number): EntryAnswer['answer'] =>
+    answers.find((row) => row.phase === phase && row.actionIndex === index)?.answer;
+  const phases = ledgerPhases(output);
+  // A landed row another row answered `landed` stood for stays landed, whatever a sibling reuse of
+  // it was answered: the manager has said it is on the provider.
+  const confirmed = new Set(
+    phases.flatMap(({ phase, applied }) =>
+      applied.flatMap((entry, index) =>
+        entry && answerOf(phase, index) === 'landed' ? rowKeys(entry as AppliedAction) : [],
+      ),
+    ),
+  );
+  return phases.flatMap(({ phase, actions, applied }) =>
     actions.flatMap((action, index): UnsentWrite[] => {
       const entry = applied[index] as AppliedAction | undefined;
       if (!entry || !parsedWrite(action)) return [];
-      const answer = answers.find(
-        (row) => row.phase === phase && row.actionIndex === index,
-      )?.answer;
-      const notSent = answer === 'not-sent' || entry.reason === NOT_SENT_AFTER_STOP_REASON;
-      return notSent ? [{ action, idempotencyKeys: rowKeys(entry) }] : [];
+      const answer = answerOf(phase, index);
+      // The manager's answer is the last word, over a stopped apply's own record (second pass).
+      const notSent =
+        answer === 'not-sent' ||
+        (answer === undefined && entry.reason === NOT_SENT_AFTER_STOP_REASON);
+      if (!notSent) return [];
+      const keys = rowKeys(entry).filter(
+        (key) => key === entry.idempotencyKey || !confirmed.has(key),
+      );
+      return [{ action, idempotencyKeys: keys }];
     }),
   );
 }
@@ -696,10 +713,17 @@ export function landedWriteLines(
   surfaces: readonly SurfaceRecord[] = [],
   unsent: readonly UnsentWrite[] = [],
 ): string[] {
-  return [...landedLines(writes ?? [], surfaces), ...unsentLines(unsent, surfaces)];
+  return [
+    ...landedLines(writes ?? [], surfaces, unsent.length > 0),
+    ...unsentLines(unsent, surfaces),
+  ];
 }
 
-function landedLines(writes: readonly LandedWrite[], surfaces: readonly SurfaceRecord[]): string[] {
+function landedLines(
+  writes: readonly LandedWrite[],
+  surfaces: readonly SurfaceRecord[],
+  unsentFollow: boolean,
+): string[] {
   if (writes.length === 0) return [];
   const shown = shownWrites(writes, surfaces);
   return [
@@ -709,7 +733,10 @@ function landedLines(writes: readonly LandedWrite[], surfaces: readonly SurfaceR
     ...shown.map((write, index) =>
       writeLine(index, write.action, surfaces, write.applied.providerId ?? null),
     ),
-    "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one. A status change listed here is not sent again either: a person may have moved the ticket since, and the state an earlier run set is satisfied from its landed row.",
+    "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one. A status change listed here is not sent again either: a person may have moved the ticket since, and the state an earlier run set is satisfied from its landed row." +
+      (unsentFollow
+        ? ' The one exception is a target that also carries a write listed below as not sent: the rule after that list says what goes on it.'
+        : ''),
   ];
 }
 

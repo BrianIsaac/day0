@@ -162,9 +162,10 @@ describe('a Stop while the approved writes are being sent (W12-R11)', (): void =
     const applied = (row.output as { applied: AppliedAction[] }).applied;
     // The reply on the wire when the Stop landed is the one to check; the rest were never sent.
     expect(applied[0]).toMatchObject({ ok: false, reason: OUTCOME_UNKNOWN_AFTER_STOP_REASON });
-    // Accounted for as a held row is: never sent, nothing to check.
+    // Accounted for as a held row is: never sent, nothing to check, named by what it would have done.
     for (const entry of applied.slice(1)) {
       expect(entry).toMatchObject({ ok: true, held: true, reason: NOT_SENT_AFTER_STOP_REASON });
+      expect(entry.effect).toEqual(expect.any(String));
     }
     expect(providerReconciliationEntries(row.output).map((entry) => entry.actionIndex)).toEqual([
       0,
@@ -201,5 +202,32 @@ describe('a Stop while the approved writes are being sent (W12-R11)', (): void =
     expect(await asked()).toBe(true);
     await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
     expect(await asked()).toBe(false);
+  });
+
+  it('leaves a row the manager reconciled before the apply recorded what it did not send', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await seedApprovedReplies(harness);
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
+    if (!claim.claimed) throw new Error(`apply not claimed: ${claim.reason}`);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: Array.from({ length: REPLIES }, (_, actionIndex) => ({
+        phase: 'single' as const,
+        actionIndex,
+        answer: 'landed' as const,
+      })),
+    });
+    await expect(
+      harness.mutation(internal.workRuns.recordUnsentAfterStop, {
+        workItemId,
+        runId: claim.runId,
+        firstUnsent: 0,
+      }),
+    ).resolves.toBe(0);
+    const applied = ((await readItem(harness, workItemId)).output as { applied: AppliedAction[] })
+      .applied;
+    expect(applied.every((entry) => entry.reason === OUTCOME_UNKNOWN_AFTER_STOP_REASON)).toBe(true);
   });
 });
