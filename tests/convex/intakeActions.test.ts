@@ -8,6 +8,7 @@ import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { PAUSED_INTAKE_REASON } from '../../src/work/pause';
 import { sealForOwner } from '../../src/lib/credential-crypto';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
@@ -1330,6 +1331,63 @@ describe('real surface intake', (): void => {
     );
     // Named before the credential was decrypted; nothing was dialled.
     expect(harness.records).toHaveLength(1);
+  });
+
+  it('takes no intake for a paused employee, says why on each card, and still reads the manager’s replies (12-P)', async (): Promise<void> => {
+    const slackCredential = id<'credentials'>('credential-slack');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      credentialId: id<'credentials'>('credential-linear'),
+      toolAllowlist: ['list_issues'],
+      waterfallPosition: 2,
+    });
+    const slack = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: 1_000,
+    });
+    const harness = runtimeHarness(
+      [linear, slack],
+      [],
+      new Map([
+        ['credential-linear', 'linear-value'],
+        [String(slackCredential), 'slack-test-value'],
+      ]),
+      [{ ...agentRow(), pausedAt: 5, pausedBy: 'owner' }],
+    );
+    const calls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      calls.push(new URL(String(input)));
+      return slackResponse({
+        ok: true,
+        messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve ab3xyz' }],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, fetcher }),
+    ).resolves.toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 2, surfaces: 2 });
+    expect(calls).toEqual([]);
+    expect(harness.decrypted).toEqual([]);
+    expect(harness.seeds.size).toBe(0);
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 2, skipReason: PAUSED_INTAKE_REASON },
+      { surfaceId: slack._id, waterfallPosition: 0, skipReason: PAUSED_INTAKE_REASON },
+    ]);
+
+    // The decision asked before the pause stays answerable: the manager's DM is still read.
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => 20_000, fetcher });
+    expect(harness.decisions).toEqual([
+      expect.objectContaining({ reply: { verb: 'approve', id: 'ab3xyz' } }),
+    ]);
   });
 
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
