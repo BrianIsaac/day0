@@ -12,6 +12,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   AWAITING_CHARTER,
   EXECUTION_STALL_MS,
+  MANAGER_CLAIM_LAPSED_REASON,
   MAX_DRAFT_RESUMES,
   STEP_LEASE_MS,
 } from '../../convex/workLoop';
@@ -1384,5 +1385,174 @@ describe('the stall sweep while a handover is finishing (D18)', (): void => {
         'workActions:executeApprovedPlanInternal',
       ]),
     );
+  });
+});
+
+describe('the manager-channel claims’ lease (N-3)', (): void => {
+  const LAPSED = 20 * 60_000;
+  const FRESH = 5 * 60_000;
+
+  /** One employee with a chat card, an item whose decision was claimed, and every kind of claim. */
+  async function claims(harness: TestConvex<typeof schema>, claimedAt: number) {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage', 'chat.update'],
+        managerDmChannelId: 'D0MANAGER',
+        credentialLanded: true,
+        whereFound: [],
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close the audit note',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'completed',
+        decision: {
+          id: 'abc234',
+          kind: 'actions',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1.1',
+          decidedAt: 2,
+          outcome: 'approved',
+          requestText: 'Approve?',
+          closeClaimedAt: claimedAt,
+          duplicateNotifiedAt: 3,
+          duplicateNoticeClaimedAt: claimedAt,
+        },
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const digestId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.manager-digest-sending',
+        payload: {},
+        createdAt: claimedAt,
+      });
+      const digestNote = await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt,
+        digestId,
+      });
+      const perRunNote = await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt,
+      });
+      const notice = await ctx.db.insert('managerDecisionNotices', {
+        agentId,
+        surfaceId,
+        workItemId,
+        decisionId: 'abc234',
+        messageTs: '2.2',
+        kind: 'received',
+        text: 'Approval abc234 received.',
+        createdAt: 1,
+        claimedAt,
+      });
+      const replaced = await ctx.db.insert('replacedDecisionRequests', {
+        agentId,
+        workItemId,
+        decisionId: 'old234',
+        kind: 'actions',
+        surfaceSlug: 'slack',
+        channel: 'D0MANAGER',
+        ts: '0.9',
+        replacedAt: 1,
+        editClaimedAt: claimedAt,
+      });
+      return { agentId, workItemId, digestNote, perRunNote, notice, replaced };
+    });
+  }
+
+  it('settles every claim an action died holding, as its own failure would, and no live one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    const live = await claims(harness, Date.now() - FRESH);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    const read = async (ids: typeof lapsed) =>
+      await harness.run(async (ctx) => ({
+        item: await ctx.db.get(ids.workItemId),
+        digestNote: await ctx.db.get(ids.digestNote),
+        perRunNote: await ctx.db.get(ids.perRunNote),
+        notice: await ctx.db.get(ids.notice),
+        replaced: await ctx.db.get(ids.replaced),
+      }));
+    const settled = await read(lapsed);
+    // An unsent digest's claim is released for the next digest, with the reason on the note.
+    expect(settled.digestNote).toMatchObject({ failure: MANAGER_CLAIM_LAPSED_REASON });
+    expect(settled.digestNote?.claimedAt).toBeUndefined();
+    expect(settled.digestNote?.digestId).toBeUndefined();
+    // A per-run note has its own switch (`recoverUnsentManagerNote`); the lease leaves it.
+    expect(settled.perRunNote?.failure).toBeUndefined();
+    expect(settled.notice?.failure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+    expect(settled.item?.decision).toMatchObject({
+      closeFailure: MANAGER_CLAIM_LAPSED_REASON,
+      duplicateNoticeFailure: MANAGER_CLAIM_LAPSED_REASON,
+    });
+    expect(settled.replaced?.editFailure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+
+    const untouched = await read(live);
+    expect(untouched.digestNote?.claimedAt).toEqual(expect.any(Number));
+    expect(untouched.digestNote?.failure).toBeUndefined();
+    expect(untouched.notice?.failure).toBeUndefined();
+    expect(untouched.item?.decision?.closeFailure).toBeUndefined();
+    expect(untouched.item?.decision?.duplicateNoticeFailure).toBeUndefined();
+    expect(untouched.replaced?.editFailure).toBeUndefined();
+  });
+
+  it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(lapsed.workItemId);
+      await ctx.db.patch(lapsed.workItemId, {
+        decision: { ...row!.decision!, closedAt: Date.now() - LAPSED + 1_000 },
+      });
+    });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    const row = await harness.run(async (ctx) => await ctx.db.get(lapsed.workItemId));
+    expect(row?.decision?.closeFailure).toBeUndefined();
+    const failed = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', lapsed.agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.manager-digest-failed'))
+          .collect(),
+    );
+    expect(failed).toHaveLength(1);
   });
 });

@@ -103,7 +103,8 @@ crons.interval('poll connected surfaces for work', { minutes: 5 }, gate, {
 });
 
 // With the intake poll: the server-driven work loop's recovery for a step
-// that died (real mode only; the mutation returns at once in mock mode).
+// that died (real mode only), and the lease on the manager channel's claims
+// (N-3, either mode).
 crons.interval('resume stalled work steps', { minutes: 5 }, gate, {
   job: 'work:resumeStalledSteps',
 });

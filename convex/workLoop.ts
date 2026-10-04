@@ -784,6 +784,146 @@ export async function resumeStalledStepsInTransaction(
   return { rescheduled };
 }
 
+/**
+ * How long a claim on one of the manager channel's sends or edits is honoured (N-3): longer than a
+ * Convex action's ten-minute limit, so a claim this old with no result belongs to an action that
+ * died between its claim and its record.
+ */
+export const MANAGER_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
+/** The failure a lapsed claim is recorded with (wave 12, 12-W; a wording draft). */
+export const MANAGER_CLAIM_LAPSED_REASON =
+  'the send stopped before it recorded a result, so it is not known whether Slack took it';
+
+/** Lapsed claims settled per employee and kind in one sweep; the rest wait for the next. */
+const LEASE_BATCH = 50;
+
+/**
+ * Settle every manager-channel claim an action died holding (N-3), for one employee, as the
+ * claim's own failure path would have: a digest's notes are released for the next digest with
+ * the reason and a `work.manager-digest-failed` event (`recordManagerDigest`); a decision
+ * acknowledgement, a duplicate-reply notice, the edit that closes a decided request (12-M writes
+ * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
+ * edit record the failure and are not sent again, since the message may have landed. A per-run
+ * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
+ * older than the lease on its index, so a claim with a result is never read.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param agentId - The employee.
+ * @param now - The instant the lease is judged against.
+ * @returns How many claims were settled.
+ */
+async function settleLapsedManagerClaims(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const before = now - MANAGER_CLAIM_LEASE_MS;
+  const failure = MANAGER_CLAIM_LAPSED_REASON;
+  const [notes, notices, duplicates, closes, edits] = await Promise.all([
+    ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .eq('discardedAt', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('managerDecisionNotices')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_duplicate_notice_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.duplicateNoticeTs', undefined)
+          .eq('decision.duplicateNoticeFailure', undefined)
+          .gt('decision.duplicateNoticeClaimedAt', 0)
+          .lt('decision.duplicateNoticeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_close_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.closedAt', undefined)
+          .eq('decision.closeFailure', undefined)
+          .gt('decision.closeClaimedAt', 0)
+          .lt('decision.closeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_edit_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('editedAt', undefined)
+          .eq('editFailure', undefined)
+          .gt('editClaimedAt', 0)
+          .lt('editClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+  ]);
+  const digestNotes = notes.filter((note) => note.digestId !== undefined);
+  for (const note of digestNotes) {
+    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+  }
+  if (digestNotes.length > 0) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.manager-digest-failed',
+      payload: { noteIds: digestNotes.map((note) => note._id), reason: failure },
+      createdAt: now,
+    });
+  }
+  for (const notice of notices) await ctx.db.patch(notice._id, { failure });
+  // One row can hold both claims, so each patch merges into the decision as it stands now.
+  const settleDecision = async (
+    workItemId: Id<'workItems'>,
+    field: 'duplicateNoticeFailure' | 'closeFailure',
+  ): Promise<void> => {
+    const decision = (await ctx.db.get(workItemId))?.decision;
+    if (decision) await ctx.db.patch(workItemId, { decision: { ...decision, [field]: failure } });
+  };
+  for (const row of duplicates) await settleDecision(row._id, 'duplicateNoticeFailure');
+  for (const row of closes) await settleDecision(row._id, 'closeFailure');
+  for (const edit of edits) await ctx.db.patch(edit._id, { editFailure: failure });
+  return digestNotes.length + notices.length + duplicates.length + closes.length + edits.length;
+}
+
+/**
+ * Settle the manager-channel claims every employee's actions died holding (N-3); see
+ * `settleLapsedManagerClaims`. Run by the five-minute sweep in either mode.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param now - The instant the lease is judged against.
+ * @returns How many claims were settled.
+ */
+export async function settleLapsedManagerClaimsInTransaction(
+  ctx: MutationCtx,
+  now: number,
+): Promise<number> {
+  let settled = 0;
+  for (const agent of await ctx.db.query('agents').collect()) {
+    settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+  }
+  return settled;
+}
+
 /** How often one employee's work surfaces may be polled on demand. */
 export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;
 
