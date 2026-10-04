@@ -500,6 +500,36 @@ services:
       timeout: 5s
       start_period: 10s
 
+  # The fake Linear (fake-linear/, wave 12): Linear's OAuth token, revoke and
+  # authorise endpoints, its GraphQL API and its MCP server, answering as real
+  # Linear answered the real-vendor walks of 3 October 2026, so a bed proves a
+  # Linear path without calling Linear. Never a production service: anyone who
+  # reaches it acts as anyone it lists. It serves https when fake-linear/tls
+  # holds a certificate (fake-linear/make-tls.sh) and plain http otherwise, and
+  # is unpublished: a bed reaches it under Linear's own names through
+  # fake-linear/compose.bed.yml, which also publishes it for this machine's
+  # processes and browser. Its defaults let it start harmlessly beside fake
+  # Slack and the test issuer on any `test` bed.
+  fake-linear:
+    profiles: ['test']
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+    command: ['node', '/app/server.js']
+    environment:
+      - FAKE_LINEAR_PORT=443
+      - FAKE_LINEAR_REDIRECT_URIS=${FAKE_LINEAR_REDIRECT_URIS:-http://localhost:3000/api/oauth/linear}
+      - FAKE_LINEAR_APPS=${FAKE_LINEAR_APPS:-}
+      - FAKE_LINEAR_PEOPLE=${FAKE_LINEAR_PEOPLE:-}
+      - FAKE_LINEAR_WORKSPACE=${FAKE_LINEAR_WORKSPACE:-}
+      - FAKE_LINEAR_SIGNED_IN=${FAKE_LINEAR_SIGNED_IN:-}
+      - FAKE_LINEAR_TLS_DIR=/app/tls
+    volumes:
+      - ./fake-linear:/app:ro
+    healthcheck:
+      test: ['CMD', 'node', '/app/healthcheck.js']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
   # A synthetic system with a web UI and no API: the case Day0 claims to be
   # honest about. Nothing reaches it but a browser, so it is what the browser
   # floor is demonstrated against. Unpublished, like every other real-profile
