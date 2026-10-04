@@ -25,6 +25,7 @@ import type {
 } from '../surfaces/access-identity';
 import type { AccessEnd } from '../surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../surfaces/revokers/outcome';
+import type { MessagesTabOpenHow } from '../surfaces/slack-messages-tab';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -747,6 +748,18 @@ export interface SurfaceSocketTokenLandedPayload extends SurfaceNamed {
   readonly replaced: boolean;
 }
 
+/**
+ * The payload of `surface.app-messages-open`: the employee's own Slack app takes messages, so the
+ * manager's typed code can reach it (W12V-7). `created` from a manifest that opens the messages
+ * tab; `opened` by Day0's `apps.manifest.update`; `found-open` when Day0 read the app's manifest and
+ * someone had opened it; `confirmed` on the manager's word, for an app Day0 cannot read.
+ */
+export interface SurfaceAppMessagesOpenPayload extends SurfaceNamed {
+  readonly appId: string;
+  readonly appName: string;
+  readonly how: MessagesTabOpenHow;
+}
+
 /** The payload of `surface.install-failed`. */
 export type SurfaceInstallFailedPayload = SurfaceReason;
 
@@ -997,6 +1010,8 @@ export interface OrganisationRevokedAtSourcePayload {
 export type SlackConfigurationMethod =
   | 'tooling.tokens.rotate'
   | 'apps.manifest.create'
+  | 'apps.manifest.export'
+  | 'apps.manifest.update'
   | 'auth.revoke';
 
 /**
@@ -1020,7 +1035,7 @@ export interface OrganisationConfigurationUsedPayload {
   readonly outcome: 'done' | 'failed' | 'superseded' | 'already-revoked' | 'unrecognised';
   /** Slack's words for a failure, or why a rotation was superseded. */
   readonly reason?: string;
-  /** The app `apps.manifest.create` made. */
+  /** The app `apps.manifest.create` made, or the one `apps.manifest.export` or `.update` read or changed. */
   readonly appId?: string;
   /** When the configuration token a rotation issued lapses. */
   readonly expiresAt?: number;
@@ -1660,6 +1675,7 @@ export interface EventPayloads {
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
+  'surface.app-messages-open': SurfaceAppMessagesOpenPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
   'credential.superseded': CredentialSupersededPayload;
@@ -1844,6 +1860,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.orientation-failed',
   'surface.app-provisioned',
   'surface.socket-token-landed',
+  'surface.app-messages-open',
   'surface.install-failed',
   'surface.shared-credential-retired',
   'credential.superseded',

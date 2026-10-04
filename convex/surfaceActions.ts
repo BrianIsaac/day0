@@ -17,6 +17,7 @@ import {
 import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import type { KeptSweepPage } from './keptIdentities';
 import { relevantSystemText } from './orientationActions';
+import { runOpenMessagesTab } from './slackMessagesTabActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
@@ -141,6 +142,11 @@ interface ProbeDependencies {
   wait?(milliseconds: number): Promise<void>;
   /** Linear's issuer for a card acting as a Linear app; the probe's own unless a test replaces it. */
   linearIdentity?: LinearProbeIdentity;
+  /**
+   * Opens the messages tab of a Slack card's own app Day0 created before this release (W12V-7);
+   * the network one unless a test replaces it.
+   */
+  openMessagesTab?: (ctx: ActionCtx, surfaceId: Id<'surfaces'>) => Promise<unknown>;
 }
 
 export interface ProbeOutcome {
@@ -1628,6 +1634,9 @@ export async function runSurfaceProbe(
       if (!recorded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (surface.path === 'documented-api' && surface.provisioning !== undefined) {
+        await openMessagesTabOf(ctx, surfaceId, dependencies);
+      }
       return {
         verdict: 'connected',
         toolAllowlist,
@@ -1649,6 +1658,26 @@ export async function runSurfaceProbe(
     }
   }
   return { verdict: 'skipped', reason: 'The approved surface ladder was exhausted.' };
+}
+
+/**
+ * Bring a connected Slack card's own app over to taking messages, when Day0 created it before this
+ * release with a connection still active (W12V-7). A refusal is logged and leaves the probe's
+ * verdict alone: the card's typed-code row then still says what a person can turn on.
+ */
+async function openMessagesTabOf(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+  dependencies: ProbeDependencies,
+): Promise<void> {
+  try {
+    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId);
+  } catch (error: unknown) {
+    log.warn('slack app messages tab not opened', {
+      surfaceId,
+      reason: safeFailureMessage(error, '', 'Slack refused the update.'),
+    });
+  }
 }
 
 /** Owner-checked shell and UI entry point for a deliberate probe. */

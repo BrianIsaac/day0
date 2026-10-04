@@ -9,6 +9,7 @@ import {
 } from './_generated/server';
 import { appendConnectionEvent } from './connectionEvents';
 import { appendEvent } from './eventLog';
+import { recordAppTakesMessages } from './slackMessagesTab';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import type {
   OrganisationConfigurationUsedPayload,
@@ -267,13 +268,19 @@ export const recordRotationRefused = internalMutation({
 });
 
 /**
- * Write one use of the configuration token on the connection's ledger: an app created, or a
- * creation Slack refused. Internal, for `slackProvisionActions`.
+ * Write one use of the configuration token on the connection's ledger: an app created, read or
+ * opened for messages, or a call Slack refused. Internal, for `slackProvisionActions` and
+ * `slackMessagesTabActions`.
  */
 export const recordConfigurationUse = internalMutation({
   args: {
     organisationConnectionId: v.id('organisationConnections'),
-    method: v.union(v.literal('tooling.tokens.rotate'), v.literal('apps.manifest.create')),
+    method: v.union(
+      v.literal('tooling.tokens.rotate'),
+      v.literal('apps.manifest.create'),
+      v.literal('apps.manifest.export'),
+      v.literal('apps.manifest.update'),
+    ),
     outcome: v.union(v.literal('done'), v.literal('failed')),
     reason: v.optional(v.string()),
     appId: v.optional(v.string()),
@@ -338,6 +345,8 @@ export const recordCreatedApp = internalMutation({
     ...installLinkFields,
     /** The owner key the provisioning action started under. */
     startedUnder: v.string(),
+    /** The manifest the app was created from opens its messages tab (W12V-7). */
+    takesMessages: v.optional(v.boolean()),
     now: v.number(),
   },
   returns: v.null(),
@@ -384,6 +393,15 @@ export const recordCreatedApp = internalMutation({
       payload: { surfaceId: surface._id, appId: args.appId, appName: args.appName },
       createdAt: args.now,
     });
+    if (args.takesMessages === true) {
+      await recordAppTakesMessages(
+        ctx,
+        surface,
+        { appId: args.appId, appName: args.appName },
+        'created',
+        args.now,
+      );
+    }
     return null;
   },
 });

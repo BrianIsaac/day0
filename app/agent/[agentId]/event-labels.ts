@@ -8,6 +8,7 @@ import {
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
+import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
 import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
@@ -160,6 +161,26 @@ function correctedWhat(payload: Read<'organisation.connection-corrected'>): stri
   return issuer ? `${corrected} and its issuer recorded` : corrected;
 }
 
+/** How an employee's own Slack app came to take messages, as the feed says it (W12V-7). */
+function messagesOpenLabel(how: MessagesTabOpenHow | undefined): string {
+  switch (how) {
+    case 'created':
+      return 'app takes messages';
+    case 'opened':
+      return 'app messages tab opened';
+    case 'found-open':
+      return 'app messages tab found open';
+    case 'confirmed':
+      return 'app messages tab confirmed by the manager';
+    case undefined:
+      return 'app takes messages';
+    default: {
+      const unknown: never = how;
+      return `app takes messages (${String(unknown)})`;
+    }
+  }
+}
+
 /** One call Day0 made with the organisation's Slack configuration token or its refresh token (11-AS). */
 function configurationUsedLabel(payload: Read<'organisation.configuration-used'>): string {
   const name = text(payload.displayName) ?? 'Slack';
@@ -167,6 +188,17 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
     return payload.outcome === 'done'
       ? `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''} created with the configuration token`
       : `an employee's ${name} app not created${because(payload.reason)}`;
+  }
+  if (payload.method === 'apps.manifest.export' || payload.method === 'apps.manifest.update') {
+    const app = `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''}`;
+    if (payload.method === 'apps.manifest.export') {
+      return payload.outcome === 'done'
+        ? `${app} read with the configuration token`
+        : `${app} not read${because(payload.reason)}`;
+    }
+    return payload.outcome === 'done'
+      ? `${app}: messages tab opened with the configuration token`
+      : `${app}: messages tab not opened${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
     const notChecked = payload.unchecked === true ? ', not confirmed afterwards' : '';
@@ -473,6 +505,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
   'surface.socket-token-landed': (payload) =>
     `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
+  'surface.app-messages-open': (payload) => `${messagesOpenLabel(payload.how)}: typed code on`,
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
