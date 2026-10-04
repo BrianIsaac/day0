@@ -9499,6 +9499,10 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
   };
   const CLOSE = 1;
 
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
   interface OnChannel extends Seeded {
     readonly runId: Id<'events'>;
     readonly surfaceId: Id<'surfaces'>;
@@ -9885,6 +9889,142 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       (call) => (call.body as { text?: unknown } | undefined)?.text === closeOnly,
     )?.body as { blocks?: Array<{ type: string }> } | undefined;
     expect((request?.blocks ?? []).some((block) => block.type === 'actions')).toBe(false);
+  });
+
+  it('leaves a tripped close in a closing set for its card, and completes the run once the card decides it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Reading the tile back.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'I could not find the refreshed figure.',
+      notes: '',
+      workDone: 'done',
+      workDoneWhy: 'The audit note is posted.',
+      closeAgainstWords: 'I could not find the refreshed figure.',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note posted.' }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_issue',
+            toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }),
+          },
+        },
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The tile was read back.' },
+        { step: 2, status: 'satisfied', evidence: 'Comment and Done await one decision.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'looker:read',
+    ]);
+    const surfaceId = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        externalId: 'REVOPS-7',
+        plan: {
+          summary: 'Read the tile back, then close the ticket.',
+          steps: ['Capture the Looker read-back evidence', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 45,
+          obligations: obligations(
+            [
+              { kind: 'read', reads: ['looker'] },
+              { kind: 'write', writes: ['linear'] },
+            ],
+            'promised',
+            2,
+          ),
+        },
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!slack) throw new Error('Slack fixture missing');
+      await ctx.db.patch(slack._id, { managerUserId: 'UMANAGER' });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      return slack._id;
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.actionVerdicts?.[1]).toEqual({
+      disposition: 'held',
+      reason: HELD_CLOSE_AGAINST_WORDS,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'gh6npq',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+    });
+
+    await approveInSlack(harness, surfaceId, 'typed code');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked.output).toMatchObject({ phase: 'dependent' });
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment'],
+    );
+
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: parked.pendingRunId!,
+      approvedIndexes: [1],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment', 'save_issue'],
+    );
   });
 
   it('a rejection in Slack rejects the whole set, the held close with it, and sends nothing', async (): Promise<void> => {
