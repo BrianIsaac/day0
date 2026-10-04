@@ -3658,6 +3658,46 @@ export async function rememberReplacedRequest(
   }
 }
 
+/**
+ * Remember the request of a plan the manager turned down before Retry drafts a new one and clears
+ * it (W12V-16): an undecided request as `rememberReplacedRequest` does, and a decided one too,
+ * since the redraft's request replaces it, so its code is answered "replaced" rather than unknown.
+ * A decided request's message already says how it was decided, so it is never edited again.
+ *
+ * @param ctx - The Retry's transaction.
+ * @param row - The cancelled work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberRetriedRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined) return;
+  if (decision.decidedAt === undefined) {
+    await rememberReplacedRequest(ctx, row, now);
+    return;
+  }
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here.
+  await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    replacedAt: now,
+  });
+}
+
 /** The most of one item's replaced requests the new request names itself on. */
 const REPLACED_NAMED_SCAN = 50;
 
@@ -6628,7 +6668,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
           decisionId: args.reply.id,
           messageTs: args.messageTs,
           kind: 'unknown',
-          text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
+          text: `I couldn’t find decision ${args.reply.id}. Check the six-character code and try again.`,
         })
       : false;
     return { ...(await ignored(reason)), notified };

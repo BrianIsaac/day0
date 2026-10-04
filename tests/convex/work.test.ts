@@ -2187,7 +2187,8 @@ describe('single-use manager decisions', (): void => {
         decisionId: 'cd4uvw',
         messageTs: '4.100',
         kind: 'unknown',
-        text: 'I couldn’t find decision cd4uvw. Check the six-character token and try again.',
+        // Re-pinned for W12V-16: the manager reads "code" everywhere else, never "token".
+        text: 'I couldn’t find decision cd4uvw. Check the six-character code and try again.',
       }),
     ]);
     expect(
