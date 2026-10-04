@@ -422,9 +422,13 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'Mateo (Day0)',
     );
     expect(words.title).toBe("Buttons: needs this app's socket token");
+    // Re-pinned for W12V-4: an app Day0 created from its manifest has Socket Mode on already, so
+    // the card tells nobody to turn it on; an older app's Enable Socket Mode makes the token itself
+    // (the walk's row 15).
     expect(words.note).toBe(
-      'Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack turns on Socket Mode, creates an app-level token with the connections:write scope (Basic Information, App-Level Tokens) and pastes it below.',
+      'Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below: on an app Day0 created from its manifest Socket Mode is on, so under Basic Information, App-Level Tokens, Generate Token and Scopes; on an older app, turning on Enable Socket Mode makes it in the same dialog.',
     );
+    expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
   });
 

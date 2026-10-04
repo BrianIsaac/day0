@@ -597,7 +597,7 @@ export function decisionButtonsWords(
           typedCode
             ? 'Requests reach you with a typed code only.'
             : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
-        } To add Approve and Reject buttons, someone who manages ${app} in Slack turns on Socket Mode, creates an app-level token with the connections:write scope (Basic Information, App-Level Tokens) and pastes it below.`,
+        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below: on an app Day0 created from its manifest Socket Mode is on, so under Basic Information, App-Level Tokens, Generate Token and Scopes; on an older app, turning on Enable Socket Mode makes it in the same dialog.`,
         asksForToken: true,
         offersReplacement: false,
       };
