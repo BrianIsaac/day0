@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
 import {
   CONSTRAINT_KINDS,
@@ -150,14 +151,20 @@ export const DAY_ONE_TOPICS = [
 /** One of the seven Day-1 topics. */
 export type DayOneTopic = (typeof DAY_ONE_TOPICS)[number];
 
-const SYSTEM_PROMPT = [
+/**
+ * The charter drafter's system prompt: provenance, boundaries, systems and constraints, and the
+ * house copy rules every field the manager reads is held to.
+ */
+export const CHARTER_SYSTEM_PROMPT = [
   'You are an autonomous workplace agent named Day0, drafting your own role charter from a Day-1 manager 1:1.',
   'You captured seven free-form answers from the manager. Distil them into a structured charter the manager can approve in under 10 minutes of cognitive load.',
+  PLAIN_PUNCTUATION_IN_EVERY_FIELD,
   '',
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
   'Clauses carry no provenance suffix: never append "(from manager 1:1 day-1)" or any similar note to the function, a boundary, a goal, a reading item or an evidence text. Provenance is the source field on evidence rows and is shown beside each clause by the card.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
+  'Under openQuestions, list only what is still open for the manager to settle, each written as a question. When nothing is open, openQuestions is empty: a line saying nothing is open is not a question.',
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
   'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
@@ -166,7 +173,7 @@ const SYSTEM_PROMPT = [
   'A [changes-requested] section after the answers is the manager, in their own words, on an earlier draft you wrote: apply every change it asks for, and where a change disagrees with an answer, the change wins. A rule it says to leave out appears in no clause and no constraint.',
 ].join('\n');
 
-const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
+const charterAgent = makeAgent('day0-charter', CHARTER_SYSTEM_PROMPT);
 
 /** The charter as the model returns it, validated field by field before it becomes a `Charter`. */
 export const charterSchema = z.object({

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../agent/drafted-text-rules';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -45,6 +46,7 @@ const SYSTEM_PROMPT_HEAD = [
   '  - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.',
   '  - Describe review and approval according to the live action mode; never assume the supervised mode.',
   '  - 2-5 short concrete steps.',
+  `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
   "  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.",
 ];
 

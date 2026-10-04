@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHARTER_SYSTEM_PROMPT,
   charterSchema,
   normaliseNamedSystems,
   renderCharter,
@@ -240,6 +241,21 @@ describe('the charter prompt', (): void => {
       '- Leave out the rule "Own segment or pipeline work assigned to Priya.": the manager struck it.',
     ]);
     expect(prompt.indexOf('[open-questions]')).toBeLessThan(prompt.indexOf('[changes-requested]'));
+  });
+});
+
+describe("the charter drafter's copy rules (the v0.15.0 walk's finding 4)", (): void => {
+  it('asks for plain punctuation in every field and carries no em dash to copy', (): void => {
+    expect(CHARTER_SYSTEM_PROMPT).not.toContain('\u2014');
+    expect(CHARTER_SYSTEM_PROMPT).toContain(
+      'Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses. The rule holds in every text field you return.',
+    );
+  });
+
+  it('lists only open questions under openQuestions, and none when nothing is open', (): void => {
+    expect(CHARTER_SYSTEM_PROMPT).toContain(
+      'Under openQuestions, list only what is still open for the manager to settle, each written as a question. When nothing is open, openQuestions is empty: a line saying nothing is open is not a question.',
+    );
   });
 });
 
