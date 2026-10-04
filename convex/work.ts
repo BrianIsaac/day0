@@ -59,12 +59,14 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { closingChanges } from '../src/work/work-done';
+import { closeAgainstWordsOf, closingChanges } from '../src/work/work-done';
 import {
   awaitingIndexes,
   isCloseHeldAgainstWords,
   LEFT_FOR_CARD_KEY,
+  leftForCardOf,
   wholeSetApproval,
+  withoutLeftForCard,
 } from '../src/work/held-close';
 import {
   accessRequestReason,
@@ -3428,7 +3430,22 @@ export const prepareDecisionRequest = internalMutation({
       .collect();
     const actions = actionsOf(row.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
-    const heldIndexes = args.kind === 'actions' ? indexesWith(verdicts, 'held') : [];
+    // An approval in Slack decides every held write still waiting but a close the tripwire held,
+    // which the request names apart and leaves for its card (12-H, R-12D-1).
+    const approval =
+      args.kind === 'actions'
+        ? wholeSetApproval(verdicts, ledgerOf(row.output))
+        : { approve: [], leftForCard: [] };
+    const heldIndexes = [...approval.approve];
+    const leftForCard =
+      approval.leftForCard.length > 0
+        ? {
+            indexes: [...approval.leftForCard],
+            ...(closeAgainstWordsOf(row.output) !== undefined
+              ? { clause: closeAgainstWordsOf(row.output) }
+              : {}),
+          }
+        : undefined;
     const refused =
       args.kind === 'actions'
         ? refusedReasonEntries(row.actionVerdicts, actions.length).map(([index, reason]) => ({
@@ -3436,7 +3453,7 @@ export const prepareDecisionRequest = internalMutation({
             reason,
           }))
         : [];
-    if (args.kind === 'actions' && heldIndexes.length === 0) {
+    if (args.kind === 'actions' && heldIndexes.length === 0 && leftForCard === undefined) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
     }
     // The other held action sets already asked on this channel, so the
@@ -3465,12 +3482,19 @@ export const prepareDecisionRequest = internalMutation({
             ) {
               return [];
             }
+            // A set whose only waiting write is a close Day0 held has nothing a code decides.
+            const otherApproval = wholeSetApproval(
+              verdictList(other.actionVerdicts, actionsOf(other.output).length),
+              ledgerOf(other.output),
+            );
+            if (otherApproval.approve.length === 0) return [];
             return [
               {
                 workItemId: other._id,
                 decisionId: decision.id,
                 pendingRunId: other.pendingRunId,
                 title: other.title,
+                ...(otherApproval.leftForCard.length > 0 ? { leavesCloseForCard: true } : {}),
               },
             ];
           })
@@ -3533,6 +3557,7 @@ export const prepareDecisionRequest = internalMutation({
         : {}),
       output: row.output,
       heldIndexes,
+      ...(leftForCard !== undefined ? { leftForCard } : {}),
       refused,
       decisionId: args.decisionId,
       requestRunId,
@@ -3541,8 +3566,11 @@ export const prepareDecisionRequest = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       pendingRunId: row.pendingRunId,
       openActionDecisions,
-      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)).
-      withButtons: decisionButtonsFor(chat, socketBridgeConfigured()).available,
+      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      withButtons:
+        (args.kind === 'plan' || heldIndexes.length > 0) &&
+        decisionButtonsFor(chat, socketBridgeConfigured()).available,
     };
   },
 });
@@ -6346,14 +6374,18 @@ async function approveActionsInTransaction(
   await ctx.db.patch(args.workItemId, {
     approvedIndexes,
     applyPhase: 'approved',
+    // The mark is this approval's alone: an earlier one's, on a set a handover returned to held,
+    // never decides what this apply parks.
     ...(leftForCard.length > 0
       ? {
           output: {
-            ...(row.output as Record<string, unknown>),
+            ...withoutLeftForCard(row.output as Record<string, unknown>),
             [LEFT_FOR_CARD_KEY]: [...leftForCard],
           },
         }
-      : {}),
+      : leftForCardOf(row.output).length > 0
+        ? { output: withoutLeftForCard(row.output as Record<string, unknown>) }
+        : {}),
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
   const approved = await ctx.db.get(args.workItemId);
@@ -6977,12 +7009,16 @@ export function interruptedApplyLedger(
       ? output.actionIndexOffset
       : 0;
   // In the auto phase a held row was never offered to the manager, so it
-  // keeps the reason the gate held it for; in the approved phase an
-  // unapproved held row is one the manager left out.
+  // keeps the reason the gate held it for; so does a close an approval left
+  // for its card (12-H), which the manager has not decided. In the approved
+  // phase any other unapproved held row is one the manager left out.
+  const leftForCard = new Set(leftForCardOf(row.output));
   const heldReasonFor = (index: number): string => {
     const verdict = verdicts[index];
     if (verdict.disposition === 'refused') return verdict.reason;
-    if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
+    if (verdict.disposition === 'held' && (row.applyPhase === 'auto' || leftForCard.has(index))) {
+      return verdict.reason;
+    }
     return HELD_NOT_APPROVED;
   };
   // A row the apply reported before it stopped is kept as it reported (P4-2).
@@ -7007,7 +7043,7 @@ export function interruptedApplyLedger(
       }),
     };
   });
-  return { output: withoutApplyProgress(output), applied };
+  return { output: withoutLeftForCard(withoutApplyProgress(output)), applied };
 }
 
 /**

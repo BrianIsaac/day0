@@ -91,3 +91,24 @@ export function leftForCardOf(output: unknown): number[] {
 export function withoutLeftForCard(output: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(output).filter(([key]) => key !== LEFT_FOR_CARD_KEY));
 }
+
+/** The most of the run's sentence a Slack request quotes, so it stays inside one section block. */
+export const QUOTED_SENTENCE_MAX_CHARS = 400;
+
+/**
+ * The run's sentence as a quotation in running text: its full stop moved outside the quotation
+ * marks, a question or exclamation mark kept inside them with no full stop added, and a sentence
+ * longer than `max` cut at a word with an ellipsis inside the marks.
+ *
+ * @param clause - The sentence the tripwire read.
+ * @param max - The most characters of it quoted.
+ */
+export function quotedSentence(clause: string, max = QUOTED_SENTENCE_MAX_CHARS): string {
+  const sentence = clause.trim().replace(/\s+/g, ' ');
+  if (sentence.length > max) {
+    const cut = sentence.slice(0, max);
+    const atWord = cut.lastIndexOf(' ') > max / 2 ? cut.slice(0, cut.lastIndexOf(' ')) : cut;
+    return `“${atWord.replace(/[\s.,;:]+$/, '')}…”`;
+  }
+  return /[?!…]$/.test(sentence) ? `“${sentence}”` : `“${sentence.replace(/\.+$/, '')}”.`;
+}

@@ -963,8 +963,8 @@ export const claimApprovedActions = internalMutation({
       },
       createdAt: Date.now(),
     });
-    // The closes an approval left for their card are read once, here, and leave the output: the
-    // apply parks them, and a later approval of the parked set decides them on their own (12-H).
+    // The closes an approval left for their card: the apply parks them, and every output it writes
+    // goes without the mark, so a later approval of the parked set decides them on their own (12-H).
     const leftForCard = autoPhase ? [] : leftForCardOf(row.output);
     const output =
       leftForCard.length > 0
@@ -974,7 +974,6 @@ export const claimApprovedActions = internalMutation({
       state: 'executing',
       applyAttemptId,
       applyClaimedAt: Date.now(),
-      ...(leftForCard.length > 0 ? { output } : {}),
     });
     // The switch counts from the claim: an apply that started late still has
     // its whole window before its outcomes are recorded as unknown (P9-1).

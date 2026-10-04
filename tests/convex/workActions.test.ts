@@ -9817,6 +9817,76 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     ).rejects.toThrow('decided on its card');
   });
 
+  /** The text of every request or notice posted to the manager's DM, in order. */
+  function postedToManager(): string[] {
+    return recorded.http.flatMap((call) => {
+      const body = call.body as { channel?: unknown; text?: unknown } | undefined;
+      return call.url.endsWith('/chat.postMessage') &&
+        body?.channel === 'D0MANAGER' &&
+        typeof body.text === 'string'
+        ? [body.text]
+        : [];
+    });
+  }
+
+  it('asks in Slack for the writes an approval sends, names the close it leaves out with the sentence, and asks nothing of the close alone once the rest landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    const first = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'zz9yxw',
+      supersedes: 'gh6npq',
+    });
+    // A delivered code is not replaced; the request the set was asked with is read again.
+    expect(first).toMatchObject({ prepared: false });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { decision: undefined });
+    });
+    const asked = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'gh6npq',
+    });
+    expect(asked).toMatchObject({
+      prepared: true,
+      heldIndexes: [0, 3],
+      leftForCard: { indexes: [CLOSE], clause: 'I could not find the close summary.' },
+    });
+
+    await approveInSlack(harness, surfaceId, 'typed code');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    // The park asks about the close alone in an action it scheduled, which runs in real time.
+    await vi.waitFor(
+      () =>
+        expect(postedToManager().some((text) => text.startsWith('Priya’s ticket close'))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked.decision).toMatchObject({ kind: 'actions' });
+    expect(parked.decision?.id).not.toBe('gh6npq');
+    expect(parked.decision?.withButtons).toBeUndefined();
+    const posts = postedToManager();
+    // The acknowledgement of the approval, and then the close's own ask.
+    expect(posts.some((text) => text.startsWith('Approval gh6npq received.'))).toBe(true);
+    const closeOnly = posts.find((text) => text.startsWith('Priya’s ticket close')) ?? '';
+    expect(closeOnly.split('\n')[0]).toBe(
+      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in day0.',
+    );
+    expect(closeOnly).toContain('wrote “I could not find the close summary”.');
+    expect(closeOnly).not.toContain(parked.decision?.id ?? 'no code');
+    // Posted as the request was kept, with the shared app's attribution after it.
+    expect(closeOnly.startsWith(parked.decision?.requestText ?? 'no request')).toBe(true);
+    const request = recorded.http.find(
+      (call) => (call.body as { text?: unknown } | undefined)?.text === closeOnly,
+    )?.body as { blocks?: Array<{ type: string }> } | undefined;
+    expect((request?.blocks ?? []).some((block) => block.type === 'actions')).toBe(false);
+  });
+
   it('a rejection in Slack rejects the whole set, the held close with it, and sends nothing', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

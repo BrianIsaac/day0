@@ -3,6 +3,7 @@ import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
   batchDecisionNoticeText,
+  batchRequestLines,
   CLOSE_ONLY_ON_CARD_REASON,
   closeOnCardNoticeText,
   canEditManagerMessage,
@@ -695,5 +696,110 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
     expect(closeOnCardNoticeText('ab12cd')).toBe(
       'Approval ab12cd decides nothing: the one write waiting is the ticket close, and what I wrote says the work was not done, so it is decided on its card in day0.',
     );
+  });
+});
+
+describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', (): void => {
+  const comment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-12","body":"Audit note posted."}',
+    },
+  };
+  const post: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-13","body":"Finance follow-up."}',
+    },
+  };
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-12","state":"Done"}',
+    },
+  };
+  const base = {
+    agentName: 'Priya',
+    title: 'Post the close-summary audit note',
+    id: 'gh6npq',
+    kind: 'actions' as const,
+    actions: [comment, close, post],
+    surfaces: [slack],
+    item: { sourceCategory: 'ticket-queue', externalId: 'REVOPS-12' },
+  };
+
+  it('lists the writes an approval sends, and names the close it leaves out, why, and where it is decided', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [0, 2],
+      leftForCard: { indexes: [1], clause: 'I could not find the close summary.' },
+      buttons: true,
+    });
+    const lines = text.split('\n');
+    expect(lines.filter((line) => /^\d+\. /.test(line))).toHaveLength(2);
+    expect(text).toContain('Left out of this request, for its card in day0:');
+    expect(text).toContain(
+      'Priya answered that the work is done, but wrote “I could not find the close summary”. Approving here does not send this close: decide it on its card, where you can read the run first.',
+    );
+    expect(text).toContain('“approve gh6npq” applies both actions listed');
+    expect(text.indexOf('Left out of this request')).toBeLessThan(text.indexOf('Press Approve'));
+    expect(text.length).toBeLessThanOrEqual(3_000);
+    expect(text).not.toContain('—');
+  });
+
+  it('asks nothing a press could decide when the close is the only write waiting', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [],
+      leftForCard: { indexes: [1], clause: 'Did the deals sync?' },
+      buttons: false,
+    });
+    expect(text.split('\n')[0]).toBe(
+      'Priya’s ticket close on “Post the close-summary audit note” waits for you on its card in day0.',
+    );
+    expect(text).toContain(
+      'Priya answered that the work is done, but wrote “Did the deals sync?” Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done.',
+    );
+    expect(text).not.toContain('approve gh6npq');
+    expect(text).not.toContain('Press Approve');
+    expect(text).not.toContain('Reply');
+  });
+
+  it('keeps a very long sentence inside one section of a Slack message', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [0, 2],
+      leftForCard: { indexes: [1], clause: `${'The deals were not found. '.repeat(200)}` },
+    });
+    expect(text.length).toBeLessThanOrEqual(3_000);
+    const sentence = text.split('\n').find((line) => line.startsWith('Priya answered'))!;
+    expect(sentence.length).toBeLessThanOrEqual(600);
+    expect(sentence).toContain('…”');
+  });
+});
+
+describe('the batch lines when a member leaves a ticket close for its card (12-H)', (): void => {
+  it('marks the member and says the batch code leaves its close for the card', (): void => {
+    expect(
+      batchRequestLines({
+        id: 'bq2wxy',
+        members: [
+          { title: 'Post the audit note', decisionId: 'gh6npq', leavesCloseForCard: true },
+          { title: 'Post the second note', decisionId: 'hk7rst' },
+        ],
+      }),
+    ).toEqual([
+      '',
+      '2 held action sets are waiting, each shown in its own request:',
+      '1. Post the audit note (gh6npq; its ticket close is left for its card)',
+      '2. Post the second note (hk7rst)',
+      'Reply “approve bq2wxy” to approve every held action in all 2, or “reject bq2wxy <reason>” to reject them all. A request decided since is left as decided. A ticket close Day0 held is not among the approved: it is decided on its card in day0.',
+    ]);
   });
 });

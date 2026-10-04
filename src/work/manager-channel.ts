@@ -3,6 +3,7 @@ import type { SurfaceRecord } from '../surfaces/types';
 import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
 import type { RunHold } from './item-display';
+import { quotedSentence } from './held-close';
 
 /** How many characters a decision code has. */
 export const DECISION_ID_LENGTH = 6;
@@ -412,7 +413,17 @@ export function decisionRequestText(args: {
   draftedWithout?: DraftedWithoutLine;
   /** The request carries Approve and Reject buttons (RM3 (a)); the typed code works beside them. */
   buttons?: boolean;
+  /**
+   * The ticket closes the tripwire held, which no approval here sends (wave 12, 12-H; R-12D-1):
+   * named after the held list with the run's sentence, and decided on their card. With no held
+   * action left beside them the request asks nothing a reply or a press could decide.
+   */
+  leftForCard?: { readonly indexes: readonly number[]; readonly clause?: string };
 }): string {
+  const closes = args.kind === 'actions' ? (args.leftForCard?.indexes ?? []) : [];
+  if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
+    return closeOnlyRequestText({ ...args, closes });
+  }
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
   const typed = `“approve ${args.id}” or “reject ${args.id} <reason>”`;
@@ -465,6 +476,14 @@ export function decisionRequestText(args: {
       listHeading,
       ...shown,
       ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in day0.`] : []),
+      ...(closes.length > 0
+        ? [
+            '',
+            'Left out of this request, for its card in day0:',
+            ...closeLines(args.actions ?? [], closes, args.surfaces ?? [], summary),
+            `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} Approving here does not send this close: decide it on its card, where you can read the run first.`,
+          ]
+        : []),
       ...(refused.length > 0 ? ['', ...refused] : []),
       '',
       reply,
@@ -478,6 +497,50 @@ export function decisionRequestText(args: {
     shown -= 1;
   }
   return frame(lines.slice(0, shown), lines.length - shown);
+}
+
+/**
+ * A request whose only waiting writes are ticket closes the tripwire held (wave 12, 12-H): it says
+ * the close waits on its card and why, and offers no code or button, since an approval here would
+ * decide nothing.
+ */
+function closeOnlyRequestText(
+  args: Parameters<typeof decisionRequestText>[0] & { readonly closes: readonly number[] },
+): string {
+  const summary: SummaryContext = {
+    ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
+    textLimit: PLAN_LINE_MAX_CHARS,
+    ...(args.slackMarkup ? { slackMarkup: true } : {}),
+  };
+  const noun = args.closes.length === 1 ? 'ticket close' : 'ticket closes';
+  const waits = args.closes.length === 1 ? 'waits' : 'wait';
+  return [
+    `${args.agentName}’s ${noun} on “${oneLine(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
+    ...(args.item ? itemLines(args.item) : []),
+    '',
+    ...closeLines(args.actions ?? [], args.closes, args.surfaces ?? [], summary),
+    `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done.`,
+  ].join('\n');
+}
+
+/** The held closes, one line each, in the request's own summary of a write. */
+function closeLines(
+  actions: readonly MockAction[],
+  closes: readonly number[],
+  surfaces: readonly SurfaceRecord[],
+  summary: SummaryContext,
+): string[] {
+  return closes.flatMap((index) => {
+    const action = actions[index];
+    return action === undefined ? [] : [`- ${summariseAction(action, surfaces, summary)}`];
+  });
+}
+
+/** Why Day0 held the close, with the run's sentence when the output kept it. */
+function heldCloseSentence(agentName: string, clause: string | undefined): string {
+  return clause === undefined || clause.trim() === ''
+    ? `${agentName} answered that the work is done, but its own words say otherwise.`
+    : `${agentName} answered that the work is done, but wrote ${quotedSentence(clause)}`;
 }
 
 /** What a decision request says about the work item it asks about. */
@@ -617,17 +680,25 @@ function planLines(plan: unknown): string[] {
  */
 export function batchRequestLines(args: {
   id: string;
-  members: ReadonlyArray<{ title: string; decisionId: string }>;
+  members: ReadonlyArray<{ title: string; decisionId: string; leavesCloseForCard?: boolean }>;
 }): string[] {
   const count = args.members.length;
+  // A ticket close the tripwire held is never approved by the batch code (12-H, R-12D-1).
+  const closes = args.members.some((member) => member.leavesCloseForCard === true);
   return [
     '',
     `${count} held action sets are waiting, each shown in its own request:`,
     ...args.members.map(
       (member, index) =>
-        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
+        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId}${
+          member.leavesCloseForCard === true ? '; its ticket close is left for its card' : ''
+        })`,
     ),
-    `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
+    `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.${
+      closes
+        ? ' A ticket close Day0 held is not among the approved: it is decided on its card in day0.'
+        : ''
+    }`,
   ];
 }
 
