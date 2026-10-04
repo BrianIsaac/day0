@@ -1,4 +1,3 @@
-import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
 import { ConvexError, v, type Infer } from 'convex/values';
 import {
@@ -12,16 +11,11 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCaller } from './ownership';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
-import {
-  HANDOVER_IN_PROGRESS_REASON,
-  HANDOVER_STOP_REASON,
-  isBeingHandedOver,
-  settleHandoverAfterRun,
-} from './transferInFlight';
+import { settleHandoverAfterRun } from './transferInFlight';
 import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
@@ -67,7 +61,7 @@ import {
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { isOpenQuestionStop, transitionWithheld } from '../src/work/obligations';
+import { transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -76,7 +70,6 @@ import {
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   COLD_START_WIP_LIMIT,
   type MockAction,
-  type ReplyTarget,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
   SCOPE_JUDGEMENT_UNAVAILABLE,
@@ -108,14 +101,8 @@ import {
 } from '../src/work/manager-channel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { skillBodyHash } from '../src/work/skill-body';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
-import {
-  INTERRUPTED_APPLY_REASON,
-  OUTCOME_UNKNOWN_REASON,
-  providerReconciliationEntries,
-  retryRequiresProviderReconciliation,
-} from '../src/work/reconciliation';
+import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
   digestDue,
@@ -132,7 +119,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { retiredClaimOn, retiredHolderName } from './retirements';
-import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 
 /**
