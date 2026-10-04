@@ -5305,6 +5305,39 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual([]);
   });
 
+  it('says a ticket delegated to the identity the employee acts as is held by it (W12V-15)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const delegated = {
+      assigned: true,
+      assigneeId: '64b6c630-449f-4c6c-863a-b4d80c64c12e',
+      state: 'Backlog',
+      stateType: 'backlog',
+      doNotAutomate: false,
+    };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: delegated,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        credentialLanded: true,
+        providerIdentityId: '64b6c630-449f-4c6c-863a-b4d80c64c12e',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+    const latest = await harness.withIdentity(OWNER).query(api.work.latestListing, { workItemId });
+    expect(latest?.holder).toEqual({ employeeName: expect.any(String), holderIsEmployee: true });
+  });
+
   it('shows the owner the newest listing of the ticket, without the assignee address, and no one else', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
@@ -5345,6 +5378,8 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       },
       refused: 'assigned to someone else',
       listedAt: expect.any(Number),
+      // Re-pinned for W12V-15: whose identity holds it, so the card names no raw id.
+      holder: { employeeName: expect.any(String), holderIsEmployee: false },
     });
     await expect(
       harness

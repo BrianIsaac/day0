@@ -329,7 +329,8 @@ describe('workingFrom', (): void => {
 });
 
 describe('ticketNowSentence', (): void => {
-  it('says where the ticket stands and who holds it, by id', (): void => {
+  it('says where the ticket stands and that someone holds it, never by its raw id', (): void => {
+    // Re-pinned for W12V-15: the walk's card named the delegate by its id.
     expect(
       ticketNowSentence({
         assigned: true,
@@ -338,7 +339,24 @@ describe('ticketNowSentence', (): void => {
         stateType: 'started',
         doNotAutomate: false,
       }),
-    ).toBe('The ticket is in In Progress, assigned to user-7.');
+    ).toBe('The ticket is in In Progress, assigned to someone in the tracker.');
+  });
+
+  it('names the employee’s own identity holding the ticket, never its raw id (W12V-15)', (): void => {
+    // The walk's REVOPS-6, delegated to the shared app user "Day0": the stopped card read
+    // "The ticket is in Backlog, assigned to 64b6c630-449f-4c6c-863a-b4d80c64c12e."
+    const tracker = {
+      assigned: true,
+      assigneeId: '64b6c630-449f-4c6c-863a-b4d80c64c12e',
+      state: 'Backlog',
+      doNotAutomate: false,
+    };
+    expect(
+      ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: true }),
+    ).toBe('The ticket is in Backlog, held by the identity Iris acts as in the tracker.');
+    expect(
+      ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: false }),
+    ).toBe('The ticket is in Backlog, assigned to someone other than Iris in the tracker.');
   });
 
   it('says what the tracker did not name, the do-not-automate mark and a refusal', (): void => {

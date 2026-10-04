@@ -149,6 +149,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
+import type { TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -377,11 +378,14 @@ export const latestListing = query({
     tracker: Omit<TicketSnapshot, 'assigneeEmail'>;
     listedAt: number;
     refused?: string;
+    holder?: TicketHolderView;
   } | null> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const kept = await keptListingAt(ctx, row, Number.MAX_SAFE_INTEGER, false);
     if (kept === undefined) return null;
     const { assigned, assigneeId, state, stateType, doNotAutomate } = kept.tracker;
+    const holder =
+      assigneeId === undefined ? undefined : await ticketHolderOf(ctx, row, assigneeId);
     return {
       tracker: {
         assigned,
@@ -392,9 +396,36 @@ export const latestListing = query({
       },
       listedAt: kept.listedAt,
       ...(kept.refused !== undefined ? { refused: kept.refused } : {}),
+      ...(holder === undefined ? {} : { holder }),
     };
   },
 });
+
+/** The most of an employee's cards the holder's reading walks. */
+const HOLDER_CARDS_READ = 100;
+
+/**
+ * Whether a listed ticket's holder is the identity the employee acts as in its tracker: the
+ * provider identity its card on the item's source system recorded (W12V-15).
+ */
+async function ticketHolderOf(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  assigneeId: string,
+): Promise<TicketHolderView | undefined> {
+  const agent = await ctx.db.get(row.agentId);
+  if (agent === null) return undefined;
+  const cards = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .take(HOLDER_CARDS_READ);
+  const holderIsEmployee = cards.some(
+    (card) =>
+      card.slug === row.sourceSystem &&
+      (card.providerIdentityId === assigneeId || card.actsAs?.providerIdentityId === assigneeId),
+  );
+  return { employeeName: agent.name, holderIsEmployee };
+}
 
 /** How many of an employee's newest plan drafts the earlier-plan read walks. */
 const EARLIER_PLAN_READ_LIMIT = 200;
