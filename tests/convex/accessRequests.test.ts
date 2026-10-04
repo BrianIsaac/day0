@@ -12,6 +12,7 @@ import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 const SAM = 'sam@acme.test';
 
@@ -332,5 +333,23 @@ describe('the card after a draft (11-AO re-review)', (): void => {
     const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
     expect(shown?.text).toBe(drafted.text);
     expect(shown?.mailto).toContain(encodeURIComponent(drafted.text));
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the card exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const surfaceId = await goneRowOf(harness, 'surfaces');
+    await expect(harness.query(api.accessRequests.forCard, { surfaceId })).rejects.toMatchObject(
+      refusal,
+    );
+    await expect(harness.mutation(api.accessRequests.draft, { surfaceId })).rejects.toMatchObject(
+      refusal,
+    );
+    await expect(
+      harness.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' }),
+    ).rejects.toMatchObject(refusal);
   });
 });

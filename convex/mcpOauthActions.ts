@@ -10,7 +10,7 @@ import {
   type ClaimedAuthorisation,
   type PendingClaimFailure,
 } from './mcpOauth';
-import { assertOwnsAgentAction, getCaller } from './ownership';
+import { assertOwnsAgentAction, getCaller, getCallerOrThrow } from './ownership';
 import { openOwnedCredential, sealForOwner } from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
 import {
@@ -367,8 +367,10 @@ export async function runStartAuthorisation(
  */
 export const startAuthorisation = action({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<StartOutcome> =>
-    await runStartAuthorisation(ctx, args.surfaceId, mcpOauthDeps()),
+  handler: async (ctx, args): Promise<StartOutcome> => {
+    await getCallerOrThrow(ctx);
+    return await runStartAuthorisation(ctx, args.surfaceId, mcpOauthDeps());
+  },
 });
 
 /** What the redirect route is told: where to send the browser, and what the card should say. */

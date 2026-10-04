@@ -41,6 +41,7 @@ import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 import { MCP_INVALID_TOKEN_ERROR } from '../fixtures/linear/linear-oauth-2026-10-02';
 import { LinearIssuerRefusal } from '../../src/surfaces/identity-issuers/linear';
 
@@ -3800,5 +3801,24 @@ describe('the endpoint check that follows a failed MCP probe', (): void => {
         throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
       }),
     ).resolves.toBe('A request without the key failed too: ECONNRESET.');
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the card exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const surfaceId = await goneRowOf(harness, 'surfaces');
+    await expect(harness.action(api.surfaceActions.probe, { surfaceId })).rejects.toMatchObject(
+      refusal,
+    );
+    await expect(
+      harness.action(api.surfaceActions.landCredential, {
+        surfaceId,
+        label: 'API key',
+        plaintext: 'fake-key',
+      }),
+    ).rejects.toMatchObject(refusal);
   });
 });

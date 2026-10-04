@@ -12,11 +12,10 @@ import {
 } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
-import { insertMinimalRow } from './schema-fixtures';
 
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
-import { guardRefusal } from './fakes/anonymous-caller';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -3995,24 +3994,6 @@ describe('surfaces.installRedirectConfigured', (): void => {
     );
   });
 });
-
-/** An id of a row of `table` that existed and is gone, so nothing behind it can be read. */
-async function goneRowOf<T extends 'surfaces' | 'docSources' | 'agents'>(
-  harness: TestConvex<typeof schema>,
-  table: T,
-): Promise<Id<T>> {
-  return await harness.run(async (ctx) => {
-    const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
-    const agentId = (await insertMinimalRow(
-      fixtureCtx,
-      'agents',
-      undefined as unknown as Parameters<typeof insertMinimalRow>[2],
-    )) as Id<'agents'>;
-    const id = (await insertMinimalRow(fixtureCtx, table, agentId)) as Id<T>;
-    await ctx.db.delete(id);
-    return id;
-  });
-}
 
 describe('the anonymous-caller guard before the mode and the card (12-G)', (): void => {
   it.each(['mock', 'real'] as const)(

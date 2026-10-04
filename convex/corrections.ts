@@ -7,7 +7,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import {
@@ -370,6 +370,7 @@ export const forPlan = internalQuery({
 export const retire = mutation({
   args: { correctionId: v.id('corrections') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
+    await getCallerOrThrow(ctx);
     const correction = await ctx.db.get(args.correctionId);
     if (!correction) throw new Error('correction not found');
     await assertOwnsAgent(ctx, correction.agentId);

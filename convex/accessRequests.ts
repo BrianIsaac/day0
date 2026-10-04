@@ -10,7 +10,7 @@ import {
 import { internal } from './_generated/api';
 import { appendEvent, eventsOfType } from './eventLog';
 import { activeConnectionFor, systemConnectionRevoked } from './organisationConnectionReads';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -95,6 +95,8 @@ async function ownedCard(
   ctx: QueryCtx | MutationCtx,
   surfaceId: Id<'surfaces'>,
 ): Promise<{ surface: Doc<'surfaces'>; agent: Doc<'agents'> }> {
+  // The guard first, so a caller with no identity is never told whether a card exists (12-G).
+  await getCallerOrThrow(ctx);
   const surface = await ctx.db.get(surfaceId);
   if (surface === null) throw new ConvexError('That card no longer exists.');
   const agent = await assertOwnsAgent(ctx, surface.agentId);
