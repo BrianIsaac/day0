@@ -16,7 +16,12 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
-import type { GivenAnswer, ReconciliationAnswer, ReconciliationEntry } from '@/work/reconciliation';
+import type {
+  GivenAnswer,
+  ReconciliationAnswer,
+  ReconciliationEntry,
+  Reconciler,
+} from '@/work/reconciliation';
 import { type ReactNode, useId, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Button } from '../../../components/Button';
@@ -568,6 +573,19 @@ function answeredCount(
   return entries.filter((entry) => answers.has(entryKey(entry))).length;
 }
 
+/** A reconciliation once recorded: when, and who recorded it in the card's words (`reconcilerOf`). */
+export interface RecordedReconciliation {
+  readonly confirmedAt: number;
+  /** Who recorded it; absent when the page does not know the employee's manager. */
+  readonly by?: Reconciler;
+}
+
+/** The words before the reconciliation's time: who verified it, when the card knows. */
+function verifiedBy(by: Reconciler | undefined): string {
+  if (by === undefined) return 'Verified at';
+  return by === 'you' ? 'Verified by you at' : 'Verified by a previous manager at';
+}
+
 /** An entry's place in the run, the checklist's key for it. */
 function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
@@ -581,7 +599,7 @@ function entryKey(entry: ReconciliationEntry): string {
  * again a write answered landed, and sends afresh one answered not sent.
  *
  * @param entries - The entries to check, from the run's ledger.
- * @param reconciliation - Who confirmed the check and when, with the answers, once they did.
+ * @param reconciliation - When the check was confirmed and who confirmed it, once they did.
  * @param busy - A decision on the card is in flight; the confirmation waits for it.
  * @param onConfirm - Record the answers; the card says what it came to.
  */
@@ -592,7 +610,7 @@ export function ProviderReconciliationControl({
   onConfirm,
 }: {
   entries: readonly ReconciliationEntry[];
-  reconciliation?: { actor: string; confirmedAt: number };
+  reconciliation?: RecordedReconciliation;
   busy?: boolean;
   onConfirm: (answers: readonly GivenAnswer[]) => void;
 }) {
@@ -687,7 +705,7 @@ export function ProviderReconciliationControl({
       )}
       {reconciliation ? (
         <p className="text-[13px] text-[var(--color-muted)]">
-          Verified by <span className="font-mono">{reconciliation.actor}</span> at{' '}
+          {verifiedBy(reconciliation.by)}{' '}
           <time
             dateTime={new Date(reconciliation.confirmedAt).toISOString()}
             title={clockTimeWithSeconds(reconciliation.confirmedAt, zone)}

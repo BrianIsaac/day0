@@ -332,18 +332,22 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm reconciliation<\/button>/);
   });
 
-  it('shows the durable actor and timestamp after provider reconciliation', (): void => {
-    const html = renderToStaticMarkup(
-      createElement(ProviderReconciliationControl, {
-        entries: [],
-        reconciliation: { actor: 'operator-7', confirmedAt: 1_788_190_200_000 },
-        onConfirm: vi.fn(async (): Promise<void> => {}),
-      }),
-    );
+  it('shows who reconciled, in words, and when, after provider reconciliation', (): void => {
+    const shown = (by: 'you' | 'previous-manager' | undefined): string =>
+      renderToStaticMarkup(
+        createElement(ProviderReconciliationControl, {
+          entries: [],
+          reconciliation: { confirmedAt: 1_788_190_200_000, ...(by ? { by } : {}) },
+          onConfirm: vi.fn(async (): Promise<void> => {}),
+        }),
+      );
+    const html = shown('you');
     expect(html).toContain('Provider state reconciled');
-    expect(html).toContain('operator-7');
+    expect(html).toContain('Verified by you at');
     expect(html).toContain('Retry is enabled');
     expect(html).not.toContain('Confirm reconciliation');
+    expect(shown('previous-manager')).toContain('Verified by a previous manager at');
+    expect(shown(undefined)).toContain('Verified at');
   });
 });
 

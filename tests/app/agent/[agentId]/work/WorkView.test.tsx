@@ -108,4 +108,32 @@ describe('WorkView', () => {
     );
     expect(mock).not.toContain('Held while');
   });
+
+  it('says who reconciled a stopped run in words, never as the owner key it keeps', () => {
+    const reconciled = workItem('REVOPS-104', {
+      state: 'failed',
+      skipReason: 'stopped: stopped by the manager',
+      output: {
+        draft: 'Posted the close summary.',
+        notes: '',
+        actions: [{ tool: 'http.request', args: {} }],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            reason: 'outcome unknown after the apply was stopped - verify provider before retry',
+          },
+        ],
+      },
+      providerReconciliation: {
+        actor: EMPLOYEE_ROW.userId,
+        confirmedAt: Date.UTC(2026, 9, 4, 9, 30),
+        entries: [],
+      },
+    });
+    backend.queries = { 'work:listForAgent': [reconciled], 'corrections:listForAgent': [] };
+    const html = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
+    expect(html).toContain('Verified by you at');
+    expect(html).not.toContain(`>${EMPLOYEE_ROW.userId}<`);
+  });
 });

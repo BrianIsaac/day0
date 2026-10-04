@@ -22,6 +22,7 @@ import {
   type GivenAnswer,
   isOutcomeUnknownReason,
   providerReconciliationEntries,
+  reconcilerOf,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
@@ -157,6 +158,7 @@ export function WorkItemCard({
   surfaces,
   autonomousActions,
   employeeName = 'the employee',
+  managerKey,
   questions = [],
   corrections = [],
   autonomyChanges = [],
@@ -179,6 +181,8 @@ export function WorkItemCard({
   autonomousActions: boolean;
   /** The employee's name, for the sentences that say who does what next. */
   employeeName?: string;
+  /** The employee's manager's owner key (`agents.userId`), to say who reconciled a run. */
+  managerKey?: string;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
@@ -541,7 +545,14 @@ export function WorkItemCard({
           reconciliation={{
             needed: retryRequiresProviderReconciliation(output, item.skipReason),
             entries: item.providerReconciliation?.entries ?? providerReconciliationEntries(output),
-            ...(item.providerReconciliation ? { recorded: item.providerReconciliation } : {}),
+            ...(item.providerReconciliation
+              ? {
+                  recorded: {
+                    confirmedAt: item.providerReconciliation.confirmedAt,
+                    by: reconcilerOf(item.providerReconciliation.actor, managerKey),
+                  },
+                }
+              : {}),
           }}
           employeeName={employeeName}
           autonomous={autonomousActions}

@@ -239,6 +239,7 @@ export function WorkQueue({
   autonomyChanges = [],
   loading = false,
   employeeName = 'the employee',
+  managerKey,
   needsYou = NO_ITEMS,
   refusedSkills = NO_REFUSED_SKILLS,
   hold,
@@ -250,6 +251,8 @@ export function WorkQueue({
   refusedSkills?: ReadonlyMap<string, RefusedSkill>;
   /** The employee's name, for the cards' sentences. */
   employeeName?: string;
+  /** The employee's manager's owner key (`agents.userId`), for who reconciled a run. */
+  managerKey?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
   needsYou?: ReadonlySet<string>;
   workItems: Doc<'workItems'>[];
@@ -450,6 +453,7 @@ export function WorkQueue({
                   }
                   onCloseWithoutRetry={() => closeWithoutRetry({ workItemId: item._id })}
                   employeeName={employeeName}
+                  managerKey={managerKey}
                   servedByLoop={surfaceMode === 'real'}
                   hold={hold}
                   {...refusedSkillOf(item, refusedSkills)}

@@ -37,6 +37,28 @@ export function isOutcomeUnknownReason(reason: unknown): boolean {
   return reason === OUTCOME_UNKNOWN_REASON || reason === OUTCOME_UNKNOWN_AFTER_STOP_REASON;
 }
 
+/**
+ * Who recorded a reconciliation, as the card names them: the manager reading it, or a manager the
+ * employee had before a handover. Only the employee's manager may reconcile (`assertOwnsWorkItem`),
+ * so the record's actor (an owner key) is one or the other.
+ */
+export type Reconciler = 'you' | 'previous-manager';
+
+/**
+ * Who recorded a reconciliation, from the owner key it keeps and the employee's manager's now.
+ *
+ * @param actor - The owner key the reconciliation was recorded under.
+ * @param managerKey - The employee's manager's owner key (`agents.userId`), when the page has it.
+ * @returns The reconciler, or undefined when the manager's key is not known.
+ */
+export function reconcilerOf(
+  actor: string,
+  managerKey: string | undefined,
+): Reconciler | undefined {
+  if (managerKey === undefined) return undefined;
+  return actor === managerKey ? 'you' : 'previous-manager';
+}
+
 /** Which phase of a run a ledger entry belongs to. */
 export type ReconciliationPhase = 'single' | 'prerequisite' | 'closing';
 /** What the manager must confirm about an entry: it landed, or its outcome is unknown. */

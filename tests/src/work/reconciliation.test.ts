@@ -6,6 +6,7 @@ import {
   OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
+  reconcilerOf,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 
@@ -101,5 +102,13 @@ describe('an outcome unknown, whichever ended the apply', (): void => {
   it('says a stopped apply was stopped, never that it was interrupted', (): void => {
     expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).not.toContain('interrupted');
     expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain('verify provider before retry');
+  });
+});
+
+describe('reconcilerOf', (): void => {
+  it('names the manager who checked as you, or one before a handover, and never by the owner key', (): void => {
+    expect(reconcilerOf('dev-no-auth|local-boss', 'dev-no-auth|local-boss')).toBe('you');
+    expect(reconcilerOf('issuer|old-manager', 'issuer|new-manager')).toBe('previous-manager');
+    expect(reconcilerOf('issuer|old-manager', undefined)).toBeUndefined();
   });
 });

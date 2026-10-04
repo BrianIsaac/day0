@@ -84,6 +84,7 @@ export function WorkView() {
         autonomyChanges={autonomyChanges ?? []}
         loading={workItems === undefined}
         employeeName={agent.name}
+        managerKey={agent.userId}
         needsYou={needsYou}
         refusedSkills={refusedSkills}
         hold={hold}
