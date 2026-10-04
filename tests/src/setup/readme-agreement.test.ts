@@ -175,3 +175,25 @@ describe('the manager address the setup writes, as the README describes it (9-U5
     expect(chinese).toContain('之后再设置的话，每个员工的 People 标签页都提供 Make it you');
   });
 });
+
+describe('what a pause holds, in both halves (W12-R5, W12-R31)', (): void => {
+  it('says a step under way finishes and holds before the next, never that it runs to its end', (): void => {
+    const { english, chinese } = halves();
+    expect(english).toContain(
+      'a step already under way when the pause lands finishes the step it is on and holds before the next',
+    );
+    expect(english).not.toMatch(/runs to its next gate|at its next claim/);
+    expect(chinese).toContain('暂停生效时已在进行中的步骤会完成当前这一步，并在下一步之前停住');
+    expect(chinese).not.toContain('运行到结束');
+  });
+
+  it('says in the verbs’ help lines that queued work steps hold until unpause', (): void => {
+    const { english, chinese } = halves();
+    const line = (half: string, verb: string): string =>
+      half.split('\n').find((text) => text.startsWith(`./setup.sh ${verb} `)) ?? '';
+    expect(line(english, 'pause')).toContain('queued work steps hold until unpause');
+    expect(line(english, 'unpause')).toContain('held work steps go on');
+    expect(line(chinese, 'pause')).toContain('排队的工作步骤都停住');
+    expect(line(chinese, 'unpause')).toContain('停住的工作步骤继续');
+  });
+});
