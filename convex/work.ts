@@ -1,6 +1,6 @@
 import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -6949,198 +6949,213 @@ export function providerTsToMs(ts: string): number | null {
 /** Why a reply naming a replaced request decided nothing, on its ignored event. */
 export const REPLACED_DECISION_REASON = 'the request was replaced by a newer one';
 
-/** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
-export const resolveChannelDecision = internalMutation({
-  args: {
-    surfaceId: v.id('surfaces'),
-    userId: v.string(),
-    messageTs: v.string(),
-    reply: v.object({
-      verb: v.union(v.literal('approve'), v.literal('reject')),
-      id: v.string(),
-      reason: v.optional(v.string()),
-    }),
-  },
-  handler: async (ctx, args) => {
-    const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || surface.class !== 'chat') {
-      return { status: 'ignored' as const, reason: 'not a chat surface' };
-    }
-    // The first poll of a manager DM has no checkpoint and reads the channel's
-    // history, which on a reused workspace holds the codes of every earlier
-    // agent. A reply written before this agent was deployed cannot answer one
-    // of its requests, so it is neither logged nor answered.
-    const agent = await ctx.db.get(surface.agentId);
-    const messageAt = providerTsToMs(args.messageTs);
-    if (agent && messageAt !== null && messageAt < agent.createdAt) {
-      return { status: 'ignored' as const, reason: 'predates the agent' };
-    }
-    const ignored = async (reason: string) => {
-      await appendEvent(ctx, {
-        agentId: surface.agentId,
-        type: 'work.decision-ignored',
-        payload: {
+/** The arguments of a manager's reply or press, as the channel resolves it. */
+const managerReplyArgs = {
+  surfaceId: v.id('surfaces'),
+  userId: v.string(),
+  messageTs: v.string(),
+  reply: v.object({
+    verb: v.union(v.literal('approve'), v.literal('reject')),
+    id: v.string(),
+    reason: v.optional(v.string()),
+  }),
+};
+
+/** A manager's reply in the DM, or a press of a request's button, read as a decision. */
+export type ManagerReply = ObjectType<typeof managerReplyArgs>;
+
+/**
+ * Apply one manager decision from the chat surface, a typed reply's or a button press's, inside
+ * the same transaction as the dashboard's controls: the sender checked against the card's
+ * manager, the code against the requests on this DM, a repeat answered once, a replaced code
+ * answered with the request that replaced it. A press reaches here exactly as a typed reply does
+ * (wave 12, 12-M), its `messageTs` the press's own timestamp.
+ *
+ * @param ctx - The decision's transaction.
+ * @param args - Who replied or pressed, on which card, when, and the decision read from it.
+ */
+export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) {
+  const surface = await ctx.db.get(args.surfaceId);
+  if (!surface || surface.class !== 'chat') {
+    return { status: 'ignored' as const, reason: 'not a chat surface' };
+  }
+  // The first poll of a manager DM has no checkpoint and reads the channel's
+  // history, which on a reused workspace holds the codes of every earlier
+  // agent. A reply written before this agent was deployed cannot answer one
+  // of its requests, so it is neither logged nor answered.
+  const agent = await ctx.db.get(surface.agentId);
+  const messageAt = providerTsToMs(args.messageTs);
+  if (agent && messageAt !== null && messageAt < agent.createdAt) {
+    return { status: 'ignored' as const, reason: 'predates the agent' };
+  }
+  const ignored = async (reason: string) => {
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'work.decision-ignored',
+      payload: {
+        surfaceId: surface._id,
+        messageTs: args.messageTs,
+        userId: args.userId,
+        reason,
+      },
+      createdAt: Date.now(),
+    });
+    return { status: 'ignored' as const, reason };
+  };
+  if (args.userId === surface.providerIdentityId) return await ignored('bot message');
+  if (!surface.managerUserId || args.userId !== surface.managerUserId) {
+    return await ignored('manager identity mismatch');
+  }
+  const unknown = async (reason: string) => {
+    const anchor = await managerReplyNoticeAnchor(ctx, surface);
+    const notified = anchor
+      ? await queueManagerReplyNotice(ctx, {
           surfaceId: surface._id,
+          workItemId: anchor._id,
+          decisionId: args.reply.id,
           messageTs: args.messageTs,
-          userId: args.userId,
-          reason,
+          kind: 'unknown',
+          text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
+        })
+      : false;
+    return { ...(await ignored(reason)), notified };
+  };
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
+    )
+    .first();
+  if (!row?.decision) {
+    const batch = await ctx.db
+      .query('decisionBatches')
+      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+      .first();
+    if (batch) return await resolveChannelBatch(ctx, surface, batch, args);
+    const replaced = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
+      )
+      .first();
+    if (!replaced) return await unknown('unknown decision id');
+    if (replaced.surfaceSlug !== surface.slug || replaced.channel !== surface.managerDmChannelId) {
+      return await unknown('decision belongs to another manager channel');
+    }
+    const answer = await replacedRequestAnswer(ctx, replaced);
+    const notified = await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: replaced.workItemId,
+      decisionId: replaced.decisionId,
+      messageTs: args.messageTs,
+      kind: 'replaced',
+      text: answer.text,
+    });
+    await ignored(REPLACED_DECISION_REASON);
+    return {
+      status: 'replaced' as const,
+      ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
+      notified,
+    };
+  }
+  if (
+    row.decision.surfaceSlug !== surface.slug ||
+    row.decision.channel !== surface.managerDmChannelId
+  ) {
+    return await unknown('decision belongs to another manager channel');
+  }
+
+  const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+  if (row.decision.decidedAt || row.state !== expectedState) {
+    // The intake reads its checkpoint boundary inclusively and re-reads anything that
+    // arrived during a sweep, so the very message that decided comes back on a later
+    // poll. That is the manager's one reply, not a duplicate: nothing to say.
+    if (row.decision.decidedTs === args.messageTs) {
+      return { status: 'already-decided' as const, notified: false };
+    }
+    if (!row.decision.duplicateNotifiedAt) {
+      await ctx.db.patch(row._id, {
+        decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
+      });
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.decision-duplicate',
+        payload: {
+          workItemId: row._id,
+          decisionId: row.decision.id,
+          messageTs: args.messageTs,
         },
         createdAt: Date.now(),
       });
-      return { status: 'ignored' as const, reason };
-    };
-    if (args.userId === surface.providerIdentityId) return await ignored('bot message');
-    if (!surface.managerUserId || args.userId !== surface.managerUserId) {
-      return await ignored('manager identity mismatch');
-    }
-    const unknown = async (reason: string) => {
-      const anchor = await managerReplyNoticeAnchor(ctx, surface);
-      const notified = anchor
-        ? await queueManagerReplyNotice(ctx, {
-            surfaceId: surface._id,
-            workItemId: anchor._id,
-            decisionId: args.reply.id,
-            messageTs: args.messageTs,
-            kind: 'unknown',
-            text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
-          })
-        : false;
-      return { ...(await ignored(reason)), notified };
-    };
-    const row = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_decision', (q) =>
-        q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
-      )
-      .first();
-    if (!row?.decision) {
-      const batch = await ctx.db
-        .query('decisionBatches')
-        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
-        .first();
-      if (batch) return await resolveChannelBatch(ctx, surface, batch, args);
-      const replaced = await ctx.db
-        .query('replacedDecisionRequests')
-        .withIndex('by_agent_decision', (q) =>
-          q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
-        )
-        .first();
-      if (!replaced) return await unknown('unknown decision id');
-      if (
-        replaced.surfaceSlug !== surface.slug ||
-        replaced.channel !== surface.managerDmChannelId
-      ) {
-        return await unknown('decision belongs to another manager channel');
-      }
-      const answer = await replacedRequestAnswer(ctx, replaced);
-      const notified = await queueManagerReplyNotice(ctx, {
-        surfaceId: surface._id,
-        workItemId: replaced.workItemId,
-        decisionId: replaced.decisionId,
-        messageTs: args.messageTs,
-        kind: 'replaced',
-        text: answer.text,
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendDecisionNotice, {
+        workItemId: row._id,
+        decisionId: row.decision.id,
       });
-      await ignored(REPLACED_DECISION_REASON);
-      return {
-        status: 'replaced' as const,
-        ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
-        notified,
-      };
+      return { status: 'already-decided' as const, notified: true };
     }
-    if (
-      row.decision.surfaceSlug !== surface.slug ||
-      row.decision.channel !== surface.managerDmChannelId
-    ) {
-      return await unknown('decision belongs to another manager channel');
-    }
+    return { status: 'already-decided' as const, notified: false };
+  }
 
-    const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
-    if (row.decision.decidedAt || row.state !== expectedState) {
-      // The intake reads its checkpoint boundary inclusively and re-reads anything that
-      // arrived during a sweep, so the very message that decided comes back on a later
-      // poll. That is the manager's one reply, not a duplicate: nothing to say.
-      if (row.decision.decidedTs === args.messageTs) {
-        return { status: 'already-decided' as const, notified: false };
-      }
-      if (!row.decision.duplicateNotifiedAt) {
-        await ctx.db.patch(row._id, {
-          decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
-        });
-        await appendEvent(ctx, {
-          agentId: row.agentId,
-          type: 'work.decision-duplicate',
-          payload: {
-            workItemId: row._id,
-            decisionId: row.decision.id,
-            messageTs: args.messageTs,
-          },
-          createdAt: Date.now(),
-        });
-        await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendDecisionNotice, {
-          workItemId: row._id,
-          decisionId: row.decision.id,
-        });
-        return { status: 'already-decided' as const, notified: true };
-      }
-      return { status: 'already-decided' as const, notified: false };
-    }
-
-    if (row.decision.kind === 'plan') {
-      if (args.reply.verb === 'approve') {
-        await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
-      } else {
-        await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
-      }
+  if (row.decision.kind === 'plan') {
+    if (args.reply.verb === 'approve') {
+      await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
     } else {
-      if (!row.pendingRunId) return await ignored('actions decision has no pending run');
-      if (args.reply.verb === 'approve') {
-        const actionCount = actionsOf(row.output).length;
-        const heldIndexes = indexesWith(verdictList(row.actionVerdicts, actionCount), 'held');
-        await approveActionsInTransaction(
-          ctx,
-          row,
-          {
-            workItemId: row._id,
-            pendingRunId: row.pendingRunId,
-            approvedIndexes: heldIndexes,
-          },
-          'channel',
-          args.messageTs,
-        );
-      } else {
-        await rejectActionsInTransaction(
-          ctx,
-          {
-            ...row,
-          },
-          {
-            workItemId: row._id,
-            pendingRunId: row.pendingRunId,
-            reason: args.reply.reason ?? '',
-          },
-          'channel',
-          args.messageTs,
-        );
-      }
+      await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
     }
-    const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
-    const text =
-      args.reply.verb === 'approve'
-        ? row.decision.kind === 'plan'
-          ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
-          : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
-        : `${noun} ${row.decision.id} received. I won’t apply it.`;
-    await queueManagerReplyNotice(ctx, {
-      surfaceId: surface._id,
-      workItemId: row._id,
-      decisionId: row.decision.id,
-      messageTs: args.messageTs,
-      kind: 'received',
-      text,
-    });
-    return { status: 'decided' as const, outcome: args.reply.verb };
-  },
+  } else {
+    if (!row.pendingRunId) return await ignored('actions decision has no pending run');
+    if (args.reply.verb === 'approve') {
+      const actionCount = actionsOf(row.output).length;
+      const heldIndexes = indexesWith(verdictList(row.actionVerdicts, actionCount), 'held');
+      await approveActionsInTransaction(
+        ctx,
+        row,
+        {
+          workItemId: row._id,
+          pendingRunId: row.pendingRunId,
+          approvedIndexes: heldIndexes,
+        },
+        'channel',
+        args.messageTs,
+      );
+    } else {
+      await rejectActionsInTransaction(
+        ctx,
+        {
+          ...row,
+        },
+        {
+          workItemId: row._id,
+          pendingRunId: row.pendingRunId,
+          reason: args.reply.reason ?? '',
+        },
+        'channel',
+        args.messageTs,
+      );
+    }
+  }
+  const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
+  const text =
+    args.reply.verb === 'approve'
+      ? row.decision.kind === 'plan'
+        ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
+        : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
+      : `${noun} ${row.decision.id} received. I won’t apply it.`;
+  await queueManagerReplyNotice(ctx, {
+    surfaceId: surface._id,
+    workItemId: row._id,
+    decisionId: row.decision.id,
+    messageTs: args.messageTs,
+    kind: 'received',
+    text,
+  });
+  return { status: 'decided' as const, outcome: args.reply.verb };
+}
+
+/** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
+export const resolveChannelDecision = internalMutation({
+  args: managerReplyArgs,
+  handler: async (ctx, args) => await resolveManagerReply(ctx, args),
 });
 
 /** Why a request whose message the DM no longer holds is sent again. */
