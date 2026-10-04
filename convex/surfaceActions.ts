@@ -7,7 +7,7 @@ import type { FunctionReference } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import {
   actsAsLinearApp,
   linearProbeIdentity,
@@ -1652,6 +1652,7 @@ export async function runSurfaceProbe(
 export const probe = action({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<ProbeOutcome> => {
+    await getCallerOrThrow(ctx);
     const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, args);
     if (!context) throw new Error('Surface not found.');
     await assertOwnsAgentAction(ctx, context.surface.agentId);
@@ -1730,6 +1731,7 @@ export function credentialLandingRefusal(
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
   handler: async (ctx, args): Promise<{ landed: true; probeScheduled: boolean }> => {
+    await getCallerOrThrow(ctx);
     const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
       surfaceId: args.surfaceId,
     });

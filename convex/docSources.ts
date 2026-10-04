@@ -430,8 +430,8 @@ export const link = action({
     credential: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docSources'>> => {
-    assertRealMode('Documentation linking');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation linking');
     const input = validateLinkInput({
       label: args.label,
       kind: args.kind,
@@ -488,8 +488,8 @@ export const link = action({
 export const rotateCredential = action({
   args: { sourceId: v.id('docSources'), credential: v.string() },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
-    assertRealMode('Documentation credential rotation');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation credential rotation');
     if (!args.credential) throw new Error('Connection secret is required.');
     const source = await ctx.runQuery(internal.docSources.getOwnedInternal, {
       sourceId: args.sourceId,
@@ -535,8 +535,8 @@ export const rotateCredential = action({
 export const resync = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<void> => {
-    assertRealMode('Documentation resync');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation resync');
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');
@@ -561,8 +561,8 @@ export const resync = mutation({
 export const unlink = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<null> => {
-    assertRealMode('Documentation unlinking');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation unlinking');
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');

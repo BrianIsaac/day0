@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 /**
  * The one correction that crosses employees (decision N3): the first plan
@@ -335,5 +336,17 @@ describe('the rejection a sibling reads', (): void => {
     expect((await harness.run(async (ctx) => await ctx.db.get(shared)))?.appliedTo).toEqual([
       sibling.workItemId,
     ]);
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the correction exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const correctionId = await goneRowOf(harness, 'corrections');
+    await expect(harness.mutation(api.corrections.retire, { correctionId })).rejects.toMatchObject(
+      refusal,
+    );
   });
 });

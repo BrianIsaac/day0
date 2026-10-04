@@ -33,10 +33,12 @@ const DATA_HOOKS = [
   'useConvex',
 ] as const;
 
-/** Functions a page may ask for before the gate opens, each with why it reads no identity. */
-const PUBLIC_FUNCTIONS: ReadonlyMap<string, string> = new Map([
-  ['config.surfaceMode', "the deployment's mode, the same for every visitor"],
-]);
+/**
+ * Functions a page may ask for before the gate opens, each with why it reads no identity. None
+ * since the anonymous-caller guard (12-G): every public function but the release refuses a caller
+ * with no identity, and the release is read on the server (`app/setup/page.tsx`).
+ */
+const PUBLIC_FUNCTIONS: ReadonlyMap<string, string> = new Map();
 
 /** Where the walk reads its files: the tree, or a test's own set. */
 interface SourceTree {
@@ -251,13 +253,15 @@ describe('the owned pages behind the session gate', (): void => {
   it('reaches no owned Convex hook from any route before its gate opens', (): void => {
     const { findings, gatedFiles } = ungatedOwnedHooks(appTree());
     expect(findings).toEqual([]);
-    // The walk saw the six owned roots, so an empty list is not a walk that found nothing: the
-    // header gates its administrator-only menu items, and the organisation page its view (11-AC).
+    // The walk saw the seven owned roots, so an empty list is not a walk that found nothing: the
+    // header gates its administrator-only menu items, the organisation page its view (11-AC), and
+    // the root layout the documentation link, which asks the deployment its mode (12-G).
     expect(gatedFiles).toEqual([
       'app/HeaderAccount.tsx',
       'app/agent/[agentId]/layout.tsx',
       'app/agent/error.tsx',
       'app/documentation/page.tsx',
+      'app/layout.tsx',
       'app/organisation/page.tsx',
       'app/page.tsx',
     ]);

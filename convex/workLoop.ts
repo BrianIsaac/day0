@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalQuery, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -790,6 +790,7 @@ const WORK_SURFACE_CLASSES = new Set(['kanban', 'chat']);
 export const checkForNewWork = mutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ scheduled: number; retryInMs?: number }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Checking for new work');
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();

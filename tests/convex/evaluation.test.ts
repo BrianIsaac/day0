@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 const tasks = [
   {
@@ -177,4 +178,34 @@ describe('evaluation backend boundary', (): void => {
       }),
     );
   });
+});
+
+describe('the anonymous-caller guard before the bed check (12-G)', (): void => {
+  it.each([
+    ['mock', ''],
+    ['real', 'comparison'],
+  ] as const)(
+    'refuses a caller with no identity before it says the mode, the bed or whether the item exists (%s)',
+    async (mode, bed): Promise<void> => {
+      useSurfaceMode(mode);
+      vi.stubEnv('DAY0_EVALUATION_BED', bed);
+      const { api: liveApi } = await import('../../convex/_generated/api');
+      const harness = convexTest(schema, allConvexModules());
+      const refusal = await guardRefusal();
+      const agentId = await goneRowOf(harness, 'agents');
+      const workItemId = await goneRowOf(harness, 'workItems');
+      await expect(
+        harness.mutation(liveApi.evaluation.seedTasks, { agentId, tasks }),
+      ).rejects.toMatchObject(refusal);
+      await expect(harness.query(liveApi.evaluation.snapshot, { agentId })).rejects.toMatchObject(
+        refusal,
+      );
+      await expect(
+        harness.mutation(liveApi.evaluation.timeoutTask, { workItemId }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.mutation(liveApi.evaluation.failSkillAuthoringAttempts, { workItemId }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
 });

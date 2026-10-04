@@ -11,7 +11,12 @@ import type {
   LinearIssuerContext,
   LinearRotationOutcome,
 } from './linearIdentity';
-import { assertAdministrator, assertOwnsAgentAction, callerIsAdministrator } from './ownership';
+import {
+  assertAdministrator,
+  assertOwnsAgentAction,
+  callerIsAdministrator,
+  getCallerOrThrow,
+} from './ownership';
 import {
   openOwnedCredential,
   sealForOwner,
@@ -450,6 +455,7 @@ async function mintInstall(
 export const connect = action({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<ConnectOutcome> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Connecting Linear');
     const context = await contextOf(ctx, args.surfaceId);
     const agent = await assertOwnsAgentAction(ctx, context.surface.agentId);
@@ -510,6 +516,7 @@ async function startInstall(
 export const startAuthorisation = action({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<InstallStart> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Installing a Linear app');
     const context = await contextOf(ctx, args.surfaceId);
     if (!(await callerIsAdministrator(ctx))) {
@@ -548,6 +555,7 @@ export const registerEmployeeApp = action({
     appName: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<InstallStart> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Recording a Linear app');
     await assertAdministrator(ctx);
     const context = await contextOf(ctx, args.surfaceId);

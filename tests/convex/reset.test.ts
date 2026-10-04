@@ -17,6 +17,7 @@ import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { RETIREMENT_READ_LIMIT } from '../../convex/retirements';
 
@@ -1479,9 +1480,9 @@ describe('holdings: what a deletion would remove, read before its control is pre
     });
   }
 
-  it('answers an anonymous caller with nothing to read', async (): Promise<void> => {
+  it('refuses a caller with no identity (the anonymous-caller guard, 12-G)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    expect(await harness.query(api.reset.holdings, {})).toBeNull();
+    await expect(harness.query(api.reset.holdings, {})).rejects.toMatchObject(await guardRefusal());
   });
 
   it('holds nothing for a manager who has stored nothing, and another owner’s rows do not count', async (): Promise<void> => {

@@ -11,7 +11,6 @@ import {
 } from './_generated/server';
 import {
   assertOwnsAgent,
-  getCaller,
   getCallerOrThrow,
   ownedAgentOrNull,
   verifiedAddressOf,
@@ -1205,17 +1204,16 @@ async function deletionHoldings(
 }
 
 /**
- * Public, any caller; reads only the caller's own: whether each kind of row a deletion of their
- * data would remove is held ({@link deletionHoldings}), so the deletion's control is live
- * whenever the deletion has something to take, an employee or not (the v0.13.0 walk). Writes
- * nothing. An anonymous caller gets `null`.
+ * Public, any signed-in caller; reads only the caller's own: whether each kind of row a
+ * deletion of their data would remove is held ({@link deletionHoldings}), so the deletion's
+ * control is live whenever the deletion has something to take, an employee or not (the v0.13.0
+ * walk). Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const holdings = query({
   args: {},
-  returns: v.union(v.null(), holdingsValidator),
-  handler: async (ctx): Promise<Infer<typeof holdingsValidator> | null> => {
-    const identity = await getCaller(ctx);
-    if (!identity) return null;
+  returns: holdingsValidator,
+  handler: async (ctx): Promise<Infer<typeof holdingsValidator>> => {
+    const identity = await getCallerOrThrow(ctx);
     const address = verifiedAddressOf(identity);
     return await deletionHoldings(ctx.db, {
       ownerKey: identity.ownerKey,

@@ -10,6 +10,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 const SEALED = { ciphertext: 'sealed', iv: 'iv', keyId: 'key' };
 const ISSUED_BY = { system: 'mcp:auth.acme.test', grant: 'authorisation-code' as const };
@@ -397,5 +398,17 @@ describe('writing a refresh’s rotation', (): void => {
     );
     expect(refresh?.ciphertext).toBeUndefined();
     expect(access).toMatchObject({ ciphertext: 'sealed', generation: 3 });
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the card exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const surfaceId = await goneRowOf(harness, 'surfaces');
+    await expect(
+      harness.mutation(api.mcpOauth.cancelAuthorisation, { surfaceId }),
+    ).rejects.toMatchObject(refusal);
   });
 });

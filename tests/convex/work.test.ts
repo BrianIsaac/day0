@@ -29,6 +29,7 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
@@ -375,6 +376,13 @@ describe('batched decisions', (): void => {
         ],
       }),
     ).rejects.toThrow('This employee is not yours.');
+  });
+
+  it('refuses a caller with no identity before it reads the batch, an empty one included (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.mutation(api.work.approveActionsBatch, { members: [] }),
+    ).rejects.toMatchObject(await guardRefusal());
   });
 
   async function batchOnChannel(harness: Harness): Promise<{
@@ -6860,7 +6868,16 @@ describe('work.needsYou', (): void => {
     ]);
   });
 
-  it('shows the owner only their own employees and an anonymous caller nothing', async (): Promise<void> => {
+  it('shows a token with an empty subject nothing, the rows keyed on an empty owner included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const malformed = await employee(harness, 'Malformed owner', { userId: '' });
+    await item(harness, malformed, 'Keyed on nobody', 'plan-pending', { planPendingAt: 1 });
+    await expect(
+      harness.withIdentity(managerIdentity('')).query(api.work.needsYou, {}),
+    ).resolves.toEqual({ entries: [], total: 0, waitingByEmployee: [] });
+  });
+
+  it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mine = await employee(harness, 'Mira');
     const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
@@ -6874,11 +6891,7 @@ describe('work.needsYou', (): void => {
 
     expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
     expect(stranger.entries.map((entry) => entry.subject)).toEqual(['Theirs']);
-    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({
-      entries: [],
-      total: 0,
-      waitingByEmployee: [],
-    });
+    await expect(harness.query(api.work.needsYou, {})).rejects.toMatchObject(await guardRefusal());
   });
 
   it('leaves evaluation agents out, as the roster does', async (): Promise<void> => {

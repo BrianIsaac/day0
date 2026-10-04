@@ -12,6 +12,7 @@ import type { OwnerMetrics } from '../../src/metrics/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 const OWNER = managerIdentity();
 
@@ -1327,10 +1328,12 @@ describe('supervision figures for a company of employees', (): void => {
     await expect(companyFigures(harness)).resolves.toEqual(before);
   });
 
-  it('returns nothing to a caller with no identity', async (): Promise<void> => {
+  it('refuses a caller with no identity (the anonymous-caller guard, 12-G)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
-    await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
+    await expect(harness.query(api.metrics.forOwner, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 });
 

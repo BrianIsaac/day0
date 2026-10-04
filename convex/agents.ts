@@ -10,7 +10,6 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import {
   assertOwnsAgent,
-  getCaller,
   getCallerOrThrow,
   ownedAgentOrNull,
   verifiedAddressOf,
@@ -75,8 +74,7 @@ const permissionGrantSource = v.union(
 export const listForUser = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await getCaller(ctx);
-    if (!identity) return [];
+    const identity = await getCallerOrThrow(ctx);
     return await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
@@ -88,7 +86,7 @@ export const listForUser = query({
 /**
  * The owner's employees, one row each, for the landing page ({@link rosterOf}, `convex/roster.ts`).
  *
- * Owner-scoped like `listForUser`; an anonymous caller gets an empty list. Writes nothing.
+ * Owner-scoped like `listForUser`; a caller with no identity is refused (12-G). Writes nothing.
  *
  * @returns At most twenty rows, newest first.
  */
@@ -96,8 +94,9 @@ export const rosterForUser = query({
   args: {},
   returns: v.array(rosterRowValidator),
   handler: async (ctx): Promise<RosterRow[]> => {
-    const identity = await getCaller(ctx);
-    if (!identity?.ownerKey) return [];
+    const identity = await getCallerOrThrow(ctx);
+    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
+    if (identity.ownerKey === '') return [];
     return await rosterOf(ctx, identity.ownerKey);
   },
 });
@@ -283,18 +282,18 @@ export const deploy = mutation({
 });
 
 /**
- * Public, any caller: the verified address a deploy by this caller would
- * store, so the deploy form shows the server's address and not the
- * browser's. Writes nothing.
+ * Public, any signed-in caller (`getCallerOrThrow`, 12-G): the verified address a deploy by this
+ * caller would store, so the deploy form shows the server's address and not the browser's. Writes
+ * nothing.
  *
- * @returns The address, or null for an anonymous caller or one whose sign-in asserts none verified.
+ * @returns The address, or null for a caller whose sign-in asserts none verified.
  */
 export const myManagerAddress = query({
   args: {},
   returns: v.union(v.string(), v.null()),
   handler: async (ctx): Promise<string | null> => {
-    const caller = await getCaller(ctx);
-    return (caller && verifiedAddressOf(caller)) ?? null;
+    const caller = await getCallerOrThrow(ctx);
+    return verifiedAddressOf(caller) ?? null;
   },
 });
 
@@ -342,22 +341,23 @@ export const managerStanding = query({
 const reportingElsewhereValidator = v.object({ agentId: v.id('agents'), name: v.string() });
 
 /**
- * Public, any caller: the caller's company employees that report to an
+ * Public, any signed-in caller (`getCallerOrThrow`, 12-G): the caller's company employees that
+ * report to an
  * address that is not the caller's verified one, newest first as the roster
  * reads them, for the home's one line while any does, each linked to its
  * People tab (the transfer plan section 11.2). Evaluation employees are left
  * out, as the roster leaves them out, within the rows the roster reads
  * (`ROSTER_SCAN_LIMIT`). Writes nothing.
  *
- * @returns The employees, or null for an anonymous caller or one whose sign-in asserts no verified address.
+ * @returns The employees, or null for a caller whose sign-in asserts no verified address.
  */
 export const employeesReportingElsewhere = query({
   args: {},
   returns: v.union(v.array(reportingElsewhereValidator), v.null()),
   handler: async (ctx): Promise<Infer<typeof reportingElsewhereValidator>[] | null> => {
-    const caller = await getCaller(ctx);
-    const callerAddress = caller ? verifiedAddressOf(caller) : undefined;
-    if (!caller || callerAddress === undefined) return null;
+    const caller = await getCallerOrThrow(ctx);
+    const callerAddress = verifiedAddressOf(caller);
+    if (callerAddress === undefined) return null;
     const agents = await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
@@ -689,6 +689,7 @@ export const setManagerNotifications = mutation({
     ctx,
     args,
   ): Promise<{ ok: true; managerNotifications: ManagerNotificationMode; changed: boolean }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Manager notifications');
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const from = managerNotificationMode(agent);
@@ -757,6 +758,7 @@ export const setAutonomousActions = mutation({
     ctx,
     args,
   ): Promise<{ ok: true; autonomousActions: boolean; changed: boolean }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Autonomous actions');
     const agent = await assertOwnsAgent(ctx, args.agentId);
     if (args.on) await assertNotBeingHandedOver(ctx.db, args.agentId);

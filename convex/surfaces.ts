@@ -8,7 +8,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgent, assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
@@ -1050,6 +1050,7 @@ export async function scheduleOrientationFor(
 export const requestProposal = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<null> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface proposal');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2375,6 +2376,7 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
 export const setAccessDays = mutation({
   args: { surfaceId: v.id('surfaces'), days: v.number() },
   handler: async (ctx, args): Promise<AccessDaysSet> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Setting surface access');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2758,6 +2760,7 @@ async function approveInTransaction(
 export const approve = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface approval');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2837,6 +2840,7 @@ async function endRejectedAtSource(
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface rejection');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2957,6 +2961,7 @@ async function disconnectInTransaction(
 export const disconnect = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Disconnecting a connection');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -3052,6 +3057,7 @@ const APPROVED_TOOLS_LIMIT = 200;
 export const approveTools = mutation({
   args: { surfaceId: v.id('surfaces'), tools: v.array(v.string()) },
   handler: async (ctx, args): Promise<{ approved: string[] }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Approving surface tools');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -3117,11 +3123,15 @@ export const approveTools = mutation({
  * belongs to the deployment that would call the provider rather than to the
  * browser or the Next process. It is a boolean by design: the address itself
  * says where this machine is reachable and is nobody's business but the
- * operator's until an install link carries it.
+ * operator's until an install link carries it. Public, guarded by `getCallerOrThrow` (12-G);
+ * writes nothing.
  */
 export const installRedirectConfigured = query({
   args: {},
-  handler: async (): Promise<boolean> => publicUrlConfigured(),
+  handler: async (ctx): Promise<boolean> => {
+    await getCallerOrThrow(ctx);
+    return publicUrlConfigured();
+  },
 });
 
 /** Whether this deployment has a public address for a dedicated app's install to return to. */

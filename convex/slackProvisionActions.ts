@@ -7,7 +7,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { credentialKeyring } from './credentialCryptoActions';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { logEvent } from './eventLog';
 import type { RefreshClaim } from './refreshLease';
 import type { HeldConfigurationRows, RotationRecorded } from './slackProvision';
@@ -1002,6 +1002,7 @@ function installLink(
 export const provisionApp = action({
   args: { surfaceId: v.id('surfaces'), configurationToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<ProvisionOutcome> => {
+    await getCallerOrThrow(ctx);
     const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
       surfaceId: args.surfaceId,
     });

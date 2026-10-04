@@ -25,6 +25,7 @@ import {
 } from '../../src/agent/manager-standing';
 import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/work';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -329,14 +330,26 @@ describe('agents.myManagerAddress', (): void => {
     ).resolves.toBe('lead@day0.local');
   });
 
-  it('answers null for a caller with no verified address and for an anonymous one', async (): Promise<void> => {
+  it('answers null for a caller with no verified address, and refuses an anonymous one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(
       harness
         .withIdentity(managerIdentity('owner', { emailVerified: false }))
         .query(api.agents.myManagerAddress, {}),
     ).resolves.toBeNull();
-    await expect(harness.query(api.agents.myManagerAddress, {})).resolves.toBeNull();
+    await expect(harness.query(api.agents.myManagerAddress, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+
+  it('refuses a caller with no identity on every read of the caller’s own employees (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    await expect(harness.query(api.agents.listForUser, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).rejects.toMatchObject(
+      refusal,
+    );
   });
 
   it('is the address the shared fixture identity carries', async (): Promise<void> => {
@@ -790,9 +803,10 @@ describe('the autonomous-actions switch', (): void => {
     ).rejects.toThrow(
       'Autonomous actions is a local real-mode feature; this deployment runs in mock mode.',
     );
+    // A caller with no identity is refused by the guard before the mode is said (12-G).
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('local real-mode feature');
+    ).rejects.toMatchObject(await guardRefusal());
     expect(
       (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions,
     ).toBeUndefined();
@@ -1314,7 +1328,9 @@ describe('the employee roster', (): void => {
         landedThisMonth: NOTHING_LANDED,
       },
     ]);
-    await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 
   it('gives each row the state the employee’s own page shows, a charter outranking the row (m6)', async (): Promise<void> => {
@@ -2201,7 +2217,9 @@ describe('agents.employeesReportingElsewhere (the home line, D17)', (): void => 
         .withIdentity(managerIdentity('owner', { emailVerified: false }))
         .query(api.agents.employeesReportingElsewhere, {}),
     ).resolves.toBeNull();
-    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).resolves.toBeNull();
+    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 });
 
@@ -2545,5 +2563,20 @@ describe('the old manager’s authority while a handover is open (U3-m3, U5-m4)'
     await expect(
       harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
     ).resolves.toMatchObject({ changed: true });
+  });
+});
+
+describe('the anonymous-caller guard before the mode (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {});
+    const refusal = await guardRefusal();
+    await expect(
+      harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      harness.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
+    ).rejects.toMatchObject(refusal);
   });
 });
