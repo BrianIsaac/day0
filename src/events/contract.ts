@@ -741,6 +741,11 @@ export interface CredentialSupersededPayload {
   readonly page: string;
   /** This agent's surfaces it was bound to, each sent back to landing a credential. */
   readonly surfaceIds: readonly SurfaceId[];
+  /**
+   * This agent's surfaces it was bound to that the page swap re-bound to the value the page
+   * states now under the same label, each checked again (N23; 12-S3). Absent on rows before it.
+   */
+  readonly reboundSurfaceIds?: readonly SurfaceId[];
 }
 
 /** The payload of `surface.reoriented`: orientation the manager's re-run placed for one surface. */
@@ -1293,7 +1298,8 @@ export type WorkDecisionNotifyingPayload = DecisionNamed;
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
-  readonly kind: 'received' | 'unknown';
+  /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
+  readonly kind: 'received' | 'unknown' | 'replaced';
 }
 
 /** The payload of `work.decision-ignored`. */

@@ -368,6 +368,19 @@ describe('the live feed labels', (): void => {
     ).toBe('Linear shared app token revoked at Linear');
   });
 
+  it('labels each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      eventLabel({
+        type: 'work.decision-acknowledging',
+        payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+      });
+    expect(answered('received')).toBe('a decision reply acknowledged');
+    expect(answered('unknown')).toBe('a reply with no open request answered');
+    expect(answered('replaced')).toBe(
+      'a reply to a replaced request answered with the request that replaced it',
+    );
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({
@@ -382,6 +395,24 @@ describe('the live feed labels', (): void => {
       }),
     ).toBe(
       'credential "linear service token" no longer in the documentation (runbooks/linear.md); land one again on 2 cards',
+    );
+  });
+
+  it('says a page swap bound the new value on the cards the old one held (N23; 12-S3)', (): void => {
+    expect(
+      eventLabel({
+        type: 'credential.superseded',
+        payload: {
+          credentialId: 'c1',
+          label: 'linear service token',
+          sourceId: 'd1',
+          page: 'runbooks/linear.md',
+          surfaceIds: [],
+          reboundSurfaceIds: ['s1'],
+        },
+      }),
+    ).toBe(
+      'credential "linear service token" replaced in the documentation (runbooks/linear.md); the new value bound on 1 card',
     );
   });
 

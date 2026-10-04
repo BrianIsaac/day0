@@ -267,14 +267,20 @@ describe('the declarations this checkout retired (N10)', (): void => {
   });
 
   it('passes rows stamped at or after the clearing release, which a volume created then never needed the migrations for', (): void => {
-    const checkout = { release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.4.0' };
+    // Re-pinned at 12-S3: the retired list now holds a declaration cleared at 0.6.0, which a
+    // checkout that records no 0.6.0 must check, so the stamp and the checkout are at 0.6.0.
+    const checkout = {
+      release: '0.6.0',
+      releases: [...RELEASES, '0.5.0', '0.6.0'],
+      newestMigrationRelease: '0.6.0',
+    };
     const cli = (args: readonly string[]) => ({
       status: 0,
       stdout:
         {
           'convex data': 'agents\ndeploymentVersions\nmigrations\n',
           'convex data deploymentVersions --limit 1 --format jsonl':
-            '{"release":"0.4.0","recordedAt":1}\n',
+            '{"release":"0.6.0","recordedAt":1}\n',
           'convex data migrations --limit 1000 --format jsonl': finished('agents-owner'),
         }[args.join(' ')] ?? '',
       stderr: '',
@@ -284,8 +290,11 @@ describe('the declarations this checkout retired (N10)', (): void => {
 });
 
 describe('the declarations the next release retires (N10, Q D2)', (): void => {
-  it('pushes a v0.5.0 volume whose single-approval migration has not run, since this checkout still declares itApprovedAt', (): void => {
-    expect(RETIRING_DECLARATIONS).toContainEqual({
+  // Re-pinned at 12-S3: this checkout no longer declares itApprovedAt (it moved to
+  // RETIRED_DECLARATIONS), so the v0.5.0 volume this test pushed is now refused until its
+  // single-approval migration has finished.
+  it('refuses a v0.5.0 volume whose single-approval migration has not run, now this checkout no longer declares itApprovedAt', (): void => {
+    expect(RETIRED_DECLARATIONS).toContainEqual({
       declaration: 'surfaces.itApprovedAt',
       migration: 'surfaces-single-approval',
       release: '0.6.0',
@@ -308,13 +317,44 @@ describe('the declarations the next release retires (N10, Q D2)', (): void => {
         }[args.join(' ')] ?? '',
       stderr: '',
     });
+    const refused = readReleaseVerdict(cli, {
+      release: '0.6.0',
+      releases: [...RELEASES, '0.5.0', '0.6.0'],
+      newestMigrationRelease: '0.6.0',
+    });
+    expect(refused).toMatchObject({ allowed: false });
+    expect(refused.allowed ? '' : refused.reason).toContain(
+      'rows may still carry surfaces.itApprovedAt',
+    );
+    expect(refused.allowed ? '' : refused.reason).toContain('(surfaces-single-approval)');
+  });
+
+  it('pushes a v0.15.0 volume whose sync-runs-refs migration has not run, since this checkout still declares docSyncRuns.refs (12-S3)', (): void => {
+    expect(RETIRING_DECLARATIONS).toContainEqual({
+      declaration: 'docSyncRuns.refs',
+      migration: 'sync-runs-refs',
+      release: '0.16.0',
+    });
+    const releases = [...RELEASES, '0.5.0', '0.6.0', '0.15.0', '0.16.0'];
+    const cli = (args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        {
+          'convex data': 'agents\ndeploymentVersions\nmigrations\ndocSyncRuns\n',
+          'convex data deploymentVersions --limit 1 --format jsonl':
+            '{"release":"0.15.0","recordedAt":1}\n',
+          // Every migration of 0.15.0 and before finished; none of 0.16.0's has run yet.
+          'convex data migrations --limit 1000 --format jsonl': '',
+        }[args.join(' ')] ?? '',
+      stderr: '',
+    });
     expect(
       readReleaseVerdict(cli, {
-        release: '0.6.0',
-        releases: [...RELEASES, '0.5.0', '0.6.0'],
-        newestMigrationRelease: '0.6.0',
+        release: '0.16.0',
+        releases,
+        newestMigrationRelease: '0.16.0',
       }),
-    ).toMatchObject({ allowed: true, from: '0.5.0' });
+    ).toMatchObject({ allowed: true, from: '0.15.0' });
   });
 });
 

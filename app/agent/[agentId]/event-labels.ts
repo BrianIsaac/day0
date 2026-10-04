@@ -3,6 +3,7 @@ import {
   isEventType,
   type EventPayloads,
   type EventType,
+  type WorkDecisionAcknowledgingPayload,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
@@ -79,6 +80,13 @@ function decidedFrom(via: unknown): string {
 function decisionNoun(kind: unknown): string {
   return kind === 'actions' ? 'held actions' : 'plan';
 }
+
+/** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
+const ACKNOWLEDGEMENT_LABELS: Readonly<Record<WorkDecisionAcknowledgingPayload['kind'], string>> = {
+  received: 'a decision reply acknowledged',
+  unknown: 'a reply with no open request answered',
+  replaced: 'a reply to a replaced request answered with the request that replaced it',
+};
 
 /** Why a row was sent back to be evaluated again, in words. */
 const REQUEUE_TRIGGER_WORDS: Readonly<Record<string, string>> = {
@@ -455,8 +463,14 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'credential.superseded': (payload) => {
     const label = text(payload.label);
     const page = text(payload.page);
-    const cards = counted(payload.surfaceIds?.length, 'card');
-    return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
+    const rebound = payload.reboundSurfaceIds?.length
+      ? counted(payload.reboundSurfaceIds.length, 'card')
+      : undefined;
+    const unbound = payload.surfaceIds?.length
+      ? counted(payload.surfaceIds.length, 'card')
+      : undefined;
+    const what = rebound ? 'replaced in the documentation' : 'no longer in the documentation';
+    return `credential${label ? ` "${label}"` : ''} ${what}${page ? ` (${page})` : ''}${rebound ? `; the new value bound on ${rebound}` : ''}${unbound ? `; land one again on ${unbound}` : ''}`;
   },
   'surface.reoriented': 'orientation run again at the manager’s request',
   'surface.app-installed': 'app installed by the administrator',
@@ -593,9 +607,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.decision-notifying': 'telling the manager what was decided',
   'work.decision-request-closing': 'marking the decided request in the manager DM',
   'work.decision-acknowledging': (payload) =>
-    payload.kind === 'unknown'
-      ? 'a reply with no open request answered'
-      : 'a decision reply acknowledged',
+    ACKNOWLEDGEMENT_LABELS[payload.kind ?? 'received'] ?? ACKNOWLEDGEMENT_LABELS.received,
   'work.decision-ignored': (payload) => `a chat reply ignored${because(payload.reason)}`,
   'work.decision-duplicate': 'a repeated decision reply ignored',
   'work.decision-batch-issued': (payload) =>

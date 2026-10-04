@@ -2,6 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
+import type { WithoutSystemFields } from 'convex/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -173,9 +174,11 @@ describe('the upgrade migrations', (): void => {
       'credentials-superseded-at',
       'decision-batches-settled',
     ];
-    // Re-pinned behind the skill library's two backfills (0.13.0), the acts-as and issued-by
-    // backfills (0.14.0) and the owner key, intake scope and purge passes (0.15.0), which follow.
-    expect(MIGRATION_NAMES.slice(-secondStep.length - 7, -7)).toEqual(secondStep);
+    // Re-pinned at 12-S3 to where the step starts rather than its distance from the end: every
+    // later release appends its passes behind it (0.13.0 to 0.16.0 so far), and they stay in order.
+    const start = MIGRATION_NAMES.indexOf('surfaces-withheld-tools');
+    expect(MIGRATION_NAMES.slice(start, start + secondStep.length)).toEqual(secondStep);
+    expect(MIGRATION_NAMES.indexOf('skills-library')).toBe(start + secondStep.length);
     const harness = limitedHarness();
     await runAll(harness);
     const status = await harness.query(internal.migrations.status, {});
@@ -791,183 +794,6 @@ describe('the superseded-at stamp (C2 D2 (a))', (): void => {
   });
 });
 
-describe('the single approval (Q10)', (): void => {
-  const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
-  const DAY = 24 * 60 * 60 * 1_000;
-
-  afterEach((): void => {
-    vi.useRealTimers();
-  });
-
-  it('approves a card the manager alone approved, clears every IT stamp, and leaves a refused card proposed saying why', async (): Promise<void> => {
-    // The approval schedules a probe; the fake clock holds it so none runs.
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    vi.setSystemTime(UPGRADED_AT);
-    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
-    const harness = limitedHarness();
-    const agentId = await agent(harness, { userId: 'owner' });
-    // A source with no page for the quoted ref: the queue it documented is gone.
-    const sourceId = await source(harness, 'owner');
-    const ids = await harness.run(async (ctx) => {
-      const card = async (
-        slug: string,
-        fields: Partial<Doc<'surfaces'>>,
-      ): Promise<Id<'surfaces'>> =>
-        await ctx.db.insert('surfaces', {
-          agentId,
-          slug,
-          displayName: slug,
-          class: 'kanban',
-          verdict: 'proposed',
-          path: 'mcp',
-          whereFound: [],
-          credentialLanded: false,
-          createdAt: 1,
-          ...fields,
-        });
-      const connected = await card('asana', {
-        verdict: 'connected',
-        managerApprovedAt: 10,
-        itApprovedAt: 11,
-        expiresAt: UPGRADED_AT + DAY,
-        accessSetBy: 'approval',
-      });
-      // A clock an earlier release started carries its event; the access-clock
-      // migration leaves it alone.
-      await ctx.db.insert('events', {
-        agentId,
-        type: 'surface.access-set',
-        payload: { surfaceId: connected, by: 'approval', days: 90, expiresAt: UPGRADED_AT + DAY },
-        createdAt: 11,
-      });
-      return {
-        managerOnly: await card('linear', { managerApprovedAt: 50 }),
-        itOnly: await card('jira', { itApprovedAt: 60 }),
-        connected,
-        refused: await card('looker', { path: 'browser-driven', managerApprovedAt: 70 }),
-        queueChanged: await card('slack', {
-          managerApprovedAt: 75,
-          intakeScope: {
-            team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: 'Team: REVOPS' },
-          },
-        }),
-        untouched: await card('notion', {}),
-      };
-    });
-
-    await runAll(harness);
-
-    const rows = await harness.run(async (ctx) => ({
-      managerOnly: await ctx.db.get(ids.managerOnly),
-      itOnly: await ctx.db.get(ids.itOnly),
-      connected: await ctx.db.get(ids.connected),
-      refused: await ctx.db.get(ids.refused),
-      queueChanged: await ctx.db.get(ids.queueChanged),
-      untouched: await ctx.db.get(ids.untouched),
-      events: await ctx.db.query('events').collect(),
-      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
-    }));
-    expect(rows.managerOnly).toMatchObject({
-      verdict: 'approved',
-      managerApprovedAt: 50,
-      expiresAt: UPGRADED_AT + 90 * DAY,
-      accessSetBy: 'upgrade',
-    });
-    expect(rows.itOnly).toMatchObject({ verdict: 'proposed' });
-    expect(rows.itOnly?.managerApprovedAt).toBeUndefined();
-    expect(rows.connected).toMatchObject({
-      verdict: 'connected',
-      managerApprovedAt: 10,
-      expiresAt: UPGRADED_AT + DAY,
-      accessSetBy: 'approval',
-    });
-    // The absent driver is read live by the card, never stored: once the
-    // driver runs, the card offers Approve again (wave 3.5 review M12).
-    expect(rows.refused).toMatchObject({ verdict: 'proposed', path: 'browser-driven' });
-    expect(rows.refused?.reason).toBeUndefined();
-    expect(rows.refused?.managerApprovedAt).toBeUndefined();
-    expect(rows.queueChanged).toMatchObject({
-      verdict: 'proposed',
-      reason:
-        'A documented intake queue changed; reject this card and re-run orientation before approval.',
-    });
-    expect(rows.queueChanged?.managerApprovedAt).toBeUndefined();
-    expect(rows.untouched).toMatchObject({ verdict: 'proposed' });
-    expect(rows.untouched?.reason).toBeUndefined();
-    for (const row of [rows.managerOnly, rows.itOnly, rows.connected, rows.refused]) {
-      expect(row).not.toHaveProperty('itApprovedAt');
-    }
-    expect(
-      rows.events
-        .filter((event) => event.createdAt === UPGRADED_AT)
-        .map((event) => ({ type: event.type, payload: event.payload })),
-    ).toEqual([
-      {
-        type: 'surface.access-set',
-        payload: {
-          surfaceId: ids.managerOnly,
-          by: 'upgrade',
-          days: 90,
-          expiresAt: UPGRADED_AT + 90 * DAY,
-        },
-      },
-      { type: 'surface.approved', payload: { surfaceId: ids.managerOnly } },
-    ]);
-    expect(rows.scheduled).toMatchObject([
-      { name: 'surfaceActions:probeInternal', args: [{ surfaceId: ids.managerOnly }] },
-    ]);
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'surfaces-single-approval')).toMatchObject({
-      release: '0.6.0',
-      read: 6,
-      changed: 5,
-      completedAt: expect.any(Number),
-    });
-  });
-
-  it('changes nothing when it runs again', async (): Promise<void> => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    vi.setSystemTime(UPGRADED_AT);
-    const harness = limitedHarness();
-    const agentId = await agent(harness, { userId: 'owner' });
-    const surfaceId = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('surfaces', {
-          agentId,
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
-          verdict: 'proposed',
-          path: 'mcp',
-          whereFound: [],
-          credentialLanded: false,
-          managerApprovedAt: 50,
-          createdAt: 1,
-        }),
-    );
-    await harness.mutation(internal.migrations.runMigrationPage, {
-      name: 'surfaces-single-approval',
-    });
-    const approved = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'surfaces-single-approval'))
-        .unique();
-      if (row) await ctx.db.delete(row._id);
-    });
-    vi.setSystemTime(UPGRADED_AT + DAY);
-    await harness.mutation(internal.migrations.runMigrationPage, {
-      name: 'surfaces-single-approval',
-    });
-    expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(approved);
-    const approvals = await harness.run(async (ctx) =>
-      (await ctx.db.query('events').collect()).filter((event) => event.type === 'surface.approved'),
-    );
-    expect(approvals).toHaveLength(1);
-  });
-});
-
 describe('the declarations the schema step retired (N10)', (): void => {
   it('runs no migration of a retired declaration and declares none of them any more', (): void => {
     for (const { declaration, migration } of RETIRED_DECLARATIONS) {
@@ -978,6 +804,18 @@ describe('the declarations the schema step retired (N10)', (): void => {
       ).fields;
       expect(fields, declaration).not.toHaveProperty(field);
     }
+  });
+
+  it('retires surfaces.itApprovedAt with the single-approval migration that cleared it at 0.6.0 (12-S3)', (): void => {
+    expect(RETIRED_DECLARATIONS).toContainEqual({
+      declaration: 'surfaces.itApprovedAt',
+      migration: 'surfaces-single-approval',
+      release: '0.6.0',
+    });
+    expect(RETIRING_DECLARATIONS.map((row) => row.declaration)).not.toContain(
+      'surfaces.itApprovedAt',
+    );
+    expect(MIGRATION_NAMES as readonly string[]).not.toContain('surfaces-single-approval');
   });
 });
 
@@ -1095,6 +933,52 @@ describe('the mirror re-key (review M20)', (): void => {
       completedAt: expect.any(Number),
     });
   });
+
+  it('reads within its byte bound, so mirrors of full page bodies re-key inside the transaction read limit (M23)', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const sourceId = await source(harness, 'owner');
+    // Thirty mirrors of 600 KB each are 18 MB: more than one transaction may read, so a page
+    // bounded by rows alone fails, and one bounded by bytes takes them a few at a time.
+    const body = 'x'.repeat(600_000);
+    const refs = Array.from({ length: 30 }, (_unused, index) => `page-${index}.md`);
+    for (const ref of refs) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: `source-legacy-${ref}`,
+          title: ref,
+          body,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: ref,
+          updatedAt: 1,
+        });
+      });
+    }
+
+    await runAll(harness);
+
+    // One read per mirror: the test is held to the same read limit as the migration.
+    for (const ref of refs) {
+      const mirror = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('mockDocs')
+            .withIndex('by_agent_slug', (q) =>
+              q.eq('agentId', agentId).eq('slug', mirroredDocSlug(sourceId, ref)),
+            )
+            .unique(),
+      );
+      expect(mirror?.sourceRef, ref).toBe(ref);
+    }
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'mirrors-rekey')).toMatchObject({
+      read: 30,
+      changed: 30,
+      completedAt: expect.any(Number),
+    });
+  });
 });
 
 describe('the release stamp', (): void => {
@@ -1110,21 +994,21 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.15.0, the schema step after the access track, from 0.6.0, 0.10.0, 0.13.0 and
-    // 0.14.0: a stamp names a release no older than the newest a shipped migration names.
+    // Re-pinned at 0.16.0, the wave 12 schema step, from 0.6.0, 0.10.0, 0.13.0, 0.14.0 and 0.15.0:
+    // a stamp names a release no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.15.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.16.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.15.0', previous: '0.15.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.16.0', previous: '0.16.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.16.0', previous: '0.15.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.17.0', previous: '0.16.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.16.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.17.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -1724,9 +1608,11 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
       plaintext,
     });
     const { completed, endedShort } = await harness.run(async (ctx) => {
+      // Re-pinned at 12-S3: the runs carry no page refs. A run whose cursor is a listing cursor
+      // began at 0.6.0 or later and never wrote refs, and the sync-runs-refs pass now clears the cursor of a run
+      // that still carries them, so a fixture with both would not be taken over.
       const run = {
         sourceId,
-        refs: ['runbook.md'],
         credentialRefs: ['runbook.md'],
         pageCount: 1,
         redactionCount: 1,
@@ -2506,9 +2392,10 @@ describe('the issued-by backfill (11-AR; the cockpit item 4 of 11-AK)', (): void
 });
 
 describe('the owner key backfill (K-m3; R-S)', (): void => {
+  // Re-pinned at 12-S3: the newest release a migration names is now the sync runs' refs
+  // clearing's, 0.16.0, which its own registration test pins.
   it('is registered at 0.15.0, after the access track’s backfills', (): void => {
     expect(MIGRATIONS['skills-owner-key'].release).toBe('0.15.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.15.0');
     expect(MIGRATION_NAMES.indexOf('skills-owner-key')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('credentials-issued-by'),
     );
@@ -2813,5 +2700,236 @@ describe('the intake scope backfill (the wave 11 review’s m5; R-S)', (): void 
       changed: 0,
       note: expect.stringContaining('mock mode'),
     });
+  });
+});
+
+describe('the sync runs refs clearing (12-S3, N10)', (): void => {
+  /** A sync run of the source, with the fields a test gives it. */
+  async function run(
+    harness: Harness,
+    sourceId: Id<'docSources'>,
+    fields: Partial<WithoutSystemFields<Doc<'docSyncRuns'>>>,
+  ): Promise<Id<'docSyncRuns'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          credentialRefs: [],
+          pageCount: 0,
+          redactionCount: 0,
+          state: 'completed',
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  it('is registered at 0.16.0, after the access follow-up passes, and names the declaration the next release removes', (): void => {
+    expect(MIGRATIONS['sync-runs-refs'].release).toBe('0.16.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.16.0');
+    expect(MIGRATION_NAMES.indexOf('sync-runs-refs')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('credentials-organisation-purge'),
+    );
+    expect(RETIRING_DECLARATIONS).toContainEqual({
+      declaration: 'docSyncRuns.refs',
+      migration: 'sync-runs-refs',
+      release: '0.16.0',
+    });
+  });
+
+  it("clears every run's refs, keeps its page count, clears the cursor of a run that did not complete so no sync resumes or finishes it, and is safe to run twice", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const runs = {
+      completed: await run(harness, sourceId, { refs: ['a.md', 'b.md', 'c.md'] }),
+      counted: await run(harness, sourceId, {
+        refs: ['a.md'],
+        pagesListed: 5,
+        listing: 2,
+        state: 'error',
+        cursor: 'finishing:pages',
+        reason: 'The documentation read was interrupted (timeout).',
+      }),
+      later: await run(harness, sourceId, {
+        pagesListed: 4,
+        listing: 3,
+        state: 'error',
+        cursor: 'finishing:pages',
+      }),
+    };
+    const read = async (): Promise<Record<string, unknown>> =>
+      await harness.run(async (ctx) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(runs).map(async ([name, id]) => {
+              const row = await ctx.db.get(id);
+              return [
+                name,
+                {
+                  refs: row?.refs ?? null,
+                  pagesListed: row?.pagesListed ?? null,
+                  cursor: row?.cursor ?? null,
+                  state: row?.state,
+                },
+              ];
+            }),
+          ),
+        ),
+      );
+    const cleared = {
+      completed: { refs: null, pagesListed: 3, cursor: null, state: 'completed' },
+      counted: { refs: null, pagesListed: 5, cursor: null, state: 'error' },
+      later: { refs: null, pagesListed: 4, cursor: 'finishing:pages', state: 'error' },
+    };
+
+    await runAll(harness);
+
+    expect(await read()).toEqual(cleared);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'sync-runs-refs')).toMatchObject({
+      release: '0.16.0',
+      read: 3,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    // The pass itself changes nothing a second time, as on a restored volume that runs it again.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'sync-runs-refs'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' }),
+    ).resolves.toMatchObject({ read: 3, changed: 0, completedAt: expect.any(Number) });
+    expect(await read()).toEqual(cleared);
+  });
+
+  it('reads within its byte bound, so runs that each list 8,192 pages clear inside the transaction read limit', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    // Thirty runs of 8,192 refs of about 80 bytes each are over 19 MB, more than one
+    // transaction may read, so a page bounded by rows alone would fail.
+    const refs = Array.from(
+      { length: 8_192 },
+      (_unused, index) =>
+        `https://wiki.example/space/runbooks/page-${String(index).padStart(6, '0')}`,
+    );
+    const ids: Id<'docSyncRuns'>[] = [];
+    for (let index = 0; index < 30; index += 1) ids.push(await run(harness, sourceId, { refs }));
+
+    await runAll(harness);
+
+    for (const id of ids) {
+      const row = await harness.run(async (ctx) => await ctx.db.get(id));
+      expect(row?.refs, String(id)).toBeUndefined();
+      expect(row?.pagesListed, String(id)).toBe(8_192);
+    }
+  });
+});
+
+describe('the decision close record (12-W, N-3; 12-S3)', (): void => {
+  it('is registered at 0.16.0, after the sync runs refs clearing', (): void => {
+    expect(MIGRATIONS['work-decision-closed'].release).toBe('0.16.0');
+    expect(MIGRATION_NAMES.indexOf('work-decision-closed')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('sync-runs-refs'),
+    );
+  });
+
+  it('records every close edit claimed before the release as made, leaves every other row, and is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const decision = {
+      id: 'abc234',
+      kind: 'plan' as const,
+      requestedAt: 2,
+      channel: 'D0123',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: '1700000000.000100',
+      decidedAt: 3,
+      outcome: 'approved' as const,
+    };
+    const rows = await harness.run(async (ctx) => {
+      const row = (externalId: string, fields: Partial<Doc<'workItems'>> = {}) => ({
+        agentId: priya,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        externalId,
+        title: externalId,
+        contentSummary: externalId,
+        contentRefs: [],
+        state: 'completed' as const,
+        observedAt: 1,
+        createdAt: 1,
+        ...fields,
+      });
+      return {
+        claimed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-1', { decision: { ...decision, closeClaimedAt: 4 } }),
+        ),
+        failed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-2', {
+            decision: { ...decision, id: 'abc235', closeClaimedAt: 4, closeFailure: 'gone' },
+          }),
+        ),
+        unclaimed: await ctx.db.insert(
+          'workItems',
+          row('REVOPS-3', { decision: { ...decision, id: 'abc236' } }),
+        ),
+        none: await ctx.db.insert('workItems', row('REVOPS-4')),
+      };
+    });
+    const read = async (): Promise<Record<string, unknown>> =>
+      await harness.run(async (ctx) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(rows).map(async ([name, id]) => {
+              const found = (await ctx.db.get(id))?.decision;
+              return [
+                name,
+                found
+                  ? { closedAt: found.closedAt ?? null, failure: found.closeFailure ?? null }
+                  : null,
+              ];
+            }),
+          ),
+        ),
+      );
+    const recorded = {
+      claimed: { closedAt: 4, failure: null },
+      failed: { closedAt: null, failure: 'gone' },
+      unclaimed: { closedAt: null, failure: null },
+      none: null,
+    };
+
+    await runAll(harness);
+
+    expect(await read()).toEqual(recorded);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'work-decision-closed')).toMatchObject({
+      release: '0.16.0',
+      read: 4,
+      changed: 1,
+      completedAt: expect.any(Number),
+    });
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'work-decision-closed'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'work-decision-closed' }),
+    ).resolves.toMatchObject({ read: 4, changed: 0 });
+    expect(await read()).toEqual(recorded);
   });
 });

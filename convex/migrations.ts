@@ -41,7 +41,6 @@ import {
   backfillWithheldToolsPage,
   newestConnectedEvent,
   restartAccessClocksPage,
-  singleApprovalPage,
 } from './surfaces';
 import {
   backfillUnavailableCausePage,
@@ -64,14 +63,11 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
  * first, so the hourly sweep has the least time to end a card on the clock
- * they restart, and the single approval next, so a card its manager already
- * approved starts its access and its probe as soon as the upgrade can; owners
- * come before the inclusion-list conversion, which reads an adopted agent's
- * sources.
+ * they restart. A migration leaves this list when the declaration it cleared
+ * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`).
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
-  'surfaces-single-approval',
   'agents-owner',
   'credentials-sync-revoke',
   'ticket-listings',
@@ -96,6 +92,8 @@ export const MIGRATION_NAMES = [
   'skills-owner-key',
   'surfaces-intake-scope',
   'credentials-organisation-purge',
+  'sync-runs-refs',
+  'work-decision-closed',
 ] as const;
 
 /** One migration's name. */
@@ -159,6 +157,13 @@ const ACCESS_RELEASE = '0.14.0';
  */
 const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 
+/**
+ * The release of the work loop and supervision (wave 12): the schema step's narrowing of the
+ * sync runs' page refs (12-S3, N10), and the record of the decision close edits claimed before
+ * the edit kept its result (12-W's N-3 lease).
+ */
+const SUPERVISION_RELEASE = '0.16.0';
+
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
   'agents-owner': {
@@ -200,11 +205,6 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'rewrites an avatar id the gallery no longer lists, the handle-keyed ids of earlier builds, to the face the dashboard already shows for it',
     thenRemoves: 'nothing: avatarById keeps its digest fallback for an id a client sends',
-  },
-  'surfaces-single-approval': {
-    release: SCHEMA_STEP_RELEASE,
-    does: 'approves each proposed card an older release left with the manager’s stamp alone, its access running from the upgrade, or leaves it proposed without the stamp where the approval would now be refused; and clears every IT stamp (Q10)',
-    thenRemoves: 'the surfaces.itApprovedAt declaration',
   },
   'mirrors-rekey': {
     release: SCHEMA_STEP_RELEASE,
@@ -293,6 +293,16 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'deletes the value of every organisation-held secret revoked more than 24 hours ago that still keeps it (an older revoke kept it, or its scheduled purge was lost), keeping the row and its revoke date; a row whose revocation at the vendor is still pending is left to its own sweep',
     thenRemoves: 'nothing: a revoke holds a secret 24 hours and schedules its purge from here on',
   },
+  'sync-runs-refs': {
+    release: SUPERVISION_RELEASE,
+    does: 'clears the page refs each sync run of a release before 0.6.0 kept, carrying their count into the run’s pagesListed where it kept none; a run that did not complete loses its cursor too, so no sync resumes or finishes a listing it no longer carries and the next reads the source from page one',
+    thenRemoves: 'the docSyncRuns.refs declaration',
+  },
+  'work-decision-closed': {
+    release: SUPERVISION_RELEASE,
+    does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
+    thenRemoves: 'nothing: the close records its result from here on',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -325,10 +335,13 @@ const EVENT_PAGE = 10;
 const RUN_PAGE = 10;
 
 /**
- * Documentation pages one page of the listing stamp reads: a page body can be
- * up to 768 KiB, so the read is bounded by bytes as well as rows.
+ * Rows one page of a migration over large rows reads: a documentation page or
+ * its mirror carries a body of up to 768 KiB, and a sync run of a release
+ * before 0.6.0 up to 8,192 page refs, so the read is bounded by bytes as well
+ * as rows (M23). A page the bound ends early continues from the last row it
+ * returned, so no row is skipped.
  */
-const PAGE_BODIES_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
+const LARGE_ROWS_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
@@ -604,7 +617,7 @@ async function rewriteAvatarIds(ctx: MutationCtx, cursor: string | null): Promis
  * no sync has written it yet, so the employee never loses the page.
  */
 async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('mockDocs').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const page = await ctx.db.query('mockDocs').paginate({ ...LARGE_ROWS_READ, cursor });
   let changed = 0;
   for (const mirror of page.page) {
     if (mirror.sourceId === undefined || mirror.sourceRef === undefined) continue;
@@ -639,6 +652,60 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
+ * Clear the page refs a sync run of a release before 0.6.0 listed its generation by (12-S3, N10:
+ * the first release of the narrowing). From 0.6.0 a listed page is stamped on its
+ * `docPageListings` row, and the finish no longer reads a run's refs; their count is kept in
+ * `pagesListed`, where the page count reads it. A run that did not complete also loses its cursor:
+ * its refs named pages its listing never stamped, so finishing it without them could remove a page
+ * it listed, and a run of that age is past every resume already (`runToResume`). The next sync then
+ * reads the source from page one and lists every page again. A run carrying no refs is left, so a
+ * second run changes nothing. Each run can hold 8,192 refs, so the page is bounded by bytes.
+ */
+async function clearRunRefs(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docSyncRuns').paginate({ ...LARGE_ROWS_READ, cursor });
+  let changed = 0;
+  for (const run of page.page) {
+    if (run.refs === undefined) continue;
+    await ctx.db.patch(run._id, {
+      refs: undefined,
+      pagesListed: run.pagesListed ?? run.refs.length,
+      ...(run.state !== 'completed' ? { cursor: undefined } : {}),
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Record each decided request's close edit claimed before the close kept its result as made
+ * (12-W's N-3 lease; 12-S3): until this release a claim was the only trace of the edit, which the
+ * code then took as made, so no release ever sends it again. From this release the edit records
+ * `closedAt` or `closeFailure`, and a claim with neither is one a lease may find. A row with either,
+ * or with no claim, is left, so a second run changes nothing. A work item carries its run's output
+ * and plan, so the page is bounded by bytes.
+ */
+async function recordClaimedCloses(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<MigrationPage> {
+  const page = await ctx.db.query('workItems').paginate({ ...LARGE_ROWS_READ, cursor });
+  let changed = 0;
+  for (const row of page.page) {
+    const decision = row.decision;
+    if (
+      decision?.closeClaimedAt === undefined ||
+      decision.closedAt !== undefined ||
+      decision.closeFailure !== undefined
+    ) {
+      continue;
+    }
+    await ctx.db.patch(row._id, { decision: { ...decision, closedAt: decision.closeClaimedAt } });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Give each stored documentation page a listing row (D D2 (a)). A page of a
  * release before 0.6.0 was kept by its run's refs; from this release a finish
  * removes a page whose row an earlier listing stamped, so every page needs
@@ -647,7 +714,7 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
  * pages its refs name.
  */
 async function stampPageListings(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('docPages').paginate({ ...PAGE_BODIES_READ, cursor });
+  const page = await ctx.db.query('docPages').paginate({ ...LARGE_ROWS_READ, cursor });
   let changed = 0;
   for (const stored of page.page) {
     const listed = await ctx.db
@@ -867,8 +934,6 @@ const MIGRATION_PAGES: Readonly<
   'mirrors-rekey': rekeyMirrors,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
-  'surfaces-single-approval': async (ctx, cursor) =>
-    await singleApprovalPage(ctx, cursor, Date.now()),
   'surfaces-withheld-tools': async (ctx, cursor) => await backfillWithheldToolsPage(ctx, cursor),
   'work-evaluation-unavailable-cause': async (ctx, cursor) =>
     await backfillUnavailableCausePage(ctx, cursor),
@@ -882,6 +947,8 @@ const MIGRATION_PAGES: Readonly<
   'credentials-issued-by': backfillIssuedBy,
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
+  'sync-runs-refs': clearRunRefs,
+  'work-decision-closed': recordClaimedCloses,
 };
 
 /** A migration's row, if it has started. */

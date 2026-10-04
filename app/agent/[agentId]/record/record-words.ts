@@ -4,6 +4,7 @@ import {
   type EventPayloads,
   type EventType,
   type GrantSource,
+  type WorkDecisionAcknowledgingPayload,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
@@ -508,6 +509,16 @@ const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
   authoring: 'skill writing',
 };
 
+/** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
+const ACKNOWLEDGEMENT_WORDS: Readonly<
+  Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
+> = {
+  received: (subject) => `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
+  unknown: () => 'A reply with no open request was answered',
+  replaced: (subject) =>
+    `${subject.name} answered ${whose(subject)} reply to a replaced request${forItem(subject)} with the request that replaced it`,
+};
+
 /**
  * The record's words for every event type the contract lists, in the manager's terms: the
  * employee by name, the manager as "you", the work item by its title. An event from before a
@@ -778,10 +789,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'credential.superseded': (p) => {
     const label = text(p.label);
     const page = text(p.page);
-    const cards = counted(p.surfaceIds?.length, 'card');
-    return `The credential${label ? ` \u201c${label}\u201d` : ''} is no longer in the documentation${
-      page ? ` (${page})` : ''
-    }${cards ? `; land one again on ${cards}` : ''}`;
+    const rebound = p.reboundSurfaceIds?.length
+      ? counted(p.reboundSurfaceIds.length, 'card')
+      : undefined;
+    const unbound = p.surfaceIds?.length ? counted(p.surfaceIds.length, 'card') : undefined;
+    const named = `${label ? ` \u201c${label}\u201d` : ''}`;
+    const where = page ? ` (${page})` : '';
+    const landAgain = unbound ? `; land one again on ${unbound}` : '';
+    return rebound
+      ? `The documentation replaced the credential${named}${where}; Day0 bound its new value on ${rebound}${landAgain}`
+      : `The credential${named} is no longer in the documentation${where}${landAgain}`;
   },
   'surface.reoriented': (_, subject) =>
     `${decider(subject)} asked ${subject.name} to look again for a way to reach ${
@@ -995,9 +1012,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.decision-request-closing': (_, subject) =>
     `${subject.name} is marking the decided request${forItem(subject)} in ${whose(subject)} DMs`,
   'work.decision-acknowledging': (p, subject) =>
-    p.kind === 'unknown'
-      ? 'A reply with no open request was answered'
-      : `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
+    (ACKNOWLEDGEMENT_WORDS[p.kind ?? 'received'] ?? ACKNOWLEDGEMENT_WORDS.received)(subject),
   'work.decision-ignored': (p) => `A chat reply was ignored${because(p.reason)}`,
   'work.decision-duplicate': () => 'A repeated decision reply was ignored',
   'work.decision-batch-issued': (p) =>

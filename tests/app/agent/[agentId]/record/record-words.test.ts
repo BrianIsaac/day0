@@ -396,6 +396,52 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      recordWords(
+        {
+          type: 'work.decision-acknowledging',
+          payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+        },
+        { name: 'Mira', item: 'Refresh pipeline coverage view' },
+      );
+    expect(answered('received')).toBe(
+      'Mira acknowledged your reply for “Refresh pipeline coverage view”.',
+    );
+    expect(answered('unknown')).toBe('A reply with no open request was answered.');
+    expect(answered('replaced')).toBe(
+      'Mira answered your reply to a replaced request for “Refresh pipeline coverage view” with the request that replaced it.',
+    );
+  });
+
+  it('says which credential left the documentation, and a page swap that bound the new value (N23; 12-S3)', (): void => {
+    const payload = {
+      credentialId: 'c1',
+      label: 'linear service token',
+      sourceId: 'd1',
+      page: 'runbooks/linear.md',
+    };
+    expect(
+      recordWords(
+        { type: 'credential.superseded', payload: { ...payload, surfaceIds: ['s1', 's2'] } },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The credential \u201clinear service token\u201d is no longer in the documentation (runbooks/linear.md); land one again on 2 cards.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'credential.superseded',
+          payload: { ...payload, surfaceIds: [], reboundSurfaceIds: ['s1'] },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The documentation replaced the credential \u201clinear service token\u201d (runbooks/linear.md); Day0 bound its new value on 1 card.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(
