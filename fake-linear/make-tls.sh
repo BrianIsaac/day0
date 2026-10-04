@@ -41,7 +41,7 @@ openssl req -newkey rsa:2048 -nodes -subj "/CN=fake-linear" \
 printf 'subjectAltName=DNS:api.linear.app,DNS:linear.app,DNS:mcp.linear.app,DNS:fake-linear,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' \
   > "$work/ext.cnf"
 openssl x509 -req -in "$work/cert.csr" -CA "$directory/ca.pem" -CAkey "$work/ca-key.pem" \
-  -CAcreateserial -days 7 -extfile "$work/ext.cnf" -out "$directory/cert.pem" 2>/dev/null
+  -CAcreateserial -CAserial "$work/ca.srl" -days 7 -extfile "$work/ext.cnf" -out "$directory/cert.pem" 2>/dev/null
 cat "$directory/ca.pem" "$@" > "$directory/cas.pem"
 cat "$system_bundle" "$directory/cas.pem" > "$directory/bundle.pem"
 # Read by the fake's container user, which is not this one.

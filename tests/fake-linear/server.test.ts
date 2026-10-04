@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpsRequest } from 'node:https';
 import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -176,6 +176,14 @@ describe('the fake Linear listener', (): void => {
         expect(status, servername).toBe(200);
       }
       expect(readFileSync(join(directory, 'cas.pem'), 'utf8')).toBe(ca.toString());
+      // Only what the overlay mounts: the CA's serial is kept with its key, which is deleted.
+      expect(readdirSync(directory).sort()).toEqual([
+        'bundle.pem',
+        'ca.pem',
+        'cas.pem',
+        'cert.pem',
+        'key.pem',
+      ]);
     },
   );
 });
