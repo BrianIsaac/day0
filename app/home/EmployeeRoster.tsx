@@ -46,6 +46,7 @@ const COLUMNS = [
   'State',
   'Role',
   'Autonomy',
+  'Decisions',
   'Needs you',
   'In progress',
   'Landed this month',
@@ -216,6 +217,9 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
       <Cell column="Autonomy">
         <AutonomyBadge autonomous={employee.autonomous} />
       </Cell>
+      <Cell column="Decisions">
+        <DecisionsReach reach={employee.decisionsReach} />
+      </Cell>
       <Cell column="Needs you">
         {loaded ? (
           <span className={waitingOnManager > 0 ? 'text-[var(--color-warn)]' : ''}>
@@ -268,6 +272,41 @@ function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
     >
       {/* The page's, the pill's and the deploy form's word (walk m10). */}
       {autonomyLabel(autonomous)}
+    </span>
+  );
+}
+
+/** Where one employee's decisions reach the manager, for the roster's Decisions column. */
+interface DecisionsReachProps {
+  /** Absent on a row from functions pushed before the column (12-M). */
+  readonly reach: RosterRow['decisionsReach'] | undefined;
+}
+
+/**
+ * Where the employee's decisions reach the manager (wave 12, 12-M; H D6): here only, or also as a
+ * DM on its chat channel, with Approve and Reject buttons or with the typed code alone. Every
+ * request also waits in this dashboard, which the hover says.
+ */
+function DecisionsReach({ reach }: DecisionsReachProps) {
+  if (reach === undefined) return null;
+  const words =
+    reach.kind === 'dashboard'
+      ? {
+          text: 'Here only',
+          title: 'Decisions wait for you in this dashboard; no chat surface carries them yet',
+        }
+      : reach.buttons
+        ? {
+            text: `${reach.channel} DM, buttons`,
+            title: `Each request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`,
+          }
+        : {
+            text: `${reach.channel} DM, typed codes`,
+            title: `Each request also arrives as a ${reach.channel} DM; reply with its typed code`,
+          };
+  return (
+    <span title={words.title} className="whitespace-nowrap text-[var(--color-fg)]/80">
+      {words.text}
     </span>
   );
 }
