@@ -3,7 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { spanModelFetch } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -149,16 +149,18 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 // Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
-// The redaction component the actions reach through DAY0_REDACTOR_URL, served
-// in-process from the recorded span model.
-let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
-beforeAll(async (): Promise<void> => {
-  redactorDouble = await serveSpanModel();
-  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+// The redaction component the actions reach through DAY0_REDACTOR_URL, answered
+// in-process from the recorded span model by the fetch stub below, never over a
+// socket: from undici 6.28 (Node 22.23, the release CI pins) a pooled socket is
+// reused only after a zero-delay setTimeout fires, which the many tests here
+// that fake setTimeout would hold until the test timed out (12-H's CI run).
+const REDACTOR_URL = 'http://redactor.test:8000';
+const answerRedactor = spanModelFetch();
+beforeAll((): void => {
+  process.env.DAY0_REDACTOR_URL = REDACTOR_URL;
 });
-afterAll(async (): Promise<void> => {
+afterAll((): void => {
   delete process.env.DAY0_REDACTOR_URL;
-  await redactorDouble?.close();
 });
 
 const recorded = vi.hoisted(() => ({
@@ -821,10 +823,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   };
 });
 
-const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<Response> => {
   // The redaction component is reached over the same global; its calls are its own.
-  if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
+  if (String(input).startsWith(REDACTOR_URL)) return answerRedactor(new Request(input, init));
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
@@ -3017,10 +3018,8 @@ describe('executing an approved plan through the gate', (): void => {
 
     // The batch schedules one apply per member; they start on the faked clock
     // and finish, rather than being raced by hand or waited for on the real one.
-    // The clock is pumped at zero while they run: fetch's zero-delay timers (the
-    // idle-socket check before a pooled connection is reused, from undici 6.28)
-    // are faked too, and the apply's redaction call waits on one. Nothing is
-    // moved forward, so the six-minute dead-man switches stay armed.
+    // The clock is pumped at zero to start them. Nothing is moved forward, so
+    // the six-minute dead-man switches stay armed.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
