@@ -655,9 +655,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       payload.autonomousActions === true ? 'autonomously' : 'automatically'
     }`,
   'work.actions-pending': (payload) =>
-    `${counted(payload.heldIndexes?.length, 'action') ?? 'actions'} held for your approval`,
+    payload.leftForCard === true
+      ? 'ticket close held for your card'
+      : `${counted(payload.heldIndexes?.length, 'action') ?? 'actions'} held for your approval`,
   'work.actions-approved': (payload) =>
-    `${counted(payload.approvedIndexes?.length, 'action') ?? 'actions'} approved${decidedFrom(payload.decidedVia)}`,
+    `${counted(payload.approvedIndexes?.length, 'action') ?? 'actions'} approved${decidedFrom(payload.decidedVia)}${
+      (payload.leftForCard?.length ?? 0) > 0 ? '; the ticket close left for its card' : ''
+    }`,
   'work.actions-rejected': (payload) =>
     `held actions rejected${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.actions-applying': (payload) =>

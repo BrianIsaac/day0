@@ -744,3 +744,20 @@ describe('the labels of an end of access at the vendor (11-AR)', (): void => {
     ).toBe("disconnected: the organisation's connection was revoked (revoked by IT)");
   });
 });
+
+describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-1)', (): void => {
+  it('says the approval left the close for its card, and that the close waits there', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.actions-approved',
+        payload: { approvedIndexes: [0, 3], leftForCard: [1], decidedVia: 'channel' },
+      }),
+    ).toBe('2 actions approved from the chat surface; the ticket close left for its card');
+    expect(
+      eventLabel({
+        type: 'work.actions-pending',
+        payload: { heldIndexes: [1], leftForCard: true },
+      }),
+    ).toBe('ticket close held for your card');
+  });
+});
