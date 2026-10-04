@@ -33,7 +33,8 @@ import { readEnvValues } from './lib/env-file';
  * Exits {@link EXIT_KEPT} when every function was asked and kept the rule, {@link EXIT_BROKEN}
  * when any broke it, {@link EXIT_NOT_RUN} when it was not run or the deployment could not be read,
  * and {@link EXIT_INCOMPLETE} when a function could not be asked (no row of a table its
- * arguments name) or gave no answer.
+ * arguments name) or gave no answer. `pnpm check:anonymous` reports every one but the first as 1
+ * (pnpm's own exit); `pnpm exec tsx scripts/check-anonymous.ts --yes` keeps them apart.
  */
 
 /** Every function was asked, and every one kept the rule. */
