@@ -28,6 +28,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('the shipped executor schema over a GLM reply (12-D)', () => {
+  it('takes the captured reply once it answers whether the work was done, and refuses it without', () => {
+    const shipped = executeSchema.extend({
+      actions: z.array(generatedActionSchema).min(priya.actionsMinimum),
+    });
+    const valid = structuredClone(priya.value);
+    valid.actions.push({
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared the message.' },
+    });
+    expect(shipped.safeParse(valid).success).toBe(false);
+    expect(
+      shipped.safeParse({ ...valid, workDone: 'done', workDoneWhy: 'The message is prepared.' })
+        .success,
+    ).toBe(true);
+  });
+});
+
 describe('prompt-mode structured repair', () => {
   it.each(fixtures)('captures the live missing-action failure for $taskId', (fixture) => {
     const result = schemaFor(fixture).safeParse(fixture.value);

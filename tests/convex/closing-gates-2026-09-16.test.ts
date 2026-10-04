@@ -54,7 +54,7 @@ import {
   RUN_4_TILE_READ_BACK,
 } from '../fixtures/plan-obligations-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
+import { HELD_CLOSE_AGAINST_WORDS, HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import { DEFERRALS_KEPT } from '../../src/work/execute-skill';
 import { encrypt } from '../../src/lib/credential-crypto';
@@ -1068,5 +1068,119 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
       ['linear', 'save_comment'],
       ['linear', 'save_issue'],
     ]);
+  });
+});
+
+describe('the run 3 closing set, answered whether the work was done (12-D, decision D-1 (b))', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    recorded.model.length = 0;
+    recorded.closingReply = undefined;
+    vi.useRealTimers();
+    restoreSurfaceMode();
+  });
+
+  /** REVOPS-7's run 3, seeded at its closing phase with autonomous actions on. */
+  async function autonomousAtClosing(harness: Harness): Promise<{
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+  }> {
+    const seeded = await seedAtClosing(harness, REVOPS_7_RUN_3);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(seeded.agentId, { autonomousActions: true });
+    });
+    return seeded;
+  }
+
+  it('refuses a closing set that moves REVOPS-7 to Done while its run answers partial, and nothing reaches Linear', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await autonomousAtClosing(t);
+    recorded.closingReply = {
+      ...run3RefreshClosing,
+      workDone: 'partial',
+      workDoneWhy: 'The tile is refreshed, but the audit line was not read back.',
+    };
+    const refusal = await t.action(internal.workActions.authorDependentActions, {
+      workItemId,
+      runId,
+    });
+    expect(refusal).toEqual({
+      ok: false,
+      reason:
+        'dependent phase sets the ticket to Done while workDone is "partial" ("The tile is refreshed, but the audit line was not read back."): a run that did not do all of the work leaves the ticket\'s state as it is and records the step it could not finish as blocked',
+    });
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
+      'dependent',
+      'dependent',
+    ]);
+    expect(recorded.mcp).toEqual([]);
+    expect((await readItem(t, workItemId)).state).toBe('failed');
+  });
+
+  it('keeps the closing set’s answer on the finished row, never the first phase’s prediction', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await autonomousAtClosing(t);
+    await t.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        output: { ...(row!.output as object), workDone: 'partial', workDoneWhy: 'Predicted.' },
+      });
+    });
+    recorded.closingReply = {
+      ...run3RefreshClosing,
+      workDone: 'done',
+      workDoneWhy: 'The tile reads 74% and REVOPS-7 is commented and closed.',
+    };
+    await t.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(done.output).toMatchObject({
+      workDone: 'done',
+      workDoneWhy: 'The tile reads 74% and REVOPS-7 is commented and closed.',
+    });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual([
+      'get_issue',
+      'save_comment',
+      'save_issue',
+    ]);
+  });
+
+  it('holds the Done for the manager under autonomy when the run answers done twice over words that say otherwise, and lands the comment', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await autonomousAtClosing(t);
+    const unfinished = 'I could not verify the audit line on the tile.';
+    recorded.closingReply = {
+      ...run3RefreshClosing,
+      draft: unfinished,
+      workDone: 'done',
+      workDoneWhy: 'The tile is refreshed.',
+    };
+    await expect(
+      t.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    // The tripwire sent the set back once; the same answer came back.
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
+      'dependent',
+      'dependent',
+    ]);
+    expect(recorded.model[1]!.user).toContain(
+      'workDone is "done" and the set moves the ticket to Done, but your own words say "I could not verify the audit line on the tile"',
+    );
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.output).toMatchObject({ closeAgainstWords: unfinished });
+    expect(held.actionVerdicts).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+    ]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
   });
 });
