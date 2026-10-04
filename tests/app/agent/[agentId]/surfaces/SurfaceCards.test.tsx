@@ -473,7 +473,7 @@ describe('SurfaceCards: where decisions reach the manager on a Slack card (wave 
   it('says the requests carry buttons once it has', (): void => {
     state.surfaces = [slackCard({ available: true })];
     const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Mateo" />);
-    expect(markup).toContain('Decisions in Slack: buttons and typed codes');
+    expect(markup).toContain('Decisions in Slack: buttons are on');
     expect(markup).toContain('Replace the app-level token');
   });
 

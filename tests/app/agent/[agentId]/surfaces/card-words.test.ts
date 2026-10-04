@@ -399,9 +399,10 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
   it('says buttons are on, with the typed code beside them', (): void => {
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
-    expect(words.title).toBe('Decisions in Slack: buttons and typed codes');
-    expect(words.note).toContain('Approve and Reject buttons');
-    expect(words.note).toContain('the typed code beside them always decides too');
+    expect(words.title).toBe('Decisions in Slack: buttons are on');
+    expect(words.note).toBe(
+      'Each request to you arrives with Approve and Reject buttons and a typed code; either one decides it.',
+    );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
   });
@@ -412,16 +413,16 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'Mateo (Day0)',
     );
     expect(words.title).toBe("Buttons: needs this app's socket token");
-    expect(words.note).toContain('Requests carry the typed code only.');
-    expect(words.note).toContain('Mateo (Day0)');
-    expect(words.note).toContain('connections:write');
+    expect(words.note).toBe(
+      'Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack turns on Socket Mode, creates an app-level token with the connections:write scope (Basic Information, App-Level Tokens) and pastes it below.',
+    );
     expect(words.asksForToken).toBe(true);
   });
 
   it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
     for (const why of ['no-bridge', 'no-own-app', 'not-slack-api'] as const) {
       const words = decisionButtonsWords({ available: false, why }, 'Mateo (Day0)');
-      expect(words.note, why).toContain('typed code');
+      expect(`${words.title} ${words.note}`, why).toContain('typed code');
       expect(words.asksForToken, why).toBe(false);
     }
     expect(decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)').title).toBe(

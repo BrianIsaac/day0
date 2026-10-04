@@ -473,12 +473,30 @@ describe('DecisionButtonsRow (wave 12, 12-M; RM3)', (): void => {
       words: decisionButtonsWords({ available: true }, 'Mateo (Day0)'),
       error: 'Slack did not accept this app-level token (invalid_auth).',
     });
-    expect(markup).toContain('Decisions in Slack: buttons and typed codes');
+    expect(markup).toContain('Decisions in Slack: buttons are on');
     expect(markup).toContain('<summary');
     // The tree's disclosure, so the toggle is a 44 px target (N14).
     expect(markup).toMatch(/<summary class="[^"]*min-h-11/);
     expect(markup).toContain('Replace the app-level token');
     expect(markup).toContain('role="alert"');
+  });
+
+  it('says the token is not the app configuration token, beside its field', (): void => {
+    const markup = render();
+    expect(markup).toContain(
+      'Starts with xapp-. It turns the buttons on; it is not the app configuration token.',
+    );
+    expect(markup).toMatch(/<input[^>]*aria-describedby="app-level-token-slack-hint"/);
+  });
+
+  it('says in the row that a landed token was stored, and closes the replace disclosure', (): void => {
+    const markup = render({
+      words: decisionButtonsWords({ available: true }, 'Mateo (Day0)'),
+      landings: 1,
+    });
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('The app-level token is stored; Approve and Reject buttons are on.');
+    expect(markup).not.toMatch(/<details[^>]* open/);
   });
 
   it('asks for nothing where the token is not the reason', (): void => {
