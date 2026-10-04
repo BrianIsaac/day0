@@ -146,7 +146,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     expect(real).not.toContain('There is no pause for one employee');
     const mock = manage([], { mode: 'mock' });
     expect(mock).toContain(
-      'The hosted office has no pause: Priya works through the hosted office&#x27;s queue, and every write waits for your decision.',
+      'The hosted office has no pause: every write Priya drafts there waits for your decision.',
     );
     expect(mock).not.toContain('Pause Priya');
     // Round two draws an Appearance card; the stylesheet has no light theme to choose.
@@ -173,7 +173,11 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     expect(html).toMatch(/<button[^>]*>Resume Priya<\/button>/);
     expect(html).not.toContain('Pause Priya');
     expect(html).toMatch(/text-\[var\(--color-warn\)\][^>]*>Paused</);
-    expect(html).toContain('Your reason: Quarter close.');
+    expect(html).toContain('Reason: Quarter close.');
+    // The card itself is drawn in warn while it holds the employee, as Retire is drawn in danger.
+    expect(html).toMatch(
+      /<section[^>]*border-\[var\(--color-warn-line\)\][^>]*>(?:(?!<section).)*>Pause</s,
+    );
   });
 
   it('pauses and resumes this employee through the backend', async (): Promise<void> => {

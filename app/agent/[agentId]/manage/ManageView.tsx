@@ -102,9 +102,13 @@ export function ManageView() {
           </p>
         )}
       </Card>
-      <Card title="Pause" meta={real && paused ? <Pill tone="warn">Paused</Pill> : undefined}>
+      <Card
+        title="Pause"
+        tone={real && paused ? 'warn' : undefined}
+        meta={real && paused ? <Pill tone="warn">Paused</Pill> : undefined}
+      >
         {surfaceMode === undefined ? (
-          <p className="text-sm text-[var(--color-muted)]">Loading</p>
+          <p className="text-sm text-[var(--color-muted)]">Loading the pause</p>
         ) : real && (active || paused) ? (
           <PauseControl
             name={agent.name}
@@ -120,7 +124,7 @@ export function ManageView() {
                 `Pause is here once ${agent.name}'s charter is approved; until then it takes on no work.`
               : !active
                 ? `The hosted office has no pause: ${agent.name} takes on work only once its charter is approved, and every write waits for your decision.`
-                : `The hosted office has no pause: ${agent.name} works through the hosted office's queue, and every write waits for your decision.`}
+                : `The hosted office has no pause: every write ${agent.name} drafts there waits for your decision.`}
           </p>
         )}
       </Card>

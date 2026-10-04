@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PAUSE_CARD_COPY,
+  PAUSE_IN_FLIGHT_COPY,
   PauseControl,
 } from '../../../../../app/agent/[agentId]/manage/PauseControl';
 import { AgentZoneContext } from '../../../../../app/components/time';
@@ -37,12 +38,13 @@ describe('PauseControl (12-P)', (): void => {
     expect(PAUSE_CARD_COPY).toBe(
       'Stops intake and holds every run at its next gate. Nothing is deleted; resume any time.',
     );
+    // What a pause leaves running is said, so nobody pauses to stop a post already on its way.
+    expect(view.container.textContent).toContain(PAUSE_IN_FLIGHT_COPY);
+    expect(PAUSE_IN_FLIGHT_COPY).toBe('A write already on its way finishes first.');
 
     await press(view.container, 'Pause Priya');
     expect(onPause).toHaveBeenCalledTimes(1);
-    expect(said(view.container)).toEqual([
-      'Priya is paused: it takes no new work, and each run holds at its next gate.',
-    ]);
+    expect(said(view.container)).toEqual(['Priya is paused.']);
     expect(focusedName()).toBe('Pause Priya');
   });
 
@@ -61,15 +63,16 @@ describe('PauseControl (12-P)', (): void => {
     );
     const text = view.container.textContent ?? '';
     expect(text).toContain('Paused since 4 Oct 2026, 17:30.');
-    expect(text).toContain('Your reason: Quarter close.');
+    expect(text).toContain('Reason: Quarter close.');
+    expect(text).not.toContain('Your reason');
     expect(text).toContain(
-      'Priya takes no new work and starts no step. Decisions it already asked still wait on you, and what you approve runs once you resume.',
+      'Priya takes no new work and starts nothing new. Decisions it already asked still wait on you; what you approve runs once you resume Priya.',
     );
     expect(text).not.toContain(PAUSE_CARD_COPY);
 
     await press(view.container, 'Resume Priya');
     expect(onResume).toHaveBeenCalledTimes(1);
-    expect(said(view.container)).toEqual(['Priya is working again: what was held goes on now.']);
+    expect(said(view.container)).toEqual(['Priya is working again.']);
   });
 
   it('says a refusal in the live region and changes nothing on the card', async (): Promise<void> => {
@@ -91,7 +94,36 @@ describe('PauseControl (12-P)', (): void => {
     const html = renderToStaticMarkup(
       <PauseControl name="Priya" pausedAt={PAUSED_AT} onPause={vi.fn()} onResume={vi.fn()} />,
     );
-    expect(html).not.toContain('Your reason');
+    expect(html).not.toContain('Reason:');
+  });
+
+  it('wraps a long name and a long reason inside the card rather than running past it', (): void => {
+    const name = 'Bartholomew-Alexandria Featherstonehaugh';
+    const html = renderToStaticMarkup(
+      <PauseControl
+        name={name}
+        pausedAt={PAUSED_AT}
+        reason={'x'.repeat(200)}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+    expect(html).toMatch(
+      /<button[^>]*class="[^"]*!whitespace-normal[^"]*"[^>]*>Resume Bartholomew/,
+    );
+    expect(html).toMatch(/<p class="[^"]*break-words[^"]*">Reason: x+<\/p>/);
+  });
+
+  it('draws Resume as the page’s next step and Pause as an ordinary control', (): void => {
+    const running = mount(<PauseControl name="Priya" onPause={vi.fn()} onResume={vi.fn()} />);
+    expect(button(running.container, 'Pause Priya').className).toContain('bg-[var(--color-card)]');
+    running.unmount();
+    const paused = mount(
+      <PauseControl name="Priya" pausedAt={PAUSED_AT} onPause={vi.fn()} onResume={vi.fn()} />,
+    );
+    expect(button(paused.container, 'Resume Priya').className).toContain(
+      'bg-[var(--color-accent)]',
+    );
   });
 
   it('passes axe and keeps each control at 44 px, running and paused', async (): Promise<void> => {
