@@ -343,6 +343,12 @@ export function EmployeeHeader({
           ) : null}
           <Pill tone={status.tone}>{status.text}</Pill>
         </div>
+        {/* Every tab carries the header, so the hold is said beside the work it holds (12-P). */}
+        {paused ? (
+          <p className="max-w-xs text-xs text-[var(--color-warn)] [overflow-wrap:anywhere] sm:text-right">
+            Nothing new starts until you resume {agent.name} on Manage.
+          </p>
+        ) : null}
         {stage}
       </div>
     </header>

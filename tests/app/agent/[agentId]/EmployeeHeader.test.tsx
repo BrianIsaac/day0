@@ -78,6 +78,11 @@ describe('header state pill', (): void => {
     expect(markup).toMatch(/text-\[var\(--color-warn\)\][^>]*>Paused</);
     expect(markup).toContain('title="Day0, paused"');
     expect(markup).not.toContain('Active · Supervised');
+    // Every tab carries the header, so the hold is said where the held work is listed too.
+    expect(markup).toContain('Nothing new starts until you resume Day0 on Manage.');
+    expect(renderToStaticMarkup(<EmployeeHeader agent={agent} charter={charter} />)).not.toContain(
+      'Nothing new starts',
+    );
   });
 
   it("makes the employee's name the page's one heading, and the manager a line beneath it", (): void => {

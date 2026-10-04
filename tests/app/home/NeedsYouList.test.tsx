@@ -191,6 +191,11 @@ describe('NeedsYouList with a paused employee (12-P)', (): void => {
     expect(text.indexOf('Aiko is paused')).toBeLessThan(text.indexOf('a write is held for you'));
   });
 
+  it('links each line to the employee’s Manage tab, where Resume is', (): void => {
+    expect(html).toContain('href="/agent/synthetic-mira/manage"');
+    expect(text).toContain('Manage Mira');
+  });
+
   it('says nothing of a paused employee with nothing waiting, and adds no entry of its own', (): void => {
     expect(text).not.toContain('Tomas');
     expect(html.match(/<li/g)?.length).toBe(
