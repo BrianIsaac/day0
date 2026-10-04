@@ -213,4 +213,29 @@ describe('landing an employee app’s app-level token (wave 12, 12-M; RM3 (a))',
     ).rejects.toThrow();
     expect(calls).toEqual([]);
   });
+
+  it.each(['real', 'mock'] as const)(
+    'refuses a caller with no identity with the guard’s refusal before it reads the card, on a %s deployment',
+    async (mode): Promise<void> => {
+      useSurfaceMode(mode);
+      slackOpens();
+      const harness = convexTest(schema, allConvexModules());
+      const { surfaceId } = await seedOwnApp(harness);
+      const gone = await seedOwnApp(harness);
+      await harness.run(async (ctx) => await ctx.db.delete(gone.surfaceId));
+      const { notAuthenticatedMessage } = await import('../../convex/devAuth');
+      const refusal = { data: notAuthenticatedMessage() };
+      for (const card of [surfaceId, gone.surfaceId]) {
+        await expect(
+          harness.action(api.slackSocketActions.landAppLevelToken, {
+            surfaceId: card,
+            token: TOKEN,
+          }),
+        ).rejects.toMatchObject(refusal);
+      }
+      expect(calls).toEqual([]);
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface?.provisioning?.appLevelTokenCredentialId).toBeUndefined();
+    },
+  );
 });

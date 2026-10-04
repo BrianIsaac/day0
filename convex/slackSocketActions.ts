@@ -4,7 +4,7 @@ import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { action, internalAction, type ActionCtx } from './_generated/server';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { assertRealMode } from '../src/lib/surface-mode';
 import { decryptCredential } from '../src/surfaces/credentials';
@@ -121,15 +121,17 @@ async function landToken(
 /**
  * Land the app-level token a person generated for an employee's own Slack app (wave 12, 12-M;
  * RM3 (a); K2: no API issues one), so the app's decision requests carry Approve and Reject buttons
- * over Socket Mode. Public, owner-checked (`assertOwnsAgentAction`), real mode only. The token is
- * checked by opening a Socket Mode connection with it before anything is kept; it is never logged
- * and never returned, and any refusal names Slack's reason without it. Writes a credentials row
- * held by the organisation, the card's `provisioning.appLevelTokenCredentialId`, and a
- * `surface.socket-token-landed` event; an earlier token's row is ended in Day0.
+ * over Socket Mode. Public: a caller with no identity is refused first (`getCallerOrThrow`, before
+ * the card or the mode is read), then owner-checked (`assertOwnsAgentAction`); real mode only. The
+ * token is checked by opening a Socket Mode connection with it before anything is kept; it is
+ * never logged and never returned, and any refusal names Slack's reason without it. Writes a
+ * credentials row held by the organisation, the card's `provisioning.appLevelTokenCredentialId`,
+ * and a `surface.socket-token-landed` event; an earlier token's row is ended in Day0.
  */
 export const landAppLevelToken = action({
   args: { surfaceId: v.id('surfaces'), token: v.string() },
   handler: async (ctx, args): Promise<{ landed: true }> => {
+    await getCallerOrThrow(ctx);
     const target = await ctx.runQuery(internal.slackSocket.appLevelTokenTarget, {
       surfaceId: args.surfaceId,
     });
