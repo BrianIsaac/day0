@@ -30,6 +30,61 @@ describe('the cross-origin check', (): void => {
   });
 });
 
+describe('the cross-origin check behind next start and a proxy', (): void => {
+  /** Next builds `request.url` on localhost under `next start`, whatever the `Host` says. */
+  function served(headers: Record<string, string>): Request {
+    return new Request('http://localhost:3630/api/voice/chat', { method: 'POST', headers });
+  }
+
+  function env(values: Record<string, string>): (name: string) => string | undefined {
+    return (name: string): string | undefined => values[name];
+  }
+
+  it('accepts a page served on the public origin while next start builds the URL on localhost', (): void => {
+    const read = env({ DAY0_PUBLIC_URL: 'http://127.0.0.1:3630' });
+    expect(crossOriginRefusal(served({ origin: 'http://127.0.0.1:3630' }), read)).toBeUndefined();
+  });
+
+  it("accepts a page the customer's proxy serves on the public origin", (): void => {
+    const read = env({ DAY0_PUBLIC_URL: 'https://day0.acme.test/' });
+    const request = served({
+      origin: 'https://day0.acme.test',
+      host: 'day0.acme.test',
+      'x-forwarded-host': 'day0.acme.test',
+      'x-forwarded-proto': 'https',
+    });
+    expect(crossOriginRefusal(request, read)).toBeUndefined();
+  });
+
+  it("still accepts the request's own origin when a public one is set, as a tunnel for Slack leaves the page on localhost", (): void => {
+    const read = env({ DAY0_PUBLIC_URL: 'https://day0.acme.test' });
+    expect(crossOriginRefusal(served({ origin: 'http://localhost:3630' }), read)).toBeUndefined();
+  });
+
+  it('never takes the origin from a forwarded header', (): void => {
+    const request = served({
+      origin: 'https://day0.acme.test',
+      host: 'day0.acme.test',
+      'x-forwarded-host': 'day0.acme.test',
+      'x-forwarded-proto': 'https',
+    });
+    expect(crossOriginRefusal(request, env({}))?.status).toBe(403);
+  });
+
+  it('refuses a page on another localhost port when a public origin is set', (): void => {
+    const read = env({ DAY0_PUBLIC_URL: 'http://127.0.0.1:3630' });
+    expect(crossOriginRefusal(served({ origin: 'http://127.0.0.1:8080' }), read)?.status).toBe(403);
+  });
+
+  it('accepts only its own origin when the public origin is not an origin', (): void => {
+    const read = env({ DAY0_PUBLIC_URL: 'https://day0.acme.test/app' });
+    expect(crossOriginRefusal(served({ origin: 'https://day0.acme.test' }), read)?.status).toBe(
+      403,
+    );
+    expect(crossOriginRefusal(served({ origin: 'http://localhost:3630' }), read)).toBeUndefined();
+  });
+});
+
 describe('the bounded JSON body', (): void => {
   it('parses JSON sent as application/json', async (): Promise<void> => {
     const read = await readJsonBody(
