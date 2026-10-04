@@ -20,7 +20,6 @@ import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
-  stoppedRowOffersMove,
 } from '../src/work/needs-manager';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import {
@@ -6986,7 +6985,7 @@ async function waitingRowsOf(
           ]
         : [],
     ),
-    stopped: failedRows.filter((row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row)),
+    stopped: failedRows.filter(stoppedRowNeedsManager),
     proposed: surfaces.filter((surface) => surface.verdict === 'proposed'),
     connectable,
   };

@@ -973,3 +973,38 @@ export const stopRun = mutation({
     return { ok: true };
   },
 });
+
+/**
+ * Public, owner-guarded (`assertOwnsWorkItem`): the manager closes a stopped or failed item whose
+ * ledger names nothing to reconcile, without a retry (E-8). It is N7's dismissal: the item leaves
+ * the needs-you inbox and the roster's figure and stays in the record, and Retry still sends it
+ * back where Retry is open. It is also the one way out of an interrupted apply that could not say
+ * what it sent, which Retry, Dismiss and the reconciliation all refuse. Writes `dismissedAt` and a
+ * `work.closed-without-retry` event naming the manager, once. Refuses, as a `ConvexError` the
+ * card says, an item no longer failed and one with a write to reconcile.
+ */
+export const closeWithoutRetry = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ ok: true; dismissedAt: number }> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (row.state !== 'failed') {
+      throw new ConvexError('Only a stopped or failed item can be closed; this one has moved on.');
+    }
+    if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
+    if (providerReconciliationEntries(row.output).length > 0) {
+      throw new ConvexError(
+        'A write on this item may have landed: check it against the provider, then Retry or Dismiss it.',
+      );
+    }
+    const identity = await getCallerOrThrow(ctx);
+    const dismissedAt = Date.now();
+    await ctx.db.patch(row._id, { dismissedAt });
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.closed-without-retry',
+      payload: { workItemId: row._id, actor: identity.ownerKey },
+      createdAt: dismissedAt,
+    });
+    return { ok: true, dismissedAt };
+  },
+});

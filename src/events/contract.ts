@@ -1350,6 +1350,15 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
 /** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
 export type WorkDismissedPayload = WorkItemNamed;
 
+/**
+ * The payload of `work.closed-without-retry`: the manager closed a failed item whose ledger named
+ * nothing to reconcile, without a retry (E-8; it is dismissed as `work.dismissed` dismisses).
+ */
+export interface WorkClosedWithoutRetryPayload extends WorkItemNamed {
+  /** The owner key of the manager who closed it. */
+  readonly actor: string;
+}
+
 /** The payload of `work.stopped`: the manager stopped an item the employee was working (wave 12). */
 export interface WorkStoppedPayload extends WorkItemNamed {
   /** The state the item was in: `claimed`, `plan-approved` or `executing`. */
@@ -1656,6 +1665,7 @@ export interface EventPayloads {
   'work.cancelled': WorkCancelledPayload;
   'work.dismissed': WorkDismissedPayload;
   'work.stopped': WorkStoppedPayload;
+  'work.closed-without-retry': WorkClosedWithoutRetryPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1833,6 +1843,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.cancelled',
   'work.dismissed',
   'work.stopped',
+  'work.closed-without-retry',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

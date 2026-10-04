@@ -8,7 +8,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
-import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
+import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { AppliedAction } from '../../src/surfaces/types';
 
@@ -436,5 +436,87 @@ describe('a retry after the reconciliation (P4-1)', (): void => {
     expect(carried?.map((write) => write.action)).toEqual([status]);
     expect(carried?.[0].applied).toMatchObject({ ok: true });
     expect(carried?.[0].applied.outcomeUnknown).toBeUndefined();
+  });
+});
+
+describe('Close without retry (E-8)', (): void => {
+  /** An apply interrupted after its claim whose approved rows were all refused before sending. */
+  async function interruptedWithNothingToReconcile(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+  }> {
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: INTERRUPTED_APPLY_REASON,
+        output: {
+          ...heldOutput,
+          applied: [
+            { tool: 'mcp.call', ok: false, reason: 'refused: not granted', idempotencyKey: 'k0' },
+            { tool: 'mcp.call', ok: false, reason: 'refused: not granted', idempotencyKey: 'k1' },
+          ],
+        },
+      });
+    });
+    return { agentId, workItemId };
+  }
+
+  it('closes a row whose ledger names nothing to reconcile, which Dismiss and Retry refuse', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await interruptedWithNothingToReconcile(harness);
+    const inbox = async (): Promise<string[]> =>
+      (await harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId })).entries.map(
+        (entry) => entry.kind,
+      );
+    expect(await inbox()).toEqual(['stopped']);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId }),
+    ).rejects.toThrow();
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).rejects.toThrow();
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.closeWithoutRetry, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.closeWithoutRetry, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.dismissedAt).toEqual(expect.any(Number));
+    expect(await inbox()).toEqual([]);
+    const closed = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.closed-without-retry'))
+          .collect(),
+    );
+    expect(closed.map((event) => event.payload)).toEqual([{ workItemId, actor: 'owner' }]);
+  });
+
+  it('closes a stopped row with nothing to reconcile, and keeps Retry on it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-approved');
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.closeWithoutRetry, { workItemId });
+    expect((await readItem(harness, workItemId)).dismissedAt).toEqual(expect.any(Number));
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'plan-approved' });
+  });
+
+  it('refuses a row with a write to reconcile, and a row that is not failed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stoppedMidApply(harness);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.closeWithoutRetry, { workItemId }),
+    ).rejects.toThrow('A write on this item may have landed');
+    const working = await seed(harness, 'executing');
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workRuns.closeWithoutRetry, { workItemId: working.workItemId }),
+    ).rejects.toThrow('Only a stopped or failed item can be closed');
   });
 });

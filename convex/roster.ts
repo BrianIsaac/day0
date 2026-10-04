@@ -18,7 +18,6 @@ import {
   NEEDS_MANAGER_STATES,
   parkedRowNeedsManager,
   stoppedRowNeedsManager,
-  stoppedRowOffersMove,
 } from '../src/work/needs-manager';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 
@@ -283,13 +282,12 @@ async function workCounts(
       // Newest first: past a bound, what the manager has not seen yet is what is kept.
       .order('desc')
       .take(limit);
-  const [open, parked, discovered, failed] = await Promise.all([
+  const [open, parked, discovered, stoppedRows] = await Promise.all([
     Promise.all(OPEN_WORK_STATES.map((state) => rowsIn(state))),
     Promise.all(PARKED_WORK_STATES.map((state) => rowsIn(state))),
     rowsIn('discovered'),
     rowsIn('failed', STOPPED_READ_LIMIT),
   ]);
-  const stoppedRows = failed.filter(stoppedRowOffersMove);
   const openRows = open.flat();
   const parkedRows = parked.flat();
   // Several rows can wait on one skill, so each skill is read once.
