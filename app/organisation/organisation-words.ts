@@ -102,6 +102,16 @@ export function connectionStatusChip(status: OrganisationConnectionStatus): Conn
 }
 
 /**
+ * The line that names the zone every time on the organisation page is printed in: the viewer's
+ * browser's, since the page belongs to no one employee's day (the wave 11 review's m23).
+ *
+ * @param zone - The zone the page's times are printed in.
+ */
+export function zoneLine(zone: string): string {
+  return `Times on this page are in ${zone}, this browser's zone.`;
+}
+
+/**
  * Who registered a connection and when: an administrator by verified address on this page, or the
  * setup command, which names nobody (11-AO's `registeredBy`).
  *

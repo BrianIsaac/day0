@@ -5075,3 +5075,94 @@ describe('the credential intake reads comes from the token store (11-AT)', (): v
     ).resolves.toBe('fake-cc-9');
   });
 });
+
+describe("a Slack ask's asker, by name where the card allows users.info (the second pre-tag's recorded item)", (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  it('labels each ask with the name Slack gives the asker, keeps the id as the requester, and keeps the id where Slack gives no name', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
+    const pollTime = Date.parse('2026-08-26T02:00:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history', 'users.info'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+          lastPolledAt: checkpoint,
+        }),
+      ],
+      [
+        pageRow('slack.md', 'Slack policy', SLACK),
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+      ],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const infoAsked: string[] = [];
+    const slackFetch = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      if (url.searchParams.get('channel') === 'CREVOPS') {
+        return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+      }
+      if (url.pathname.endsWith('/users.info')) {
+        const user = url.searchParams.get('user') ?? '';
+        infoAsked.push(user);
+        return user === 'UPRIYA'
+          ? slackResponse({
+              ok: true,
+              user: {
+                id: 'UPRIYA',
+                name: 'priya',
+                real_name: 'Priya Shah',
+                profile: { display_name: 'Priya' },
+              },
+            })
+          : slackResponse({ ok: false, error: 'user_not_found' });
+      }
+      return slackResponse({
+        ok: true,
+        messages: [
+          { ts: '1770000000.000100', user: 'UPRIYA', text: '<@UBOT> please review REVOPS-1' },
+          { ts: '1770000000.000101', user: 'UPRIYA', text: '<@UBOT> and REVOPS-2' },
+          { ts: '1770000000.000102', user: 'UGONE', text: '<@UBOT> one more' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    });
+
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => pollTime,
+      fetcher: slackFetch,
+    });
+
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000100')).toMatchObject({
+      requesterLabel: 'Priya',
+      requester: 'UPRIYA',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000101')).toMatchObject({
+      requesterLabel: 'Priya',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000102')).toMatchObject({
+      requesterLabel: 'UGONE',
+      requester: 'UGONE',
+    });
+    // One question per asker, however many asks they made.
+    expect(infoAsked.toSorted()).toEqual(['UGONE', 'UPRIYA']);
+  });
+});

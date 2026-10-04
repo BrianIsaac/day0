@@ -1423,6 +1423,7 @@ describe('holdings: what a deletion would remove, read before its control is pre
     handoverWords: false,
     retiredBoundaries: false,
     documentation: false,
+    credentials: false,
   };
 
   afterEach((): void => {
@@ -1479,6 +1480,99 @@ describe('holdings: what a deletion would remove, read before its control is pre
       });
     });
   }
+
+  it("holds a credential the manager landed and kept, and the deletion with the unlink choice takes it (the wave 11 review's m15)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Notion integration token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('credentials', {
+        userId: 'rival',
+        kind: 'value',
+        label: 'Rival token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+    });
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, credentials: true });
+
+    await owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+  });
+
+  it("counts no credential the deletion's purge would keep: one held for its vendor's revocation, or an identity kept for another manager's employee (the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Token held for its revocation',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        revokedAt: 1,
+        sourceRevocation: { state: 'pending', end: 'retire', attempts: 0 },
+        createdAt: 1,
+      });
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const kept = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Leo (Day0) bot token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        issuedBy: {
+          system: 'slack',
+          grant: 'oauth-install',
+          organisationConnectionId: connectionId,
+        },
+        createdAt: 1,
+      });
+      const leo = await ctx.db.insert('agents', {
+        bossEmail: 'colleague@day0.local',
+        name: 'Leo',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId: leo,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'proposed',
+        whereFound: [],
+        credentialLanded: false,
+        credentialId: kept,
+        createdAt: 1,
+      });
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
+  });
 
   it('refuses a caller with no identity (the anonymous-caller guard, 12-G)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

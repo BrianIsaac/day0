@@ -27,12 +27,8 @@ import {
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
-import {
-  EVENT_TYPES,
-  isConnectionEventType,
-  isEventOf,
-  type ConnectionEventType,
-} from '../src/events/contract';
+import { EVENT_TYPES, isEventOf } from '../src/events/contract';
+import { ledgerLineOf } from './connectionEvents';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
 
@@ -419,22 +415,24 @@ async function organisationLedgerOf(
   );
   return ledgers
     .flat()
-    .filter((line) => isConnectionEventType(line.type))
+    .flatMap((row) => {
+      const line = ledgerLineOf(row);
+      return line === undefined ? [] : [line];
+    })
     .filter((line) => {
       if (line.type === 'organisation.configuration-used') {
         // Only the creation of this employee's own app is its: another employee's app, a renewal
         // of the token and its revoke are the organisation's (the wave 11 review's m1).
-        const appId = (line.payload as { readonly appId?: unknown }).appId;
+        const appId = line.payload.appId;
         return typeof appId === 'string' && ownApps.has(appId);
       }
       if (line.type !== 'organisation.revoked-at-source') return true;
-      const credentialId = (line.payload as { readonly credentialId?: unknown }).credentialId;
-      return typeof credentialId === 'string' && own.has(credentialId);
+      return own.has(line.payload.credentialId);
     })
     .toSorted((left, right) => left.createdAt - right.createdAt)
     .map(
       (line): TraceLedgerLine => ({
-        type: line.type as ConnectionEventType,
+        type: line.type,
         organisationConnectionId: line.organisationConnectionId,
         createdAt: line.createdAt,
         payload: redactForExport(line.payload) as TraceLedgerLine['payload'],

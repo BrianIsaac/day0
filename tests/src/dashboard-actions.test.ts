@@ -189,6 +189,9 @@ describe('dashboard exact-action gate', (): void => {
     ).toBe(
       '1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface',
     );
+    expect(pendingHeadline([{ disposition: 'held', reason: HELD_MUTATION }], 1)).toBe(
+      '1 action awaiting your approval · not sent until you approve',
+    );
   });
 
   it('reads persisted verdicts of either shape and pads a run held before verdicts existed', (): void => {

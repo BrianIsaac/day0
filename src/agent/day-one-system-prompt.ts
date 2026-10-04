@@ -1,5 +1,6 @@
 import { DAY_ONE_TOPIC_COUNT, DAY_ONE_TOPIC_TITLES, topicIndexOf } from './day-one-progress';
 import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
+import { PLAIN_PUNCTUATION_RULE } from './drafted-text-rules';
 import { clippedEmployeeName } from './employee-name';
 
 /**
@@ -64,7 +65,7 @@ export function dayOneSystemPrompt(employeeName: string): string {
       ? `  - Lead with a short welcome on turn one that introduces you as ${name}, then ask topic 1.`
       : '  - Lead with a short welcome on turn one, then ask topic 1.',
     '  - Ask each question in your own words. Never announce a topic by its number or its title.',
-    '  - Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses.',
+    `  - ${PLAIN_PUNCTUATION_RULE}`,
     "  - Wait for the boss's reply before moving on.",
     '  - Ask only the question the note at the end of the conversation names, once, then stop. ' +
       'Never ask a follow-up, never go back to an earlier topic and never ask a later one early. ' +

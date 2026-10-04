@@ -395,19 +395,28 @@ export interface ConnectRowProps {
   readonly connecting: boolean;
   readonly error?: string;
   readonly onConnect: () => void;
+  /** The system refused the employee's own app, which Connect installs again (R41X-4). */
+  readonly reinstall?: boolean;
 }
 
 /**
  * Connect, for an approved card whose system IT connected for the organisation (the access plan,
  * section 4.3): one click, the issuer runs, and no credential passes through the manager. An
- * authorisation started and not finished is said, and Connect starts it again.
+ * authorisation started and not finished is said, and Connect starts it again. A card whose
+ * system refused the employee's own app says that Connect installs it again, not the first
+ * connection's words.
  */
 export function ConnectRow(props: ConnectRowProps): React.ReactNode {
   return (
     <div className={INSET}>
-      <p className="font-medium text-[var(--color-fg)]">Connect {props.system}</p>
+      <p className="font-medium text-[var(--color-fg)]">
+        Connect {props.system}
+        {props.reinstall ? ' again' : ''}
+      </p>
       <p className="mt-1 text-[var(--color-fg-2)]">
-        {`Nothing to paste: Connect gives ${props.employee} its access through IT's connection.`}
+        {props.reinstall
+          ? `${props.employee}'s own app no longer has access to ${props.system}: Connect installs it again through IT's connection, with nothing to paste.`
+          : `Nothing to paste: Connect gives ${props.employee} its access through IT's connection.`}
       </p>
       {props.startedAt !== undefined ? (
         <p className="mt-1 text-[var(--color-warn)]">

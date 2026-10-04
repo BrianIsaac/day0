@@ -159,6 +159,10 @@ describe('the access recipes', (): void => {
     expect(row('`scopes` GAP, landed without')).toContain('land it again');
     expect(row('`scopes` GAP, landed without')).not.toContain('--correct');
     expect(row('`identity` GAP, no issuer')).toContain('land it again');
+    // The round review's m13: a public client's issuer is recorded in place, ending no card.
+    expect(row('`identity` GAP, no issuer')).toContain(
+      '`./setup.sh access --correct <system>` records the issuer',
+    );
     expect(row('`reach` GAP')).toContain('SSL_CERT_FILE');
     expect(row('`reach` WARN')).toContain('./setup.sh resume');
   });

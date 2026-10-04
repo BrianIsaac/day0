@@ -16,7 +16,7 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
-import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { holdsPurgeableCredential, purgeCredential, purgeOwnedCredentials } from './credentials';
 import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
@@ -699,10 +699,27 @@ export async function stillBound(
 }
 
 /**
+ * Whether a credential is the own identity of the employee whose card binds it, whoever's key it
+ * is held under: a per-employee identity the organisation holds (the wave 11 common rules), or
+ * one a release before v0.14.0 stored under the old owner's key through an organisation
+ * connection, which a handover keeps for the new manager (the wave 11 review's m6). A token the
+ * organisation shares between employees is none.
+ *
+ * @param credential - A credential a leaving employee's card binds.
+ */
+function employeeIdentityOf(credential: Doc<'credentials'>): boolean {
+  if (credential.holder !== undefined) return !sharedByOrganisation(credential);
+  return (
+    credential.issuedBy?.organisationConnectionId !== undefined &&
+    credential.issuedBy.grant !== 'client-credentials'
+  );
+}
+
+/**
  * Which of a leaving employee's credentials a retire or a handover would revoke and which it
- * would keep for what still binds them; a credential that is gone, or neither the owner's nor a
- * per-employee identity the organisation holds for the owner's employee (the wave 11 common
- * rules), is in neither, so the organisation's own rows never are.
+ * would keep for what still binds them; a credential that is gone, or neither the owner's nor the
+ * employee's own identity ({@link employeeIdentityOf}), is in neither, so the organisation's own
+ * rows never are.
  *
  * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
@@ -720,8 +737,7 @@ export async function sortCredentials(
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
     if (!credential) continue;
-    const employeeIdentity = credential.holder !== undefined && !sharedByOrganisation(credential);
-    if (credential.userId !== userId && !employeeIdentity) continue;
+    if (credential.userId !== userId && !employeeIdentityOf(credential)) continue;
     if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }
@@ -1130,6 +1146,8 @@ const holdingsValidator = v.object({
   handoverWords: v.boolean(),
   retiredBoundaries: v.boolean(),
   documentation: v.boolean(),
+  /** A credential the owner stored that the unlink choice's purge would take. */
+  credentials: v.boolean(),
 });
 
 /**
@@ -1137,7 +1155,9 @@ const holdingsValidator = v.object({
  * employee (evaluation agents included), a version in the owner's skill library, a handover
  * request carrying words the scrub clears (one the owner asked, or one naming their verified
  * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
- * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * releases; and the documentation and the stored credentials only the unlink choice takes (the
+ * wave 11 review's m15: an owner holding only a credential read "Nothing of yours is stored now",
+ * and no control could reach it). Each read stops at its first
  * match, the handover reads scanning the party's requests of one state until one carries words,
  * and the retirements read stops at their cap, so the home page can subscribe to it.
  *
@@ -1149,7 +1169,7 @@ async function deletionHoldings(
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<Infer<typeof holdingsValidator>> {
   const { ownerKey, address } = party;
-  const [employee, version, source, requests, retirements] = await Promise.all([
+  const [employee, version, source, credential, requests, retirements] = await Promise.all([
     db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
@@ -1162,6 +1182,7 @@ async function deletionHoldings(
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', ownerKey))
       .first(),
+    holdsPurgeableCredential({ db }, ownerKey),
     Promise.all(
       MANAGER_TRANSFER_STATES.flatMap((state) => [
         db
@@ -1200,6 +1221,7 @@ async function deletionHoldings(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
     ),
     documentation: source !== null,
+    credentials: credential,
   };
 }
 

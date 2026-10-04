@@ -46,6 +46,7 @@ import {
   rejoinWords,
   stateChip,
   type OrganisationSystem,
+  awaitingAccessWords,
 } from './card-words';
 import { CredentialField } from './CredentialField';
 import { DisconnectDialog } from './DisconnectDialog';
@@ -392,9 +393,14 @@ export function SurfaceCard({
     !accessRequest &&
     !connectable &&
     !slack;
+  const waitsOn =
+    accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined;
+  // The approval's own probe meets no credential and leaves the card `ungranted`; one that waits
+  // on IT or the manager's Connect for it is waiting, not refused (the wave 11 review's m23).
+  const awaitingAccess =
+    surface.verdict === 'ungranted' && surface.credentialId === undefined && waitsOn !== undefined;
   const chip = stateChip(surface, context.now, zone, {
-    waitsOn:
-      accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined,
+    waitsOn: surface.verdict === 'ungranted' && !awaitingAccess ? undefined : waitsOn,
   });
   return (
     <Card
@@ -407,12 +413,19 @@ export function SurfaceCard({
       <div className="grid gap-4">
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
             M13); a reason that is the skip line is said once, as the skip. */}
-        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
+        {surface.reason &&
+        !awaitingAccess &&
+        surface.reason !== skipReason &&
+        surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
             {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
           </p>
         ) : null}
-        {skipReason ? (
+        {awaitingAccess ? (
+          <p className="text-sm text-[var(--color-muted)]">
+            {awaitingAccessWords(context.employeeName, surface.displayName, waitsOn)}
+          </p>
+        ) : skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
         {surface.lastDecisionError ? (
@@ -470,7 +483,11 @@ export function SurfaceCard({
             ) : null}
             {covering !== undefined && showsIdentity ? (
               <Fact label="Connection">
-                {connectedForOrganisationWords(covering, zone ?? deploymentZone())}
+                {connectedForOrganisationWords(
+                  covering,
+                  zone ?? deploymentZone(),
+                  identity.kind === 'shared-key' && !identity.planned,
+                )}
               </Fact>
             ) : null}
             {documentedKeyUnused && showsIdentity ? (
@@ -545,6 +562,7 @@ export function SurfaceCard({
             connecting={pending === 'connect'}
             error={failed('connect')}
             onConnect={actions.connect}
+            reinstall={refusedOwnApp}
           />
         ) : null}
         {unserved !== undefined && approvedAccess && surface.credentialId === undefined ? (

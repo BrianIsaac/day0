@@ -339,7 +339,7 @@ export function presentSurfaceCredential(
         label: input.summary.label,
         text: input.provisioning
           ? `delivered by the install of ${input.provisioning.appName} (masked)`
-          : 'delivered by an OAuth install (masked)',
+          : 'delivered by an OAuth authorisation (masked)',
       };
     }
     if (input.summary.source === 'entered') {

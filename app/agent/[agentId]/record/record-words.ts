@@ -204,14 +204,21 @@ function inWords(value: unknown): string | undefined {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-/** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
+/**
+ * What a correction of an organisation connection did: corrected the redirect or the scopes (M12
+ * e), recorded an MCP connection's missing issuer (the round review's m13, never "corrected":
+ * nothing was recorded before), or both.
+ */
 function correctedParts(p: Read<'organisation.connection-corrected'>): string {
   const scopes = listed(p.scopes);
   const parts = [
     ...(p.redirectCorrected === true ? ['redirect'] : []),
     ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
   ];
-  return parts.length === 0 ? 'registration' : parts.join(' and ');
+  const issuer = p.issuerRecorded === true;
+  if (parts.length === 0) return issuer ? 'issuer recorded' : 'recorded registration corrected';
+  const corrected = `recorded ${parts.join(' and ')} corrected`;
+  return issuer ? `${corrected} and its issuer recorded` : corrected;
 }
 
 /**
@@ -871,7 +878,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'organisation.connection-rotated': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
   'organisation.connection-corrected': (p) =>
-    `The organisation's ${organisationSystem(p.displayName)} connection had its recorded ${correctedParts(p)} corrected${registeredVia(p.via)}`,
+    `The organisation's ${organisationSystem(p.displayName)} connection had its ${correctedParts(p)}${registeredVia(p.via)}`,
   'organisation.connection-revoked': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
   'surface.authorised': (p, subject) =>

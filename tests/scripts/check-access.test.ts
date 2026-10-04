@@ -62,9 +62,14 @@ function vendors(
     /** What the Slack socket service says of itself; running, with no app, by default. */
     readonly socket?: SocketBridgeReading;
   } = {},
-): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
+): VendorProbes & {
+  readonly calls: string[];
+  readonly fromTheBackend: string[];
+  readonly requestedScopes: (string | null)[];
+} {
   const calls: string[] = [];
   const fromTheBackend: string[] = [];
+  const requestedScopes: (string | null)[] = [];
   const opened: Readonly<Record<string, string | Error>> = overrides.opened ?? {
     'cred-slack': CONFIGURATION_TOKEN,
     'cred-linear': LINEAR_SECRET,
@@ -72,6 +77,7 @@ function vendors(
   return {
     calls,
     fromTheBackend,
+    requestedScopes,
     slackApiBase: new URL('https://slack.com/api/'),
     socketBridge: async (): Promise<SocketBridgeReading> =>
       overrides.socket ?? { state: 'running', synced: true, apps: [] },
@@ -100,6 +106,7 @@ function vendors(
         const form = new URLSearchParams(await request.text());
         expect(form.get('grant_type')).toBe('client_credentials');
         expect(form.get('client_secret')).toBe(LINEAR_SECRET);
+        requestedScopes.push(form.get('scope'));
         // Linear's own answer to the set, 3 October: `scope: "app:assignable read write"`.
         const answer = overrides.linearToken ?? {
           status: 200,
@@ -223,11 +230,15 @@ describe('check:access', (): void => {
   });
 
   it('passes a shared Linear connection landed read, write, app:assignable, with no note to remove a scope (R41V-3)', async (): Promise<void> => {
-    const checks = await accessChecks([LINEAR], VALUES, vendors());
+    const probes = vendors();
+    const checks = await accessChecks([LINEAR], VALUES, probes);
     expect(only(checks, 'linear', 'scopes')).toMatchObject({
       status: 'ok',
       detail: 'Holds read, write, app:assignable.',
     });
+    // The token is asked for with the set the connection landed, exactly: Linear revokes every
+    // token of the app when one is asked for with another (L2; the round review's m20).
+    expect(probes.requestedScopes).toEqual(['read,write,app:assignable']);
   });
 
   it('says a shared Linear connection landed without app:assignable takes no delegated ticket, cured by revoke and land again', async (): Promise<void> => {
@@ -381,12 +392,23 @@ describe('check:access', (): void => {
     expect(only(narrower, 'mcp:mcp.acme.com', 'scopes')).toMatchObject({ status: 'gap' });
 
     // Every card refuses a connection with no issuer since the review's m4, so the check calls it a
-    // gap with its cure, where it once noted that the first sign-in would discover one.
+    // gap with its cure, where it once noted that the first sign-in would discover one. Since the
+    // round review's m13 a public client's cure is a correction, which ends no card.
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
       status: 'gap',
       detail:
-        "No issuer is recorded, so every employee's authorisation is refused: revoke the connection and land it again; the setup verb finds the issuer from the server's own metadata.",
+        "No issuer is recorded, so every employee's authorisation is refused: ./setup.sh access --correct mcp:mcp.acme.com records the issuer the server's own metadata names, and ends no card.",
+    });
+    const confidential = await accessChecks(
+      [{ ...mcp, issuer: undefined, secretCredentialId: 'secret-1' }],
+      VALUES,
+      { ...metadata([]), openSecret: async (): Promise<string> => 'mcp-test-secret' },
+    );
+    expect(only(confidential, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
+      status: 'gap',
+      detail:
+        "No issuer is recorded, so every employee's authorisation is refused: a client with a secret takes the issuer IT registered it with, so revoke the connection and land it again with that issuer.",
     });
   });
 

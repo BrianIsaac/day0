@@ -103,7 +103,8 @@ export interface StateChipWords {
  * connection, since it is what the manager has to act on.
  *
  * An approved card with nothing landed says what it waits on where that is not a paste: IT, for a
- * card whose access request is out, or the manager's Connect, for a card IT's connection covers.
+ * card whose access request is out, or the manager's Connect, for a card IT's connection covers;
+ * so does one its approval's probe left `ungranted` with no credential, when the caller says so.
  *
  * @param surface - The card's row.
  * @param now - The instant to judge the access against.
@@ -140,6 +141,10 @@ export function stateChip(
     case 'connected':
       return { text: rung ? `Connected ${rung.via}` : 'Connected', tone: 'ok' };
     case 'ungranted':
+      // The approval's own probe finds no credential before IT's install or the manager's
+      // Connect lands one, and the card is waiting on that, not refused (the wave 11 review's m23).
+      if (options.waitsOn === 'it') return { text: 'Waiting on IT', tone: 'muted' };
+      if (options.waitsOn === 'connect') return { text: 'Ready to connect', tone: 'accent' };
       return { text: 'Not granted', tone: 'warn' };
     case 'listed-dead':
       return { text: 'Not answering', tone: 'warn' };
@@ -290,17 +295,41 @@ export function calendarDay(ms: number, zone: string): string {
 }
 
 /**
+ * What a card its approval's probe found with no credential says while it waits for one (the wave
+ * 11 review's m23): the employee reads nothing from the system until IT gives it access, or until
+ * the manager connects it.
+ *
+ * @param employee - The employee's name.
+ * @param system - The card's system, as the card names it.
+ * @param waitsOn - Whom the card waits on.
+ */
+export function awaitingAccessWords(
+  employee: string,
+  system: string,
+  waitsOn: 'it' | 'connect',
+): string {
+  return waitsOn === 'it'
+    ? `${employee} reads nothing from ${system} until IT gives it access.`
+    : `${employee} reads nothing from ${system} until you connect it.`;
+}
+
+/**
  * The manager's read-only line for a system IT connected for the organisation: "Connected for
- * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged).
+ * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged). A card
+ * still acting as a pasted key says the connection is not its own yet, so the line is not read as
+ * true of the card beside "Acts as a key someone pasted" (the wave 11 review's m19).
  *
  * @param connection - The organisation's connection for the card's system.
  * @param zone - The zone the day is named in.
+ * @param onPastedKey - Whether the card still acts as a key someone pasted.
  */
 export function connectedForOrganisationWords(
   connection: Pick<OrganisationSystem, 'connectedAt'>,
   zone: string,
+  onPastedKey = false,
 ): string {
-  return `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  const line = `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  return onPastedKey ? `${line}. This card does not use it yet.` : line;
 }
 
 /**

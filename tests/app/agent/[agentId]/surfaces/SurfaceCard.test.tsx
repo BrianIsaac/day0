@@ -376,6 +376,29 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).not.toContain('Once you approve, the card asks for');
   });
 
+  it("says a card still on a pasted key does not use IT's connection yet (the wave 11 review's m19)", (): void => {
+    const pasted = render(
+      listed({
+        ...LINEAR_APPROVED,
+        verdict: 'connected',
+        credentialId: 'credential-1' as ListedSurface['credentialId'],
+        credentialLanded: true,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      {
+        organisation: organisation({ system: 'linear', mode: 'shared' }),
+        credentials: new Map([
+          ['credential-1', { _id: 'credential-1', label: 'Linear API key', source: 'entered' }],
+        ]),
+      },
+      { connect: (): void => undefined },
+    );
+    expect(pasted).toContain('a key someone pasted');
+    expect(fact(pasted, 'Connection')).toBe(
+      'Connected for your organisation by IT on 1 October. This card does not use it yet.',
+    );
+  });
+
   it('keeps the credential field where no organisation connection covers the system', (): void => {
     const markup = render(listed(LINEAR_APPROVED));
     expect(markup).toMatch(/<input id="credential-[^"\s]+" type="password"/);
@@ -528,6 +551,31 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(chip(ready)).toBe('Ready to connect');
     expect(chip(render(listed(LINEAR_APPROVED)))).toBe('Needs its credential');
+  });
+
+  it("keeps a card its approval's own probe found with no credential waiting, never Not granted with the docs' gap (the wave 11 review's m23)", (): void => {
+    const probed = {
+      ...LINEAR_APPROVED,
+      verdict: 'ungranted',
+      reason: 'credential not in the docs; Access',
+    } as Partial<ListedSurface>;
+    const waiting = render(listed(probed), {}, { accessRequest: REQUEST });
+    expect(chip(waiting)).toBe('Waiting on IT');
+    expect(waiting).not.toContain('credential not in the docs');
+    expect(waiting).toContain('Maya reads nothing from Linear until IT gives it access.');
+    const ready = render(
+      listed(probed),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(chip(ready)).toBe('Ready to connect');
+    expect(ready).not.toContain('credential not in the docs');
+    expect(ready).toContain('Maya reads nothing from Linear until you connect it.');
+    const refused = render(
+      listed({ ...probed, credentialId: 'credential-1' as ListedSurface['credentialId'] }),
+    );
+    expect(chip(refused)).toBe('Not granted');
+    expect(refused).toContain('Skipped: credential not in the docs; Access');
   });
 
   it("draws no credential lines on a covered card, whose identity the Acts as row names, unless the manager's own key is stored there (bed, 2 Oct)", (): void => {
@@ -778,6 +826,13 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).toMatch(/>Connect<\/button>/);
     expect(chip(markup)).toBe('Not granted');
+    // Its lead says what Connect does for this card, not the first connection's generic words
+    // (the second pre-tag's recorded item).
+    expect(markup).toContain('Connect Linear again');
+    expect(markup).toContain(
+      "Maya's own app no longer has access to Linear: Connect installs it again through IT's connection, with nothing to paste.",
+    );
+    expect(markup).not.toContain('Nothing to paste: Connect gives');
     // Only an employee's own app installs again: through a shared connection Connect is not it.
     expect(
       render(

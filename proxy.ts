@@ -249,7 +249,8 @@ function toCompanySignIn(request: NextRequest, returnTo: string): NextResponse {
  * that are called from outside (the voice webhook and Slack's install
  * redirect, each with its own boundary, above). A signed-out page request is
  * sent to the company sign-in and brought back afterwards; a signed-out API
- * call is answered 401. Clerk's pages are never drawn.
+ * call is answered 401, and a signed-out prefetch with no page. Clerk's pages
+ * are never drawn.
  *
  * This is the optimistic check Next's guide describes (O2): it reads the
  * sealed cookie on the Node runtime and nothing else. Authorisation stays on
@@ -268,6 +269,12 @@ async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
   if (session) return NextResponse.next();
   if (isApiRoute(request) || (request.method !== 'GET' && request.method !== 'HEAD')) {
     return NextResponse.json({ error: 'not signed in' }, { status: 401 });
+  }
+  // As in Clerk mode: a redirect would be kept as the link's page, so a prefetch or a client-side
+  // navigation gets no page, and the whole load the link then makes reaches the sign-in (the
+  // round review's m23).
+  if (isRouterFetch(request)) {
+    return new NextResponse(null, { status: 204, headers: { 'cache-control': 'no-store' } });
   }
   return toCompanySignIn(request, `${request.nextUrl.pathname}${request.nextUrl.search}`);
 }

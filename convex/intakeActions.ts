@@ -1394,6 +1394,7 @@ async function pollMcpManagerReplies(
  *   channel: Documented channel containing it.
  *   surface: Connected Slack surface.
  *   observedAt: Poll observation time.
+ *   askerName: The name Slack gives the asker, when the card could ask; the asker's id otherwise.
  *
  * Returns:
  *   Normalised event-stream candidate.
@@ -1403,6 +1404,7 @@ export function slackCandidate(
   channel: ChatChannel,
   surface: Doc<'surfaces'>,
   observedAt: number,
+  askerName?: string,
 ): WorkCandidate {
   const teamId = surface.providerWorkspaceId!;
   const threadKey = `${channel.id}-${message.ts.replace('.', '')}`;
@@ -1414,7 +1416,7 @@ export function slackCandidate(
     contentSummary: message.text.slice(0, 4_000),
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],
     observedAt: new Date(observedAt),
-    requesterLabel: message.user,
+    requesterLabel: askerName ?? message.user,
     requester: message.user,
     // A reply belongs in the ask's thread: under the mention itself, or under
     // the parent when the mention was already a threaded message.
@@ -1506,6 +1508,44 @@ interface ChatPollScope {
   readonly mentionsSince?: number;
 }
 
+/** The most askers one poll asks the chat system to name; the rest keep their ids this poll. */
+const ASKER_NAMES_PER_POLL = 25;
+
+/**
+ * The names the chat system gives the askers of one poll's mentions, each asked once (the second
+ * pre-tag's recorded item: a manager read the asker as "A Slack member"). A name the system does
+ * not give, or cannot give now, leaves that asker's id on the ask; a failure is logged and never
+ * fails the poll, whose work the asks are.
+ *
+ * @param reader - The surface's chat reader.
+ * @param asks - The mentions the poll takes.
+ * @param surfaceId - The card, for the log.
+ */
+async function askerNames(
+  reader: ChatReader,
+  asks: ReadonlyArray<{ readonly message: ChatMessage }>,
+  surfaceId: Id<'surfaces'>,
+): Promise<ReadonlyMap<string, string>> {
+  const askers = [
+    ...new Set(asks.flatMap(({ message }) => (message.user === undefined ? [] : [message.user]))),
+  ].slice(0, ASKER_NAMES_PER_POLL);
+  const named = await Promise.all(
+    askers.map(async (userId): Promise<[string, string] | undefined> => {
+      try {
+        const name = await reader.memberName(userId);
+        return name === undefined ? undefined : [userId, name];
+      } catch (error) {
+        log.warn('the asker of a Slack ask was not named this poll; the ask keeps its id', {
+          surfaceId,
+          reason: safeFailureMessage(error, '', 'Slack users.info failed.'),
+        });
+        return undefined;
+      }
+    }),
+  );
+  return new Map(named.filter((entry): entry is [string, string] => entry !== undefined));
+}
+
 /**
  * Poll a chat surface's approved channels for exact mentions of the connected
  * bot, and its manager DM for decision replies, through the surface's chat
@@ -1550,6 +1590,7 @@ async function pollChatReader(
     const mention = `<@${surface.providerIdentityId}>`;
     const since = include.mentionsSince;
     const sinceTs = since === undefined ? undefined : String(since / 1_000);
+    const asks: Array<{ readonly message: ChatMessage; readonly channel: ChatChannel }> = [];
     for (const channel of channels) {
       // One channel that still fails after its retries costs that channel's
       // read, not the rest of the poll: its mentions are read again next time.
@@ -1572,8 +1613,13 @@ async function pollChatReader(
         if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId))
           continue;
         if (sinceTs !== undefined && compareProviderTs(message.ts, sinceTs) < 0) continue;
-        candidates.push(slackCandidate(message, channel, surface, observedAt));
+        asks.push({ message, channel });
       }
+    }
+    const askers = await askerNames(reader, asks, surface._id);
+    for (const { message, channel } of asks) {
+      const name = message.user === undefined ? undefined : askers.get(message.user);
+      candidates.push(slackCandidate(message, channel, surface, observedAt, name));
     }
   }
   const found = managerMessages();

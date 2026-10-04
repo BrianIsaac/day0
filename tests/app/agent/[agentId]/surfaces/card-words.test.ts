@@ -338,6 +338,9 @@ describe("the manager's line for a system IT connected", (): void => {
         'UTC',
       ),
     ).toBe('Connected for your organisation by IT on 1 October');
+    expect(
+      connectedForOrganisationWords({ connectedAt: Date.UTC(2026, 9, 1, 9) }, 'UTC', true),
+    ).toBe('Connected for your organisation by IT on 1 October. This card does not use it yet.');
   });
 });
 

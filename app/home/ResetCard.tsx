@@ -28,7 +28,7 @@ export function resetOutcome(unlinkedSources: number): string {
 
 /** One kind of stored row a deletion takes, in the words the card and its warning say it by. */
 interface HeldKind {
-  readonly kind: Exclude<keyof Holdings, 'documentation'>;
+  readonly kind: Exclude<keyof Holdings, 'documentation' | 'credentials'>;
   /** As the card lists what is stored. */
   readonly stored: string;
   /** As the warning lists what goes. */
@@ -58,27 +58,46 @@ function listed(phrases: readonly string[]): string {
     : `${phrases.slice(0, -1).join(', ')} and ${phrases.at(-1)}`;
 }
 
+/** What only the unlink choice takes, as the card lists it: the documentation, then the credentials. */
+function takenByUnlink(holdings: Holdings): string[] {
+  return [
+    ...(holdings.documentation ? ['your linked documentation'] : []),
+    ...(holdings.credentials ? ['the credentials you stored'] : []),
+  ];
+}
+
 /**
  * What is stored for the manager now, so a live button says what it would take and a disabled
- * one says why. Linked documentation is said apart, since only the unlink choice takes it.
+ * one says why. Linked documentation and the credentials the manager stored are said apart, since
+ * only the unlink choice takes them (the wave 11 review's m15).
  *
  * @param holdings - What the deletion would take, as the backend reads it.
  * @param alsoUnlinkDocumentation - Whether the manager has ticked the unlink choice.
  */
 export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
   const held = heldKinds.filter(({ kind }) => holdings[kind]).map(({ stored }) => stored);
+  const apart = takenByUnlink(holdings);
   if (held.length === 0) {
-    if (!holdings.documentation) return 'Nothing of yours is stored now.';
+    if (apart.length === 0) return 'Nothing of yours is stored now.';
+    if (!holdings.credentials) {
+      return alsoUnlinkDocumentation
+        ? 'Only your linked documentation is stored now, and it goes with the box ticked.'
+        : 'Only your linked documentation is stored now: tick the box below to unlink it.';
+    }
+    const verb = holdings.documentation ? 'unlink and delete' : 'delete';
     return alsoUnlinkDocumentation
-      ? 'Only your linked documentation is stored now, and it goes with the box ticked.'
-      : 'Only your linked documentation is stored now: tick the box below to unlink it.';
+      ? `Only ${listed(apart)} remain, and they go with the box ticked.`
+      : `Only ${listed(apart)} remain: tick the box below to ${verb} them.`;
   }
-  const documentation = !holdings.documentation
-    ? ''
-    : alsoUnlinkDocumentation
-      ? ' Your linked documentation goes too.'
-      : ' Your linked documentation stays unless you tick the box below.';
-  return `Stored for you now: ${listed(held)}.${documentation}`;
+  if (apart.length === 0) return `Stored for you now: ${listed(held)}.`;
+  // One phrase is a single thing (`stays`), two or the credentials are many (`stay`).
+  const many = holdings.credentials;
+  const subject = listed(apart);
+  const said = `${subject.charAt(0).toUpperCase()}${subject.slice(1)}`;
+  const fate = alsoUnlinkDocumentation
+    ? `${many ? 'go' : 'goes'} too.`
+    : `${many ? 'stay' : 'stays'} unless you tick the box below.`;
+  return `Stored for you now: ${listed(held)}. ${said} ${fate}`;
 }
 
 /**
@@ -91,9 +110,14 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
 export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
   const goes = heldKinds.filter(({ kind }) => holdings[kind]).map(({ goes: words }) => words);
   const unlinks = alsoUnlinkDocumentation && holdings.documentation;
+  // The credentials the manager stored go with the box ticked, said as one more thing deleted.
+  const deleted = [
+    ...goes,
+    ...(alsoUnlinkDocumentation && holdings.credentials ? ['the credentials you stored'] : []),
+  ];
   const what =
-    goes.length > 0
-      ? `This deletes ${listed(goes)}${unlinks ? ', and unlinks every documentation source' : ''}.`
+    deleted.length > 0
+      ? `This deletes ${listed(deleted)}${unlinks ? ', and unlinks every documentation source' : ''}.`
       : unlinks
         ? 'This unlinks every documentation source.'
         : 'There is nothing left to delete.';
@@ -102,8 +126,26 @@ export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boo
     : '';
   const documentation =
     holdings.documentation && !alsoUnlinkDocumentation ? ' Your documentation stays linked.' : '';
-  if (goes.length === 0 && !unlinks) return `${what}${documentation}`;
-  return `${what}${requests}${documentation} Your sign-in stays. It cannot be undone.`;
+  const credentials =
+    holdings.credentials && !alsoUnlinkDocumentation ? ' The credentials you stored stay.' : '';
+  if (deleted.length === 0 && !unlinks) return `${what}${documentation}${credentials}`;
+  return `${what}${requests}${documentation}${credentials} Your sign-in stays. It cannot be undone.`;
+}
+
+/**
+ * The unlink choice's label, naming only what the box takes for this manager: the documentation
+ * sources, the credentials they stored, or both; the documentation while nothing is read yet.
+ *
+ * @param holdings - What the deletion would take, or undefined or null before it is read.
+ */
+export function unlinkLabel(holdings: Holdings | null | undefined): string {
+  const takes = [
+    ...(!holdings?.credentials || holdings.documentation
+      ? ['unlink your documentation sources']
+      : []),
+    ...(holdings?.credentials ? ['delete the credentials you stored'] : []),
+  ];
+  return `Also ${takes.join(' and ')}`;
 }
 
 /**
@@ -113,7 +155,7 @@ export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boo
 function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): boolean {
   return (
     heldKinds.some(({ kind }) => holdings[kind]) ||
-    (alsoUnlinkDocumentation && holdings.documentation)
+    (alsoUnlinkDocumentation && (holdings.documentation || holdings.credentials))
   );
 }
 
@@ -165,7 +207,7 @@ export function ResetCard() {
               checked={alsoUnlinkDocumentation}
               onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
             />
-            Also unlink your documentation sources
+            {unlinkLabel(holdings)}
           </label>
         </div>
         <Button

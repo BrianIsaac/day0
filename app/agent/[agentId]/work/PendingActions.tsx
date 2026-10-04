@@ -64,6 +64,7 @@ export function heldActionsWhy(
 export function PendingActions({
   actions,
   verdicts,
+  landed = 0,
   surfaces,
   replyTarget,
   autonomousActions = false,
@@ -78,6 +79,8 @@ export function PendingActions({
 }: {
   actions: MockAction[];
   verdicts: ActionVerdict[];
+  /** How many rows the run already landed, listed above the box. */
+  landed?: number;
   surfaces: SurfaceRecord[];
   replyTarget?: ReplyTarget;
   /** Whether the agent's switch is on now; the card says why the rows are waiting either way. */
@@ -153,7 +156,7 @@ export function PendingActions({
     <>
       <ItemSection tone="warn">
         <p className="text-[15px] font-semibold text-[var(--color-warn)]">
-          {pendingHeadline(verdicts)}
+          {pendingHeadline(verdicts, landed)}
           {withheld > 0 ? ` · ${withheld} withheld by you` : ''}
         </p>
         {heldIndexes.length > 0 ? (

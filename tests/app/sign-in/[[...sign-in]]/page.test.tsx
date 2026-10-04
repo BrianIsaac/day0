@@ -27,10 +27,13 @@ afterEach(() => {
  *
  * @param pathname - The path Clerk's step is on.
  */
-async function render(pathname = '/sign-in'): Promise<string> {
+async function render(
+  pathname = '/sign-in',
+  search: Record<string, string | string[]> = {},
+): Promise<string> {
   clerk.pathname = pathname;
   const { default: SignInPage } = await import('../../../../app/sign-in/[[...sign-in]]/page');
-  return renderToStaticMarkup(<SignInPage />);
+  return renderToStaticMarkup(await SignInPage({ searchParams: Promise.resolve(search) }));
 }
 
 /** Markup with entities resolved, so copy can be matched as it reads. */
@@ -41,6 +44,24 @@ describe('the sign-in page', () => {
     const html = await render();
     expect(html).toMatch(/<h1[^>]*>Sign in to deploy an employee<\/h1>/);
     expect(html).not.toMatch(/\bagent\b/i);
+  });
+
+  it("says a visitor sent to sign in from a page they asked for continues there, never that they deploy (the round review's m23)", async () => {
+    const returning = await render('/sign-in', {
+      redirect_url: 'https://dayzer0.dev/agent/k57abc/work?from=review',
+    });
+    expect(returning).toMatch(/<h1[^>]*>Sign in to continue<\/h1>/);
+    // The new manager's first steps are not this visitor's (the second pass's design reader).
+    expect(returning).not.toContain('Give your first employee a name.');
+    expect(await render('/sign-in')).toContain('Give your first employee a name.');
+    for (const home of ['https://dayzer0.dev/', 'https://dayzer0.dev/home', '/']) {
+      expect(await render('/sign-in', { redirect_url: home })).toMatch(
+        /<h1[^>]*>Sign in to deploy an employee<\/h1>/,
+      );
+    }
+    expect(await render('/sign-in', { redirect_url: 'not an address' })).toMatch(
+      /<h1[^>]*>Sign in to deploy an employee<\/h1>/,
+    );
   });
 
   it("leaves the h1 to Clerk's title on a later step, keeping the heading's words and look", async () => {

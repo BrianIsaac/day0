@@ -1,6 +1,7 @@
 import { ConvexError, v, type Infer } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { activeConnectionFor } from './organisationConnectionReads';
 import { clipRoleLine } from './roster';
 import { readableDocs } from './mock';
 import { RETIRE_PREVIEW_ROW_LIMIT } from './reset';
@@ -11,6 +12,7 @@ import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { clippedEmployeeName } from '../src/agent/employee-name';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { ACTS_AS_KINDS } from '../src/surfaces/access-identity';
+import { organisationSystemOf, servedByIssuer } from '../src/surfaces/access-request';
 import { shownEmployeeState } from '../src/work/state-labels';
 
 /*
@@ -110,7 +112,16 @@ function reportingLinesOf(charter: Doc<'charters'> | null): string[] {
 }
 
 /** One connection the handover cuts, by the name the Surfaces tab gives it. */
-const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
+const previewSurface = v.object({
+  slug: v.string(),
+  displayName: v.string(),
+  /**
+   * Whether an organisation connection an issuer of Day0's acts through covers the card's system,
+   * so its new manager connects it through IT's connection with nothing to paste (the wave 11
+   * review's m23).
+   */
+  throughConnection: v.boolean(),
+});
 
 /**
  * One connection that keeps the employee's own identity through the handover and goes back to the
@@ -335,6 +346,27 @@ async function departingMirrors(
 }
 
 /**
+ * Whether a cut card's system has an active organisation connection an issuer of Day0's acts
+ * through, so the card connects again through it and takes no key of its own; not a per-employee
+ * Linear connection, whose Connect waits for IT to record the new card's own app.
+ *
+ * @param ctx - Any query context.
+ * @param surface - The card the handover cuts.
+ */
+async function connectsThroughOrganisation(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+): Promise<boolean> {
+  const system = organisationSystemOf(surface);
+  if (system === undefined) return false;
+  const connection = await activeConnectionFor(ctx, system);
+  if (connection === null || !servedByIssuer(connection)) return false;
+  // A cut forgets the card's app, and a per-employee Linear connection's Connect waits until IT
+  // records an app for the new manager's card (11-AL), so that card asks IT, as the card says.
+  return !(system === 'linear' && connection.mode === 'per-employee');
+}
+
+/**
  * What accepting an asked handover would bring and leave (the transfer plan, section 6.1), for
  * the account it names: bounded reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows of each
  * kind, counts and names only, never the content of a work item, a charter or a record. Reads
@@ -361,7 +393,7 @@ export async function transferPreviewOf(
     agent._id,
     [...cut, ...reapprove].map((surface) => surface.slug),
   );
-  const [charter, takesOn, mirrors, sources, inFlight] = await Promise.all([
+  const [charter, takesOn, mirrors, sources, inFlight, cutSurfaces] = await Promise.all([
     approvedCharterOf(ctx.db, agent._id),
     takenOn(ctx, agent, new Set(scopesRevoked)),
     departingMirrors(ctx, agent, acceptorKey),
@@ -370,6 +402,13 @@ export async function transferPreviewOf(
       .withIndex('by_user', (q) => q.eq('userId', acceptorKey))
       .take(PREVIEW_SOURCE_LIMIT),
     runsInFlight(ctx.db, agent._id),
+    Promise.all(
+      cut.map(async (surface) => ({
+        slug: surface.slug,
+        displayName: surface.displayName,
+        throughConnection: await connectsThroughOrganisation(ctx, surface),
+      })),
+    ),
   ]);
   return {
     transferId: transfer._id,
@@ -387,7 +426,7 @@ export async function transferPreviewOf(
     expiresAt: transfer.expiresAt,
     takesOn,
     leavesBehind: {
-      surfaces: cut.map((surface) => ({ slug: surface.slug, displayName: surface.displayName })),
+      surfaces: cutSurfaces,
       reapprove: reapprove.map((surface) => ({
         slug: surface.slug,
         displayName: surface.displayName,

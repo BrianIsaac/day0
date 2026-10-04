@@ -106,3 +106,25 @@ describe('an empty structured reply, by its cause (E-79)', (): void => {
     await expect(openai.textComplete(ARGS)).rejects.toThrow('cut off at the output limit');
   });
 });
+
+describe('the JSON-only instruction a prompt-mode call appends', (): void => {
+  it("sends the model no em dash to copy into a drafted text (the v0.15.0 walk's finding 4)", async (): Promise<void> => {
+    const openai = await loadWith(
+      completion([
+        {
+          index: 0,
+          message: { role: 'assistant', content: '{"tile":"pipeline"}' },
+          finish_reason: 'stop',
+        },
+      ]),
+    );
+    await openai.jsonCompleteWithMode(ARGS);
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    const body = JSON.parse(String(init?.body)) as {
+      readonly messages: readonly { readonly role: string; readonly content: string }[];
+    };
+    const system = body.messages.find((message) => message.role === 'system')?.content ?? '';
+    expect(system).toContain('Reply with ONE JSON object and nothing else.');
+    expect(system).not.toContain('\u2014');
+  });
+});

@@ -368,6 +368,31 @@ describe('the chat room for a screen reader, and a 1:1 that could not start (ste
     room.messages = [];
   });
 
+  it("draws a closing call whose line is not text as the close, never crashing the room (the 12-FX bed's qwen3 echoed the tool's schema)", (): void => {
+    room.messages = [
+      { id: 'u0', role: 'user', parts: [{ type: 'text', text: INIT_PROMPT }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-dayOneComplete',
+            toolCallId: 'call_close',
+            state: 'output-error',
+            input: { closingLine: { type: 'string', description: 'The closing line.' } },
+            errorText: 'Invalid input for tool dayOneComplete',
+          },
+        ],
+      },
+    ] as unknown as UIMessage[];
+    const view = mount(<ChatRoom agentId={'agent-1' as Id<'agents'>} bossLabel="Sam" />);
+    expect(view.container.querySelector('[role="log"]')?.textContent).toContain(
+      'Employee: (closing)',
+    );
+    view.unmount();
+    room.messages = [];
+  });
+
   it('says why the session could not start and starts it again on Ask again', async (): Promise<void> => {
     (globalThis as { Element: typeof Element }).Element.prototype.scrollTo = (): void => undefined;
     room.startRefusal = new Error(
