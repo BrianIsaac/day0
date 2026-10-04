@@ -1412,7 +1412,7 @@ describe('every decision on a work item card is said in its live region and give
     });
     expect(view.container.textContent).toContain('Provider reconciliation required');
     expect(view.container.textContent).toContain(
-      'You confirmed this run as a whole before Day0 asked about each write.',
+      'You confirmed this run as a whole before Day0 asked about each write, so each is asked again.',
     );
     const retry = [...view.container.querySelectorAll('button')].find(
       (control) => control.textContent === 'Retry',

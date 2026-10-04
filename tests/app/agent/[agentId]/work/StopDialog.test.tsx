@@ -89,13 +89,21 @@ describe('StopDialog', (): void => {
     );
   });
 
-  it('says an approval not yet started is taken back and none of its writes is sent (W12-R14, D-7 (b))', (): void => {
+  it('says an approval not yet started is taken back and none of its writes is sent (W12-R14, D-7 (b))', async (): Promise<void> => {
     const view = opened({ moment: 'approved' });
     const dialog = document.body.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain(
       'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
     );
     expect(focusedName()).toBe('Keep the approval');
+    expect(dialog?.querySelector('h2')?.textContent).toBe(
+      'Take back your approval for “Close the Q3 audit note”?',
+    );
+    await press(document.body, 'Take the approval back');
+    expect(view.calls).toEqual([
+      ['stop', ''],
+      ['done', 'Approval taken back: Close the Q3 audit note. It waits for you with Retry.'],
+    ]);
     view.unmount();
     expect(stopWhy('Mira', 'approved')).toBe(
       'Mira has not sent the writes you approved yet. Stop takes your approval back and sends none of them.',

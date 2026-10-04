@@ -60,6 +60,7 @@ import {
   landedPlaces,
   pendingVerdicts,
   phasedLedger,
+  type PhasedLedgerRow,
   type RunOutput,
   unfinishedInOwnWords,
   waitingLine,
@@ -243,6 +244,19 @@ export function WorkItemCard({
       !refused.includes(row) && (row.outcomeUnknown === true || isOutcomeUnknownReason(row.reason)),
   );
   const failed = unlanded.filter((row) => !refused.includes(row) && !unknown.includes(row));
+  // A write whose outcome is unknown is named by what it does, as the reconciliation names it.
+  const ledgerActions = output?.initial
+    ? [...(output.initial.actions ?? []), ...(output.actions ?? [])]
+    : (output?.actions ?? []);
+  const namedUnknown = unknown.map((row): PhasedLedgerRow => {
+    const action = ledgerActions[ledger.indexOf(row)];
+    return action
+      ? {
+          ...row,
+          summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
+        }
+      : row;
+  });
   const landedAutonomously = landed.filter((row) => row.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -368,7 +382,7 @@ export function WorkItemCard({
       rows={ledger}
       refused={refused}
       failed={failed}
-      unknown={unknown}
+      unknown={namedUnknown}
       title={item.title}
     />
   );

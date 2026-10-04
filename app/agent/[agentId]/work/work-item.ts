@@ -111,7 +111,11 @@ export interface RefusedClosingRow {
 }
 
 /** A ledger row labelled with the phase that applied it, when the run had two. */
-export type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+export type PhasedLedgerRow = LedgerRow & {
+  phase?: 'prerequisite' | 'closing';
+  /** What the row's action does, in a manager's words, where the card has named it. */
+  summary?: string;
+};
 
 /**
  * Every applied row of a run, prerequisite phase first, each labelled with the
@@ -353,7 +357,7 @@ export function failedItemReason(item: {
       const said =
         note === ''
           ? 'You stopped the run.'
-          : `You stopped the run: “${note}”${/[.!?]$/.test(note) ? '' : '.'}`;
+          : `You stopped the run: “${note}”${/[.!?…]$/.test(note) ? '' : '.'}`;
       if (unconfirmed) {
         return `${said} A write landed or may have; confirm the provider below before Retry.`;
       }

@@ -322,11 +322,12 @@ describe('dashboard exact-action gate', (): void => {
     // Re-pinned for W12-R9: an entry is named by what it does, its place and key kept quieter.
     expect(html).toContain('Reply in #revops thread: Deal 1 reconciled.');
     expect(html).not.toContain('prerequisite action 1');
-    expect(html).toContain('Landed · first phase');
+    expect(html).toContain('Landed · prerequisites');
     expect(html).toContain('comment created');
     expect(html).toContain('provider id comment-17');
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>Ledger key<\/summary>[^]*run:1/);
-    expect(html).toContain('Outcome unknown · closing phase');
+    expect(html).toContain('Ledger key (for support)');
+    expect(html).toContain('run:1');
+    expect(html).toContain('Outcome unknown · closing actions');
     expect(html).toContain('response lost');
     // Answered per entry since wave 12 (U17 D1): two answers each, not one tick.
     expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(2);

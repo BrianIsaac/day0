@@ -133,7 +133,7 @@ describe('runProgress', (): void => {
     );
     expect(sending?.title).toBe('Sending the 3 writes you approved');
     expect(sending?.detail).toBe(
-      'A stop sends nothing more; a write already sent stays sent, and one on its way when you stop is listed for you to check.',
+      'Stopping sends nothing more; a write already sent stays sent, and one on its way when you stop is listed for you to check.',
     );
     expect(sending?.parts).toEqual([
       { name: 'Read and draft', status: 'done' },
@@ -150,7 +150,7 @@ describe('runProgress', (): void => {
       }),
       { autonomous: false },
     );
-    expect(closing?.title).toBe('Sending the 1 write you approved');
+    expect(closing?.title).toBe('Sending the write you approved');
     expect(closing?.parts).toEqual([
       { name: 'Prerequisites', status: 'done' },
       { name: 'Closing actions', status: 'now' },

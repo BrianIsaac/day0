@@ -54,9 +54,12 @@ export function stopWhy(employeeName: string, moment: StopMoment = 'working'): s
  * The words a stop the manager made comes to, for the card's live region.
  *
  * @param title - The item's title.
+ * @param moment - Where the item was; taking an approval back says so.
  */
-export function stoppedOutcome(title: string): string {
-  return `Stopped: ${title}. It waits for you with Retry.`;
+export function stoppedOutcome(title: string, moment: StopMoment = 'working'): string {
+  return moment === 'approved'
+    ? `Approval taken back: ${title}. It waits for you with Retry.`
+    : `Stopped: ${title}. It waits for you with Retry.`;
 }
 
 /**
@@ -93,7 +96,11 @@ export function StopDialog({
   return (
     <Dialog
       role="alertdialog"
-      title={`Stop work on “${title}”?`}
+      title={
+        moment === 'approved'
+          ? `Take back your approval for “${title}”?`
+          : `Stop work on “${title}”?`
+      }
       description={stopDialogDescription(employeeName, moment)}
       onClose={onClose}
       initialFocus={keep}
@@ -105,9 +112,9 @@ export function StopDialog({
           event.preventDefault();
           if (change.busy) return;
           change.run(() => onStop(reason.trim()), {
-            done: stoppedOutcome(title),
+            done: stoppedOutcome(title, moment),
             refused: 'The run was not stopped.',
-            after: () => onDone(stoppedOutcome(title)),
+            after: () => onDone(stoppedOutcome(title, moment)),
           });
         }}
       >
@@ -131,7 +138,11 @@ export function StopDialog({
             {moment === 'approved' ? 'Keep the approval' : 'Keep working'}
           </Button>
           <Button type="submit" variant="danger" size="large" disabled={change.busy}>
-            {change.busy ? 'Stopping…' : 'Stop the run'}
+            {change.busy
+              ? 'Stopping…'
+              : moment === 'approved'
+                ? 'Take the approval back'
+                : 'Stop the run'}
           </Button>
         </div>
       </form>

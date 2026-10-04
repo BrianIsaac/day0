@@ -52,6 +52,22 @@ export function outcomeReasonWords(reason: string): string {
 export const NOT_SENT_AFTER_STOP_REASON =
   'not sent: the run was stopped before this write went out';
 
+/**
+ * What happened to a write whose outcome is unknown, as a card says it under the words "Outcome
+ * unknown" (the second pass on W12-R9): the cause alone, since the status and the check are said
+ * beside it. Undefined for any other reason.
+ *
+ * @param reason - A ledger row's reason, of any release's words.
+ */
+export function outcomeUnknownDetail(reason: unknown): string | undefined {
+  const words = typeof reason === 'string' ? outcomeReasonWords(reason) : undefined;
+  if (words === OUTCOME_UNKNOWN_REASON) return 'Day0 was interrupted while sending this write.';
+  if (words === OUTCOME_UNKNOWN_AFTER_STOP_REASON) {
+    return 'The run was stopped while this write was being sent.';
+  }
+  return undefined;
+}
+
 /** Why an apply's unreported rows are recorded as of unknown outcome: it was interrupted, or stopped. */
 export type ApplyEnd = 'interrupted' | 'stopped';
 

@@ -283,7 +283,7 @@ describe('Stop on an approval that has not started (W12-R14, D-7 (b))', (): void
       'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
     );
     expect(focusedName()).toBe('Keep the approval');
-    await press(document.body, 'Stop the run');
+    await press(document.body, 'Take the approval back');
     expect(view.calls).toEqual([['stop', '']]);
   });
 
@@ -553,11 +553,14 @@ describe('stopped with a write that may have landed', (): void => {
     expect(group?.querySelector('legend')?.textContent).toContain('Reply in #revops-asks thread');
     expect(group?.querySelector('legend')?.textContent).toContain('Outcome unknown');
     expect(group?.querySelector('legend')?.textContent).not.toContain('http.request');
+    // The run record's list names the write the same way, with no tool id and no spaced hyphen.
+    expect(view.text()).toContain('with an unknown outcome · may have landed');
+    expect(view.text()).not.toContain('http.request - ');
     expect(
       [...view.container.querySelectorAll('details > summary')].map(
         (summary) => summary.textContent,
       ),
-    ).toContain('Ledger key');
+    ).toContain('Ledger key (for support)');
     for (const radio of group?.querySelectorAll('input[type="radio"]') ?? []) {
       expect(radio.closest('label')?.className).toMatch(/(^|\s)min-h-11(\s|$)/);
     }
