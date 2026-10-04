@@ -6366,7 +6366,7 @@ async function approveActionsInTransaction(
   const leftForCard =
     scope === 'whole-set' ? wholeSetApproval(verdicts, ledgerOf(row.output)).leftForCard : [];
   if (approvedIndexes.length === 0 && leftForCard.length > 0) {
-    throw new Error(`only a ticket close Day0 held is waiting, and it ${CLOSE_DECIDED_ON_CARD}`);
+    throw new Error('only a ticket close Day0 held is waiting, and it is decided on its card');
   }
   const rejectedIndexes = awaiting.filter(
     (index) => !approvedIndexes.includes(index) && !leftForCard.includes(index),
