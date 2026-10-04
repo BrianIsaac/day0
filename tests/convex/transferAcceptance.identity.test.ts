@@ -164,6 +164,24 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     ]);
   });
 
+  it("marks the card that kept its identity with the move's time, and the new manager's approval clears it (the round review's m16)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
+    const movedAt = Date.now();
+
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(harness, leo.slack.surfaceId))?.keptIdentitySince).toBe(movedAt);
+    // A cut card keeps nothing to mark.
+    expect((await read(harness, leo.linear.surfaceId))?.keptIdentitySince).toBeUndefined();
+
+    await harness
+      .withIdentity(COLLEAGUE)
+      .mutation(api.surfaces.approve, { surfaceId: leo.slack.surfaceId });
+    expect((await read(harness, leo.slack.surfaceId))?.keptIdentitySince).toBeUndefined();
+  });
+
   it("keeps a per-employee Linear identity as the product lands it, and calls neither vendor (the review's M11 c)", async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });

@@ -23,24 +23,33 @@ const KEPT_SWEEP_PAGE = 100;
 /** The most `surface.proposed` lines of one employee read to find a card's latest. */
 const PROPOSED_EVENTS_READ = 100;
 
-/** The reasons a handover's re-approval leaves on a card that kept the employee's own identity. */
+/**
+ * The reasons a handover's re-approval left on a card that kept the employee's own identity, read
+ * only for a card kept before the move marked it (`keptIdentitySince`, v0.16.0): a later release's
+ * backfill marks those, and this fallback goes then (12-S3's handover).
+ */
 const HANDOVER_REAPPROVAL_REASONS: ReadonlySet<string> = new Set([
   HANDOVER_REAPPROVE_REASON,
   HANDOVER_CUT_REPROPOSE_REASON,
 ]);
 
+/** Whether a handover kept the card's identity: its mark, or on an unmarked card the move's words. */
+function keptByHandover(surface: Doc<'surfaces'>): boolean {
+  if (surface.keptIdentitySince !== undefined) return true;
+  return surface.reason !== undefined && HANDOVER_REAPPROVAL_REASONS.has(surface.reason);
+}
+
 /**
  * Whether a `proposed` card holds an identity a handover kept for re-approval (A25): the move's
- * own reason on it, no approval since, and a live credential Day0 obtained. A card a changed
- * intake queue sent back to `proposed` keeps its identity under another reason, and is never
- * ended here (the code pass's B1).
+ * mark on it (the round review's m16), no approval since, and a live credential Day0 obtained. A
+ * card a changed intake queue sent back to `proposed` keeps its identity unmarked and under
+ * another reason, and is never ended here (the code pass's B1).
  */
 async function holdsKeptIdentity(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<boolean> {
   if (
     surface.credentialId === undefined ||
     surface.managerApprovedAt !== undefined ||
-    surface.reason === undefined ||
-    !HANDOVER_REAPPROVAL_REASONS.has(surface.reason)
+    !keptByHandover(surface)
   ) {
     return false;
   }
@@ -50,11 +59,15 @@ async function holdsKeptIdentity(ctx: MutationCtx, surface: Doc<'surfaces'>): Pr
   );
 }
 
-/** When the card was last sent back to `proposed`, by its own record; undefined when none says. */
+/**
+ * Since when the card has waited: the move's mark, or on a card kept before the mark the latest
+ * `surface.proposed` line its own record holds; undefined when neither says.
+ */
 async function waitingSince(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
 ): Promise<number | undefined> {
+  if (surface.keptIdentitySince !== undefined) return surface.keptIdentitySince;
   const proposed = await eventsOfType(ctx, surface.agentId, 'surface.proposed')
     .order('desc')
     .take(PROPOSED_EVENTS_READ);

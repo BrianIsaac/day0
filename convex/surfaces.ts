@@ -2721,6 +2721,8 @@ async function approveInTransaction(
   await ctx.db.patch(surface._id, {
     verdict: 'approved',
     managerApprovedAt: approval.approvedAt,
+    // An approved card's identity is the new manager's own decision, no longer a kept one.
+    keptIdentitySince: undefined,
     expiresAt,
     accessSetBy: approval.by,
     ...(approval.intakeScope === undefined ? {} : { intakeScope: approval.intakeScope }),
@@ -2856,6 +2858,7 @@ export const reject = mutation({
       probeStartedAt: undefined,
       request: undefined,
       managerApprovedAt: undefined,
+      keptIdentitySince: undefined,
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,
@@ -3235,6 +3238,7 @@ export async function endKeptIdentity(
   await endOwnCredentialAtSource(ctx, surface, 'transfer', now);
   await ctx.db.patch(surface._id, {
     reason: KEPT_IDENTITY_ENDED_REASON,
+    keptIdentitySince: undefined,
     credentialId: undefined,
     credentialKind: undefined,
     credentialLocation: undefined,
@@ -3497,6 +3501,7 @@ function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
     managerApprovedAt: undefined,
+    keptIdentitySince: undefined,
     credentialId: undefined,
     credentialKind: undefined,
     credentialLocation: undefined,
@@ -3528,14 +3533,18 @@ function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
 /**
  * The fields a handover's re-approval clears (A25): everything {@link cutPatch} clears save the
  * employee's own identity, which stays on the card: its credential, the provider's identities, its
- * app and the channels its bot is in. A card whose address went says so, as a cut one does.
+ * app and the channels its bot is in. A card whose address went says so, as a cut one does. The
+ * card is marked with the move's time (`keptIdentitySince`), which the kept-identity sweep reads
+ * rather than the reason's words (the round review's m16).
  *
  * @param surface - The surface before the move.
+ * @param now - When the move kept the identity.
  */
-function reapprovePatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+function reapprovePatch(surface: Doc<'surfaces'>, now: number): Partial<Doc<'surfaces'>> {
   const patch = cutPatch(surface);
   return {
     ...patch,
+    keptIdentitySince: now,
     reason: patch.reason === HANDOVER_CUT_REASON ? HANDOVER_REAPPROVE_REASON : patch.reason,
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
@@ -3674,7 +3683,7 @@ export async function handOverSurfaces(
         break;
       }
       case 'reapprove': {
-        const patch = reapprovePatch(surface);
+        const patch = reapprovePatch(surface, input.now);
         await ctx.db.patch(surface._id, {
           ...patch,
           ...quotes,
