@@ -1,4 +1,5 @@
 import { summariseAction, type SummaryContext } from '../surfaces/summary';
+import { clippedSlackText, slackEscaped } from '../surfaces/slack-markup';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
@@ -381,6 +382,14 @@ function oneLine(value: unknown, fallback: string): string {
   return line || fallback;
 }
 
+/**
+ * A model's or a ticket's words on one line, escaped as Slack asks, so a quoted `<!here>` reads as
+ * text in the request (`slackEscaped`).
+ */
+function quotedText(value: unknown, fallback: string): string {
+  return slackEscaped(oneLine(value, fallback));
+}
+
 /** How a request with buttons opens its reply line; the line without them opens "Reply ". */
 export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
 
@@ -445,7 +454,7 @@ export function decisionRequestText(args: {
   if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
     return closeOnlyRequestText({ ...args, closes });
   }
-  const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
+  const heading = `${slackEscaped(args.agentName)} needs your decision on “${quotedText(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
   const reply = replyLine(args.id, args.buttons === true, args.typedCode !== false);
   // A request is read on its own, so its action lines name the ask's channel
@@ -454,6 +463,7 @@ export function decisionRequestText(args: {
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
     ...(args.slackMarkup ? { slackMarkup: true } : {}),
+    slackEscape: true,
   };
   const refused =
     args.kind === 'actions'
@@ -466,7 +476,7 @@ export function decisionRequestText(args: {
   if (args.kind === 'plan') {
     listHeading = planHeading(args.plan);
     lines = [
-      ...(args.draftedWithout ? [draftedWithoutLine(args.draftedWithout)] : []),
+      ...(args.draftedWithout ? [slackEscaped(draftedWithoutLine(args.draftedWithout))] : []),
       ...planLines(args.plan),
     ];
     noun = 'plan steps';
@@ -553,11 +563,12 @@ function closeOnlyRequestText(
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
     ...(args.slackMarkup ? { slackMarkup: true } : {}),
+    slackEscape: true,
   };
   const noun = args.closes.length === 1 ? 'ticket close' : 'ticket closes';
   const waits = args.closes.length === 1 ? 'waits' : 'wait';
   return [
-    `${args.agentName}’s ${noun} on “${oneLine(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
+    `${slackEscaped(args.agentName)}’s ${noun} on “${quotedText(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
     ...(args.item ? itemLines(args.item) : []),
     '',
     ...closeLines(args.actions ?? [], args.closes, args.surfaces ?? [], summary),
@@ -584,9 +595,10 @@ function closeLines(
 
 /** Why Day0 held the close, with the run's sentence when the output kept it. */
 function heldCloseSentence(agentName: string, clause: string | undefined): string {
+  const name = slackEscaped(agentName);
   return clause === undefined || clause.trim() === ''
-    ? `${agentName} answered that the work is done, but its own words say otherwise.`
-    : `${agentName} answered that the work is done, but wrote ${quotedSentence(clause)}`;
+    ? `${name} answered that the work is done, but its own words say otherwise.`
+    : `${name} answered that the work is done, but wrote ${slackEscaped(quotedSentence(clause))}`;
 }
 
 /** What a decision request says about the work item it asks about. */
@@ -610,16 +622,16 @@ export interface DecisionRequestItem {
  * and opened from a phone.
  */
 function itemLines(item: DecisionRequestItem): string[] {
-  const link = item.link === undefined ? '' : oneLine(item.link, '');
+  const link = item.link === undefined ? '' : quotedText(item.link, '');
   if (item.replyTarget) {
-    const channel = `#${oneLine(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
+    const channel = `#${quotedText(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
     return [
       `Asked in ${channel}${link ? `: ${link}` : ''}`,
       `The answer to the ask goes to its thread in ${channel}.`,
     ];
   }
   if (item.sourceCategory === 'ticket-queue') {
-    return [`Ticket: ${oneLine(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
+    return [`Ticket: ${quotedText(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
   }
   return link ? [`Source: ${link}`] : [];
 }
@@ -641,15 +653,13 @@ function refusedLines(
   context: SummaryContext,
 ): string[] {
   if (refused.length === 0) return [];
-  const clip = (text: string, limit: number): string =>
-    text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
   // The reason is what the manager needs from the line, so the action gives
   // way to it within the line's length, never the other way round.
   const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
     const action = actions[index];
     const what = action ? summariseAction(action, surfaces, context) : `action ${index + 1}`;
-    const why = ` (${clip(oneLine(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
-    return `- ${clip(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
+    const why = ` (${clippedSlackText(quotedText(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
+    return `- ${clippedSlackText(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
   });
   const more = refused.length - shown.length;
   return [
@@ -682,7 +692,7 @@ export function draftedWithoutLine(without: DraftedWithoutLine): string {
 /** The first line of a plan request: its summary, or where to read the plan. */
 function planHeading(plan: unknown): string {
   const summary = (plan ?? {}) as { summary?: unknown };
-  return `Plan: ${oneLine(summary.summary, 'The drafted plan is available in day0.')}`;
+  return `Plan: ${quotedText(summary.summary, 'The drafted plan is available in day0.')}`;
 }
 
 /** The longest plan step or note a request quotes before it clips. */
@@ -694,16 +704,15 @@ const PLAN_LINE_MAX_CHARS = 300;
  */
 function planLines(plan: unknown): string[] {
   const body = (plan ?? {}) as { steps?: unknown; riskNotes?: unknown; reversibility?: unknown };
-  const clip = (line: string): string =>
-    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const clip = (line: string): string => clippedSlackText(line, PLAN_LINE_MAX_CHARS);
   const steps = Array.isArray(body.steps)
     ? body.steps.flatMap((step): string[] => {
-        const line = oneLine(step, '');
+        const line = quotedText(step, '');
         return line ? [line] : [];
       })
     : [];
-  const risk = oneLine(body.riskNotes, '');
-  const reversibility = oneLine(body.reversibility, '');
+  const risk = quotedText(body.riskNotes, '');
+  const reversibility = quotedText(body.reversibility, '');
   return [
     ...(steps.length > 0
       ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))]
@@ -736,7 +745,7 @@ export function batchRequestLines(args: {
     `${count} held action sets are waiting, each shown in its own request:`,
     ...args.members.map(
       (member, index) =>
-        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId}${
+        `${index + 1}. ${quotedText(member.title, 'Untitled work')} (${member.decisionId}${
           member.leavesCloseForCard === true ? '; its ticket close waits on its card' : ''
         })`,
     ),

@@ -26,6 +26,7 @@ import { BOSS_MESSAGE_SCOPE, surfaceRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { accessEnded } from '../src/work/surface-access';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 
 /*
  * The access request (the access plan, section 4.5; A24): when an approved card's system has no
@@ -393,11 +394,6 @@ async function managerDmCardOf(
       !accessEnded(surface, now) &&
       surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
   );
-}
-
-/** The three characters Slack reads as markup in a message's text, escaped as Slack asks. */
-function slackEscaped(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

@@ -148,6 +148,7 @@ import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -4606,7 +4607,7 @@ export const prepareDecisionNotice = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
-      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${slackEscaped(origin)}.`,
       // The notice answers the request, so it goes in the request's thread.
       ...(row.decision.ts ? { threadTs: row.decision.ts } : {}),
     };
