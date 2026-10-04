@@ -391,7 +391,7 @@ describe('check:access', (): void => {
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
       status: 'gap',
       detail:
-        "No issuer is recorded, so every employee's authorisation is refused: ./setup.sh access --correct mcp:mcp.acme.com records the one the server's own metadata names, and ends no card.",
+        "No issuer is recorded, so every employee's authorisation is refused: ./setup.sh access --correct mcp:mcp.acme.com records the issuer the server's own metadata names, and ends no card.",
     });
     const confidential = await accessChecks(
       [{ ...mcp, issuer: undefined, secretCredentialId: 'secret-1' }],

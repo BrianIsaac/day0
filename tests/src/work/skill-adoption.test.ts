@@ -454,7 +454,7 @@ describe('adoptionWords', (): void => {
   it("says a retired author was retired, never as a colleague who still works (the wave 11 review's m19)", (): void => {
     const words = adoptionWords({ ...base, authorRetired: true, state: 'offered' });
     expect(words.lead).toBe(
-      'The skill kanban-comment-and-close, verified on 18 September 2026, does this; Priya, who wrote it, has been retired.',
+      'The skill kanban-comment-and-close, verified on 18 September 2026, does this. Priya, who wrote it, has since been retired.',
     );
     expect(adoptionWords({ ...base, authorRetired: true, state: 'verifying' }).lead).toBe(
       'Adopting the skill kanban-comment-and-close for Mateo.',

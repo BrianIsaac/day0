@@ -625,7 +625,7 @@ describe('setup: the access verb', (): void => {
     });
     const said = bed.bed.output.join('\n');
     expect(said).toContain(
-      'mcp:auth.acme.test: the recorded issuer is now https://auth.acme.test, the authorisation server the server names (none was recorded).',
+      "mcp:auth.acme.test: the recorded issuer is now https://auth.acme.test, the authorisation server named in the server's metadata (none was recorded).",
     );
     expect(said).toContain('No secret changed and no card ended.');
   });

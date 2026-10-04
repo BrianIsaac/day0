@@ -585,7 +585,7 @@ async function correctConnection(
     }
     if (issuer.kind === 'record') {
       io.log(
-        `${name}: the recorded issuer is now ${issuer.issuer}, the authorisation server the server names (none was recorded).`,
+        `${name}: the recorded issuer is now ${issuer.issuer}, the authorisation server named in the server's metadata (none was recorded).`,
       );
     }
     if (issuer.kind === 'refused') {

@@ -294,6 +294,25 @@ export function calendarDay(ms: number, zone: string): string {
 }
 
 /**
+ * What a card its approval's probe found with no credential says while it waits for one (the wave
+ * 11 review's m23): the employee reads nothing from the system until IT gives it access, or until
+ * the manager connects it.
+ *
+ * @param employee - The employee's name.
+ * @param system - The card's system, as the card names it.
+ * @param waitsOn - Whom the card waits on.
+ */
+export function awaitingAccessWords(
+  employee: string,
+  system: string,
+  waitsOn: 'it' | 'connect',
+): string {
+  return waitsOn === 'it'
+    ? `${employee} reads nothing from ${system} until IT gives it access.`
+    : `${employee} reads nothing from ${system} until you connect it.`;
+}
+
+/**
  * The manager's read-only line for a system IT connected for the organisation: "Connected for
  * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged). A card
  * still acting as a pasted key says the connection is not its own yet, so the line is not read as
@@ -309,7 +328,7 @@ export function connectedForOrganisationWords(
   onPastedKey = false,
 ): string {
   const line = `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
-  return onPastedKey ? `${line}, not yet used by this card` : line;
+  return onPastedKey ? `${line}. This card does not use it yet.` : line;
 }
 
 /**

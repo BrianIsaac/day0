@@ -517,7 +517,7 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
         lead: handedOver
           ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
           : retired
-            ? `${opening}, verified on ${verifiedOn}, does this; ${input.authorName}, who wrote it, has been retired.`
+            ? `${opening}, verified on ${verifiedOn}, does this. ${input.authorName}, who wrote it, has since been retired.`
             : `${opening}, verified on ${verifiedOn}, does this.`,
         body: `${adopterName} can adopt it. It would be re-verified in the sandbox${under} before ${adopterName} can use it.`,
         ...scopes,

@@ -45,6 +45,7 @@ import {
   rejoinWords,
   stateChip,
   type OrganisationSystem,
+  awaitingAccessWords,
 } from './card-words';
 import { CredentialField } from './CredentialField';
 import { DisconnectDialog } from './DisconnectDialog';
@@ -408,7 +409,7 @@ export function SurfaceCard({
         ) : null}
         {awaitingAccess ? (
           <p className="text-sm text-[var(--color-muted)]">
-            Day0 reads nothing from it until its access lands.
+            {awaitingAccessWords(context.employeeName, surface.displayName, waitsOn)}
           </p>
         ) : skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>

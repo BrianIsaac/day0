@@ -414,7 +414,7 @@ export function ConnectRow(props: ConnectRowProps): React.ReactNode {
       </p>
       <p className="mt-1 text-[var(--color-fg-2)]">
         {props.reinstall
-          ? `${props.system} refused ${props.employee}'s own app: Connect installs it again through IT's connection, with nothing to paste.`
+          ? `${props.employee}'s own app no longer has access to ${props.system}: Connect installs it again through IT's connection, with nothing to paste.`
           : `Nothing to paste: Connect gives ${props.employee} its access through IT's connection.`}
       </p>
       {props.startedAt !== undefined ? (

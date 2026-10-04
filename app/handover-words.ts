@@ -482,7 +482,7 @@ export function leavesBehindLines(
   return [
     ...left.surfaces.map((surface) =>
       surface.throughConnection
-        ? `${surface.displayName}: you approve it and connect it through IT's connection, with nothing to paste`
+        ? `${surface.displayName}: you approve it, then connect it through IT's connection, with nothing to paste`
         : `${surface.displayName}: you approve and connect it with your own credentials`,
     ),
     ...left.reapprove.map(

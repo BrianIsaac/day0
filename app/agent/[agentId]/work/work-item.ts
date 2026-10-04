@@ -417,7 +417,7 @@ export function pendingVerdicts(
 /**
  * The one-line headline of the gate box. With nothing applied on its own it says nothing reached
  * a surface, unless the run already landed a row the card lists above the box (a phase-one read):
- * then it says only that the held ones are not sent yet.
+ * then it says only that the held ones are not sent until the manager approves.
  *
  * @param verdicts - The run's verdicts.
  * @param landed - How many rows the run already landed.
@@ -432,7 +432,11 @@ export function pendingHeadline(verdicts: readonly ActionVerdict[], landed = 0):
   if (auto > 0) {
     return `${auto} applied automatically · ${awaiting}${refusedNote}`;
   }
-  return `${awaiting}${refusedNote} · ${landed > 0 ? 'not sent yet' : 'nothing has reached a surface'}`;
+  // Beside a landed row the held ones are said as unsent, before any refusal so the clause is
+  // theirs alone.
+  return landed > 0
+    ? `${awaiting} · not sent until you approve${refusedNote}`
+    : `${awaiting}${refusedNote} · nothing has reached a surface`;
 }
 
 /** What the waiting line reads of a row. */

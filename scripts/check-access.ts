@@ -522,7 +522,7 @@ async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<Ac
     // (the round review's m13); a confidential client's is IT's to give (M12 f).
     const cure =
       row.secretCredentialId === undefined
-        ? `./setup.sh access --correct ${row.system} records the one the server's own metadata ` +
+        ? `./setup.sh access --correct ${row.system} records the issuer the server's own metadata ` +
           'names, and ends no card.'
         : 'a client with a secret takes the issuer IT registered it with, so revoke the ' +
           'connection and land it again with that issuer.';

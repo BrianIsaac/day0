@@ -394,7 +394,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(pasted).toContain('a key someone pasted');
     expect(fact(pasted, 'Connection')).toBe(
-      'Connected for your organisation by IT on 1 October, not yet used by this card',
+      'Connected for your organisation by IT on 1 October. This card does not use it yet.',
     );
   });
 
@@ -561,7 +561,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     const waiting = render(listed(probed), {}, { accessRequest: REQUEST });
     expect(chip(waiting)).toBe('Waiting on IT');
     expect(waiting).not.toContain('credential not in the docs');
-    expect(waiting).toContain('Day0 reads nothing from it until its access lands.');
+    expect(waiting).toContain('Maya reads nothing from Linear until IT gives it access.');
     const ready = render(
       listed(probed),
       { organisation: organisation({ system: 'linear', mode: 'shared' }) },
@@ -569,6 +569,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(chip(ready)).toBe('Ready to connect');
     expect(ready).not.toContain('credential not in the docs');
+    expect(ready).toContain('Maya reads nothing from Linear until you connect it.');
     const refused = render(
       listed({ ...probed, credentialId: 'credential-1' as ListedSurface['credentialId'] }),
     );
@@ -828,7 +829,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     // (the second pre-tag's recorded item).
     expect(markup).toContain('Connect Linear again');
     expect(markup).toContain(
-      "Linear refused Maya's own app: Connect installs it again through IT's connection, with nothing to paste.",
+      "Maya's own app no longer has access to Linear: Connect installs it again through IT's connection, with nothing to paste.",
     );
     expect(markup).not.toContain('Nothing to paste: Connect gives');
     // Only an employee's own app installs again: through a shared connection Connect is not it.

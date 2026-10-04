@@ -1564,7 +1564,9 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
     const view = mount(card(held));
     expect(view.container.textContent).toContain('Read REVOPS-5');
     expect(view.container.textContent).not.toContain('nothing has reached a surface');
-    expect(view.container.textContent).toContain('1 action awaiting your approval · not sent yet');
+    expect(view.container.textContent).toContain(
+      '1 action awaiting your approval · not sent until you approve',
+    );
     view.unmount();
   });
 

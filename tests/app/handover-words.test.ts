@@ -353,7 +353,7 @@ describe('the acceptance dialog (plan 7.3)', () => {
         },
       }),
     ).toEqual([
-      "Linear: you approve it and connect it through IT's connection, with nothing to paste",
+      "Linear: you approve it, then connect it through IT's connection, with nothing to paste",
       'Slack: you approve and connect it with your own credentials',
       'autonomous actions: off until you turn them on',
     ]);
