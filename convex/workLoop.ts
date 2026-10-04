@@ -766,15 +766,49 @@ async function recordedStepPending(ctx: MutationCtx, row: Doc<'workItems'>): Pro
 }
 
 /**
+ * Schedule again the apply of each approved set, or each run's auto phase, whose apply a pause
+ * refused at its claim (12-P): no apply attempt on the row and the apply recorded on it
+ * (`stepJobId`) no longer waiting or running, so a set whose apply is still queued is left to it
+ * and never doubled. At most `SWEEP_BATCH` rows of each state.
+ *
+ * @param ctx - Mutation context.
+ * @param agentId - The employee, which may run steps now (`stepMayRun`).
+ * @returns How many applies were scheduled.
+ */
+async function resumeHeldApplies(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
+  let scheduled = 0;
+  for (const [state, phase] of [
+    ['actions-pending', 'approved'],
+    ['executing', 'auto'],
+  ] as const) {
+    let read = 0;
+    for await (const row of ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))) {
+      if (++read > SWEEP_BATCH) break;
+      if (
+        isRevocationTrialRow(row) ||
+        row.pendingRunId === undefined ||
+        row.approvedIndexes === undefined ||
+        row.applyAttemptId !== undefined ||
+        (phase === 'auto' && row.applyPhase !== 'auto') ||
+        (await recordedStepPending(ctx, row))
+      ) {
+        continue;
+      }
+      if (await scheduleApply(ctx, row._id, row.pendingRunId, phase)) scheduled += 1;
+    }
+  }
+  return scheduled;
+}
+
+/**
  * Reschedule every step the loop lost, for every employee: one pass of
  * {@link resumeAgentStepsInTransaction} each.
  *
- * Args:
- *   ctx: Mutation context.
- *   now: The instant to judge claims against.
- *
- * Returns:
- *   How many steps were scheduled.
+ * @param ctx - Mutation context.
+ * @param now - The instant to judge claims against.
+ * @returns How many steps were scheduled.
  */
 export async function resumeStalledStepsInTransaction(
   ctx: MutationCtx,
@@ -805,8 +839,8 @@ export async function resumeStalledStepsInTransaction(
  *
  * A step a pause held (12-P) is ready in the same way, and is queued again
  * here: the claimed row and the approved plan as above, and an approved set,
- * or a run's auto phase, whose apply was refused at its claim, unless the apply
- * recorded on the row is still waiting to run. The resume runs this pass for
+ * or a run's auto phase, whose apply was refused at its claim
+ * ({@link resumeHeldApplies}). The resume runs this pass for
  * its employee in its own transaction; the sweep runs it for every employee,
  * which is how a step the deployment's pause held goes on once the jobs run.
  *
@@ -816,13 +850,10 @@ export async function resumeStalledStepsInTransaction(
  * and no evaluation starts for it. Its stalled runs are still stopped, which
  * ends them for a handover's move sooner than its deadline would.
  *
- * Args:
- *   ctx: Mutation context.
- *   agentId: The employee.
- *   now: The instant to judge claims against.
- *
- * Returns:
- *   How many steps were scheduled.
+ * @param ctx - Mutation context.
+ * @param agentId - The employee.
+ * @param now - The instant to judge claims against.
+ * @returns How many steps were scheduled.
  */
 export async function resumeAgentStepsInTransaction(
   ctx: MutationCtx,
@@ -872,25 +903,7 @@ export async function resumeAgentStepsInTransaction(
     });
     rescheduled += 1;
   }
-  // An approved set, or a run's auto phase, whose apply a pause refused at its claim (12-P).
-  for (const [state, phase] of [
-    ['actions-pending', 'approved'],
-    ['executing', 'auto'],
-  ] as const) {
-    for (const row of await resumable(
-      state,
-      async (row) =>
-        row.pendingRunId !== undefined &&
-        row.approvedIndexes !== undefined &&
-        row.applyAttemptId === undefined &&
-        (phase === 'approved' || row.applyPhase === 'auto') &&
-        !(await recordedStepPending(ctx, row)),
-    )) {
-      if (row.pendingRunId && (await scheduleApply(ctx, row._id, row.pendingRunId, phase))) {
-        rescheduled += 1;
-      }
-    }
-  }
+  if (resumes) rescheduled += await resumeHeldApplies(ctx, agentId);
   for (const row of await ready('executing', async (row) => {
     if (
       !row.executionRunId ||

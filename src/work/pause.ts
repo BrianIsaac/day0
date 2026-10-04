@@ -42,6 +42,7 @@ export function isPauseReasonWithinBound(reason: string): boolean {
 export function isPaused(agent: Readonly<Pick<Doc<'agents'>, 'pausedAt'>>): boolean {
   return agent.pausedAt !== undefined;
 }
+
 /** What the intake sweep records on each of a paused employee's cards: it reads nothing (12-P). */
 export const PAUSED_INTAKE_REASON =
   'the employee is paused; intake reads nothing here until the manager resumes it';
