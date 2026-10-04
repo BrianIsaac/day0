@@ -195,6 +195,32 @@ describe("recording the issuer of an MCP connection landed with none (the round 
     ).rejects.toThrow('Only an MCP connection records an issuer.');
   });
 
+  it("refuses an issuer for a client that holds a secret, whose issuer only IT gives (M12 f; the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await seedIssuerless(harness);
+    await harness.run(async (ctx) => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'organisation',
+        kind: 'value',
+        label: 'auth.acme.test client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.patch(connectionId, { secretCredentialId: secret });
+    });
+
+    await expect(
+      harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'https://auth.acme.test',
+      }),
+    ).rejects.toThrow(
+      'A client with a secret takes the issuer IT registered it with: revoke the connection and land it again with that issuer.',
+    );
+  });
+
   it('refuses an issuer that is not an https address', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedIssuerless(harness);

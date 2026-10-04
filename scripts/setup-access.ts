@@ -486,12 +486,13 @@ type IssuerCorrection =
  * The issuer a correction records on an MCP connection landed with none (the round review's m13):
  * for a public client, the authorisation server the MCP server's own metadata names, as a landing
  * finds it ({@link withIssuer}); a confidential client's is IT's to give, never read from a server,
- * since its secret goes to that server alone (M12 f), so the correction says the cure instead.
+ * since its secret goes to that server alone (M12 f), so the correction says the cure instead; a
+ * server whose metadata cannot be read leaves the issuer unrecorded and says so, and the redirect
+ * and the scopes are corrected all the same.
  *
  * @param system - The connection's system key.
  * @param row - The connection as recorded.
  * @param io - The setup's io, whose vendor fetch reads the metadata.
- * @throws AccessRefused when the server names no authorisation server Day0 can read.
  */
 async function issuerCorrection(
   system: string,
@@ -514,9 +515,14 @@ async function issuerCorrection(
     const target = await discoverAuthorisation(io.vendorFetch ?? fetch, new URL(row.resource));
     return { kind: 'record', issuer: target.server.issuer };
   } catch (err) {
-    throw new AccessRefused(
-      `${row.resource} names no authorisation server Day0 could read (${errorMessage(err)}).`,
-    );
+    // The redirect and the scopes are still corrected; only the issuer waits for the server.
+    return {
+      kind: 'refused',
+      lines: [
+        `${system}: no issuer is recorded, and ${row.resource} names no authorisation server Day0 could read (${errorMessage(err)}).`,
+        'Run the correction again once the server answers. pnpm check:access reports the gap until then.',
+      ],
+    };
   }
 }
 

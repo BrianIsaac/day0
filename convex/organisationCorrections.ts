@@ -46,7 +46,8 @@ function redirectRefusal(redirectUrl: string): string | undefined {
 
 /**
  * Why an issuer cannot be recorded on the connection, or undefined when it can (the round review's
- * m13): only an MCP client records one, only where none is recorded (a recorded issuer is the
+ * m13): only an MCP client records one, only a public one (a client with a secret takes IT's
+ * issuer, never one read from a server), only where none is recorded (a recorded issuer is the
  * server IT registered the client with, and changing it would send the client's secret elsewhere,
  * M12 f), and only an https (or local http) address.
  */
@@ -55,6 +56,9 @@ function issuerRefusal(
   issuer: string,
 ): string | undefined {
   if (connection.kind !== 'mcp-client') return 'Only an MCP connection records an issuer.';
+  if (connection.secretCredentialId !== undefined && connection.issuer === undefined) {
+    return 'A client with a secret takes the issuer IT registered it with: revoke the connection and land it again with that issuer.';
+  }
   if (connection.issuer !== undefined && connection.issuer !== issuer) {
     return 'The connection already records its issuer: revoke it and land it again to change it.';
   }

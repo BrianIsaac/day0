@@ -630,6 +630,38 @@ describe('setup: the access verb', (): void => {
     expect(said).toContain('No secret changed and no card ended.');
   });
 
+  it("still corrects the redirect and scopes when the server names no authorisation server it can read, and says the issuer stays unrecorded (the second pass's code reader)", async (): Promise<void> => {
+    const bed = accessBed({
+      connected: ['mcp:auth.acme.test'],
+      rows: {
+        'mcp:auth.acme.test': {
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          status: 'active',
+          kind: 'mcp-client',
+          mode: 'per-employee',
+          scopes: ['read'],
+          resource: 'https://auth.acme.test/mcp',
+          redirectUrl: 'https://day0.old.acme.test/api/oauth/mcp',
+        },
+      },
+    });
+    expect(await bed.run(['access', '--correct', 'mcp:auth.acme.test'])).toBe(0);
+    const [correction] = bed.deployment.calls.filter(
+      (call) => call.path === 'organisationCorrections:correctFromSetup',
+    );
+    expect(correction?.args).toMatchObject({
+      system: 'mcp:auth.acme.test',
+      redirectUrl: 'https://day0.acme.test/api/oauth/mcp',
+    });
+    expect(correction?.args).not.toHaveProperty('issuer');
+    const said = bed.bed.output.join('\n');
+    expect(said).toContain(
+      'mcp:auth.acme.test: no issuer is recorded, and https://auth.acme.test/mcp names no authorisation server Day0 could read',
+    );
+    expect(said).not.toContain('to see it pass');
+  });
+
   it("never reads a confidential MCP client's issuer from the server on a correction, and says the cure (the round review's m13)", async (): Promise<void> => {
     const bed = accessBed({
       connected: ['mcp:auth.acme.test'],
