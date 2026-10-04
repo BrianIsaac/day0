@@ -84,9 +84,10 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
         ? 'Only your linked documentation is stored now, and it goes with the box ticked.'
         : 'Only your linked documentation is stored now: tick the box below to unlink it.';
     }
+    const verb = holdings.documentation ? 'unlink and delete' : 'delete';
     return alsoUnlinkDocumentation
-      ? `Only ${listed(apart)} are kept now, and they go with the box ticked.`
-      : `Only ${listed(apart)} are kept now: tick the box below to ${apart.length === 1 ? 'delete' : 'remove'} them.`;
+      ? `Only ${listed(apart)} remain, and they go with the box ticked.`
+      : `Only ${listed(apart)} remain: tick the box below to ${verb} them.`;
   }
   if (apart.length === 0) return `Stored for you now: ${listed(held)}.`;
   // One phrase is a single thing (`stays`), two or the credentials are many (`stay`).
@@ -109,18 +110,16 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
 export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boolean): string {
   const goes = heldKinds.filter(({ kind }) => holdings[kind]).map(({ goes: words }) => words);
   const unlinks = alsoUnlinkDocumentation && holdings.documentation;
-  const purges = alsoUnlinkDocumentation && holdings.credentials;
-  const unlinked = [
-    ...(unlinks ? ['unlinks every documentation source'] : []),
-    ...(purges ? ['deletes the credentials you stored'] : []),
+  // The credentials the manager stored go with the box ticked, said as one more thing deleted.
+  const deleted = [
+    ...goes,
+    ...(alsoUnlinkDocumentation && holdings.credentials ? ['the credentials you stored'] : []),
   ];
   const what =
-    goes.length > 0
-      ? unlinked.length === 0
-        ? `This deletes ${listed(goes)}.`
-        : `This deletes ${listed(goes)}${unlinked.length === 1 ? ', and' : ','} ${listed(unlinked)}.`
-      : unlinked.length > 0
-        ? `This ${listed(unlinked)}.`
+    deleted.length > 0
+      ? `This deletes ${listed(deleted)}${unlinks ? ', and unlinks every documentation source' : ''}.`
+      : unlinks
+        ? 'This unlinks every documentation source.'
         : 'There is nothing left to delete.';
   const requests = holdings.handoverWords
     ? ' The requests stay in the other manager’s record.'
@@ -129,8 +128,24 @@ export function deletionWarning(holdings: Holdings, alsoUnlinkDocumentation: boo
     holdings.documentation && !alsoUnlinkDocumentation ? ' Your documentation stays linked.' : '';
   const credentials =
     holdings.credentials && !alsoUnlinkDocumentation ? ' The credentials you stored stay.' : '';
-  if (goes.length === 0 && unlinked.length === 0) return `${what}${documentation}${credentials}`;
+  if (deleted.length === 0 && !unlinks) return `${what}${documentation}${credentials}`;
   return `${what}${requests}${documentation}${credentials} Your sign-in stays. It cannot be undone.`;
+}
+
+/**
+ * The unlink choice's label, naming only what the box takes for this manager: the documentation
+ * sources, the credentials they stored, or both; the documentation while nothing is read yet.
+ *
+ * @param holdings - What the deletion would take, or undefined or null before it is read.
+ */
+export function unlinkLabel(holdings: Holdings | null | undefined): string {
+  const takes = [
+    ...(!holdings?.credentials || holdings.documentation
+      ? ['unlink your documentation sources']
+      : []),
+    ...(holdings?.credentials ? ['delete the credentials you stored'] : []),
+  ];
+  return `Also ${takes.join(' and ')}`;
 }
 
 /**
@@ -192,9 +207,7 @@ export function ResetCard() {
               checked={alsoUnlinkDocumentation}
               onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
             />
-            {holdings?.credentials
-              ? 'Also unlink your documentation sources and delete the credentials you stored'
-              : 'Also unlink your documentation sources'}
+            {unlinkLabel(holdings)}
           </label>
         </div>
         <Button

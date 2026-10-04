@@ -20,7 +20,7 @@ vi.mock('convex/react', () => ({
   useQuery: () => read.holdings,
 }));
 
-import { ResetCard, deletionWarning, heldNow } from '../../../app/home/ResetCard';
+import { ResetCard, deletionWarning, heldNow, unlinkLabel } from '../../../app/home/ResetCard';
 import { focusedName, mount, press, said, unmountAll } from '../../fixtures/dom/press';
 
 const NOTHING: Holdings = {
@@ -151,13 +151,13 @@ describe('ResetCard', (): void => {
 
   it("says the credentials the manager stored, which go only with the box ticked, never that nothing is stored (the wave 11 review's m15)", (): void => {
     expect(heldNow(holding({ credentials: true }), false)).toBe(
-      'Only the credentials you stored are kept now: tick the box below to delete them.',
+      'Only the credentials you stored remain: tick the box below to delete them.',
     );
     expect(heldNow(holding({ credentials: true }), true)).toBe(
-      'Only the credentials you stored are kept now, and they go with the box ticked.',
+      'Only the credentials you stored remain, and they go with the box ticked.',
     );
     expect(heldNow(holding({ documentation: true, credentials: true }), false)).toBe(
-      'Only your linked documentation and the credentials you stored are kept now: tick the box below to remove them.',
+      'Only your linked documentation and the credentials you stored remain: tick the box below to unlink and delete them.',
     );
     expect(heldNow(holding({ employees: true, credentials: true }), false)).toBe(
       'Stored for you now: your employees. The credentials you stored stay unless you tick the box below.',
@@ -173,25 +173,36 @@ describe('ResetCard', (): void => {
     expect(
       deletionWarning(holding({ employees: true, documentation: true, credentials: true }), true),
     ).toBe(
-      'This deletes every employee and its data, unlinks every documentation source and deletes the credentials you stored. Your sign-in stays. It cannot be undone.',
+      'This deletes every employee and its data and the credentials you stored, and unlinks every documentation source. Your sign-in stays. It cannot be undone.',
     );
     expect(deletionWarning(holding({ employees: true, credentials: true }), true)).toBe(
-      'This deletes every employee and its data, and deletes the credentials you stored. Your sign-in stays. It cannot be undone.',
+      'This deletes every employee and its data and the credentials you stored. Your sign-in stays. It cannot be undone.',
     );
     expect(deletionWarning(holding({ employees: true, credentials: true }), false)).toBe(
       'This deletes every employee and its data. The credentials you stored stay. Your sign-in stays. It cannot be undone.',
     );
     read.holdings = holding({ credentials: true });
     const view = mount(<ResetCard />);
-    expect(view.container.textContent).toContain(
-      'Also unlink your documentation sources and delete the credentials you stored',
-    );
+    expect(view.container.textContent).toContain('Also delete the credentials you stored');
     act(() => view.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     expect(
       [...view.container.querySelectorAll('button')].find(
         (control) => control.textContent === 'Delete my data…',
       )?.disabled,
     ).toBe(false);
+  });
+
+  it("labels the unlink choice with only what it takes for this manager (the second pass's design reader)", (): void => {
+    expect(unlinkLabel(undefined)).toBe('Also unlink your documentation sources');
+    expect(unlinkLabel(holding({ documentation: true }))).toBe(
+      'Also unlink your documentation sources',
+    );
+    expect(unlinkLabel(holding({ credentials: true }))).toBe(
+      'Also delete the credentials you stored',
+    );
+    expect(unlinkLabel(holding({ documentation: true, credentials: true }))).toBe(
+      'Also unlink your documentation sources and delete the credentials you stored',
+    );
   });
 
   it('ties the button to the line that says what it would take', (): void => {
