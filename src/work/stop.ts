@@ -28,8 +28,8 @@ import { summariseAction } from '../surfaces/summary';
 import type { LandedNoteRow } from './manager-notes';
 import type { MockAction, ReplyTarget } from './types';
 import {
+  isOutcomeUnknownReason,
   ledgerPhases,
-  OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   type ReconciliationEntry,
 } from './reconciliation';
@@ -296,8 +296,7 @@ export function landedNoteRows(
 ): LandedNoteRow[] {
   return ledgerPhases(output).flatMap(({ actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {
-      const outcomeUnknown =
-        entry.outcomeUnknown === true || entry.reason === OUTCOME_UNKNOWN_REASON;
+      const outcomeUnknown = entry.outcomeUnknown === true || isOutcomeUnknownReason(entry.reason);
       if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
       const action = actions[index];
       const parsed = action ? parseSurfaceAction(action) : undefined;

@@ -108,7 +108,11 @@ import {
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
-import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../src/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  outcomeUnknownReasonFor,
+  type ApplyEnd,
+} from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
   digestDue,
@@ -6796,10 +6800,13 @@ export interface InterruptedApplyLedger {
  *
  * @param row - The work item, `executing` with an apply claimed.
  * @param pendingRunId - The run the approval belongs to.
+ * @param end - What ended the apply: an interruption the recovery found, or a stop; the unreported
+ *   rows' reason says which (`outcomeUnknownReasonFor`).
  */
 export function interruptedApplyLedger(
   row: Doc<'workItems'>,
   pendingRunId: Id<'events'>,
+  end: ApplyEnd,
 ): InterruptedApplyLedger {
   const output = (row.output ?? {}) as {
     actions?: Array<{ tool?: unknown }>;
@@ -6838,7 +6845,7 @@ export function interruptedApplyLedger(
       tool: typeof action.tool === 'string' ? action.tool : 'unknown',
       ok: !approved.has(index),
       ...(approved.has(index)
-        ? { reason: OUTCOME_UNKNOWN_REASON }
+        ? { reason: outcomeUnknownReasonFor(end) }
         : { held: true, reason: heldReasonFor(index) }),
       idempotencyKey: actionIdempotencyKey({
         workItemId: row._id,
@@ -6893,7 +6900,7 @@ export const recoverInterruptedApply = internalMutation({
     if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
-    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId);
+    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId, 'interrupted');
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',

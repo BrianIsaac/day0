@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   answeredEntries,
+  isOutcomeUnknownReason,
   landedRowCount,
+  OUTCOME_UNKNOWN_AFTER_STOP_REASON,
+  OUTCOME_UNKNOWN_REASON,
+  providerReconciliationEntries,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 
@@ -69,5 +73,33 @@ describe('the reconciliation answered per entry (U17 D1)', () => {
         ],
       ),
     ).toEqual({ ok: false, unanswered: [unknown] });
+  });
+});
+
+describe('an outcome unknown, whichever ended the apply', (): void => {
+  it('reads an apply the manager stopped as unknown, as it reads an interrupted one', (): void => {
+    for (const reason of [OUTCOME_UNKNOWN_REASON, OUTCOME_UNKNOWN_AFTER_STOP_REASON]) {
+      expect(isOutcomeUnknownReason(reason)).toBe(true);
+      expect(
+        providerReconciliationEntries({
+          actions: [{ tool: 'http.request', args: {} }],
+          applied: [{ tool: 'http.request', ok: false, reason }],
+        }),
+      ).toEqual([
+        {
+          phase: 'single',
+          actionIndex: 0,
+          tool: 'http.request',
+          outcome: 'outcome-unknown',
+          reason,
+        },
+      ]);
+    }
+    expect(isOutcomeUnknownReason('HTTP 500 · {"ok":false}')).toBe(false);
+  });
+
+  it('says a stopped apply was stopped, never that it was interrupted', (): void => {
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).not.toContain('interrupted');
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain('verify provider before retry');
   });
 });

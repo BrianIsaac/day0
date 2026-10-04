@@ -7,6 +7,35 @@ export const INTERRUPTED_APPLY_REASON =
 /** The ledger reason for an action whose provider outcome the interrupted apply never learnt. */
 export const OUTCOME_UNKNOWN_REASON =
   'outcome unknown after interrupted apply - verify provider before retry';
+/**
+ * The ledger reason for an action whose provider outcome is unknown because its apply was stopped
+ * while it was sending (the manager's Stop, or a skill withdrawn under a run; wave 12, 12-W): the
+ * same check owed, without saying an interruption ended it.
+ */
+export const OUTCOME_UNKNOWN_AFTER_STOP_REASON =
+  'outcome unknown after the apply was stopped - verify provider before retry';
+
+/** Why an apply's unreported rows are recorded as of unknown outcome: it was interrupted, or stopped. */
+export type ApplyEnd = 'interrupted' | 'stopped';
+
+/**
+ * The ledger reason for an approved row an ended apply never reported.
+ *
+ * @param end - What ended the apply.
+ */
+export function outcomeUnknownReasonFor(end: ApplyEnd): string {
+  return end === 'stopped' ? OUTCOME_UNKNOWN_AFTER_STOP_REASON : OUTCOME_UNKNOWN_REASON;
+}
+
+/**
+ * Whether a ledger reason says the row's provider outcome is unknown, whichever ended its apply.
+ * A row an adapter marked itself carries `outcomeUnknown` instead; the readers check both.
+ *
+ * @param reason - The ledger row's reason, of any shape.
+ */
+export function isOutcomeUnknownReason(reason: unknown): boolean {
+  return reason === OUTCOME_UNKNOWN_REASON || reason === OUTCOME_UNKNOWN_AFTER_STOP_REASON;
+}
 
 /** Which phase of a run a ledger entry belongs to. */
 export type ReconciliationPhase = 'single' | 'prerequisite' | 'closing';
@@ -143,8 +172,7 @@ export function providerReconciliationEntries(output: unknown): ReconciliationEn
   return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, actionIndex): ReconciliationEntry[] => {
       const tool = optionalString(entry.tool) ?? actions[actionIndex]?.tool ?? 'unknown';
-      const outcomeUnknown =
-        entry.outcomeUnknown === true || optionalString(entry.reason) === OUTCOME_UNKNOWN_REASON;
+      const outcomeUnknown = entry.outcomeUnknown === true || isOutcomeUnknownReason(entry.reason);
       if (outcomeUnknown) {
         return [
           {

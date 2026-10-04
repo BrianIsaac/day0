@@ -666,7 +666,7 @@ export async function stopRunsInTransaction(
 ): Promise<void> {
   for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
-      const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
+      const { output, applied } = interruptedApplyLedger(row, row.pendingRunId, 'stopped');
       await failInTransaction(ctx, row, {
         reason,
         output: { ...output, applied },

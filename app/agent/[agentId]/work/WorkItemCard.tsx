@@ -20,7 +20,7 @@ import {
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
-  OUTCOME_UNKNOWN_REASON,
+  isOutcomeUnknownReason,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
@@ -238,8 +238,7 @@ export function WorkItemCard({
   // account for, may have landed: it is not listed as never reaching anything.
   const unknown = unlanded.filter(
     (row) =>
-      !refused.includes(row) &&
-      (row.outcomeUnknown === true || row.reason === OUTCOME_UNKNOWN_REASON),
+      !refused.includes(row) && (row.outcomeUnknown === true || isOutcomeUnknownReason(row.reason)),
   );
   const failed = unlanded.filter((row) => !refused.includes(row) && !unknown.includes(row));
   const landedAutonomously = landed.filter((row) => row.authority === 'autonomous').length;
