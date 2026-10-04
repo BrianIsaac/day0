@@ -41,6 +41,11 @@ export interface EntryAnswer {
   readonly answer?: ReconciliationAnswer;
 }
 
+/** An answer the manager gave for one entry on the card, which always carries the answer. */
+export interface GivenAnswer extends EntryAnswer {
+  readonly answer: ReconciliationAnswer;
+}
+
 /** The ledger reason on a write the manager confirmed landed after its outcome was unknown. */
 export const CONFIRMED_LANDED_REASON =
   'confirmed landed by the manager after its outcome was unknown';

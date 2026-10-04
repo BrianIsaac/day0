@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { HELD_NOT_APPROVED, isGateRefusal, isSurfaceTool } from '@/surfaces/policy';
 import { summariseAction } from '@/surfaces/summary';
@@ -13,10 +13,14 @@ import {
 import { rejectionOf, workingFrom } from '@/work/item-display';
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
+  type GivenAnswer,
   OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
+import { failedRowMove } from '@/work/needs-manager';
+import { isStopped } from '@/work/stop';
+import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { usePreviousValue } from '../../../components/previous-value';
@@ -26,7 +30,7 @@ import type { KeptCorrection } from '../corrections-panel';
 import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
-import { ItemSection, Lead, Note } from './ItemParts';
+import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
@@ -34,6 +38,7 @@ import { type ItemPlan, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
+import { StopDialog, stopWhy } from './StopDialog';
 import { TicketNowLine } from './TicketNowLine';
 import {
   type ItemVerdict,
@@ -51,6 +56,7 @@ import {
   pendingVerdicts,
   phasedLedger,
   type RunOutput,
+  unfinishedInOwnWords,
   waitingLine,
 } from './work-item';
 
@@ -156,6 +162,8 @@ export function WorkItemCard({
   onRejectActions,
   onResendDecision,
   onDismiss,
+  onStop,
+  onCloseWithoutRetry,
   servedByLoop = false,
   refusedSkill,
 }: {
@@ -173,12 +181,17 @@ export function WorkItemCard({
   onApprovePlan: (decision: PlanApproval) => Promise<unknown> | void;
   onCancelPlan: (reason: string) => Promise<unknown> | void;
   onRetryFailed: (feedback?: string) => Promise<unknown> | void;
-  onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
+  /** Record the manager's answer for each entry the provider was checked for (U17 D1). */
+  onReconcileFailed: (answers: readonly GivenAnswer[]) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
   onResendDecision: () => Promise<unknown>;
   /** Dismiss a failed item (N7); a card offers no Dismiss without it. */
   onDismiss?: () => Promise<unknown>;
+  /** Stop a run under way with the manager's reason (wave 12); a working card offers no Stop without it. */
+  onStop?: (reason: string) => Promise<unknown>;
+  /** Close a failed item with nothing to reconcile without a retry (E-8); none offered without it. */
+  onCloseWithoutRetry?: () => Promise<unknown>;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
   servedByLoop?: boolean;
   /** The skill the item waits on, when its draft failed Day0's check (D3). */
@@ -192,6 +205,7 @@ export function WorkItemCard({
   // to the control when it stayed, or to the card rather than the page.
   const change = useChange(cardRef);
   const deciding = change.busy;
+  const [stopping, setStopping] = useState(false);
   const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
     change.run(call, { done, refused });
   const verdict = item.verdict as ItemVerdict | undefined;
@@ -287,6 +301,28 @@ export function WorkItemCard({
       </ItemSection>
     ) : null;
   const leadsWithResult = item.state === 'completed' || rejection !== undefined;
+  // What the run's own words say it did not do, said beside what landed (the 4 October demo).
+  const unfinished = item.state === 'completed' ? unfinishedInOwnWords(output) : [];
+  const unfinishedSection =
+    unfinished.length > 0 ? (
+      <ItemSection title={`Not done, in ${employeeName}’s own words`}>
+        <ul className="grid gap-1.5 text-[15px]">
+          {unfinished.map((statement) => (
+            <li key={statement}>
+              <Quote>{statement}</Quote>
+            </li>
+          ))}
+        </ul>
+      </ItemSection>
+    ) : null;
+  // A stopped item that left nothing to reconcile, and the interrupted apply that cannot say what
+  // it sent, are closed without a retry rather than dismissed (E-8, a product call, flagged); a
+  // rejected or failed item keeps Dismiss.
+  const closesWithoutRetry =
+    item.state === 'failed' &&
+    onCloseWithoutRetry !== undefined &&
+    providerReconciliationEntries(output).length === 0 &&
+    (isStopped(item.skipReason) || failedRowMove(item) === 'close-without-retry');
   // Writes held for the manager: the draft is read before the controls that decide them.
   const holding =
     item.state === 'actions-pending' && output !== undefined && item.approvedIndexes === undefined;
@@ -352,6 +388,7 @@ export function WorkItemCard({
         />
       ) : null}
       {leadsWithResult ? landedSection : null}
+      {unfinishedSection}
       {item.state === 'completed' ? ticketNow : null}
       {from ? (
         <WorkingFromNote
@@ -366,6 +403,19 @@ export function WorkItemCard({
       ) : null}
       {WORKING_STATES.has(item.state) ? (
         <ProgressSection item={item} autonomous={autonomousActions} gate={gate} />
+      ) : null}
+      {stopping && onStop ? (
+        <StopDialog
+          title={item.title}
+          employeeName={employeeName}
+          applying={item.applyAttemptId !== undefined}
+          onStop={onStop}
+          onClose={() => setStopping(false)}
+          onDone={(words) => {
+            setStopping(false);
+            decide(() => undefined, words, words);
+          }}
+        />
       ) : null}
       {plan ? (
         <PlanSection item={item} plan={plan} surfaces={surfaces} corrections={corrections} />
@@ -483,33 +533,55 @@ export function WorkItemCard({
               'The item was not sent back.',
             )
           }
-          onReconcile={() =>
+          onReconcile={(answers) =>
             decide(
-              () => onReconcileFailed(true),
+              () => onReconcileFailed(answers),
               'Reconciliation recorded: Retry is enabled.',
               'Could not record reconciliation.',
             )
           }
-          {...(item.state === 'failed' &&
-          onDismiss &&
-          // A write that may have landed keeps the item in the inbox until it is reconciled.
-          !(
-            retryRequiresProviderReconciliation(output, item.skipReason) &&
-            !item.providerReconciliation
-          )
+          {...(closesWithoutRetry
             ? {
                 dismiss: {
+                  kind: 'close' as const,
                   ...(item.dismissedAt !== undefined ? { at: item.dismissedAt } : {}),
                   onDismiss: () =>
                     decide(
-                      onDismiss,
-                      `Dismissed: ${item.title} is out of your inbox and stays in the record.`,
-                      'The item was not dismissed.',
+                      onCloseWithoutRetry,
+                      `Closed: ${item.title} is out of your inbox and stays in the record.`,
+                      'The item was not closed.',
                     ),
                 },
               }
-            : {})}
+            : item.state === 'failed' &&
+                onDismiss &&
+                // A write that may have landed keeps the item in the inbox until it is reconciled.
+                !(
+                  retryRequiresProviderReconciliation(output, item.skipReason) &&
+                  !item.providerReconciliation
+                )
+              ? {
+                  dismiss: {
+                    kind: 'dismiss' as const,
+                    ...(item.dismissedAt !== undefined ? { at: item.dismissedAt } : {}),
+                    onDismiss: () =>
+                      decide(
+                        onDismiss,
+                        `Dismissed: ${item.title} is out of your inbox and stays in the record.`,
+                        'The item was not dismissed.',
+                      ),
+                  },
+                }
+              : {})}
         />
+      ) : null}
+      {/* A run under way is stopped from the card's foot, where every card keeps its controls. */}
+      {WORKING_STATES.has(item.state) && onStop ? (
+        <ItemFoot why={stopWhy(employeeName)}>
+          <Button variant="danger" disabled={deciding} onClick={() => setStopping(true)}>
+            Stop
+          </Button>
+        </ItemFoot>
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">

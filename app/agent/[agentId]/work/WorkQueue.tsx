@@ -277,6 +277,8 @@ export function WorkQueue({
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
   const dismissFailed = useMutation(api.workRuns.dismissFailed);
+  const stopRun = useMutation(api.workRuns.stopRun);
+  const closeWithoutRetry = useMutation(api.workRuns.closeWithoutRetry);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
   const [filter, setFilter] = useState<QueueFilter>('all');
@@ -408,8 +410,12 @@ export function WorkQueue({
                   onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
                   onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
                   onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
-                  onReconcileFailed={(confirmed) =>
-                    reconcileFailed({ workItemId: item._id, confirmed })
+                  onReconcileFailed={(answers) =>
+                    reconcileFailed({
+                      workItemId: item._id,
+                      confirmed: true,
+                      answers: [...answers],
+                    })
                   }
                   onApproveActions={(approvedIndexes) =>
                     item.pendingRunId
@@ -435,6 +441,10 @@ export function WorkQueue({
                   }
                   onResendDecision={() => resendDecision({ workItemId: item._id })}
                   onDismiss={() => dismissFailed({ workItemId: item._id })}
+                  onStop={(reason) =>
+                    stopRun({ workItemId: item._id, ...(reason !== '' ? { reason } : {}) })
+                  }
+                  onCloseWithoutRetry={() => closeWithoutRetry({ workItemId: item._id })}
                   employeeName={employeeName}
                   servedByLoop={surfaceMode === 'real'}
                   {...refusedSkillOf(item, refusedSkills)}

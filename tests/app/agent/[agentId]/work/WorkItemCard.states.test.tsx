@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { openQuestionStopReason } from '../../../../../src/work/obligations';
+import { INTERRUPTED_APPLY_REASON } from '../../../../../src/work/reconciliation';
 import { EVALUATION_ATTEMPTS_SPENT } from '../../../../../src/work/queue-order';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { button, focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
+import { axeViolations } from '../../../../fixtures/dom/axe';
 import {
   DRAWN,
   EMPLOYEE,
@@ -66,6 +68,8 @@ function card(
         onRejectActions={record('rejectActions')}
         onResendDecision={record('resend')}
         onDismiss={record('dismiss')}
+        onStop={record('stop')}
+        onCloseWithoutRetry={record('closeWithoutRetry')}
         servedByLoop={options.loop ?? true}
       />
     </AgentZoneContext>,
@@ -200,8 +204,56 @@ describe('working (work-working.html)', (): void => {
     expect(view.text()).toContain('Answered at approval');
     expect(view.text()).toContain('Ad-hoc asks and anything about the on-call rota.');
     expect(view.text()).toContain("Your answers to the charter's questions were written into it.");
-    // No Stop: nothing on the server can stop a run under way (recorded for the work-loop unit).
-    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    // Re-pinned in wave 12 (12-W): the server can stop a run under way, so Stop is the one
+    // control a working card offers.
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Stop',
+    ]);
+  });
+});
+
+describe('Stop on a working card (wave 12)', (): void => {
+  it('asks first, keeps working by default, and stops with the reason given', async (): Promise<void> => {
+    const view = card(DRAWN.working);
+    expect(view.text()).toContain(
+      'Stop ends this run: Mira sends nothing more, and the item waits for you with Retry.',
+    );
+    await press(view.container, 'Stop');
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    expect(dialog?.querySelector('h2')?.textContent).toBe(
+      'Stop work on “Draft response for new tier-two RevOps ask”?',
+    );
+    expect(dialog?.textContent).toContain(
+      'Mira stops now and sends nothing more. Nothing already sent is undone; the item waits for you as stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep working');
+    typeInto(field(document.body, 'Reason (optional)'), 'Wrong ticket.');
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([['stop', 'Wrong ticket.']]);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([
+      'Stopped: Draft response for new tier-two RevOps ask. It waits for you with Retry.',
+    ]);
+  });
+
+  it('closes with nothing stopped when Keep working is pressed', async (): Promise<void> => {
+    const view = card(DRAWN.working);
+    await press(view.container, 'Stop');
+    await press(document.body, 'Keep working');
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(view.calls).toEqual([]);
+  });
+
+  it('says, while the approved writes are being sent, that one may still land and is listed to check', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.working,
+      applyAttemptId: 'apply-1',
+      pendingRunId: 'run-1',
+    } as unknown as Doc<'workItems'>);
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira is sending the writes you approved. Stopping sends nothing more; a write it was sending when you stop may still land, so the item lists each one for you to check before any retry.',
+    );
   });
 });
 
@@ -315,16 +367,33 @@ describe('landed (work-landed.html)', (): void => {
       field(view.container, 'Note for the retry: say what to change or answer what Mira asked'),
       'Add the escalation note.',
     );
-    // The writes landed, so a send-back first asks for the provider check (U17 D1), one tick each.
+    // The writes landed, so a send-back first asks for the provider check (U17 D1), one answer
+    // each: it landed, or it was not sent (re-pinned in wave 12 from one tick each).
     expect(view.text()).toContain('Provider reconciliation required');
     expect(send()?.disabled).toBe(true);
-    const ticks = [...view.container.querySelectorAll('label input[type="checkbox"]')];
-    expect(ticks).toHaveLength(3);
+    const landedAnswers = [...view.container.querySelectorAll('input[type="radio"]')].filter(
+      (radio) => radio.closest('label')?.textContent === 'It landed',
+    );
+    const notSentAnswers = [...view.container.querySelectorAll('input[type="radio"]')].filter(
+      (radio) => radio.closest('label')?.textContent === 'It was not sent',
+    );
+    expect(landedAnswers).toHaveLength(3);
+    expect(notSentAnswers).toHaveLength(3);
     expect(() => button(view.container, 'Confirm reconciliation')).toThrow();
-    for (const tick of ticks)
-      await act(async (): Promise<void> => (tick as HTMLInputElement).click());
+    await act(async (): Promise<void> => (landedAnswers[0] as HTMLInputElement).click());
+    await act(async (): Promise<void> => (notSentAnswers[1] as HTMLInputElement).click());
+    await act(async (): Promise<void> => (landedAnswers[2] as HTMLInputElement).click());
     await press(view.container, 'Confirm reconciliation');
-    expect(view.calls).toEqual([['reconcile', true]]);
+    expect(view.calls).toEqual([
+      [
+        'reconcile',
+        [
+          { phase: 'single', actionIndex: 0, answer: 'landed' },
+          { phase: 'single', actionIndex: 1, answer: 'not-sent' },
+          { phase: 'single', actionIndex: 2, answer: 'landed' },
+        ],
+      ],
+    ]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
     view.unmount();
 
@@ -424,6 +493,89 @@ describe('stopped with a write that may have landed', (): void => {
     } as unknown as Doc<'workItems'>);
     expect(view.text()).toContain('Provider reconciliation required');
     expect(view.container.textContent).not.toContain('Dismiss');
+  });
+
+  it('asks it landed or not sent in a named group per entry, with no axe violation and 44 px answers', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: stopped by the manager',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY],
+        applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' }],
+      },
+    } as unknown as Doc<'workItems'>);
+    const group = view.container.querySelector('fieldset');
+    expect(group?.querySelector('legend')?.textContent).toContain('outcome unknown');
+    for (const radio of group?.querySelectorAll('input[type="radio"]') ?? []) {
+      expect(radio.closest('label')?.className).toMatch(/(^|\s)min-h-11(\s|$)/);
+    }
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+  });
+});
+
+describe('Close without retry (E-8)', (): void => {
+  const stoppedByYou = {
+    ...DRAWN.rejected,
+    skipReason: 'stopped: stopped by the manager: Wrong ticket.',
+    managerFeedback: undefined,
+    output: { draft: 'd', notes: '', actions: [THREAD_REPLY] },
+  } as unknown as Doc<'workItems'>;
+
+  it('closes a stopped item that left nothing to reconcile, in place of Dismiss, Retry kept', async (): Promise<void> => {
+    const view = card(stoppedByYou);
+    expect(() => button(view.container, 'Dismiss')).toThrow();
+    expect(button(view.container, 'Retry').disabled).toBe(false);
+    expect(view.text()).toContain(
+      'Close without retry takes it out of your inbox and keeps it in the record; Retry stays here.',
+    );
+    await press(view.container, 'Close without retry');
+    expect(view.calls).toEqual([['closeWithoutRetry', undefined]]);
+    expect(said(view.container)).toEqual([
+      'Closed: Draft response for new tier-two RevOps ask is out of your inbox and stays in the record.',
+    ]);
+  });
+
+  it('is the one way out of an interrupted apply that names nothing to check', (): void => {
+    const view = card({
+      ...stoppedByYou,
+      skipReason: INTERRUPTED_APPLY_REASON,
+      output: { draft: 'd', notes: '', actions: [THREAD_REPLY], applied: [] },
+    } as unknown as Doc<'workItems'>);
+    const named = (name: string): HTMLButtonElement | undefined =>
+      [...view.container.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === name,
+      );
+    expect(named('Retry')?.disabled).toBe(true);
+    expect(named('Close without retry')?.disabled).toBe(false);
+  });
+
+  it('keeps Dismiss on an item you rejected', (): void => {
+    const view = card(DRAWN.rejected);
+    expect(button(view.container, 'Dismiss')).toBeTruthy();
+    expect(() => button(view.container, 'Close without retry')).toThrow();
+  });
+});
+
+describe('what a finished run says it did not do (the 4 October demo)', (): void => {
+  it('says on the card, in the run’s own words, what was not done', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...(DRAWN.landed.output as object),
+        draft:
+          "I could not reconcile the three October closed-won deals: I can't find them in the tracker.",
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Not done, in Mira’s own words');
+    expect(view.text()).toContain('I could not reconcile the three October closed-won deals');
+    expect(view.text()).toContain('I can’t find them in the tracker.'.replace('’', "'"));
+  });
+
+  it('says nothing of the kind for a run whose words say the work was done', (): void => {
+    expect(card(DRAWN.landed).text()).not.toContain('Not done, in');
   });
 });
 

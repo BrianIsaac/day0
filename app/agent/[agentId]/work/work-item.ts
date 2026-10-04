@@ -14,6 +14,7 @@ import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reco
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
+import { notDoneStatements, runOwnWords } from '@/work/not-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -64,7 +65,11 @@ export interface RunOutput {
   notes: string;
   actions?: MockAction[];
   applied?: LedgerRow[];
-  initial?: { applied?: LedgerRow[]; withheldActions?: WithheldActionRow[] };
+  initial?: {
+    actions?: MockAction[];
+    applied?: LedgerRow[];
+    withheldActions?: WithheldActionRow[];
+  };
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
@@ -491,4 +496,19 @@ export function waitingLine(item: WaitingItem, zone: string | undefined): string
     return `Evaluation started ${clockTime(item.evaluationClaimedAt, zone)}${attempt}; if it does not answer, the item waits for the next free slot.`;
   }
   return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
+}
+
+/**
+ * What a finished run's own words say it did not do (the 4 October live demo): the clauses of its
+ * draft and of every comment and message it wrote, in both phases, that say the work was not done.
+ *
+ * @param output - The run's output.
+ * @returns The clauses, in order; empty when the words say nothing of the kind.
+ */
+export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
+  if (!output) return [];
+  const initial = output.initial?.actions ?? [];
+  return notDoneStatements(
+    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
+  );
 }

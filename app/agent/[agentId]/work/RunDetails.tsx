@@ -16,8 +16,8 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
-import type { ReconciliationEntry } from '@/work/reconciliation';
-import { type ReactNode, useState } from 'react';
+import type { GivenAnswer, ReconciliationAnswer, ReconciliationEntry } from '@/work/reconciliation';
+import { type ReactNode, useId, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
@@ -566,15 +566,16 @@ function entryKey(entry: ReconciliationEntry): string {
 }
 
 /**
- * The checklist a run shows before a retry when a write landed or may have (U17 D1): each entry
- * the provider must be checked for, what the ledger recorded of it, and a tick per entry once the
- * manager has looked; the confirmation is recorded once, for all of them, and only then does
- * Retry open. A retry never sends a write the manager has not accounted for.
+ * The checklist a run shows before a retry when a write landed or may have (U17 D1, answered per
+ * entry since wave 12): each entry the provider must be checked for, what the ledger recorded of
+ * it, and the manager's answer for it, that it landed or that it was not sent. Every entry is
+ * answered before the confirmation is recorded, and only then does Retry open; a retry never sends
+ * again a write answered landed, and sends afresh one answered not sent.
  *
  * @param entries - The entries to check, from the run's ledger.
- * @param reconciliation - Who confirmed the check and when, once they did.
+ * @param reconciliation - Who confirmed the check and when, with the answers, once they did.
  * @param busy - A decision on the card is in flight; the confirmation waits for it.
- * @param onConfirm - Record the manager's check; the card says what it came to.
+ * @param onConfirm - Record the answers; the card says what it came to.
  */
 export function ProviderReconciliationControl({
   entries,
@@ -585,18 +586,16 @@ export function ProviderReconciliationControl({
   entries: readonly ReconciliationEntry[];
   reconciliation?: { actor: string; confirmedAt: number };
   busy?: boolean;
-  onConfirm: () => void;
+  onConfirm: (answers: readonly GivenAnswer[]) => void;
 }) {
   const zone = useAgentZone();
-  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
-  const all = entries.length > 0 && entries.every((entry) => checked.has(entryKey(entry)));
-  const toggle = (key: string, on: boolean): void =>
-    setChecked((current) => {
-      const next = new Set(current);
-      if (on) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+  const group = useId();
+  const [answers, setAnswers] = useState<ReadonlyMap<string, ReconciliationAnswer>>(
+    () => new Map(),
+  );
+  const all = entries.length > 0 && entries.every((entry) => answers.has(entryKey(entry)));
+  const answer = (key: string, value: ReconciliationAnswer): void =>
+    setAnswers((current) => new Map(current).set(key, value));
   return (
     <div className="grid gap-2 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-3.5 py-3">
       <p className="text-[15px] font-medium text-[var(--color-warn)]">
@@ -604,13 +603,13 @@ export function ProviderReconciliationControl({
       </p>
       {reconciliation ? null : (
         <p className="text-[13px] text-[var(--color-fg-2)]">
-          Check each entry on the provider before a retry, so nothing that landed is sent twice.
-          Tick each once you have looked; the check is recorded for all of them.
+          Check each entry on the provider before a retry. Say for each whether it landed or was not
+          sent: a retry never sends again a write you say landed.
         </p>
       )}
       {entries.length > 0 ? (
-        <ul className="grid gap-1.5 text-sm text-[var(--color-fg)]">
-          {entries.map((entry) => {
+        <ul className="grid gap-2 text-sm text-[var(--color-fg)]">
+          {entries.map((entry, index) => {
             const key = entryKey(entry);
             const words = (
               <span className="grid min-w-0 gap-0.5 break-words">
@@ -630,26 +629,45 @@ export function ProviderReconciliationControl({
                     idempotency key {entry.idempotencyKey}
                   </span>
                 ) : null}
+                {reconciliation && entry.answer ? (
+                  <span className="text-[13px] text-[var(--color-fg-2)]">
+                    {entry.answer === 'landed'
+                      ? 'You said it landed.'
+                      : 'You said it was not sent.'}
+                  </span>
+                ) : null}
               </span>
             );
+            if (reconciliation) return <li key={key}>{words}</li>;
+            const name = `${group}-${index}`;
             return (
               <li key={key}>
-                {reconciliation ? (
-                  words
-                ) : (
-                  <label className="grid min-h-11 cursor-pointer grid-cols-[44px_minmax(0,1fr)] items-start">
-                    <span className="flex min-h-11 items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={checked.has(key)}
-                        disabled={busy}
-                        onChange={(event) => toggle(key, event.target.checked)}
-                        className="size-[18px] accent-[var(--color-accent)]"
-                      />
-                    </span>
-                    <span className="py-2.5">{words}</span>
-                  </label>
-                )}
+                <fieldset className="grid min-w-0 gap-1.5" disabled={busy}>
+                  <legend className="min-w-0">{words}</legend>
+                  <span className="flex flex-wrap gap-x-4">
+                    {(
+                      [
+                        ['landed', 'It landed'],
+                        ['not-sent', 'It was not sent'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <label
+                        key={value}
+                        className="inline-flex min-h-11 cursor-pointer items-center gap-2.5"
+                      >
+                        <input
+                          type="radio"
+                          name={name}
+                          value={value}
+                          checked={answers.get(key) === value}
+                          onChange={() => answer(key, value)}
+                          className="size-[18px] accent-[var(--color-accent)]"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </span>
+                </fieldset>
               </li>
             );
           })}
@@ -672,7 +690,19 @@ export function ProviderReconciliationControl({
         </p>
       ) : (
         <div>
-          <Button size="small" disabled={!all || busy || entries.length === 0} onClick={onConfirm}>
+          <Button
+            size="small"
+            disabled={!all || busy || entries.length === 0}
+            onClick={() =>
+              onConfirm(
+                entries.map((entry) => ({
+                  phase: entry.phase,
+                  actionIndex: entry.actionIndex,
+                  answer: answers.get(entryKey(entry)) ?? 'landed',
+                })),
+              )
+            }
+          >
             Confirm reconciliation
           </Button>
         </div>
