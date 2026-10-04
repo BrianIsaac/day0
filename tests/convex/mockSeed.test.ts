@@ -41,7 +41,7 @@ describe('the seeded mock office', (): void => {
       tickets: await ctx.db.query('mockTickets').collect(),
     }));
     expect(seeded.docs.length).toBeGreaterThan(0);
-    const dashed = strings(seeded).filter(([, text]) => /[–—]/.test(text));
+    const dashed = strings(seeded).filter(([, text]) => /[\u2013\u2014]/.test(text));
     expect(dashed.map(([path, text]) => `${path}: ${text.slice(0, 80)}`)).toEqual([]);
   });
 });
