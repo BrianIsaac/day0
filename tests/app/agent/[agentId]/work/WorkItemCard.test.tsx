@@ -898,9 +898,18 @@ describe('the card agrees with the server (P6-6)', (): void => {
     const reason = failedItemReason(stopped);
     expect(reason).not.toContain('nothing landed');
     expect(reason).toContain('confirm the provider below before Retry');
-    expect(failedItemReason({ ...stopped, providerReconciliation: { confirmedAt: 1 } })).toContain(
-      'a write landed before it stopped',
-    );
+    const entry = {
+      phase: 'single' as const,
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'landed' as const,
+    };
+    expect(
+      failedItemReason({
+        ...stopped,
+        providerReconciliation: { entries: [{ ...entry, answer: 'landed' as const }] },
+      }),
+    ).toContain('a write landed before it stopped');
     expect(failedItemReason({ skipReason: 'stopped: the ticket was already closed' })).toContain(
       'stopped, nothing landed and nothing to decide',
     );
@@ -1364,6 +1373,59 @@ describe('every decision on a work item card is said in its live region and give
       ['reconcile', [{ phase: 'single', actionIndex: 0, answer: 'landed' }]],
     ]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
+    view.unmount();
+  });
+
+  it('asks again, entry by entry, a run confirmed as a whole before the per-entry answers (W12-R3)', async (): Promise<void> => {
+    const view = card({
+      state: 'failed',
+      plan,
+      skipReason: 'a write may have landed',
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            outcomeUnknown: true,
+            reason: 'socket closed after the request',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+      // As v0.15.0 stored it: confirmed whole, no answer on the entry.
+      providerReconciliation: {
+        actor: 'owner',
+        confirmedAt: 1,
+        entries: [
+          {
+            phase: 'single',
+            actionIndex: 0,
+            tool: 'http.request',
+            outcome: 'outcome-unknown',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+    });
+    expect(view.container.textContent).toContain('Provider reconciliation required');
+    expect(view.container.textContent).toContain(
+      'You confirmed this run as a whole before Day0 asked about each write.',
+    );
+    const retry = [...view.container.querySelectorAll('button')].find(
+      (control) => control.textContent === 'Retry',
+    );
+    expect(retry?.disabled).toBe(true);
+    const notSent = [
+      ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ].find((radio) => radio.closest('label')?.textContent === 'It was not sent');
+    act((): void => notSent?.click());
+    await press(view.container, 'Confirm reconciliation');
+    expect(view.calls).toEqual([
+      ['reconcile', [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]],
+    ]);
     view.unmount();
   });
 

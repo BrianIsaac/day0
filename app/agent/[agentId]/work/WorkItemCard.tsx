@@ -17,6 +17,8 @@ import {
   isOutcomeUnknownReason,
   providerReconciliationEntries,
   reconcilerOf,
+  reconciliationAnswered,
+  reconciliationOwed,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
@@ -538,15 +540,19 @@ export function WorkItemCard({
           reason={stopReason}
           reconciliation={{
             needed: retryRequiresProviderReconciliation(output, item.skipReason),
-            entries: item.providerReconciliation?.entries ?? providerReconciliationEntries(output),
-            ...(item.providerReconciliation
+            // One recorded before the per-entry answers is asked again (W12-R3, D-9 (a)).
+            ...(item.providerReconciliation && reconciliationAnswered(item.providerReconciliation)
               ? {
+                  entries: item.providerReconciliation.entries,
                   recorded: {
                     confirmedAt: item.providerReconciliation.confirmedAt,
                     by: reconcilerOf(item.providerReconciliation.actor, managerKey),
                   },
                 }
-              : {}),
+              : {
+                  entries: providerReconciliationEntries(output),
+                  askedAgain: item.providerReconciliation !== undefined,
+                }),
           }}
           employeeName={employeeName}
           autonomous={autonomousActions}
@@ -582,10 +588,7 @@ export function WorkItemCard({
             : item.state === 'failed' &&
                 onDismiss &&
                 // A write that may have landed keeps the item in the inbox until it is reconciled.
-                !(
-                  retryRequiresProviderReconciliation(output, item.skipReason) &&
-                  !item.providerReconciliation
-                )
+                !reconciliationOwed(item)
               ? {
                   dismiss: {
                     kind: 'dismiss' as const,

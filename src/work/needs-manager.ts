@@ -3,6 +3,7 @@ import { holdsLiveAuthoringClaim } from '../lib/skill-authoring';
 import { MAX_AUTHORING_ATTEMPTS } from './skill-library';
 import {
   providerReconciliationEntries,
+  reconciliationAnswered,
   retryRequiresProviderReconciliation,
 } from './reconciliation';
 
@@ -151,7 +152,7 @@ export function failedRowMove(
   row: Pick<Doc<'workItems'>, 'output' | 'skipReason' | 'providerReconciliation'>,
 ): FailedRowMove {
   if (providerReconciliationEntries(row.output).length > 0) {
-    return row.providerReconciliation ? 'retry' : 'reconcile';
+    return reconciliationAnswered(row.providerReconciliation) ? 'retry' : 'reconcile';
   }
   return retryRequiresProviderReconciliation(row.output, row.skipReason)
     ? 'close-without-retry'

@@ -131,6 +131,22 @@ describe('needs-manager rules', (): void => {
         }),
       ),
     ).toBe('retry');
+    // Confirmed whole before the per-entry answers, the unknown write is asked again (W12-R3).
+    const unanswered = {
+      phase: 'single' as const,
+      actionIndex: 0,
+      tool: 'mcp.call',
+      outcome: 'outcome-unknown' as const,
+    };
+    expect(
+      failedRowMove(
+        row({
+          skipReason: 'the run stopped',
+          output,
+          providerReconciliation: { actor: 'owner', confirmedAt: 1, entries: [unanswered] },
+        }),
+      ),
+    ).toBe('reconcile');
   });
 });
 

@@ -40,6 +40,8 @@ export interface RetryReconciliation {
   readonly needed: boolean;
   readonly entries: readonly ReconciliationEntry[];
   readonly recorded?: RecordedReconciliation;
+  /** A reconciliation recorded before the per-entry answers stands on the row and is asked again (D-9 (a)). */
+  readonly askedAgain?: boolean;
 }
 
 /**
@@ -324,6 +326,7 @@ export function RetrySection({
         key="reconcile"
         entries={reconciliation.entries}
         reconciliation={reconciliation.recorded}
+        askedAgain={reconciliation.askedAgain === true}
         busy={busy}
         onConfirm={onReconcile}
       />,

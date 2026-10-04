@@ -606,17 +606,21 @@ function entryKey(entry: ReconciliationEntry): string {
  *
  * @param entries - The entries to check, from the run's ledger.
  * @param reconciliation - When the check was confirmed and who confirmed it, once they did.
+ * @param askedAgain - The run was confirmed as a whole before Day0 asked about each write, so it
+ *   is asked again (W12-R3, D-9 (a)).
  * @param busy - A decision on the card is in flight; the confirmation waits for it.
  * @param onConfirm - Record the answers; the card says what it came to.
  */
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
+  askedAgain = false,
   busy = false,
   onConfirm,
 }: {
   entries: readonly ReconciliationEntry[];
   reconciliation?: RecordedReconciliation;
+  askedAgain?: boolean;
   busy?: boolean;
   onConfirm: (answers: readonly GivenAnswer[]) => void;
 }) {
@@ -635,6 +639,9 @@ export function ProviderReconciliationControl({
       </p>
       {reconciliation ? null : (
         <p className="text-[13px] text-[var(--color-fg-2)]">
+          {askedAgain
+            ? 'You confirmed this run as a whole before Day0 asked about each write. '
+            : null}
           Check each entry on the provider before a retry. Say for each whether it landed or was not
           sent: a retry never sends again a write you say landed.
         </p>

@@ -7,6 +7,8 @@ import {
   OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   reconcilerOf,
+  reconciliationAnswered,
+  reconciliationOwed,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 
@@ -110,5 +112,42 @@ describe('reconcilerOf', (): void => {
     expect(reconcilerOf('dev-no-auth|local-boss', 'dev-no-auth|local-boss')).toBe('you');
     expect(reconcilerOf('issuer|old-manager', 'issuer|new-manager')).toBe('previous-manager');
     expect(reconcilerOf('issuer|old-manager', undefined)).toBeUndefined();
+  });
+});
+
+describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a))', (): void => {
+  const unknown: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'mcp.call',
+    outcome: 'outcome-unknown',
+  };
+  const landed: ReconciliationEntry = { ...unknown, actionIndex: 1, outcome: 'landed' };
+  const output = {
+    actions: [{ tool: 'mcp.call', args: {} }],
+    applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+  };
+
+  it('counts as answered only once every write of unknown outcome has an answer', (): void => {
+    expect(reconciliationAnswered(undefined)).toBe(false);
+    expect(reconciliationAnswered({ entries: [unknown, landed] })).toBe(false);
+    expect(reconciliationAnswered({ entries: [{ ...unknown, answer: 'not-sent' }, landed] })).toBe(
+      true,
+    );
+    expect(reconciliationAnswered({ entries: [landed] })).toBe(true);
+  });
+
+  it('owes the check until it is answered, and never where nothing may have landed', (): void => {
+    expect(reconciliationOwed({ output })).toBe(true);
+    expect(reconciliationOwed({ output, providerReconciliation: { entries: [unknown] } })).toBe(
+      true,
+    );
+    expect(
+      reconciliationOwed({
+        output,
+        providerReconciliation: { entries: [{ ...unknown, answer: 'landed' }] },
+      }),
+    ).toBe(false);
+    expect(reconciliationOwed({ output: { actions: [], applied: [] } })).toBe(false);
   });
 });

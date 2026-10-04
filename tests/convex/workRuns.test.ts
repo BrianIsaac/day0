@@ -12,6 +12,8 @@ import {
   INTERRUPTED_APPLY_REASON,
   OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   OUTCOME_UNKNOWN_REASON,
+  providerReconciliationEntries,
+  reconciliationOwed,
 } from '../../src/work/reconciliation';
 import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
@@ -507,6 +509,64 @@ describe('a retry after the reconciliation (P4-1)', (): void => {
     const sentAgain = await retried('not-sent');
     expect((sentAgain.output as { resumedClosing?: boolean }).resumedClosing).toBeUndefined();
     expect(unsentWritesOf(sentAgain.output).map((write) => write.action)).toEqual([comment]);
+  });
+});
+
+describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a))', (): void => {
+  /** A stopped run reconciled at v0.15.0: the entries stored whole, with no answer on any. */
+  async function reconciledAtV0150(harness: Harness): Promise<Id<'workItems'>> {
+    const { workItemId } = await stoppedMidApply(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      // The ledger's entries, which carry no answer, stored whole as v0.15.0 stored them.
+      const entries = providerReconciliationEntries(row?.output);
+      await ctx.db.patch(workItemId, {
+        providerReconciliation: { actor: 'owner', confirmedAt: 5, entries },
+      });
+    });
+    return workItemId;
+  }
+
+  it('asks again for the write of unknown outcome, and takes the answers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await reconciledAtV0150(harness);
+    const row = await readItem(harness, workItemId);
+    expect(reconciliationOwed(row)).toBe(true);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId }),
+    ).rejects.toThrow('confirm it against the provider before you dismiss it');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [{ phase: 'single', actionIndex: 1, answer: 'landed' }],
+    });
+    const answered = await readItem(harness, workItemId);
+    expect(answered.providerReconciliation?.entries.map((entry) => entry.answer)).toEqual([
+      'landed',
+      'landed',
+    ]);
+    expect(reconciliationOwed(answered)).toBe(false);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    // Both writes now ride into the retry as landed, so neither is sent again.
+    expect(
+      landedWritesOf((await readItem(harness, workItemId)).output).map((write) => write.action),
+    ).toEqual([comment, status]);
+  });
+
+  it('still refuses a confirmation that leaves the unknown write unanswered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await reconciledAtV0150(harness);
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true }),
+    ).rejects.toThrow('Say for each write whose outcome is unknown whether it landed');
   });
 });
 

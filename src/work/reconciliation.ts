@@ -241,3 +241,40 @@ export function retryRequiresProviderReconciliation(output: unknown, skipReason?
     skipReason === INTERRUPTED_APPLY_REASON || providerReconciliationEntries(output).length > 0
   );
 }
+
+/**
+ * Whether a stored reconciliation answers every write whose outcome was unknown. One recorded
+ * before the per-entry answers (v0.15.0 and earlier) answers none: it confirmed the ledger as a
+ * whole, so a retry could not tell a write that landed from one that was not sent, and it is asked
+ * again (wave 12 review W12-R3, decision D-9 (a)). A landed entry needs no answer of its own.
+ *
+ * @param reconciliation - The row's stored reconciliation, if any.
+ */
+export function reconciliationAnswered(
+  reconciliation: { readonly entries: readonly ReconciliationEntry[] } | undefined,
+): boolean {
+  return (
+    reconciliation !== undefined &&
+    reconciliation.entries.every(
+      (entry) => entry.outcome !== 'outcome-unknown' || entry.answer !== undefined,
+    )
+  );
+}
+
+/**
+ * Whether a run still owes the manager's check of the provider before a Retry or a dismissal: its
+ * ledger names a write to confirm, or its apply was interrupted, and no reconciliation answers
+ * every write of unknown outcome.
+ *
+ * @param row - The work item's output, skip reason and stored reconciliation.
+ */
+export function reconciliationOwed(row: {
+  readonly output?: unknown;
+  readonly skipReason?: string;
+  readonly providerReconciliation?: { readonly entries: readonly ReconciliationEntry[] };
+}): boolean {
+  return (
+    retryRequiresProviderReconciliation(row.output, row.skipReason) &&
+    !reconciliationAnswered(row.providerReconciliation)
+  );
+}

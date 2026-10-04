@@ -16,7 +16,12 @@ import {
   managerStopNote,
 } from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
-import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reconciliation';
+import {
+  landedRowCount,
+  reconciliationAnswered,
+  retryRequiresProviderReconciliation,
+  type ReconciliationEntry,
+} from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
@@ -328,7 +333,7 @@ export function failedItemReason(item: {
     applied?: unknown;
     initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
   } | null;
-  providerReconciliation?: { confirmedAt: number };
+  providerReconciliation?: { entries: readonly ReconciliationEntry[] };
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
@@ -340,7 +345,7 @@ export function failedItemReason(item: {
   }
   if (item.skipReason && isStopped(item.skipReason)) {
     const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
-    const unconfirmed = landed && !item.providerReconciliation;
+    const unconfirmed = landed && !reconciliationAnswered(item.providerReconciliation);
     // The manager's own stop says so in their words, once, then what is left (wave 12).
     const note = managerStopNote(item.skipReason);
     if (note !== undefined) {

@@ -58,6 +58,8 @@ import {
   answeredEntries,
   ledgerPhases,
   providerReconciliationEntries,
+  reconciliationAnswered,
+  reconciliationOwed,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
 import { landedWritesOf, unsentWritesOf } from '../src/work/landed-writes';
@@ -132,10 +134,7 @@ export const retryFailed = mutation({
     if (row.state === 'completed' && !feedback) {
       throw new Error('a completed item is sent back with a note saying what to change');
     }
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
+    if (reconciliationOwed(row)) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );
@@ -280,8 +279,9 @@ export const reconcileFailed = mutation({
       throw new Error(`workItem state is ${row.state}; expected failed or completed`);
     }
     if (!args.confirmed) throw new Error('explicit provider verification is required');
-    if (row.providerReconciliation) {
-      return { ok: true, reconciledEntries: row.providerReconciliation.entries.length };
+    // One recorded before the per-entry answers is asked again and replaced (D-9 (a)).
+    if (reconciliationAnswered(row.providerReconciliation)) {
+      return { ok: true, reconciledEntries: row.providerReconciliation?.entries.length ?? 0 };
     }
     const entries = providerReconciliationEntries(row.output);
     if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) {
@@ -339,10 +339,7 @@ export const dismissFailed = mutation({
     if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
     // The inbox's entry is the one prompt that a write may have landed; it
     // stays until the manager has checked the provider.
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
+    if (reconciliationOwed(row)) {
       throw new ConvexError(
         'A write on this item may have landed: confirm it against the provider before you dismiss it.',
       );
