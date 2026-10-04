@@ -113,7 +113,12 @@ export function isGuardRefusalData(data: unknown): boolean {
 /** One line of the check: the function and what became of its call. */
 export interface AnonymousCheck {
   readonly path: string;
-  readonly status: 'refused' | 'answered as named' | 'BROKE THE RULE' | 'not asked';
+  readonly status:
+    | 'refused'
+    | 'refused as named'
+    | 'answered as named'
+    | 'BROKE THE RULE'
+    | 'not asked';
   readonly detail: string;
 }
 
@@ -162,7 +167,8 @@ export async function sweepWithNoIdentity(
     } else if (outcome.kind === 'refused' && isGuardRefusalData(outcome.data)) {
       checks.push({ path: fn.path, status: 'refused', detail: 'the guard' });
     } else {
-      checks.push({ path: fn.path, status: 'answered as named', detail: said.slice(0, 160) });
+      const status = outcome.kind === 'refused' ? 'refused as named' : 'answered as named';
+      checks.push({ path: fn.path, status, detail: said.slice(0, 160) });
     }
   }
   return checks;
@@ -242,7 +248,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     checks.filter((check) => check.status === status).length;
   console.log(
     `${functions.length} public functions: ${count('refused')} refused by the guard, ` +
-      `${count('answered as named')} answered as src/lib/anonymous-access.ts names, ` +
+      `${count('answered as named') + count('refused as named')} kept to what ` +
+      'src/lib/anonymous-access.ts names for them (' +
+      `${count('answered as named')} answered, ${count('refused as named')} refused), ` +
       `${count('not asked')} not asked (no row to name), ${count('BROKE THE RULE')} broke the rule.`,
   );
   return anonymousExitCode(checks);

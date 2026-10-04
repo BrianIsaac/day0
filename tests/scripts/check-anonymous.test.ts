@@ -146,4 +146,26 @@ describe('the deployment check for a caller with no identity', (): void => {
       'Server Error Uncaught Error: webhook denied at handler (convex/voice.ts)',
     ]);
   });
+
+  it('says a named function refused when it refused, and answered only when it answered', async (): Promise<void> => {
+    const checks = await sweepWithNoIdentity(
+      [fn('slackProvisionActions:completeInstall'), fn('config:release')],
+      {
+        tables: new Set(),
+        rowOf: (): undefined => undefined,
+        ask: async (one): Promise<CallOutcome> =>
+          one.path === 'config:release'
+            ? { kind: 'answered', value: null }
+            : {
+                kind: 'refused',
+                message: 'App installation is a local real-mode feature',
+                data: undefined,
+              },
+      },
+    );
+    expect(checks.map((check) => `${check.status} ${check.path}`)).toEqual([
+      'refused as named slackProvisionActions:completeInstall',
+      'answered as named config:release',
+    ]);
+  });
 });
