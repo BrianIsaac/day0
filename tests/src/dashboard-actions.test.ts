@@ -300,6 +300,7 @@ describe('dashboard exact-action gate', (): void => {
             phase: 'prerequisite',
             actionIndex: 1,
             tool: 'mcp.call',
+            summary: 'Reply in #revops thread: Deal 1 reconciled.',
             outcome: 'landed',
             effect: 'comment created',
             providerId: 'comment-17',
@@ -318,13 +319,14 @@ describe('dashboard exact-action gate', (): void => {
       }),
     );
     expect(html).toContain('Provider reconciliation required');
-    expect(html).toContain('prerequisite action 1');
-    expect(html).toContain('landed');
+    // Re-pinned for W12-R9: an entry is named by what it does, its place and key kept quieter.
+    expect(html).toContain('Reply in #revops thread: Deal 1 reconciled.');
+    expect(html).not.toContain('prerequisite action 1');
+    expect(html).toContain('Landed · first phase');
     expect(html).toContain('comment created');
     expect(html).toContain('provider id comment-17');
-    expect(html).toContain('idempotency key run:1');
-    expect(html).toContain('closing action 0');
-    expect(html).toContain('outcome unknown');
+    expect(html).toMatch(/<details[^>]*><summary[^>]*>Ledger key<\/summary>[^]*run:1/);
+    expect(html).toContain('Outcome unknown · closing phase');
     expect(html).toContain('response lost');
     // Answered per entry since wave 12 (U17 D1): two answers each, not one tick.
     expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(2);

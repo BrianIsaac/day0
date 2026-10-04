@@ -161,6 +161,17 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
     );
   });
 
+  it('ends the quoted reason with a full stop when the manager gave none (W12-R9)', (): void => {
+    expect(
+      failedItemReason({
+        skipReason:
+          'stopped: stopped by the manager: Wrong quarter, stopping before anything is sent',
+      }),
+    ).toBe(
+      'You stopped the run: “Wrong quarter, stopping before anything is sent”. Nothing landed, so there is nothing to check.',
+    );
+  });
+
   it('says nothing landed when nothing did, and gives no reason you did not give', (): void => {
     expect(failedItemReason({ skipReason: 'stopped: stopped by the manager' })).toBe(
       'You stopped the run. Nothing landed, so there is nothing to check.',

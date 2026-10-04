@@ -592,6 +592,24 @@ function verifiedBy(by: Reconciler | undefined): string {
   }
 }
 
+/** One entry the checklist shows: the ledger's entry, and what its action does in the manager's words. */
+export interface ReconciliationRow extends ReconciliationEntry {
+  /** The action's summary (`summariseAction`), when the card can read the action. */
+  readonly summary?: string;
+}
+
+/** Where an entry sits in a run of two phases, said plainly; nothing for a run of one. */
+function phaseWords(phase: ReconciliationEntry['phase']): string {
+  switch (phase) {
+    case 'single':
+      return '';
+    case 'prerequisite':
+      return ' · first phase';
+    case 'closing':
+      return ' · closing phase';
+  }
+}
+
 /** An entry's place in the run, the checklist's key for it. */
 function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
@@ -618,7 +636,7 @@ export function ProviderReconciliationControl({
   busy = false,
   onConfirm,
 }: {
-  entries: readonly ReconciliationEntry[];
+  entries: readonly ReconciliationRow[];
   reconciliation?: RecordedReconciliation;
   askedAgain?: boolean;
   busy?: boolean;
@@ -652,22 +670,22 @@ export function ProviderReconciliationControl({
             const key = entryKey(entry);
             const words = (
               <span className="grid min-w-0 gap-0.5 break-words">
-                <span className="font-mono text-[13px]">
-                  {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
-                  {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
+                {/* Named by what it does (W12-R9); the ledger's place and key stay to hand. */}
+                <span className="font-medium">
+                  {entry.summary ?? (entry.effect ? clipLedgerRow(entry.effect) : entry.tool)}
                 </span>
-                {entry.effect ? <span>{clipLedgerRow(entry.effect)}</span> : null}
+                <span className="text-[13px] text-[var(--color-fg-2)]">
+                  {entry.outcome === 'outcome-unknown' ? 'Outcome unknown' : 'Landed'}
+                  {phaseWords(entry.phase)}
+                </span>
+                {entry.effect && entry.summary ? <span>{clipLedgerRow(entry.effect)}</span> : null}
                 {entry.reason ? <span>{entry.reason}</span> : null}
                 {entry.providerId ? (
                   <span className="font-mono text-[13px] text-[var(--color-muted)]">
                     provider id {entry.providerId}
                   </span>
                 ) : null}
-                {entry.idempotencyKey ? (
-                  <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
-                    idempotency key {entry.idempotencyKey}
-                  </span>
-                ) : null}
+
                 {reconciliation && entry.answer ? (
                   <span className="text-[13px] text-[var(--color-fg)]">
                     {entry.answer === 'landed'
@@ -677,7 +695,23 @@ export function ProviderReconciliationControl({
                 ) : null}
               </span>
             );
-            if (reconciliation) return <li key={key}>{words}</li>;
+            // Outside the legend, which takes phrasing content only.
+            const ledgerKey = entry.idempotencyKey ? (
+              <details className="mt-1 text-[13px] text-[var(--color-muted)]">
+                <summary className="inline-flex min-h-11 cursor-pointer items-center">
+                  Ledger key
+                </summary>
+                <span className="font-mono break-all">{entry.idempotencyKey}</span>
+              </details>
+            ) : null;
+            if (reconciliation) {
+              return (
+                <li key={key}>
+                  {words}
+                  {ledgerKey}
+                </li>
+              );
+            }
             const name = `${group}-${index}`;
             return (
               <li key={key}>
@@ -707,6 +741,7 @@ export function ProviderReconciliationControl({
                     ))}
                   </span>
                 </fieldset>
+                {ledgerKey}
               </li>
             );
           })}

@@ -38,6 +38,8 @@ import {
 } from '../../convex/work';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
+// Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -3442,7 +3444,7 @@ describe('the exact-action gate', (): void => {
       {
         tool: 'mcp.call',
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
         idempotencyKey: `${workItemId}:${runId}:0`,
       },
       {
@@ -4536,7 +4538,7 @@ describe('the exact-action gate', (): void => {
         entry.reason,
       ]),
     ).toEqual([
-      [false, false, 'outcome unknown after interrupted apply - verify provider before retry'],
+      [false, false, OUTCOME_UNKNOWN_REASON],
       [true, true, HELD_PUBLIC_POST],
     ]);
   });
@@ -4584,7 +4586,7 @@ describe('the exact-action gate', (): void => {
       landed,
       expect.objectContaining({
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
       }),
     ]);
   });

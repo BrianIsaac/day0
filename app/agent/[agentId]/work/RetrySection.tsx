@@ -3,13 +3,17 @@
 import { useState, type ReactNode } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { skipSentence, type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
-import type { GivenAnswer, ReconciliationEntry } from '@/work/reconciliation';
+import type { GivenAnswer } from '@/work/reconciliation';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
 import { Help, ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { NotSentLedger } from './LandedChanges';
-import { ProviderReconciliationControl, type RecordedReconciliation } from './RunDetails';
+import {
+  ProviderReconciliationControl,
+  type ReconciliationRow,
+  type RecordedReconciliation,
+} from './RunDetails';
 import {
   ANSWER_AND_RETRY,
   SKIP_RETRY_NOTE,
@@ -38,7 +42,7 @@ function capitalised(name: string): string {
 /** The provider reconciliation a retry waits on, when a write landed or may have. */
 export interface RetryReconciliation {
   readonly needed: boolean;
-  readonly entries: readonly ReconciliationEntry[];
+  readonly entries: readonly ReconciliationRow[];
   readonly recorded?: RecordedReconciliation;
   /** A reconciliation recorded before the per-entry answers stands on the row and is asked again (D-9 (a)). */
   readonly askedAgain?: boolean;

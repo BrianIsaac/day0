@@ -549,7 +549,15 @@ describe('stopped with a write that may have landed', (): void => {
       },
     } as unknown as Doc<'workItems'>);
     const group = view.container.querySelector('fieldset');
-    expect(group?.querySelector('legend')?.textContent).toContain('outcome unknown');
+    // Re-pinned for W12-R9: the group is named by what the write does, then its outcome.
+    expect(group?.querySelector('legend')?.textContent).toContain('Reply in #revops-asks thread');
+    expect(group?.querySelector('legend')?.textContent).toContain('Outcome unknown');
+    expect(group?.querySelector('legend')?.textContent).not.toContain('http.request');
+    expect(
+      [...view.container.querySelectorAll('details > summary')].map(
+        (summary) => summary.textContent,
+      ),
+    ).toContain('Ledger key');
     for (const radio of group?.querySelectorAll('input[type="radio"]') ?? []) {
       expect(radio.closest('label')?.className).toMatch(/(^|\s)min-h-11(\s|$)/);
     }

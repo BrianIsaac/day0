@@ -4,16 +4,44 @@ import type { MockAction } from './types';
 /** The skip reason a run carries when its apply was interrupted after the claim. */
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
-/** The ledger reason for an action whose provider outcome the interrupted apply never learnt. */
+/**
+ * The ledger reason for an action whose provider outcome the interrupted apply never learnt, in
+ * the manager's words, since the card shows it (the wave 12 review's W12-R9; wording draft).
+ */
 export const OUTCOME_UNKNOWN_REASON =
-  'outcome unknown after interrupted apply - verify provider before retry';
+  'outcome unknown: Day0 was interrupted while sending this write; check whether it arrived before you retry';
 /**
  * The ledger reason for an action whose provider outcome is unknown because its apply was stopped
  * while it was sending (the manager's Stop, or a skill withdrawn under a run; wave 12, 12-W): the
- * same check owed, without saying an interruption ended it.
+ * same check owed, without saying an interruption ended it. Wording draft.
  */
 export const OUTCOME_UNKNOWN_AFTER_STOP_REASON =
-  'outcome unknown after the apply was stopped - verify provider before retry';
+  'outcome unknown: the run was stopped while this write was being sent; check whether it arrived before you retry';
+
+/**
+ * The two reasons as rows recorded before v0.16.0 carry them, each with the words it reads in now
+ * (W12-R9): a stored row keeps its reason, and every reader still takes it as unknown.
+ */
+const EARLIER_OUTCOME_UNKNOWN_REASONS: ReadonlyMap<string, string> = new Map([
+  [
+    'outcome unknown after interrupted apply - verify provider before retry',
+    OUTCOME_UNKNOWN_REASON,
+  ],
+  [
+    'outcome unknown after the apply was stopped - verify provider before retry',
+    OUTCOME_UNKNOWN_AFTER_STOP_REASON,
+  ],
+]);
+
+/**
+ * A ledger reason in the words the card shows: a reason an earlier release recorded for an
+ * unknown outcome reads as the current one; any other is returned as it is.
+ *
+ * @param reason - A ledger row's reason.
+ */
+export function outcomeReasonWords(reason: string): string {
+  return EARLIER_OUTCOME_UNKNOWN_REASONS.get(reason) ?? reason;
+}
 
 /**
  * The ledger reason on an approved row a stopped apply never sent (the wave 12 review's W12-R11):
@@ -48,7 +76,11 @@ export function outcomeUnknownReasonFor(end: ApplyEnd): string {
  * @param reason - The ledger row's reason, of any shape.
  */
 export function isOutcomeUnknownReason(reason: unknown): boolean {
-  return reason === OUTCOME_UNKNOWN_REASON || reason === OUTCOME_UNKNOWN_AFTER_STOP_REASON;
+  return (
+    reason === OUTCOME_UNKNOWN_REASON ||
+    reason === OUTCOME_UNKNOWN_AFTER_STOP_REASON ||
+    (typeof reason === 'string' && EARLIER_OUTCOME_UNKNOWN_REASONS.has(reason))
+  );
 }
 
 /**
@@ -185,7 +217,8 @@ function optionalString(value: unknown): string | undefined {
 
 function entryDetails(entry: LedgerEntry): Partial<ReconciliationEntry> {
   const effect = optionalString(entry.effect);
-  const reason = optionalString(entry.reason);
+  const recorded = optionalString(entry.reason);
+  const reason = recorded === undefined ? undefined : outcomeReasonWords(recorded);
   const providerId = optionalString(entry.providerId);
   const idempotencyKey = optionalString(entry.idempotencyKey);
   return {

@@ -101,9 +101,32 @@ describe('an outcome unknown, whichever ended the apply', (): void => {
     expect(isOutcomeUnknownReason('HTTP 500 · {"ok":false}')).toBe(false);
   });
 
+  // Re-pinned for W12-R9: the reasons reach the manager on the card, in their words.
   it('says a stopped apply was stopped, never that it was interrupted', (): void => {
     expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).not.toContain('interrupted');
-    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain('verify provider before retry');
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain(
+      'check whether it arrived before you retry',
+    );
+  });
+
+  it('words both reasons for a manager, with no spaced hyphen, and still reads the old words (W12-R9)', (): void => {
+    for (const reason of [OUTCOME_UNKNOWN_REASON, OUTCOME_UNKNOWN_AFTER_STOP_REASON]) {
+      expect(reason).not.toMatch(/ - |\bapply\b|\bprovider\b/);
+    }
+    const legacy = 'outcome unknown after interrupted apply - verify provider before retry';
+    expect(isOutcomeUnknownReason(legacy)).toBe(true);
+    expect(
+      isOutcomeUnknownReason(
+        'outcome unknown after the apply was stopped - verify provider before retry',
+      ),
+    ).toBe(true);
+    // A row recorded before v0.16.0 is listed in the words a row carries now.
+    expect(
+      providerReconciliationEntries({
+        actions: [{ tool: 'http.request', args: {} }],
+        applied: [{ tool: 'http.request', ok: false, reason: legacy, idempotencyKey: 'k' }],
+      })[0]?.reason,
+    ).toBe(OUTCOME_UNKNOWN_REASON);
   });
 });
 

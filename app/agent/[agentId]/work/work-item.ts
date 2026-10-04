@@ -349,7 +349,11 @@ export function failedItemReason(item: {
     // The manager's own stop says so in their words, once, then what is left (wave 12).
     const note = managerStopNote(item.skipReason);
     if (note !== undefined) {
-      const said = note === '' ? 'You stopped the run.' : `You stopped the run: “${note}”`;
+      // The quoted reason ends the sentence: a full stop after it unless it carries its own (W12-R9).
+      const said =
+        note === ''
+          ? 'You stopped the run.'
+          : `You stopped the run: “${note}”${/[.!?]$/.test(note) ? '' : '.'}`;
       if (unconfirmed) {
         return `${said} A write landed or may have; confirm the provider below before Retry.`;
       }

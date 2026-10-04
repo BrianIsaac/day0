@@ -15,6 +15,8 @@ import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
   isOutcomeUnknownReason,
+  ledgerPhases,
+  type ReconciliationEntry,
   providerReconciliationEntries,
   reconcilerOf,
   reconciliationAnswered,
@@ -39,7 +41,7 @@ import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { type ItemPlan, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
-import { ManagerFeedbackNote, WorkingFromNote } from './RunDetails';
+import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
 import { StopDialog, stopWhy, type StopMoment } from './StopDialog';
 import { TicketNowLine } from './TicketNowLine';
@@ -262,6 +264,21 @@ export function WorkItemCard({
   // The per-action box already names every action that failed, so the
   // row-level reason only earns its space for the other failures: no
   // registered skill, a model error, a mid-run throw.
+  // Each entry to check is named by what its action does, as the held actions are (W12-R9).
+  const namedEntries = (entries: readonly ReconciliationEntry[]): ReconciliationRow[] => {
+    const phases = ledgerPhases(output);
+    return entries.map((entry) => {
+      const action = phases.find((phase) => phase.phase === entry.phase)?.actions[
+        entry.actionIndex
+      ];
+      return action
+        ? {
+            ...entry,
+            summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
+          }
+        : entry;
+    });
+  };
   // An apply sending writes holds both; a closing phase being written holds only the claim.
   const stopMoment: StopMoment = approvedNotStarted(item)
     ? 'approved'
@@ -548,14 +565,14 @@ export function WorkItemCard({
             // One recorded before the per-entry answers is asked again (W12-R3, D-9 (a)).
             ...(item.providerReconciliation && reconciliationAnswered(item.providerReconciliation)
               ? {
-                  entries: item.providerReconciliation.entries,
+                  entries: namedEntries(item.providerReconciliation.entries),
                   recorded: {
                     confirmedAt: item.providerReconciliation.confirmedAt,
                     by: reconcilerOf(item.providerReconciliation.actor, managerKey),
                   },
                 }
               : {
-                  entries: providerReconciliationEntries(output),
+                  entries: namedEntries(providerReconciliationEntries(output)),
                   askedAgain: item.providerReconciliation !== undefined,
                 }),
           }}
