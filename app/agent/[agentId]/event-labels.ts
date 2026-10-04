@@ -606,6 +606,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${decisionNoun(payload.kind)} request asked on the chat surface`,
   'work.decision-notifying': 'telling the manager what was decided',
   'work.decision-request-closing': 'marking the decided request in the manager DM',
+  'work.decision-request-replacing': 'marking the replaced request in the manager DM',
   'work.decision-acknowledging': (payload) =>
     ACKNOWLEDGEMENT_LABELS[payload.kind ?? 'received'] ?? ACKNOWLEDGEMENT_LABELS.received,
   'work.decision-ignored': (payload) => `a chat reply ignored${because(payload.reason)}`,

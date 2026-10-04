@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { redraftPlansDraftedWithout } from '../../convex/work';
 import {
   NOTICE_TO_A_GUEST,
   NOTICE_CARD_NOT_APPROVED,
@@ -549,6 +550,8 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
   });
 
   function recordSlack(): void {
+    // Scheduled acknowledgements stay on fake timers, so none posts through a later test's stub.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
@@ -645,6 +648,222 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     expect(body.blocks.map((block) => block.type)).toEqual(['section']);
     expect(body.blocks[0]!.text!.text).toBe(body.text);
     expect(body.text).toContain(`Decided: approved in this DM (${decisionId}).`);
+  });
+});
+
+describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  function recordSlack(): void {
+    // Scheduled acknowledgements stay on fake timers, so none posts through a later test's stub.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  /** A delivered plan request, then replaced by a fresh one under a new code. */
+  async function replaceDeliveredRequest(harness: TestConvex<typeof schema>): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    surfaceId: Id<'surfaces'>;
+    oldCode: string;
+    newCode: string;
+  }> {
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: oldCode });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+      supersedes: oldCode,
+    });
+    const newCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    return { agentId, workItemId, surfaceId, oldCode, newCode };
+  }
+
+  it('remembers the replaced code with the code that replaced it', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    expect(newCode).not.toBe(oldCode);
+    const remembered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique(),
+    );
+    expect(remembered).toMatchObject({
+      workItemId,
+      decisionId: oldCode,
+      replacedBy: newCode,
+      kind: 'plan',
+      ts: 'provider-1',
+      withButtons: true,
+      requestText: expect.stringContaining('needs your decision'),
+    });
+  });
+
+  it('answers a reply to the replaced code with the request that replaced it, and decides nothing', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: newCode });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row?.state).toBe('plan-pending');
+    expect(row?.decision?.decidedAt).toBeUndefined();
+    const notice = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').first(),
+    );
+    expect(notice).toMatchObject({
+      kind: 'replaced',
+      decisionId: oldCode,
+      text: `That request (${oldCode}) was replaced by ${newCode}. Decide on ${newCode} instead.`,
+    });
+  });
+
+  it('answers with the replacement’s own decision once it was decided', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768410.000100',
+      reply: { verb: 'approve', id: newCode },
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768411.000100',
+      reply: { verb: 'reject', id: oldCode, reason: '' },
+    });
+    const notice = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .filter((q) => q.eq(q.field('kind'), 'replaced'))
+          .first(),
+    );
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced by ${newCode}, which was already approved.`,
+    );
+  });
+
+  it('answers another Slack user’s reply to a replaced code with nothing', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'USOMEONE',
+        messageTs: '1787768412.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'manager identity mismatch' });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([]);
+  });
+
+  it('edits the replaced message once to say so, without its buttons, and records the edit', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, oldCode } = await replaceDeliveredRequest(harness);
+    const replacedId = await harness.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique())!._id,
+    );
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('managerChannelActions:markRequestReplaced');
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: true });
+    const updates = sent.filter((call) => call.url.endsWith('/chat.update'));
+    expect(updates).toHaveLength(1);
+    const body = JSON.parse(updates[0]!.body) as {
+      ts: string;
+      text: string;
+      blocks: Array<{ type: string }>;
+    };
+    expect(body.ts).toBe('provider-1');
+    expect(body.text).toContain('needs your decision');
+    expect(body.text).toContain(`Replaced (${oldCode}): this request no longer decides anything.`);
+    expect(body.blocks.map((block) => block.type)).toEqual(['section']);
+    expect(await harness.run(async (ctx) => await ctx.db.get(replacedId))).toMatchObject({
+      editClaimedAt: expect.any(Number),
+      editedAt: expect.any(Number),
+    });
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+  });
+
+  it('remembers a request a re-draft took back, with nothing replacing it yet', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.patch(workItemId, {
+        planDraftedWithout: { surfaceSlug: 'team-chat', subject: 'thread', cause: 'not-connected' },
+      });
+      const surface = (await ctx.db.query('surfaces').first())!;
+      await redraftPlansDraftedWithout(ctx, surface, Date.now());
+      return surface._id;
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision).toBe(
+      undefined,
+    );
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768413.000100',
+      reply: { verb: 'approve', id: oldCode },
+    });
+    const notice = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').first(),
+    );
+    expect(notice).toMatchObject({ agentId, kind: 'replaced' });
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+    );
   });
 });
 

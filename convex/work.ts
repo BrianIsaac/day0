@@ -3140,6 +3140,7 @@ async function sendBackToDrafting(
   surface: Doc<'surfaces'>,
   now: number,
 ): Promise<void> {
+  await rememberReplacedRequest(ctx, row, now);
   await ctx.db.patch(row._id, {
     state: 'claimed',
     plan: undefined,
@@ -3424,7 +3425,9 @@ export const prepareDecisionRequest = internalMutation({
       surfaceSlug: chat.slug,
       surfaceName: chat.displayName,
     };
+    await rememberReplacedRequest(ctx, row, decision.requestedAt);
     await ctx.db.patch(row._id, { decision });
+    await nameReplacement(ctx, row._id, decision);
     await settleClosedBatchesOn(ctx, {
       agentId: row.agentId,
       surfaceSlug: chat.slug,
@@ -3507,6 +3510,128 @@ async function supersedeDecisionRequest(
   });
 }
 
+/**
+ * Remember a decision request a newer one replaces, or a path takes back, before the row's
+ * `decision` is overwritten or cleared (wave 12, 12-M; F2 D14): its code stays answerable ("that
+ * request was replaced by ..."), and a delivered message whose text was kept is edited once to say
+ * so. A decided request is history on the row's record, not a replaced one, and a code already
+ * remembered is not remembered twice. Only a row whose employee has a manager chat channel ever
+ * carries a request, so nothing else writes a row here.
+ *
+ * @param ctx - The transaction that replaces or clears the request.
+ * @param row - The work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberReplacedRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined || decision.decidedAt !== undefined) return;
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  const replacedId = await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    ...(decision.ts === undefined ? {} : { ts: decision.ts }),
+    ...(decision.requestText === undefined ? {} : { requestText: decision.requestText }),
+    ...(decision.withButtons === true ? { withButtons: true } : {}),
+    replacedAt: now,
+  });
+  if (decision.ts !== undefined && decision.requestText !== undefined) {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.markRequestReplaced, {
+      replacedId,
+    });
+  }
+}
+
+/** The most of one item's replaced requests the new request names itself on. */
+const REPLACED_NAMED_SCAN = 50;
+
+/**
+ * Name a new request on the item's earlier requests of its kind that nothing replaced yet, so a
+ * reply to one of those codes is answered with this one.
+ */
+async function nameReplacement(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  decision: { readonly id: string; readonly kind: DecisionKind },
+): Promise<void> {
+  const replaced = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .take(REPLACED_NAMED_SCAN);
+  for (const earlier of replaced) {
+    if (
+      earlier.replacedBy !== undefined ||
+      earlier.kind !== decision.kind ||
+      earlier.decisionId === decision.id
+    ) {
+      continue;
+    }
+    await ctx.db.patch(earlier._id, { replacedBy: decision.id });
+  }
+}
+
+/** How many replacements the answer to a replaced code follows to the request that stands. */
+const REPLACEMENT_HOPS = 5;
+
+/**
+ * What Day0 answers a reply or a press naming a replaced request: the request that replaced it
+ * and where that one stands (open, or already decided), following a chain of replacements to the
+ * request that stands; or that nothing replaced it yet.
+ *
+ * @param ctx - The decision's transaction.
+ * @param replaced - The replaced request the code names.
+ * @returns The answer's words, and the code that stands, when there is one.
+ */
+async function replacedRequestAnswer(
+  ctx: MutationCtx,
+  replaced: Doc<'replacedDecisionRequests'>,
+): Promise<{ readonly text: string; readonly replacedBy?: string }> {
+  const opening = `That request (${replaced.decisionId}) was replaced`;
+  let code = replaced.replacedBy;
+  for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
+    const current = code;
+    const standing = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', replaced.agentId).eq('decision.id', current),
+      )
+      .first();
+    const decision = standing?.decision;
+    if (decision !== undefined) {
+      return decision.decidedAt === undefined
+        ? { text: `${opening} by ${current}. Decide on ${current} instead.`, replacedBy: current }
+        : {
+            text: `${opening} by ${current}, which was already ${decision.outcome ?? 'decided'}.`,
+            replacedBy: current,
+          };
+    }
+    const next = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', replaced.agentId).eq('decisionId', current),
+      )
+      .first();
+    if (next?.replacedBy === undefined) break;
+    code = next.replacedBy;
+  }
+  return {
+    text: `${opening} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+  };
+}
+
 /** What the manager's note says ended a run whose apply was interrupted. */
 const INTERRUPTED_NOTE_REASON =
   'the apply was interrupted, so what it sent is not known; check each change marked below';
@@ -3559,6 +3684,7 @@ export async function voidDecisionRequestsForHandover(
     }
     // A delivered request keeps its code, marked failed, for the probe to re-send; one still on
     // its way would be re-sent by nothing, so it is taken back and the stall sweep asks afresh.
+    if (decision.ts === undefined) await rememberReplacedRequest(ctx, row, now);
     await ctx.db.patch(row._id, {
       decision:
         decision.ts === undefined
@@ -4105,6 +4231,119 @@ export const prepareRequestClose = internalMutation({
 /** The most of a close edit's failure a decision keeps. */
 const CLOSE_FAILURE_KEPT = 240;
 
+/** Why a replaced request's message was not edited: no connected card can edit it now. */
+const REPLACED_EDIT_UNAVAILABLE =
+  "the manager DM's chat card cannot edit this message now (not connected, another DM, or no chat.update)";
+
+/**
+ * Claim the one edit that marks a replaced request in the manager DM (wave 12, 12-M; F2 D14), and
+ * say what it writes: the request as it was sent, then that it no longer decides anything.
+ * Internal; the replaced edit's action. Refused when the message was never delivered or kept no
+ * text, or the edit was claimed or settled already; a message no connected card can edit (the
+ * DM's card changed, or allows no `chat.update`) is settled with the reason, so nothing reads it
+ * as open.
+ */
+export const prepareReplacedEdit = internalMutation({
+  args: { replacedId: v.id('replacedDecisionRequests') },
+  handler: async (ctx, args) => {
+    const replaced = await ctx.db.get(args.replacedId);
+    if (
+      replaced === null ||
+      replaced.ts === undefined ||
+      replaced.requestText === undefined ||
+      replaced.editClaimedAt !== undefined ||
+      replaced.editedAt !== undefined ||
+      replaced.editFailure !== undefined
+    ) {
+      return { prepared: false as const };
+    }
+    const [agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(replaced.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', replaced.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', replaced.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate.slug === replaced.surfaceSlug &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        candidate.managerDmChannelId === replaced.channel &&
+        canEditManagerMessage(toSurfaceRecord(candidate)),
+    );
+    if (agent === null || surface === undefined) {
+      await ctx.db.patch(replaced._id, { editFailure: REPLACED_EDIT_UNAVAILABLE });
+      return { prepared: false as const };
+    }
+    const claimedAt = Date.now();
+    const requestRunId = await appendEvent(ctx, {
+      agentId: replaced.agentId,
+      type: 'work.decision-request-replacing',
+      payload: { workItemId: replaced.workItemId, decisionId: replaced.decisionId },
+      createdAt: claimedAt,
+    });
+    await ctx.db.patch(replaced._id, { editClaimedAt: claimedAt });
+    return {
+      prepared: true as const,
+      claimedAt,
+      workItemId: replaced.workItemId,
+      agentId: replaced.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      channel: replaced.channel,
+      ts: replaced.ts,
+      withButtons: replaced.withButtons === true,
+      text: `${replaced.requestText}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
+    };
+  },
+});
+
+/**
+ * Record the result of a replaced request's one edit (wave 12, 12-M; N-3): when it landed, or why
+ * not. Internal; the replaced edit's action, once. Fenced as the close's record is, on the claim
+ * the edit was made under and on no result yet: the five-minute sweep (12-W) settles a claim that
+ * lapsed with no result under the same fence.
+ *
+ * @returns Whether the result was written.
+ */
+export const recordReplacedEdit = internalMutation({
+  args: {
+    replacedId: v.id('replacedDecisionRequests'),
+    claimedAt: v.number(),
+    editedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if ((args.editedAt === undefined) === (args.failure === undefined)) {
+      throw new Error('an edit records exactly one of editedAt and failure');
+    }
+    const replaced = await ctx.db.get(args.replacedId);
+    if (
+      replaced === null ||
+      replaced.editClaimedAt !== args.claimedAt ||
+      replaced.editedAt !== undefined ||
+      replaced.editFailure !== undefined
+    ) {
+      return false;
+    }
+    await ctx.db.patch(
+      replaced._id,
+      args.editedAt !== undefined
+        ? { editedAt: args.editedAt }
+        : { editFailure: redactTokenShapes(args.failure ?? '').slice(0, CLOSE_FAILURE_KEPT) },
+    );
+    return true;
+  },
+});
+
 /**
  * Record the result of the one edit that marks a decided request: when it landed, or why it did
  * not (wave 12, 12-M; N-3). Internal; the close action's, once, after its provider call. Fenced
@@ -4296,6 +4535,16 @@ async function requestThreadOf(
   decisionId: string,
 ): Promise<string | undefined> {
   const decision = workItem.decision;
+  if (decision?.id !== decisionId) {
+    // A replaced request's answer goes in the replaced message's own thread.
+    const replaced = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', workItem.agentId).eq('decisionId', decisionId),
+      )
+      .first();
+    if (replaced !== null) return replaced.ts;
+  }
   if (!decision?.ts) return undefined;
   if (decision.id === decisionId) return decision.ts;
   const batch = await ctx.db
@@ -4451,7 +4700,7 @@ async function queueManagerReplyNotice(
     workItemId: Id<'workItems'>;
     decisionId: string;
     messageTs: string;
-    kind: 'received' | 'unknown';
+    kind: 'received' | 'unknown' | 'replaced';
     text: string;
   },
 ): Promise<boolean> {
@@ -4781,6 +5030,7 @@ export const retryFailed = mutation({
               .filter((surface) => verdictFor(surface, Date.now()) === 'connected'),
           )
         : undefined;
+    if (redraft) await rememberReplacedRequest(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
       // A retried item begins a new run, which the queue orders by (x4); one sent back to
@@ -6696,6 +6946,9 @@ export function providerTsToMs(ts: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** Why a reply naming a replaced request decided nothing, on its ignored event. */
+export const REPLACED_DECISION_REASON = 'the request was replaced by a newer one';
+
 /** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
 export const resolveChannelDecision = internalMutation({
   args: {
@@ -6765,8 +7018,35 @@ export const resolveChannelDecision = internalMutation({
         .query('decisionBatches')
         .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
         .first();
-      if (!batch) return await unknown('unknown decision id');
-      return await resolveChannelBatch(ctx, surface, batch, args);
+      if (batch) return await resolveChannelBatch(ctx, surface, batch, args);
+      const replaced = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) =>
+          q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
+        )
+        .first();
+      if (!replaced) return await unknown('unknown decision id');
+      if (
+        replaced.surfaceSlug !== surface.slug ||
+        replaced.channel !== surface.managerDmChannelId
+      ) {
+        return await unknown('decision belongs to another manager channel');
+      }
+      const answer = await replacedRequestAnswer(ctx, replaced);
+      const notified = await queueManagerReplyNotice(ctx, {
+        surfaceId: surface._id,
+        workItemId: replaced.workItemId,
+        decisionId: replaced.decisionId,
+        messageTs: args.messageTs,
+        kind: 'replaced',
+        text: answer.text,
+      });
+      await ignored(REPLACED_DECISION_REASON);
+      return {
+        status: 'replaced' as const,
+        ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
+        notified,
+      };
     }
     if (
       row.decision.surfaceSlug !== surface.slug ||

@@ -1011,6 +1011,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} is telling ${addressee(subject)} what was decided${forItem(subject)}`,
   'work.decision-request-closing': (_, subject) =>
     `${subject.name} is marking the decided request${forItem(subject)} in ${whose(subject)} DMs`,
+  'work.decision-request-replacing': (_, subject) =>
+    `${subject.name} is marking the replaced request${forItem(subject)} in ${whose(subject)} DMs`,
   'work.decision-acknowledging': (p, subject) =>
     (ACKNOWLEDGEMENT_WORDS[p.kind ?? 'received'] ?? ACKNOWLEDGEMENT_WORDS.received)(subject),
   'work.decision-ignored': (p) => `A chat reply was ignored${because(p.reason)}`,

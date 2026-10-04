@@ -159,6 +159,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.decision-request-asked': WRITES,
   'work.decision-notifying': WRITES,
   'work.decision-request-closing': WRITES,
+  'work.decision-request-replacing': WRITES,
   'work.decision-acknowledging': WRITES,
   'work.decision-ignored': REFUSED,
   'work.decision-duplicate': NONE,

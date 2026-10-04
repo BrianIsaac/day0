@@ -344,6 +344,50 @@ export const closeDecisionRequest = internalAction({
   },
 });
 
+/**
+ * Mark a replaced request so in its own message in the manager DM, once, by editing it to end
+ * with the code that no longer decides anything and without its buttons (wave 12, 12-M; F2 D14).
+ * Internal; scheduled where a request is replaced or taken back. The edit's result is recorded
+ * under the claim it was made with (`work.recordReplacedEdit`), and a failed edit is not tried
+ * again: the replaced code is still answered with the request that replaced it.
+ */
+export const markRequestReplaced = internalAction({
+  args: { replacedId: v.id('replacedDecisionRequests') },
+  handler: async (ctx, args): Promise<{ edited: boolean }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareReplacedEdit, args);
+    if (!prepared.prepared) return { edited: false };
+    const claim = { replacedId: args.replacedId, claimedAt: prepared.claimedAt };
+    const action = managerMessageUpdateAction(
+      prepared.surface,
+      prepared.ts,
+      prepared.text,
+      prepared.withButtons ? settledRequestBlocks(prepared.text) : undefined,
+    );
+    if (!action) {
+      await ctx.runMutation(internal.work.recordReplacedEdit, {
+        ...claim,
+        failure: CANNOT_EDIT_REASON,
+      });
+      return { edited: false };
+    }
+    try {
+      await applyManagerAction(ctx, prepared.workItemId, prepared, action, {
+        requestEdit: { channel: prepared.channel, ts: prepared.ts },
+      });
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'the edit did not land');
+      log.warn('the replaced request could not be marked in the manager DM', {
+        replacedId: args.replacedId,
+        reason,
+      });
+      await ctx.runMutation(internal.work.recordReplacedEdit, { ...claim, failure: reason });
+      return { edited: false };
+    }
+    await ctx.runMutation(internal.work.recordReplacedEdit, { ...claim, editedAt: Date.now() });
+    return { edited: true };
+  },
+});
+
 /** Send the sole acknowledgement claimed for a late or duplicate reply. */
 export const sendDecisionNotice = internalAction({
   args: { workItemId: v.id('workItems'), decisionId: v.string() },
