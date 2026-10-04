@@ -480,6 +480,31 @@ describe('transferPreview: what the named manager reads before accepting (transf
     );
   });
 
+  it("never says a cut Linear card connects through a per-employee connection, whose Connect waits for IT to record the new manager's app (the second pass's code reader)", async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write', 'app:assignable'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.patch(office.linear, { endpoint: 'https://api.linear.app/graphql' });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.leavesBehind.surfaces).toEqual(
+      expect.arrayContaining([{ slug: 'linear', displayName: 'Linear', throughConnection: false }]),
+    );
+  });
+
   it('counts the record at most to the retire preview’s bound, and says when the count is a floor', async (): Promise<void> => {
     const office = await seedOffice();
     await office.harness.run(async (ctx) => {

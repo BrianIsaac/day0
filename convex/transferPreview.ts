@@ -347,7 +347,8 @@ async function departingMirrors(
 
 /**
  * Whether a cut card's system has an active organisation connection an issuer of Day0's acts
- * through, so the card connects again through it and takes no key of its own.
+ * through, so the card connects again through it and takes no key of its own; not a per-employee
+ * Linear connection, whose Connect waits for IT to record the new card's own app.
  *
  * @param ctx - Any query context.
  * @param surface - The card the handover cuts.
@@ -359,7 +360,10 @@ async function connectsThroughOrganisation(
   const system = organisationSystemOf(surface);
   if (system === undefined) return false;
   const connection = await activeConnectionFor(ctx, system);
-  return connection !== null && servedByIssuer(connection);
+  if (connection === null || !servedByIssuer(connection)) return false;
+  // A cut forgets the card's app, and a per-employee Linear connection's Connect waits until IT
+  // records an app for the new manager's card (11-AL), so that card asks IT, as the card says.
+  return !(system === 'linear' && connection.mode === 'per-employee');
 }
 
 /**
