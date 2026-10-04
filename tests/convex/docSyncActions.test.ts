@@ -41,7 +41,8 @@ const temporary = temporaryDirectories();
 // 6.28 (Node 22.23) a request on a pooled socket waits for a zero-delay timer
 // that a faked clock never fires (about 6 s a test until the double dropped the
 // socket, 12-N, 5 October 2026). A test that stubs fetch again keeps the route by
-// handing on to the global it found.
+// handing on to the global it found; one that unstubs every global itself (the
+// private wiki test, after its sync) leaves the rest of its own body unrouted.
 const redactorFetch = routeSpanModelFetch(globalThis.fetch);
 beforeAll((): void => {
   process.env.DAY0_REDACTOR_URL = SPAN_MODEL_TEST_URL;
