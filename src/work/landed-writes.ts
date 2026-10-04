@@ -1,5 +1,6 @@
 import {
   actionIntent,
+  describeAction,
   isAuditComment,
   isManagerDm,
   isStatusChange,
@@ -149,10 +150,17 @@ function parsedWrite(action: MockAction): ParsedSurfaceAction | undefined {
 /**
  * A row whose outcome was unknown, as the manager confirmed it: landed, with no unknown flag.
  *
+ * @param action - The action the row records.
  * @param entry - The ledger row.
  */
-function confirmedLanded(entry: AppliedAction): AppliedAction {
-  const confirmed: AppliedAction = { ...entry, ok: true, reason: CONFIRMED_LANDED_REASON };
+function confirmedLanded(action: MockAction, entry: AppliedAction): AppliedAction {
+  const confirmed: AppliedAction = {
+    ...entry,
+    ok: true,
+    reason: CONFIRMED_LANDED_REASON,
+    // A row whose outcome was unknown carried no effect: the ledger's words for the action stand in.
+    effect: entry.effect ?? describeAction(action),
+  };
   delete confirmed.outcomeUnknown;
   return confirmed;
 }
@@ -187,7 +195,7 @@ export function landedWritesOf(
       )?.answer;
       if (answer === 'not-sent') return [];
       if (answer === 'landed' && !landedEntry(entry)) {
-        return [{ action, applied: confirmedLanded(entry) }];
+        return [{ action, applied: confirmedLanded(action, entry) }];
       }
       return landedEntry(entry) ? [{ action, applied: entry }] : [];
     }),

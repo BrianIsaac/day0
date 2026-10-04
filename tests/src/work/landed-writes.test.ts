@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSurfaceAction } from '../../../src/surfaces/policy';
+import { describeAction, parseSurfaceAction } from '../../../src/surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import {
   correctionRequested,
@@ -101,6 +101,8 @@ describe('the writes earlier runs landed', () => {
     expect(answered.map((write) => write.action)).toEqual([comment]);
     expect(answered[0].applied).toMatchObject({ ok: true, idempotencyKey: 'wi:run:0' });
     expect(answered[0].applied.outcomeUnknown).toBeUndefined();
+    // A write whose outcome was unknown carried no effect; the ledger's words for it stand in.
+    expect(answered[0].applied.effect).toBe(describeAction(comment));
   });
 
   it('never lists a refused closing set, a held row awaiting approval, or a row the provider refused', () => {

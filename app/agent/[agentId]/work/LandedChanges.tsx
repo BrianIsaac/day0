@@ -94,7 +94,8 @@ function rowMeta(row: PhasedLedgerRow): ReactNode {
       </span>,
     );
   }
-  return parts;
+  // The parts are set apart, as every ledger line's small print is: never run together.
+  return parts.flatMap((part, index) => (index === 0 ? [part] : [' · ', part]));
 }
 
 /**
