@@ -1,0 +1,34 @@
+# A bed's additions to docker-compose.yml for the fake Linear: the fake under
+# Linear's own names on the project's network, so the deployment's fixed
+# Linear addresses (src/surfaces/identity-issuers/linear.ts,
+# src/surfaces/revokers/linear.ts, src/surfaces/fixed-endpoints.ts) reach it
+# with no product setting; the backend trusting the fake's throwaway CA
+# (fake-linear/make-tls.sh) through SSL_CERT_FILE and NODE_EXTRA_CA_CERTS; and
+# the fake published on this machine's loopback for its processes (through
+# fake-linear/host-preload.mjs) and its headless browser (through
+# --host-resolver-rules). Compose reads COMPOSE_FILE from the process
+# environment, not from the --env-file, and the setup pins it to the main file
+# for its own children; so a bed runs the setup, then exports
+#
+#   COMPOSE_FILE=docker-compose.yml:fake-linear/compose.bed.yml
+#
+# (fake-oidc/compose.bed.yml before it when the bed signs in through the test
+# issuer: the last file's backend trust is the one that holds, so make-tls.sh
+# is given fake-oidc's ca.pem too) and recreates the stack before anything
+# else. The deployment also needs DAY0_PRIVATE_HOSTS=mcp.linear.app: the MCP
+# client dials only public addresses unless a host is named there. Never on a
+# customer install: real Linear has public certificates and public names.
+services:
+  fake-linear:
+    networks:
+      default:
+        aliases: ['api.linear.app', 'linear.app', 'mcp.linear.app']
+    ports:
+      - '${FAKE_LINEAR_BIND_ADDR:-127.0.0.1}:${FAKE_LINEAR_HOST_PORT:?the port this machine reaches the fake Linear on}:443'
+
+  backend:
+    environment:
+      - SSL_CERT_FILE=/fake-linear-tls/bundle.pem
+      - NODE_EXTRA_CA_CERTS=/fake-linear-tls/cas.pem
+    volumes:
+      - ${FAKE_LINEAR_TLS_DIR:-./fake-linear/tls}:/fake-linear-tls:ro

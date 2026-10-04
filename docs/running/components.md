@@ -53,6 +53,7 @@ nothing else on your machine can dial them.
 | `model` | `model` | `MODEL_PORT` 11434 | `http://model:11434/v1` |
 | `fake-slack` | `test` | `FAKE_SLACK_HOST_PORT` 8090 | `http://fake-slack:8090/api/` |
 | `fake-oidc` | `test` | none | `http://fake-oidc:8443` (a fixed address on a review bed) |
+| `fake-linear` | `test` | none (`FAKE_LINEAR_HOST_PORT` on a bed, through its overlay) | `https://api.linear.app`, `https://linear.app`, `https://mcp.linear.app` on a bed |
 | `docs-notion-mcp` | `docs-notion` | none | `http://docs-notion-mcp:3000/mcp` |
 | `playwright-mcp` | `browser` | none | `http://playwright-mcp:8931/mcp` |
 | `looker-tile` | `demo` | none | `http://looker-tile:8080` |
@@ -244,6 +245,32 @@ the sign-in walk).
 
 **What it never sees.** A real person's account or password. It holds its
 people and codes in memory and forgets them when the container stops.
+
+---
+
+## `fake-linear` - the Linear double
+
+**What it is.** A stand-in for Linear: its OAuth token, revoke and authorise
+endpoints, its GraphQL API and its MCP server, answering as real Linear
+answered the real-vendor walks of 3 October 2026, with the controls a Linear
+administrator has in Linear's settings (revoke an app's access, expire a
+token). On a bed it answers under Linear's own names through
+`fake-linear/compose.bed.yml`, so a Linear path is proved without calling
+Linear.
+
+**What day0 uses it for.** Nothing in production. Anyone who reaches it acts as
+anyone it lists, which is why it is never a Linear a real installation points
+at.
+
+**When you need it.** Proving a Linear path on a bed: the shared connection,
+an employee's own app, a revoke, an expiry, intake and a landed write.
+
+**When you do not.** Every real installation, which reaches Linear at its own
+addresses.
+
+**What it never sees.** A real workspace, a real token or a real ticket. It
+holds its tokens and issues in memory and forgets them when the container
+stops.
 
 ---
 

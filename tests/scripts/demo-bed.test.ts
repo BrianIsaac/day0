@@ -590,6 +590,7 @@ describe('the compose file is pinned to digests', (): void => {
       'backend',
       'dashboard',
       'docs-notion-mcp',
+      'fake-linear',
       'fake-oidc',
       'fake-slack',
       'looker-tile',

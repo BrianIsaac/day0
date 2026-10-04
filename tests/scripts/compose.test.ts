@@ -89,7 +89,7 @@ describe('the profile list and the compose file agree', (): void => {
     const testServices = [
       ...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['test'\]$/gm),
     ].map((match: RegExpMatchArray): string => match[1]);
-    expect(testServices.sort()).toEqual(['fake-oidc', 'fake-slack']);
+    expect(testServices.sort()).toEqual(['fake-linear', 'fake-oidc', 'fake-slack']);
     for (const service of testServices) {
       expect(components, service).toContain(`| \`${service}\` | \`test\` |`);
     }
