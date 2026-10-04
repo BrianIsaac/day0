@@ -237,7 +237,8 @@ export function spanModelFetch(
 /**
  * A global `fetch` for a test whose code reaches the redaction component through it: requests to
  * `SPAN_MODEL_TEST_URL` are answered in-process by `spanModelFetch`, every other request goes to
- * `fallback` as it came.
+ * `fallback` as it came. The span model's answer does not wait, so a request's abort signal is
+ * not consulted.
  *
  * With `DAY0_REDACTOR_URL` set to `SPAN_MODEL_TEST_URL` and this stubbed as the global, no
  * redaction call opens a socket, so a test may fake `setTimeout` without stalling it

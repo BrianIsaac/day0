@@ -173,6 +173,15 @@ describe('the global fetch a test routes to the in-process span model', () => {
     await expect(model.spans('the password is hunter2', ['password'], 0.5)).resolves.toEqual([
       { start: 16, end: 23, label: 'password', score: 0.9 },
     ]);
+    const posted = await routed(
+      new Request(`${SPAN_MODEL_TEST_URL}/v1/spans`, {
+        method: 'POST',
+        body: JSON.stringify({ text: 'call Aman', labels: ['person'], threshold: 0.5 }),
+      }),
+    );
+    expect(await posted.json()).toEqual({
+      spans: [{ start: 5, end: 9, label: 'person', score: 0.9 }],
+    });
     const health = await routed(`${SPAN_MODEL_TEST_URL}/healthz`);
     expect(await health.json()).toMatchObject({ ok: true, model: 'recorded' });
     expect(fallback.asked).toEqual([]);
