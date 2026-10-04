@@ -78,6 +78,7 @@ import {
 import {
   HELD_ELSEWHERE_LIMIT,
   browserFieldId,
+  claimKeyItem,
   providerItemKey,
   writeTargetIds,
   type ClaimHolder,
@@ -120,7 +121,7 @@ import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
-import { retiredClaimOn, retiredHolderName } from './retirements';
+import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 
@@ -2180,6 +2181,27 @@ export const itemsHeldElsewhere = internalQuery({
             ...(UNCLAIMED_STATES.has(holding.state) ? { unclaimed: true } : {}),
           });
         }
+      }
+    }
+    // A retired or handed-over employee's kept claims bind its colleagues as a live holder's do
+    // (the wave 3.5 review's M3): the executor is told, so it announces no write the guard withholds.
+    for (const retirement of await ownerRetirements(ctx, userId)) {
+      for (const claim of retirement.claims) {
+        if (held.length >= HELD_ELSEWHERE_LIMIT) return held;
+        if (own.has(claim.key) || (claim.aliases ?? []).some((alias) => own.has(alias))) continue;
+        held.push({
+          ...(claim.writeTarget
+            ? {
+                externalId: claim.writeTarget.field,
+                sourceSystem: claim.writeTarget.surface,
+                pageField: true,
+              }
+            : claimKeyItem(claim.key)),
+          holderName: retiredHolderName(retirement),
+          sameEmployee: false,
+          title: claim.title,
+          state: claim.state,
+        });
       }
     }
     return held;

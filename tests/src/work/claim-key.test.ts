@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
 import type { MockAction } from '../../../src/work/types';
 import {
+  claimKeyItem,
   browserFieldId,
   documentedBrowserFields,
   heldElsewhereLines,
@@ -446,5 +447,39 @@ describe('a documented page field of a browser-driven surface', (): void => {
     expect(
       heldItemReplyFindings([signIn, tile('browser_snapshot', {}), reply(said)], [held], surfaces),
     ).toEqual([]);
+  });
+});
+
+describe('claimKeyItem (a kept claim named to the executor, M3)', () => {
+  it('reads the surface and the item back out of every key providerItemKey makes', () => {
+    const linear = { slug: 'linear', class: 'kanban', endpoint: 'https://mcp.linear.app/mcp' };
+    const slack = {
+      slug: 'slack',
+      class: 'chat',
+      endpoint: 'https://slack.com/api/',
+      providerWorkspaceId: 'T0TEAM',
+    };
+    const hosted = {
+      slug: 'tracker',
+      class: 'kanban',
+      endpoint: 'https://tracker.example.com/api',
+    };
+    const item = (externalId: string) => ({ sourceSystem: 'tracker', externalId });
+    expect(claimKeyItem(providerItemKey(linear, item('REVOPS-7'), 'real')!)).toEqual({
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-7',
+    });
+    expect(claimKeyItem(providerItemKey(slack, item('1787.0001'), 'real')!)).toEqual({
+      sourceSystem: 'slack',
+      externalId: '1787.0001',
+    });
+    expect(claimKeyItem(providerItemKey(hosted, item('T-1'), 'real')!)).toEqual({
+      sourceSystem: 'https://tracker.example.com',
+      externalId: 'T-1',
+    });
+    expect(claimKeyItem(providerItemKey(undefined, item('T-2'), 'real')!)).toEqual({
+      sourceSystem: 'tracker',
+      externalId: 'T-2',
+    });
   });
 });
