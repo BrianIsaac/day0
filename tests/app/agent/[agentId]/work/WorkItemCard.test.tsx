@@ -1354,10 +1354,15 @@ describe('every decision on a work item card is said in its live region and give
         ],
       },
     });
-    const box = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    act((): void => box?.click());
+    // Answered per entry since wave 12 (U17 D1): re-pinned from one tick and `true`.
+    const landed = [
+      ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ].find((radio) => radio.closest('label')?.textContent === 'It landed');
+    act((): void => landed?.click());
     await press(view.container, 'Confirm reconciliation');
-    expect(view.calls).toEqual([['reconcile', true]]);
+    expect(view.calls).toEqual([
+      ['reconcile', [{ phase: 'single', actionIndex: 0, answer: 'landed' }]],
+    ]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
     view.unmount();
   });

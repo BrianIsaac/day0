@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSurfaceAction } from '../../../src/surfaces/policy';
+import { describeAction, parseSurfaceAction } from '../../../src/surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import {
   correctionRequested,
@@ -79,6 +79,30 @@ describe('the writes earlier runs landed', () => {
       '1789.2',
     ]);
     expect(landedWritesOf(undefined)).toEqual([]);
+  });
+
+  it('counts a write the manager answered landed and leaves out one they answered not sent (P4-1)', () => {
+    const comment = call('linear', 'save_comment', { issueId: 'REVOPS-1', body: 'Audit note.' });
+    const close = call('linear', 'save_issue', { id: 'REVOPS-1', state: 'Done' });
+    const output = {
+      actions: [comment, close],
+      applied: [
+        row({ ok: false, outcomeUnknown: true, idempotencyKey: 'wi:run:0' }),
+        row({ ok: true, idempotencyKey: 'wi:run:1' }),
+      ],
+    };
+    expect(landedWritesOf(output).map((write) => write.applied.idempotencyKey)).toEqual([
+      'wi:run:1',
+    ]);
+    const answered = landedWritesOf(output, [
+      { phase: 'single', actionIndex: 0, answer: 'landed' },
+      { phase: 'single', actionIndex: 1, answer: 'not-sent' },
+    ]);
+    expect(answered.map((write) => write.action)).toEqual([comment]);
+    expect(answered[0].applied).toMatchObject({ ok: true, idempotencyKey: 'wi:run:0' });
+    expect(answered[0].applied.outcomeUnknown).toBeUndefined();
+    // A write whose outcome was unknown carried no effect; the ledger's words for it stand in.
+    expect(answered[0].applied.effect).toBe(describeAction(comment));
   });
 
   it('never lists a refused closing set, a held row awaiting approval, or a row the provider refused', () => {

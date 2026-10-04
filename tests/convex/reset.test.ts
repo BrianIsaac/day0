@@ -751,6 +751,60 @@ describe('retire in real mode', (): void => {
     });
   });
 
+  it('keeps a retired employee’s claim on an item a Retry moved on with a write that may have landed, and names it to its colleagues (M2, M3)', async (): Promise<void> => {
+    const { harness, retiring, sibling } = await seedRealOwner();
+    const comment = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Audit note."}',
+      },
+    };
+    const { held, asking } = await harness.run(async (ctx) => {
+      // Retried after a stop whose comment's outcome was unknown: the manager answered it landed,
+      // and the retry carries it, so the row now waits in plan-approved.
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(retiring, 'REVOPS-9', 'Close REVOPS-9'),
+        state: 'plan-approved',
+        output: {
+          actions: [comment],
+          applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k0' }],
+          landedWrites: [
+            { action: comment, applied: { tool: 'mcp.call', ok: true, idempotencyKey: 'k0' } },
+          ],
+        },
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-9',
+        agentId: retiring,
+        workItemId: held,
+        claimedAt: 1,
+      });
+      const asking = await ctx.db.insert('workItems', {
+        ...workItemFields(sibling, 'REVOPS-90', 'Report on REVOPS-9'),
+        state: 'plan-approved',
+      });
+      return { held, asking };
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+
+    expect((await retirementsOf(harness))[0].claims).toMatchObject([
+      { key: 'linear:REVOPS-9', workItemId: held, title: 'Close REVOPS-9' },
+    ]);
+    const named = await harness.query(internal.work.itemsHeldElsewhere, { workItemId: asking });
+    expect(named).toContainEqual({
+      externalId: 'REVOPS-9',
+      sourceSystem: 'linear',
+      holderName: 'retiring (retired)',
+      sameEmployee: false,
+      title: 'Close REVOPS-9',
+      state: 'plan-approved',
+    });
+  });
+
   it('releases a retired employee’s claim on work it had not begun to write, and wakes the colleague it refused (review M8)', async (): Promise<void> => {
     vi.useFakeTimers();
     const { harness, retiring, sibling } = await seedRealOwner();

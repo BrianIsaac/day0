@@ -1,7 +1,13 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { internalQuery, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
@@ -396,6 +402,7 @@ async function parkSpentEvaluations(
     const reason = unavailable ? SCOPE_JUDGEMENT_UNAVAILABLE : EVALUATION_ATTEMPTS_SPENT;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason, attempts, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
@@ -412,6 +419,39 @@ async function parkSpentEvaluations(
 
 async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
   await ctx.scheduler.runAfter(0, internal.workActions.evaluateWorkItemInternal, { workItemId });
+}
+
+/** A step of a row's run that the loop queues and Stop can cancel. */
+export type QueuedStep = 'draft' | 'execute' | 'apply';
+
+/**
+ * Queue one step of a row's run and record it on the row (`stepJobId`, wave 12; V12-3), so a Stop
+ * can cancel it before it starts. One id is kept, the latest: an earlier step still pending is held
+ * off by the fences Stop clears.
+ *
+ * @param ctx - The transition's mutation context.
+ * @param workItemId - The row.
+ * @param step - The draft, the execution or the apply.
+ * @param delayMs - How long the step waits before it runs.
+ */
+export async function queueStep(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  step: QueuedStep,
+  delayMs = 0,
+): Promise<void> {
+  const args = { workItemId };
+  const stepJobId =
+    step === 'draft'
+      ? await ctx.scheduler.runAfter(delayMs, internal.workActions.draftPlanInternal, args)
+      : step === 'execute'
+        ? await ctx.scheduler.runAfter(
+            delayMs,
+            internal.workActions.executeApprovedPlanInternal,
+            args,
+          )
+        : await ctx.scheduler.runAfter(delayMs, internal.workActions.applyApprovedActions, args);
+  await ctx.db.patch(workItemId, { stepJobId });
 }
 
 /** The deferral reason of a row parked because the employee's charter awaits approval. */
@@ -456,6 +496,7 @@ async function parkForCharter(
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
@@ -533,17 +574,11 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'claimed':
-      if (row.plan === undefined) {
-        await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
-          workItemId: row._id,
-        });
-      }
+      if (row.plan === undefined) await queueStep(ctx, row._id, 'draft');
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'plan-approved':
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
+      await queueStep(ctx, row._id, 'execute');
       return;
     case 'plan-pending':
     case 'executing':
@@ -595,7 +630,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
   if (row.draftClaimedAt !== undefined) {
     const resumed = await draftResumesSinceRetry(ctx, row);
     if (resumed >= MAX_DRAFT_RESUMES) {
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+      await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         reason: `the plan draft died ${resumed + 1} times without an answer; Retry drafts it again`,
         stopped: true,
@@ -609,7 +644,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
       createdAt: now,
     });
   }
-  await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, { workItemId: row._id });
+  await queueStep(ctx, row._id, 'draft');
   return true;
 }
 
@@ -673,9 +708,7 @@ export async function resumeStalledStepsInTransaction(
       if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
     for (const row of await resumable('plan-approved', () => true)) {
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
+      await queueStep(ctx, row._id, 'execute');
       rescheduled += 1;
     }
     for (const row of await resumable(
@@ -716,7 +749,7 @@ export async function resumeStalledStepsInTransaction(
         rescheduled += 1;
         continue;
       }
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+      await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         runId: row.executionRunId,
         reason: 'execution interrupted before the exact-action gate',
@@ -758,6 +791,146 @@ export async function resumeStalledStepsInTransaction(
   }
   return { rescheduled };
 }
+
+/**
+ * How long a claim on one of the manager channel's sends or edits is honoured (N-3): longer than a
+ * Convex action's ten-minute limit, so a claim this old with no result belongs to an action that
+ * died between its claim and its record.
+ */
+export const MANAGER_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
+/** The failure a lapsed claim is recorded with (wave 12, 12-W; a wording draft). */
+export const MANAGER_CLAIM_LAPSED_REASON =
+  'the send stopped before it recorded a result, so it is not known whether Slack took it';
+
+/** Lapsed claims settled per employee and kind in one sweep; the rest wait for the next. */
+const LEASE_BATCH = 50;
+
+/**
+ * Settle every manager-channel claim an action died holding (N-3), for one employee, as the
+ * claim's own failure path would have: a digest's notes are released for the next digest with
+ * the reason and a `work.manager-digest-failed` event (`recordManagerDigest`); a decision
+ * acknowledgement, a duplicate-reply notice, the edit that closes a decided request (12-M writes
+ * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
+ * edit record the failure and are not sent again, since the message may have landed. A per-run
+ * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
+ * older than the lease on its index, so a claim with a result is never read.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param agentId - The employee.
+ * @param now - The instant the lease is judged against.
+ * @returns How many claims were settled.
+ */
+async function settleLapsedManagerClaims(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const before = now - MANAGER_CLAIM_LEASE_MS;
+  const failure = MANAGER_CLAIM_LAPSED_REASON;
+  const [notes, notices, duplicates, closes, edits] = await Promise.all([
+    ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .eq('discardedAt', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('managerDecisionNotices')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_duplicate_notice_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.duplicateNoticeTs', undefined)
+          .eq('decision.duplicateNoticeFailure', undefined)
+          .gt('decision.duplicateNoticeClaimedAt', 0)
+          .lt('decision.duplicateNoticeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_close_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.closedAt', undefined)
+          .eq('decision.closeFailure', undefined)
+          .gt('decision.closeClaimedAt', 0)
+          .lt('decision.closeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_edit_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('editedAt', undefined)
+          .eq('editFailure', undefined)
+          .gt('editClaimedAt', 0)
+          .lt('editClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+  ]);
+  const digestNotes = notes.filter((note) => note.digestId !== undefined);
+  for (const note of digestNotes) {
+    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+  }
+  if (digestNotes.length > 0) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.manager-digest-failed',
+      payload: { noteIds: digestNotes.map((note) => note._id), reason: failure },
+      createdAt: now,
+    });
+  }
+  for (const notice of notices) await ctx.db.patch(notice._id, { failure });
+  // One row can hold both claims, so each patch merges into the decision as it stands now.
+  const settleDecision = async (
+    workItemId: Id<'workItems'>,
+    field: 'duplicateNoticeFailure' | 'closeFailure',
+  ): Promise<void> => {
+    const decision = (await ctx.db.get(workItemId))?.decision;
+    if (decision) await ctx.db.patch(workItemId, { decision: { ...decision, [field]: failure } });
+  };
+  for (const row of duplicates) await settleDecision(row._id, 'duplicateNoticeFailure');
+  for (const row of closes) await settleDecision(row._id, 'closeFailure');
+  for (const edit of edits) await ctx.db.patch(edit._id, { editFailure: failure });
+  return digestNotes.length + notices.length + duplicates.length + closes.length + edits.length;
+}
+
+/**
+ * Settle the manager-channel claims every employee's actions died holding (N-3); see
+ * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
+ * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back.
+ *
+ * @returns How many claims were settled.
+ */
+export const settleLapsedClaims = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ settled: number }> => {
+    const now = Date.now();
+    let settled = 0;
+    for (const agent of await ctx.db.query('agents').collect()) {
+      settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+    }
+    return { settled };
+  },
+});
 
 /** How often one employee's work surfaces may be polled on demand. */
 export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;

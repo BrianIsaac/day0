@@ -643,7 +643,7 @@ describe('amending an approved charter', (): void => {
       return { workItemId, skillId };
     });
     const owner = t.withIdentity(managerIdentity());
-    const claim = await t.mutation(internal.work.claimForExecution, ids);
+    const claim = await t.mutation(internal.workRuns.claimForExecution, ids);
     expect(claim.claimed).toBe(true);
     const before = await t.run((ctx) => ctx.db.get(ids.workItemId));
     vi.useFakeTimers();
@@ -657,13 +657,13 @@ describe('amending an approved charter', (): void => {
       vi.useRealTimers();
     }
     await expect(
-      owner.mutation(api.work.retryFailed, {
+      owner.mutation(api.workRuns.retryFailed, {
         workItemId: ids.workItemId,
         feedback: 'Try again now',
       }),
     ).rejects.toThrow('workItem state is executing');
     expect(await t.run((ctx) => ctx.db.get(ids.workItemId))).toEqual(before);
-    expect(await t.mutation(internal.work.claimForExecution, ids)).toMatchObject({
+    expect(await t.mutation(internal.workRuns.claimForExecution, ids)).toMatchObject({
       claimed: false,
     });
   });

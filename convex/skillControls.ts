@@ -18,7 +18,8 @@ import {
   skillOwnerKeyOf,
   STORED_COPY_CLEARED,
 } from './skillVersions';
-import { applyVerdict, stopRunsInTransaction } from './work';
+import { applyVerdict } from './work';
+import { stopRunsInTransaction } from './workRuns';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
@@ -193,6 +194,8 @@ async function parkForSkill(
   const behind = await liveSkillNamed(ctx, item.agentId, wait.name);
   await ctx.db.patch(item._id, {
     state: 'needs-skill',
+    // A wait on a skill is stamped as every wait is (wave 12, 12-W).
+    waitingSince: wait.now,
     verdict: {
       decision: 'needs-skill',
       reason: wait.reason,

@@ -427,13 +427,15 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     // The retry resumes at plan-approved and the server runs the plan again.
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     // The note directs the Done in so many words, so the hold the plan puts on it is the manager's word already given.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
@@ -539,12 +541,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
       });
     });
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     await landedOnNote(t, workItemId);
 
     expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
@@ -567,12 +571,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3ObedientClosing(FIRST_COMMENT_ID);
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
 
@@ -611,12 +617,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3CorrectionClosing(FIRST_COMMENT_ID);
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
     // The note asks for the correction and then directs the Done in so many words, so both land on the note.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();

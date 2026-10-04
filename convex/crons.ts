@@ -33,6 +33,8 @@ const SCHEDULED_JOBS = {
     await ctx.runAction(intakeInternal.intakeActions.pollAll, {}),
   'work:resumeStalledSteps': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runMutation(internal.work.resumeStalledSteps, {}),
+  'workLoop:settleLapsedClaims': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.workLoop.settleLapsedClaims, {}),
   'intakeActions:pollDecisions': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runAction(intakeInternal.intakeActions.pollDecisions, {}),
   'managerChannelActions:sendManagerDigests': async (ctx: ActionCtx): Promise<unknown> =>
@@ -106,6 +108,12 @@ crons.interval('poll connected surfaces for work', { minutes: 5 }, gate, {
 // that died (real mode only; the mutation returns at once in mock mode).
 crons.interval('resume stalled work steps', { minutes: 5 }, gate, {
   job: 'work:resumeStalledSteps',
+});
+
+// The lease on the manager channel's sends and edits (N-3, either mode): a claim an action died
+// holding is settled as its own failure would have settled it.
+crons.interval('settle lapsed manager-channel claims', { minutes: 5 }, gate, {
+  job: 'workLoop:settleLapsedClaims',
 });
 
 crons.interval('poll manager decision replies', { seconds: 60 }, gate, {

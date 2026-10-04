@@ -101,6 +101,7 @@ import type * as waitingWork from '../waitingWork.js';
 import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
 import type * as workLoop from '../workLoop.js';
+import type * as workRuns from '../workRuns.js';
 import type * as workspace from '../workspace.js';
 
 import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
@@ -199,6 +200,7 @@ declare const fullApi: ApiFromModules<{
   work: typeof work;
   workActions: typeof workActions;
   workLoop: typeof workLoop;
+  workRuns: typeof workRuns;
   workspace: typeof workspace;
 }>;
 

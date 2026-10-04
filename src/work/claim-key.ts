@@ -112,6 +112,28 @@ export function providerItemKey(
   return `slug:${item.sourceSystem}|${item.externalId}`;
 }
 
+/**
+ * The surface and the item a claim key names, as a prompt lists them: `linear:REVOPS-7` is
+ * Linear's REVOPS-7, `slack:<team>:<ts>` a Slack message, `<origin>|<id>` an item on that host,
+ * `slug:<surface>|<id>` an item on a surface known by its slug. A retired employee's kept claim
+ * has only its key.
+ *
+ * @param key - A key `providerItemKey` made.
+ */
+export function claimKeyItem(key: string): { sourceSystem: string; externalId: string } {
+  if (key.startsWith('linear:')) return { sourceSystem: 'linear', externalId: key.slice(7) };
+  if (key.startsWith('slack:')) {
+    return { sourceSystem: 'slack', externalId: key.slice(key.indexOf(':', 6) + 1) };
+  }
+  const bar = key.lastIndexOf('|');
+  if (bar < 0) return { sourceSystem: 'unknown', externalId: key };
+  const system = key.slice(0, bar);
+  return {
+    sourceSystem: system.startsWith('slug:') ? system.slice(5) : system,
+    externalId: key.slice(bar + 1),
+  };
+}
+
 /** The path of a surface reached through a browser, where a write fills a page's fields. */
 const BROWSER_DRIVEN = 'browser-driven';
 const SECRET_VALUE = /\{\{\s*secret\s*\}\}/;

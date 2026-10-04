@@ -351,16 +351,25 @@ const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'completed',
 ]);
 
+/** The states whose item holds nothing it wrote: the manager turned it down, or it was never taken. */
+const NEVER_WROTE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'cancelled',
+  'skipped',
+]);
+
 /**
  * Whether a leaving employee's item may have written its provider item: it is writing or wrote,
- * or it failed with a landed write, or with a write whose outcome is unknown (an apply stopped
- * part way, by the dead-man switch or a handover's deadline), which may have landed.
+ * or its output carries a landed write, or a write whose outcome is unknown (an apply stopped
+ * part way, by the dead-man switch, a handover's deadline or the manager's Stop), which may have
+ * landed. The output is read in every state but the two that never wrote: a Retry moves a row
+ * that landed writes back to `plan-approved`, `claimed` or `plan-pending` with them carried (the
+ * wave 3.5 review's M2).
  *
  * @param item - The holding work item.
  */
 function mayHaveWritten(item: Doc<'workItems'>): boolean {
   if (WRITING_HOLDER_STATES.has(item.state)) return true;
-  if (item.state !== 'failed') return false;
+  if (NEVER_WROTE_STATES.has(item.state)) return false;
   return (
     landedWritesOf(item.output).length > 0 ||
     providerReconciliationEntries(item.output).some((entry) => entry.outcome === 'outcome-unknown')
@@ -416,7 +425,7 @@ interface Retired {
  * The backend keeps finished records for a week beside the pending ones, so
  * this is far past a team deployment's queue. A pending job older than the
  * window still runs against a missing row: most steps end as a no-op, and a
- * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
+ * few (`workRuns.setFailed`, `work.decidePlan`) throw into the backend log.
  */
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 

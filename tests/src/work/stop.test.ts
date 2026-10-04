@@ -14,6 +14,9 @@ import {
   landedWork,
   STOPPED_PREFIX,
   stopDetail,
+  isStoppable,
+  managerStopNote,
+  managerStopReason,
   stoppedReason,
   withRefusedReadsDropped,
 } from '../../../src/work/stop';
@@ -332,5 +335,25 @@ describe('a gate refusal stop, scrubbed like every failure path (step 42)', (): 
     expect(reason).toContain("Day0's gate refused 1 of 1 actions");
     expect(reason).toContain('POST /chat.postMessage?token=');
     expect(reason).not.toContain(token);
+  });
+});
+
+describe('a stop the manager made (wave 12)', () => {
+  it('stops only work under way', () => {
+    expect(['claimed', 'plan-approved', 'executing'].every(isStoppable)).toBe(true);
+    expect(['plan-pending', 'actions-pending', 'failed', 'completed'].some(isStoppable)).toBe(
+      false,
+    );
+  });
+
+  it('records the manager’s reason under the stopped prefix, and reads it back', () => {
+    expect(managerStopReason('')).toBe(`${STOPPED_PREFIX}stopped by the manager`);
+    expect(managerStopReason('Wrong ticket.')).toBe(
+      `${STOPPED_PREFIX}stopped by the manager: Wrong ticket.`,
+    );
+    expect(managerStopNote(managerStopReason(''))).toBe('');
+    expect(managerStopNote(managerStopReason('Wrong ticket.'))).toBe('Wrong ticket.');
+    expect(managerStopNote(`${STOPPED_PREFIX}the read did not land`)).toBeUndefined();
+    expect(managerStopNote('rejected by the manager: no')).toBeUndefined();
   });
 });

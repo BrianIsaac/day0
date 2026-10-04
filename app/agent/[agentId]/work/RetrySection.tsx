@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { skipSentence, type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
-import type { ReconciliationEntry } from '@/work/reconciliation';
+import type { GivenAnswer, ReconciliationEntry } from '@/work/reconciliation';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
@@ -83,12 +83,22 @@ export function retryWhy(
   }
 }
 
+/** Whether a failed item's quiet control dismisses it (N7) or closes it without a retry (E-8). */
+export type SetAside = 'dismiss' | 'close';
+
 /**
- * What Dismiss does to a failed item, beside what Retry does (N7).
+ * What Dismiss, or Close without retry, does to a failed item, beside what Retry does (N7, E-8).
  *
  * @param mode - The failed item's controls: a rejection is already out of the inbox.
+ * @param kind - Which of the two the card offers.
+ * @param retryOpen - Whether Retry can be pressed here.
  */
-export function dismissWhy(mode: RetryMode): string {
+export function dismissWhy(mode: RetryMode, kind: SetAside = 'dismiss', retryOpen = true): string {
+  if (kind === 'close') {
+    return retryOpen
+      ? 'Close without retry takes it out of your inbox and keeps it in the record; Retry is still here if you change your mind.'
+      : 'Close without retry takes it out of your inbox and keeps it in the record.';
+  }
   return mode.kind === 'retry-failed' && mode.rejected
     ? 'It is already out of your inbox, as the decision was yours; Dismiss files it at the foot of the queue and keeps it in the record.'
     : 'Dismiss takes it out of your inbox and keeps it in the record; Retry stays here.';
@@ -208,8 +218,9 @@ export function RejectedSection({
  * @param autonomous - Whether autonomous actions are on.
  * @param busy - A decision on the card is in flight.
  * @param onRetry - Retry with the note as typed.
- * @param onReconcile - Record the manager's check of the provider.
- * @param dismiss - Dismiss for a failed item (N7): the call, and when it was dismissed if it was.
+ * @param onReconcile - Record the manager's answer for each entry the provider was checked for.
+ * @param dismiss - Dismiss (N7) or Close without retry (E-8) for a failed item: which, the call,
+ *   and when it was set aside if it was.
  */
 export function RetrySection({
   item,
@@ -233,8 +244,8 @@ export function RetrySection({
   gate?: WorkGate;
   busy: boolean;
   onRetry: (note: string) => void;
-  onReconcile: () => void;
-  dismiss?: { readonly at?: number; readonly onDismiss: () => void };
+  onReconcile: (answers: readonly GivenAnswer[]) => void;
+  dismiss?: { readonly kind: SetAside; readonly at?: number; readonly onDismiss: () => void };
 }) {
   const zone = useAgentZone();
   const token = retryNoteToken(item);
@@ -279,11 +290,18 @@ export function RetrySection({
   const disabled =
     busy || blocked || ((mode.kind === 'send-back' || mode.kind === 'answer') && !writing);
   const body: ReactNode[] = [];
+  if (reason) {
+    body.push(
+      <Note key="reason" tone="warn">
+        {reason}
+      </Note>,
+    );
+  }
   if (dismiss?.at !== undefined) {
     body.push(
       <Note key="dismissed">
         <Lead>
-          You dismissed this at{' '}
+          {dismiss.kind === 'close' ? 'You closed this at' : 'You dismissed this at'}{' '}
           <time
             dateTime={new Date(dismiss.at).toISOString()}
             title={clockTimeWithSeconds(dismiss.at, zone)}
@@ -292,14 +310,11 @@ export function RetrySection({
           </time>
           .
         </Lead>{' '}
-        It is out of your inbox and stays in the record; Retry still sends it back.
-      </Note>,
-    );
-  }
-  if (reason) {
-    body.push(
-      <Note key="reason" tone="warn">
-        {reason}
+        {blocked
+          ? 'It is out of your inbox and stays in the record.'
+          : dismiss.kind === 'close'
+            ? 'It is out of your inbox and stays in the record; Retry is still here if you change your mind.'
+            : 'It is out of your inbox and stays in the record; Retry still sends it back.'}
       </Note>,
     );
   }
@@ -340,7 +355,9 @@ export function RetrySection({
             {blocked && (mode.kind !== 'send-back' || writing)
               ? ' Retry remains disabled until provider reconciliation is recorded.'
               : ''}
-            {dismiss && dismiss.at === undefined ? ` ${dismissWhy(mode)}` : ''}
+            {dismiss && dismiss.at === undefined
+              ? ` ${dismissWhy(mode, dismiss.kind, !blocked)}`
+              : ''}
           </>
         }
       >
@@ -354,7 +371,7 @@ export function RetrySection({
         </Button>
         {dismiss && dismiss.at === undefined ? (
           <Button variant="quiet" disabled={busy} onClick={dismiss.onDismiss}>
-            Dismiss
+            {dismiss.kind === 'close' ? 'Close without retry' : 'Dismiss'}
           </Button>
         ) : null}
       </ItemFoot>

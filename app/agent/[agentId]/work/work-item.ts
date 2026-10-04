@@ -8,12 +8,19 @@ import {
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
 } from '@/work/types';
 import type { Doc } from '@convex/_generated/dataModel';
-import { isStopped, stopDetail, isGateRefusalStop, GATE_REFUSAL_STOP } from '@/work/stop';
+import {
+  isStopped,
+  stopDetail,
+  isGateRefusalStop,
+  GATE_REFUSAL_STOP,
+  managerStopNote,
+} from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
 import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
+import { notDoneStatements, runOwnWords } from '@/work/not-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -64,7 +71,11 @@ export interface RunOutput {
   notes: string;
   actions?: MockAction[];
   applied?: LedgerRow[];
-  initial?: { applied?: LedgerRow[]; withheldActions?: WithheldActionRow[] };
+  initial?: {
+    actions?: MockAction[];
+    applied?: LedgerRow[];
+    withheldActions?: WithheldActionRow[];
+  };
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
@@ -330,6 +341,17 @@ export function failedItemReason(item: {
   if (item.skipReason && isStopped(item.skipReason)) {
     const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
     const unconfirmed = landed && !item.providerReconciliation;
+    // The manager's own stop says so in their words, once, then what is left (wave 12).
+    const note = managerStopNote(item.skipReason);
+    if (note !== undefined) {
+      const said = note === '' ? 'You stopped the run.' : `You stopped the run: “${note}”`;
+      if (unconfirmed) {
+        return `${said} A write landed or may have; confirm the provider below before Retry.`;
+      }
+      if (landed)
+        return `${said} A write landed before it stopped; a retry does not send it again.`;
+      return `${said} Nothing landed, so there is nothing to check.`;
+    }
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
     if (item.output?.refusedClosing) {
@@ -495,4 +517,23 @@ export function waitingLine(item: WaitingItem, zone: string | undefined): string
     return `Evaluation started ${clockTime(item.evaluationClaimedAt, zone)}${attempt}; if it does not answer, the item waits for the next free slot.`;
   }
   return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
+}
+
+/** The most clauses the card quotes of what a run says it did not do; the rest say the same. */
+const UNFINISHED_SHOWN = 3;
+
+/**
+ * What a finished run's own words say it did not do (the 4 October live demo): the first clauses
+ * of its draft and of every comment and message it wrote, in both phases, that say the work was
+ * not done, at most {@link UNFINISHED_SHOWN}.
+ *
+ * @param output - The run's output.
+ * @returns The clauses, in order; empty when the words say nothing of the kind.
+ */
+export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
+  if (!output) return [];
+  const initial = output.initial?.actions ?? [];
+  return notDoneStatements(
+    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
+  ).slice(0, UNFINISHED_SHOWN);
 }
