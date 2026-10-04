@@ -593,7 +593,7 @@ describe('the access request and the organisation connection ledger in the recor
         subject,
       ),
     ).toBe(
-      "The organisation's Slack connection had its recorded issuer corrected by the setup command.",
+      "The organisation's Slack connection had its issuer recorded by the setup command.",
     );
     expect(
       recordWords(

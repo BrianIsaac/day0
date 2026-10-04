@@ -245,7 +245,7 @@ describe('the live feed labels', (): void => {
           issuerRecorded: true,
         },
       }),
-    ).toBe("auth.acme.test: the organisation connection's recorded issuer corrected");
+    ).toBe("auth.acme.test: the organisation connection's issuer recorded");
     expect(
       eventLabel({
         type: 'organisation.connection-revoked',

@@ -152,11 +152,12 @@ function correctedWhat(payload: Read<'organisation.connection-corrected'>): stri
   const parts = [
     ...(payload.redirectCorrected === true ? ['redirect'] : []),
     ...(Array.isArray(payload.scopes) ? ['scopes'] : []),
-    ...(payload.issuerRecorded === true ? ['issuer'] : []),
   ];
-  return parts.length <= 1
-    ? (parts[0] ?? 'scopes')
-    : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+  // An issuer recorded where none was is recorded, never corrected (the round review's m13).
+  const issuer = payload.issuerRecorded === true;
+  if (parts.length === 0 && issuer) return 'issuer recorded';
+  const corrected = `recorded ${parts.length === 0 ? 'scopes' : parts.join(' and ')} corrected`;
+  return issuer ? `${corrected} and its issuer recorded` : corrected;
 }
 
 /** One call Day0 made with the organisation's Slack configuration token or its refresh token (11-AS). */
@@ -525,7 +526,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'organisation.connection-rotated': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection's secret rotated`,
   'organisation.connection-corrected': (payload) =>
-    `${text(payload.displayName) ?? 'a system'}: the organisation connection's recorded ${correctedWhat(payload)} corrected`,
+    `${text(payload.displayName) ?? 'a system'}: the organisation connection's ${correctedWhat(payload)}`,
   'organisation.connection-revoked': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
   'surface.authorised': 'authorised at its authorisation server',
