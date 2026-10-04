@@ -480,8 +480,10 @@ export function leavesBehindLines(
   const left = preview.leavesBehind;
   const pages = countedAtLeast(left.mirroredPages, left.mirroredPagesAtLeast, 'page', 'pages');
   return [
-    ...left.surfaces.map(
-      (surface) => `${surface.displayName}: you approve and connect it with your own credentials`,
+    ...left.surfaces.map((surface) =>
+      surface.throughConnection
+        ? `${surface.displayName}: you approve it and connect it through IT's connection, with nothing to paste`
+        : `${surface.displayName}: you approve and connect it with your own credentials`,
     ),
     ...left.reapprove.map(
       (surface) =>

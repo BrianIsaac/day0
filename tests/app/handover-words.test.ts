@@ -65,8 +65,8 @@ const PREVIEW: TransferPreview = {
   },
   leavesBehind: {
     surfaces: [
-      { slug: 'linear', displayName: 'Linear' },
-      { slug: 'slack', displayName: 'Slack' },
+      { slug: 'linear', displayName: 'Linear', throughConnection: false },
+      { slug: 'slack', displayName: 'Slack', throughConnection: false },
     ],
     reapprove: [],
     scopesRevoked: ['linear:read'],
@@ -335,6 +335,26 @@ describe('the acceptance dialog (plan 7.3)', () => {
       'Linear: you approve and connect it with your own credentials',
       'Slack: you approve and connect it with your own credentials',
       "12 pages of sam@kestrel.example's documentation it stops reading",
+      'autonomous actions: off until you turn them on',
+    ]);
+  });
+
+  it("says a cut card on IT's connection connects through it, with nothing to paste (the wave 11 review's m23)", () => {
+    expect(
+      leavesBehindLines({
+        ...PREVIEW,
+        leavesBehind: {
+          ...PREVIEW.leavesBehind,
+          surfaces: [
+            { slug: 'linear', displayName: 'Linear', throughConnection: true },
+            { slug: 'slack', displayName: 'Slack', throughConnection: false },
+          ],
+          mirroredPages: 0,
+        },
+      }),
+    ).toEqual([
+      "Linear: you approve it and connect it through IT's connection, with nothing to paste",
+      'Slack: you approve and connect it with your own credentials',
       'autonomous actions: off until you turn them on',
     ]);
   });
