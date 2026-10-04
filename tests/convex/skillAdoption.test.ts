@@ -466,7 +466,7 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
     });
   });
 
-  it("says the offered version's author was retired once its retire released it (the wave 11 review's m19)", async (): Promise<void> => {
+  it("says the offered version's author left once its retire released it (the wave 11 review's m19)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priya = await employee(harness, 'Priya');
     const mateo = await employee(harness, 'Mateo');
@@ -476,7 +476,7 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
     const before = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
       agentId: mateo,
     });
-    expect(before[0]).toMatchObject({ versionId: offered, authorRetired: false });
+    expect(before[0]).toMatchObject({ versionId: offered, authorLeft: false });
 
     await harness.run(async (ctx) => {
       await releaseAuthor(ctx, priya);
@@ -484,11 +484,25 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
     const after = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
       agentId: mateo,
     });
-    expect(after[0]).toMatchObject({
-      versionId: offered,
-      authorName: 'Priya',
-      authorRetired: true,
+    expect(after[0]).toMatchObject({ versionId: offered, authorName: 'Priya', authorLeft: true });
+  });
+
+  it("says the same of an author handed over to another manager, who no longer works for this one (the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await linear(harness, mateo);
+    const offered = await version(harness, priya);
+    await propose(harness, mateo);
+
+    // The handover's own release: the old owner's copies keep the name and lose the author.
+    await harness.run(async (ctx) => {
+      await releaseAuthor(ctx, priya, 'another-owner');
     });
+    const [view] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(view).toMatchObject({ versionId: offered, authorName: 'Priya', authorLeft: true });
   });
 
   it("refuses another owner's caller", async (): Promise<void> => {

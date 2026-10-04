@@ -528,8 +528,11 @@ export interface AdoptionView {
   readonly versionId: Id<'skillVersions'>;
   readonly version: number;
   readonly authorName: string;
-  /** Whether the version's author has been retired since it wrote it (`releaseAuthor`). */
-  readonly authorRetired: boolean;
+  /**
+   * Whether the version's author no longer works for this owner: retired, or handed over to
+   * another manager (`releaseAuthor` clears the author on both).
+   */
+  readonly authorLeft: boolean;
   readonly verifiedAt: number;
   /** The employee's connection the sandbox runs under, by name; absent in mock mode. */
   readonly connection?: string;
@@ -617,8 +620,9 @@ async function adoptionView(
     versionId: version._id,
     version: version.version,
     authorName: version.authorName,
-    // A retire releases the versions its employee wrote; a handed-over copy never named one.
-    authorRetired:
+    // A retire and a handover release the versions their employee wrote; a handed-over copy
+    // never named one.
+    authorLeft:
       version.authorAgentId === undefined && version.authorName !== HANDED_OVER_AUTHOR_NAME,
     verifiedAt: version.verifiedAt,
     ...(offer.kind === 'ready' && offer.connection !== undefined

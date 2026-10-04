@@ -451,12 +451,12 @@ describe('adoptionWords', (): void => {
     expect(Object.values(words).join(' ')).not.toContain(HANDED_OVER_AUTHOR_NAME);
   });
 
-  it("says a retired author was retired, never as a colleague who still works (the wave 11 review's m19)", (): void => {
-    const words = adoptionWords({ ...base, authorRetired: true, state: 'offered' });
+  it("says an author who left, retired or handed over, no longer works for the manager, never as a colleague who still does (the wave 11 review's m19)", (): void => {
+    const words = adoptionWords({ ...base, authorLeft: true, state: 'offered' });
     expect(words.lead).toBe(
-      'The skill kanban-comment-and-close, verified on 18 September 2026, does this. Priya, who wrote it, has since been retired.',
+      'The skill kanban-comment-and-close, verified on 18 September 2026, does this. Priya, who wrote it, no longer works for you.',
     );
-    expect(adoptionWords({ ...base, authorRetired: true, state: 'verifying' }).lead).toBe(
+    expect(adoptionWords({ ...base, authorLeft: true, state: 'verifying' }).lead).toBe(
       'Adopting the skill kanban-comment-and-close for Mateo.',
     );
   });

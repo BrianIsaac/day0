@@ -462,8 +462,11 @@ export interface AdoptionWordsInput {
   readonly connection?: string;
   /** The offered version was withdrawn from every employee ({@link OFFER_WITHDRAWN_REFUSAL}). */
   readonly withdrawn?: boolean;
-  /** The version's author has been retired since it wrote it (its retire released the version). */
-  readonly authorRetired?: boolean;
+  /**
+   * The version's author no longer works for this manager: retired, or handed over to another
+   * manager (either releases the version, `releaseAuthor`).
+   */
+  readonly authorLeft?: boolean;
 }
 
 /** Why an offer may no longer be adopted or checked again: its version was withdrawn. */
@@ -484,18 +487,19 @@ export interface AdoptionWords {
 /**
  * The card's words, wording drafts (a product call). A copy handed over from another manager is
  * said as its own case, since its author's name is the placeholder 10-K writes for a colleague
- * this manager never had; so is a version whose author has been retired, which names the author
- * once, as retired, and never as a colleague who still works (the wave 11 review's m19).
+ * this manager never had; so is a version whose author no longer works for this manager, retired
+ * or handed over, which names the author once, as gone, and never as a colleague who still works
+ * here (the wave 11 review's m19).
  *
  * @param input - The state, the people, the skill and the connection.
  */
 export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   const { adopterName, skillName, verifiedOn } = input;
   const handedOver = input.authorName === HANDED_OVER_AUTHOR_NAME;
-  const retired = !handedOver && input.authorRetired === true;
+  const left = !handedOver && input.authorLeft === true;
   const skill =
-    handedOver || retired ? `the skill ${skillName}` : `${input.authorName}'s skill ${skillName}`;
-  const opening = handedOver || retired ? `The skill ${skillName}` : skill;
+    handedOver || left ? `the skill ${skillName}` : `${input.authorName}'s skill ${skillName}`;
+  const opening = handedOver || left ? `The skill ${skillName}` : skill;
   const under =
     input.connection !== undefined ? ` under ${adopterName}'s ${input.connection} connection` : '';
   const scopes = {
@@ -516,8 +520,8 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
       return {
         lead: handedOver
           ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
-          : retired
-            ? `${opening}, verified on ${verifiedOn}, does this. ${input.authorName}, who wrote it, has since been retired.`
+          : left
+            ? `${opening}, verified on ${verifiedOn}, does this. ${input.authorName}, who wrote it, no longer works for you.`
             : `${opening}, verified on ${verifiedOn}, does this.`,
         body: `${adopterName} can adopt it. It would be re-verified in the sandbox${under} before ${adopterName} can use it.`,
         ...scopes,
