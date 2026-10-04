@@ -9,11 +9,16 @@ import {
   settleHandoverAfterRun,
 } from './transferInFlight';
 import { keepCorrectionInTransaction } from './corrections';
-import { EXECUTION_STALL_MS, scheduleNextStep } from './workLoop';
+import {
+  armApplySwitch,
+  EXECUTION_STALL_MS,
+  scheduleApply,
+  scheduleNextStep,
+  stepMayRun,
+} from './workLoop';
 import { appendEvent } from './eventLog';
 import {
   actionsOf,
-  armApplySwitch,
   assertSameAgent,
   failInTransaction,
   indexesWith,
@@ -26,7 +31,6 @@ import {
   rememberReplacedRequest,
   retakeExternalClaim,
   reviewHeldActions,
-  scheduleApply,
   scheduleDecisionRequest,
   settleWriteTargetClaims,
   SKILL_OUT_OF_USE_REASONS,
@@ -397,6 +401,10 @@ export const claimForExecution = internalMutation({
     if (await isBeingHandedOver(ctx.db, item.agentId)) {
       return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
     }
+    // A paused employee, or a paused deployment, starts no run (12-P): the plan stays approved
+    // for the resume's pass, or the sweep's once the deployment's jobs run again.
+    const permission = await stepMayRun(ctx.db, item.agentId);
+    if (!permission.mayRun) return { claimed: false, reason: permission.reason };
     const now = Date.now();
     const version = skill.versionId === undefined ? null : await ctx.db.get(skill.versionId);
     const runId = await appendEvent(ctx, {
@@ -849,6 +857,11 @@ export const claimApprovedActions = internalMutation({
     }
     if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
     if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
+    // A paused employee, or a paused deployment, starts no apply in either phase (12-P): held at
+    // this claim, never between two actions of one apply, and the set, approved or auto, waits for
+    // the resume's pass, or the sweep's once the deployment's jobs run again.
+    const permission = await stepMayRun(ctx.db, row.agentId);
+    if (!permission.mayRun) return { claimed: false, reason: permission.reason };
     // A manager's approval does not start its apply while the employee is being handed over
     // (D18): the set returns to held at the move (D13). The auto phase belongs to a run already
     // executing, which the move waits for.

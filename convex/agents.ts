@@ -23,7 +23,7 @@ import {
   PAUSE_REASON_TOO_LONG,
   pauseReasonOf,
 } from '../src/work/pause';
-import { wakeQueuedWork } from './workLoop';
+import { resumeAgentStepsInTransaction, wakeQueuedWork } from './workLoop';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import {
@@ -857,6 +857,7 @@ export const resume = mutation({
       payload: { pausedAt: agent.pausedAt },
       createdAt: now,
     });
+    await resumeAgentStepsInTransaction(ctx, args.agentId, now);
     return { ok: true, paused: false, changed: true };
   },
 });

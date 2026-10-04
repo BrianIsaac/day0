@@ -42,3 +42,31 @@ export function isPauseReasonWithinBound(reason: string): boolean {
 export function isPaused(agent: Readonly<Pick<Doc<'agents'>, 'pausedAt'>>): boolean {
   return agent.pausedAt !== undefined;
 }
+/** Why a step did not start: the employee is paused (a claim's refusal, as a handover's is). */
+export const EMPLOYEE_PAUSED_REASON = 'the employee is paused, so no new step starts';
+
+/**
+ * Why a step did not start while the deployment's scheduled work is paused (`DAY0_CRONS_PAUSED`).
+ *
+ * @param cronsReason - The reason the deployment's switch carries.
+ */
+export function cronsPausedStepReason(cronsReason: string): string {
+  return `the deployment's scheduled work is paused (${cronsReason}), so no new step starts`;
+}
+
+/**
+ * Why a step of this employee may not start now, or undefined when it may: the employee's own
+ * pause first, then the deployment's. Both hold a step at its next gate and leave its row in the
+ * state it was ready in, so the sweep, or the resume, queues it again.
+ *
+ * @param agent - The employee's pause stamp, or null when the row is gone (nothing to hold).
+ * @param cronsReason - The deployment switch's reason (`cronsPauseReason`), undefined while it runs.
+ */
+export function stepHoldReason(
+  agent: Readonly<Pick<Doc<'agents'>, 'pausedAt'>> | null,
+  cronsReason: string | undefined,
+): string | undefined {
+  if (agent !== null && isPaused(agent)) return EMPLOYEE_PAUSED_REASON;
+  if (cronsReason !== undefined) return cronsPausedStepReason(cronsReason);
+  return undefined;
+}

@@ -37,6 +37,10 @@ const recorded = vi.hoisted(() => ({
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
   skillRuns: [] as string[],
+  /** Holds the skill run open until the test releases it. */
+  skillGate: undefined as Promise<void> | undefined,
+  /** Answered by the skill run instead of the manager DM. */
+  skillOutput: undefined as ExecutionOutput | undefined,
   http: [] as Array<{ url: string; body: unknown }>,
 }));
 
@@ -104,7 +108,8 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     ...original,
     runSkill: async (args: { candidate: { title: string } }): Promise<ExecutionOutput> => {
       recorded.skillRuns.push(args.candidate.title);
-      return managerDm;
+      await recorded.skillGate;
+      return recorded.skillOutput ?? managerDm;
     },
   };
 });
@@ -129,8 +134,11 @@ afterEach((): void => {
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
   recorded.skillRuns.length = 0;
+  recorded.skillGate = undefined;
+  recorded.skillOutput = undefined;
   recorded.http.length = 0;
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   restoreSurfaceMode();
 });
 
@@ -1582,5 +1590,322 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
           .collect(),
     );
     expect(failed).toHaveLength(1);
+  });
+});
+
+/** The posts sent to a channel, by channel id. */
+function postsTo(channel: string): unknown[] {
+  return recorded.http
+    .filter((call) => call.url.endsWith('/chat.postMessage'))
+    .map((call) => call.body)
+    .filter((body) => (body as { channel?: unknown }).channel === channel);
+}
+
+describe('a paused employee (12-P; G1 / A15)', (): void => {
+  /** A run whose one write is a public post, which a supervised employee holds for the manager. */
+  const publicPost: ExecutionOutput = {
+    draft: 'The close summary is posted.',
+    notes: '',
+    actions: [
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: '/chat.postMessage',
+          headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+          body: JSON.stringify({ channel: 'C0REVOPS', text: 'The close summary is posted.' }),
+        },
+      },
+    ],
+  };
+
+  async function pause(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+  }
+
+  async function resume(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+  }
+
+  it('takes no step for a row seeded while paused, and the resume takes it to a decision request', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await pause(harness, agentId);
+
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-80');
+    await drain(harness);
+
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'discovered' });
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationClaimedAt');
+    expect(recorded.scopeCalls).toEqual([]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
+
+    await resume(harness, agentId);
+    await drain(harness);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-pending');
+    expect(row.decision).toMatchObject({ kind: 'plan' });
+  });
+
+  it('holds each step queued before the pause at its claim, the row ready as it was', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const evaluated = await seedTicket(harness, agentId, 'REVOPS-81');
+    const drafted = await insertDiscovered(harness, agentId, 'REVOPS-82');
+    const executed = await insertDiscovered(harness, agentId, 'REVOPS-83');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(drafted, { state: 'claimed', verdict: { decision: 'claim' } });
+      await ctx.db.patch(executed, {
+        state: 'plan-approved',
+        verdict: { decision: 'claim' },
+        plan: { summary: 'Tell the manager.', steps: ['DM the manager.'] },
+      });
+    });
+    // The sweep queues the draft and the execution; the seed queued the evaluation.
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await pause(harness, agentId);
+    await drain(harness);
+
+    expect(recorded.scopeCalls).toEqual([]);
+    expect(recorded.planCalls).toEqual([]);
+    expect(recorded.skillRuns).toEqual([]);
+    expect((await readItem(harness, evaluated)).state).toBe('discovered');
+    expect(await readItem(harness, evaluated)).not.toHaveProperty('evaluationAttempts');
+    expect((await readItem(harness, drafted)).state).toBe('claimed');
+    expect(await readItem(harness, drafted)).not.toHaveProperty('draftClaimedAt');
+    expect((await readItem(harness, executed)).state).toBe('plan-approved');
+    expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
+
+    await resume(harness, agentId);
+    await drain(harness);
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect(recorded.planCalls).toEqual(expect.arrayContaining([expect.stringContaining('82')]));
+    expect(recorded.skillRuns).toEqual(expect.arrayContaining([expect.stringContaining('83')]));
+  });
+
+  it('holds a run that was executing at its next gate, sends nothing, and lets it go on at the resume', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-84');
+    await drain(harness);
+    let release = (): void => {};
+    recorded.skillGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dmsBefore = postsTo('D0MANAGER').length;
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    const running = drain(harness);
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    await pause(harness, agentId);
+    release();
+    await running;
+
+    const held = await readItem(harness, workItemId);
+    expect(held).toMatchObject({ state: 'executing', applyPhase: 'auto' });
+    expect(held).not.toHaveProperty('applyAttemptId');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore);
+    expect(await eventsOf(harness, 'work.actions-applying')).toEqual([]);
+
+    await resume(harness, agentId);
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore + 1);
+  });
+
+  it.each(['dashboard', 'typed code', 'button', 'batch code'] as const)(
+    'keeps the decisions asked before the pause answerable by the %s, and holds what each approval queues until the resume',
+    async (route): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers();
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const agentId = await seedEmployee(harness);
+      const slack = await harness.run(async (ctx) => {
+        await ctx.db.insert('permissionGrants', { agentId, scope: 'slack:write', createdAt: 1 });
+        const surface = (await ctx.db.query('surfaces').collect()).find(
+          (row) => row.slug === 'slack',
+        );
+        if (!surface) throw new Error('slack surface missing');
+        const clientSecretCredentialId = await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Ops (Day0) client secret',
+          ciphertext: 'ciphertext',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+        } as never);
+        await ctx.db.patch(surface._id, {
+          provisioning: {
+            appId: 'A0OPS',
+            appName: 'Ops (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+          providerWorkspaceId: 'T0DAY0',
+        });
+        return surface._id;
+      });
+      recorded.skillOutput = publicPost;
+      const workItemId = await seedTicket(harness, agentId, 'REVOPS-85');
+      await drain(harness);
+
+      /** Approve the row's open decision by this test's route. */
+      const approve = async (kind: 'plan' | 'actions'): Promise<void> => {
+        const row = await readItem(harness, workItemId);
+        const decision = row.decision;
+        if (!decision) throw new Error('no decision asked');
+        const owner = harness.withIdentity(OWNER);
+        if (route === 'typed code') {
+          await harness.mutation(internal.work.resolveChannelDecision, {
+            surfaceId: slack,
+            userId: 'UMANAGER',
+            messageTs: `1789000001.00${kind === 'plan' ? '1' : '2'}00`,
+            reply: { verb: 'approve', id: decision.id },
+          });
+        } else if (route === 'button') {
+          await harness.mutation(internal.slackSocket.resolvePress, {
+            surfaceId: slack,
+            press: {
+              userId: 'UMANAGER',
+              teamId: 'T0DAY0',
+              appId: 'A0OPS',
+              channelId: 'D0MANAGER',
+              messageTs: decision.ts ?? '',
+              actionTs: `1789000002.00${kind === 'plan' ? '1' : '2'}00`,
+              action: { action_id: 'day0.decision.approve', value: decision.id },
+            },
+          });
+        } else if (kind === 'plan') {
+          await owner.mutation(api.work.approvePlan, { workItemId });
+        } else if (route === 'batch code') {
+          await owner.mutation(api.work.approveActionsBatch, {
+            members: [{ workItemId, pendingRunId: row.pendingRunId!, approvedIndexes: [0] }],
+          });
+        } else {
+          await owner.mutation(api.work.approveActions, {
+            workItemId,
+            pendingRunId: row.pendingRunId!,
+            approvedIndexes: [0],
+          });
+        }
+      };
+
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+      await pause(harness, agentId);
+      await approve('plan');
+      await drain(harness);
+      expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+      expect(recorded.skillRuns).toEqual([]);
+
+      await resume(harness, agentId);
+      await drain(harness);
+      const asked = await readItem(harness, workItemId);
+      expect(asked.state).toBe('actions-pending');
+      expect(asked.decision).toMatchObject({ kind: 'actions' });
+
+      await pause(harness, agentId);
+      await approve('actions');
+      await drain(harness);
+      const approved = await readItem(harness, workItemId);
+      expect(approved.state).toBe('actions-pending');
+      expect(approved.approvedIndexes).toEqual([0]);
+      expect(postsTo('C0REVOPS')).toEqual([]);
+
+      await resume(harness, agentId);
+      await drain(harness);
+      expect((await readItem(harness, workItemId)).state).toBe('completed');
+      expect(postsTo('C0REVOPS')).toHaveLength(1);
+    },
+  );
+
+  it("lets the manager stop a paused employee's working row", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-86');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await pause(harness, agentId);
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  it('resumes nothing for a paused employee in the stalled-step sweep', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await insertDiscovered(harness, agentId, 'REVOPS-87');
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.query('workItems').first();
+      if (row) await ctx.db.patch(row._id, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    await pause(harness, agentId);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledNames(harness)).toEqual([]);
+
+    await resume(harness, agentId);
+    expect(await scheduledNames(harness)).toEqual(['workActions:draftPlanInternal']);
+  });
+});
+
+describe("the deployment's pause holds queued steps too (12-P; crons.ts)", (): void => {
+  it('holds an execution and an apply queued before DAY0_CRONS_PAUSED, and the sweep queues each once the jobs run again', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-88');
+    await drain(harness);
+    const dmsBefore = postsTo('D0MANAGER').length;
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+
+    // The execution was queued before the deployment's jobs were paused: it holds at its claim.
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
+    await drain(harness);
+    expect(recorded.skillRuns).toEqual([]);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+
+    // The jobs run again: the sweep queues the execution, and the deployment is paused once more
+    // while it runs, so its auto apply holds at its claim.
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    let release = (): void => {};
+    recorded.skillGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = drain(harness);
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'restore from backup');
+    release();
+    await running;
+    const held = await readItem(harness, workItemId);
+    expect(held).toMatchObject({ state: 'executing', applyPhase: 'auto' });
+    expect(held).not.toHaveProperty('applyAttemptId');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore);
+
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore + 1);
   });
 });
