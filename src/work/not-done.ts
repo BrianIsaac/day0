@@ -5,8 +5,14 @@
  * comment and DM said the work could not be done ("I can't find the three October deals"; "no
  * vendor-charge data"). The mock action contract decided full or partial closure from the ask
  * and the plan alone and sent the run back to `done`; a real closing phase was held to the
- * transition its plan promised. Both now read the run's own words first: a run whose draft or
- * messages say the work was not done does not close the ticket, and its card says so.
+ * transition its plan promised. 12-W read the run's own words first; the wave's review measured
+ * that reading misread plain model English both ways (W12-R1).
+ *
+ * Since v0.16.0 the run is asked for the fact (`./work-done.ts`, decision D-1 (b)) and this
+ * reading is no longer the reader. It is kept, its list unchanged, for two things only: the
+ * tripwire, which sends a close back once when a run answers `done` and these words say
+ * otherwise, and output recorded before the release, which carries no answer and is read as the
+ * release before read it.
  *
  * The reading is lexical, as the evidence check's is: a sentence or clause says the work was not
  * done when it says the writer could not do a step of it, that the work is unfinished or not yet
