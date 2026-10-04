@@ -58,8 +58,13 @@ const scheduledJobNames = Object.keys(SCHEDULED_JOBS) as ScheduledJob[];
  * Internal: only the cron table below calls it. Paused (`DAY0_CRONS_PAUSED`
  * set, by `./setup.sh pause` or an upgrade), it logs one line and returns
  * before the job reads or writes anything, so the polls' cursors stay where
- * they were and the next run after the pause picks up from them. Work a job
- * scheduled before the pause is not held: it runs to its end.
+ * they were and the next run after the pause picks up from them. A work-loop
+ * step a job queued before the pause is held too (12-P): every step reads the
+ * same switch at its claim (`stepMayRun`), so a queued evaluation, draft,
+ * execution or apply starts nothing and its row waits, ready, for the stalled-
+ * step sweep's first run after the pause. A step that had already claimed runs
+ * to its next claim; the documentation sync's own chain is not a step and is
+ * not held.
  */
 export const runScheduledJob = internalAction({
   args: { job: v.union(...scheduledJobNames.map((job) => v.literal(job))) },
