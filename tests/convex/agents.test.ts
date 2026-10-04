@@ -803,9 +803,10 @@ describe('the autonomous-actions switch', (): void => {
     ).rejects.toThrow(
       'Autonomous actions is a local real-mode feature; this deployment runs in mock mode.',
     );
+    // A caller with no identity is refused by the guard before the mode is said (12-G).
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('local real-mode feature');
+    ).rejects.toMatchObject(await guardRefusal());
     expect(
       (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions,
     ).toBeUndefined();
@@ -2562,5 +2563,20 @@ describe('the old manager’s authority while a handover is open (U3-m3, U5-m4)'
     await expect(
       harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
     ).resolves.toMatchObject({ changed: true });
+  });
+});
+
+describe('the anonymous-caller guard before the mode (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {});
+    const refusal = await guardRefusal();
+    await expect(
+      harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      harness.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
+    ).rejects.toMatchObject(refusal);
   });
 });

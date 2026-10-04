@@ -13,6 +13,8 @@ import { fakeLinear, type FakeLinear } from './fakes/linear-oauth';
 import { readLinearViewer } from '../../src/surfaces/identity-issuers/linear';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
 import { managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
+import { insertMinimalRow } from './schema-fixtures';
 import { throughTimers } from './fakes/fake-clock';
 import { LINEAR_OWN_APP_NAME } from '../fixtures/real-vendor-rewalk-2026-10-03';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -1481,4 +1483,40 @@ describe("per-employee mode: the employee's own app", (): void => {
     expect(tokenRequests()).toEqual([]);
     expect((await read(harness, surfaceIds[0]!)).surface.credentialId).toBeUndefined();
   });
+});
+
+describe('the anonymous-caller guard before the mode and the card (12-G)', (): void => {
+  it.each(['real', 'mock'] as const)(
+    'refuses a caller with no identity before it says the mode or whether the card exists (%s)',
+    async (mode): Promise<void> => {
+      useSurfaceMode(mode);
+      const { api } = await liveApi();
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await harness.run(async (ctx) => {
+        const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+        const agentId = (await insertMinimalRow(
+          fixtureCtx,
+          'agents',
+          undefined as unknown as Parameters<typeof insertMinimalRow>[2],
+        )) as Id<'agents'>;
+        const id = (await insertMinimalRow(fixtureCtx, 'surfaces', agentId)) as Id<'surfaces'>;
+        await ctx.db.delete(id);
+        return id;
+      });
+      const refusal = await guardRefusal();
+      await expect(
+        harness.action(api.linearIdentityActions.connect, { surfaceId }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.action(api.linearIdentityActions.startAuthorisation, { surfaceId }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.action(api.linearIdentityActions.registerEmployeeApp, {
+          surfaceId,
+          clientId: LEO_CLIENT,
+          clientSecret: LEO_SECRET,
+        }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
 });

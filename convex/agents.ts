@@ -688,6 +688,7 @@ export const setManagerNotifications = mutation({
     ctx,
     args,
   ): Promise<{ ok: true; managerNotifications: ManagerNotificationMode; changed: boolean }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Manager notifications');
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const from = managerNotificationMode(agent);
@@ -756,6 +757,7 @@ export const setAutonomousActions = mutation({
     ctx,
     args,
   ): Promise<{ ok: true; autonomousActions: boolean; changed: boolean }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Autonomous actions');
     const agent = await assertOwnsAgent(ctx, args.agentId);
     if (args.on) await assertNotBeingHandedOver(ctx.db, args.agentId);

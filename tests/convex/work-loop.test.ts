@@ -16,6 +16,7 @@ import {
   STEP_LEASE_MS,
 } from '../../convex/workLoop';
 import { managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -1380,6 +1381,17 @@ describe('the stall sweep while a handover is finishing (D18)', (): void => {
         'workActions:draftPlanInternal',
         'workActions:executeApprovedPlanInternal',
       ]),
+    );
+  });
+});
+
+describe('workLoop.checkForNewWork and the anonymous-caller guard (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {});
+    await expect(harness.mutation(api.workLoop.checkForNewWork, { agentId })).rejects.toMatchObject(
+      await guardRefusal(),
     );
   });
 });

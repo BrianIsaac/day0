@@ -12,6 +12,8 @@ import {
 } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
+import { insertMinimalRow } from './schema-fixtures';
+
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
@@ -3992,4 +3994,52 @@ describe('surfaces.installRedirectConfigured', (): void => {
       await guardRefusal(),
     );
   });
+});
+
+/** An id of a row of `table` that existed and is gone, so nothing behind it can be read. */
+async function goneRowOf<T extends 'surfaces' | 'docSources' | 'agents'>(
+  harness: TestConvex<typeof schema>,
+  table: T,
+): Promise<Id<T>> {
+  return await harness.run(async (ctx) => {
+    const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+    const agentId = (await insertMinimalRow(
+      fixtureCtx,
+      'agents',
+      undefined as unknown as Parameters<typeof insertMinimalRow>[2],
+    )) as Id<'agents'>;
+    const id = (await insertMinimalRow(fixtureCtx, table, agentId)) as Id<T>;
+    await ctx.db.delete(id);
+    return id;
+  });
+}
+
+describe('the anonymous-caller guard before the mode and the card (12-G)', (): void => {
+  it.each(['mock', 'real'] as const)(
+    'refuses a caller with no identity before it says the mode or whether the card exists (%s)',
+    async (mode): Promise<void> => {
+      useSurfaceMode(mode);
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await goneRowOf(harness, 'surfaces');
+      const refusal = await guardRefusal();
+      await expect(harness.mutation(api.surfaces.approve, { surfaceId })).rejects.toMatchObject(
+        refusal,
+      );
+      await expect(
+        harness.mutation(api.surfaces.approveTools, { surfaceId, tools: ['read'] }),
+      ).rejects.toMatchObject(refusal);
+      await expect(harness.mutation(api.surfaces.disconnect, { surfaceId })).rejects.toMatchObject(
+        refusal,
+      );
+      await expect(
+        harness.mutation(api.surfaces.reject, { surfaceId, reason: 'no' }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.mutation(api.surfaces.requestProposal, { surfaceId }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
 });

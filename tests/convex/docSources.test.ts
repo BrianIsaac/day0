@@ -17,9 +17,12 @@ import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
+import { insertMinimalRow } from './schema-fixtures';
+
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 /**
  * A cursor a resume can check: an offset bound to the listing it continues,
@@ -2785,5 +2788,48 @@ describe("a handed-over employee's mirrors of its old owner's sources (transfer 
         .sort();
     expect(await slugsOf(moved)).toEqual(['colleague-onboarding', 'office-welcome']);
     expect(await slugsOf(colleague)).toEqual(['owner-0']);
+  });
+});
+
+/** An id of a row of `table` that existed and is gone, so nothing behind it can be read. */
+async function goneRowOf<T extends 'surfaces' | 'docSources' | 'agents'>(
+  harness: TestConvex<typeof schema>,
+  table: T,
+): Promise<Id<T>> {
+  return await harness.run(async (ctx) => {
+    const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+    const agentId = (await insertMinimalRow(
+      fixtureCtx,
+      'agents',
+      undefined as unknown as Parameters<typeof insertMinimalRow>[2],
+    )) as Id<'agents'>;
+    const id = (await insertMinimalRow(fixtureCtx, table, agentId)) as Id<T>;
+    await ctx.db.delete(id);
+    return id;
+  });
+}
+
+describe('the anonymous-caller guard before the mode (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await goneRowOf(harness, 'docSources');
+    const refusal = await guardRefusal();
+    await expect(
+      harness.action(api.docSources.link, {
+        label: 'Wiki',
+        kind: 'mcp',
+        locator: 'https://wiki.test',
+      }),
+    ).rejects.toMatchObject(refusal);
+    await expect(harness.mutation(api.docSources.resync, { sourceId })).rejects.toMatchObject(
+      refusal,
+    );
+    await expect(
+      harness.action(api.docSources.rotateCredential, { sourceId, credential: 'fake-key' }),
+    ).rejects.toMatchObject(refusal);
+    await expect(harness.mutation(api.docSources.unlink, { sourceId })).rejects.toMatchObject(
+      refusal,
+    );
   });
 });
