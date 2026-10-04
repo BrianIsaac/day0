@@ -125,6 +125,12 @@ export function vocabularySpans(text: string, labels: readonly string[], thresho
   return spans.sort((left, right): number => left.start - right.start);
 }
 
+/**
+ * The span model's address in a test that answers it in-process: a reserved `.test` name
+ * (RFC 6761), so a request that got past the test's `fetch` could not resolve.
+ */
+export const SPAN_MODEL_TEST_URL = 'http://redactor.test:8000';
+
 /** A model that is configured and cannot be reached. */
 export class UnreachableSpanModel implements SpanModel {
   readonly name = 'unreachable';
@@ -141,7 +147,7 @@ export class UnreachableSpanModel implements SpanModel {
 export class StalledSpanModel extends HttpSpanModel {
   constructor(timeoutMs = 25) {
     super(
-      'http://redactor.test:8000',
+      SPAN_MODEL_TEST_URL,
       (_input: URL, init: RequestInit): Promise<Response> =>
         new Promise<Response>((_resolve, reject): void => {
           init.signal?.addEventListener('abort', (): void => reject(new Error('aborted')), { once: true });
@@ -225,6 +231,32 @@ export function spanModelFetch(
       status: reply.status,
       headers: { 'content-type': 'application/json' },
     });
+  };
+}
+
+/**
+ * A global `fetch` for a test whose code reaches the redaction component through it: requests to
+ * `SPAN_MODEL_TEST_URL` are answered in-process by `spanModelFetch`, every other request goes to
+ * `fallback` as it came. The span model's answer does not wait, so a request's abort signal is
+ * not consulted.
+ *
+ * With `DAY0_REDACTOR_URL` set to `SPAN_MODEL_TEST_URL` and this stubbed as the global, no
+ * redaction call opens a socket, so a test may fake `setTimeout` without stalling it
+ * (`tests/setup/fetch-under-fake-clock.ts` says why it would).
+ *
+ * @param fallback - Where every other request goes: the global `fetch` the test found.
+ * @param model - The double to answer the span model's requests with.
+ */
+export function routeSpanModelFetch(
+  fallback: typeof fetch,
+  model: SpanModel = new RecordedSpanModel(),
+): typeof fetch {
+  const answer = spanModelFetch(model);
+  const origin = new URL(SPAN_MODEL_TEST_URL).origin;
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const address = input instanceof Request ? input.url : String(input);
+    if (new URL(address).origin !== origin) return await fallback(input, init);
+    return await answer(new Request(input, init));
   };
 }
 

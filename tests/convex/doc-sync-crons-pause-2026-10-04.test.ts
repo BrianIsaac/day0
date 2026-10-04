@@ -4,10 +4,10 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { temporaryDirectories } from '../setup/temporary-directories';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -20,14 +20,11 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const temporary = temporaryDirectories();
 
-// The redaction component the sync reaches through DAY0_REDACTOR_URL, served in-process.
-let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
-beforeAll(async (): Promise<void> => {
-  redactorDouble = await serveSpanModel();
-});
-afterAll(async (): Promise<void> => {
-  await redactorDouble?.close();
-});
+// The redaction component the sync reaches through DAY0_REDACTOR_URL, answered in-process by the
+// global fetch each test starts with, never over a socket: every test here fakes setTimeout, and
+// from undici 6.28 (Node 22.23) a request on a pooled socket waits for a zero-delay timer a faked
+// clock never fires (about 6 s until the double dropped the socket, 12-N, 5 October 2026).
+const redactorFetch = routeSpanModelFetch(globalThis.fetch);
 
 const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
 
@@ -40,10 +37,12 @@ beforeEach((): void => {
   useSurfaceMode('real');
   vi.useFakeTimers();
   vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
-  vi.stubEnv('DAY0_REDACTOR_URL', redactorDouble?.url ?? '');
+  vi.stubEnv('DAY0_REDACTOR_URL', SPAN_MODEL_TEST_URL);
+  vi.stubGlobal('fetch', redactorFetch);
 });
 
 afterEach((): void => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   restoreSurfaceMode();
 });

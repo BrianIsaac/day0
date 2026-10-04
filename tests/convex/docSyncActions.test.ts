@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
 import { UrlsReader } from '../../src/docs/readers/urls';
@@ -35,16 +35,26 @@ import { temporaryDirectories } from '../setup/temporary-directories';
 
 const temporary = temporaryDirectories();
 
-// The redaction component the actions reach through DAY0_REDACTOR_URL, served
-// in-process from the recorded span model.
-let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
-beforeAll(async (): Promise<void> => {
-  redactorDouble = await serveSpanModel();
-  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+// The redaction component the actions reach through DAY0_REDACTOR_URL, answered
+// in-process from the recorded span model by the global fetch each test starts
+// with, never over a socket: the batching tests fake setTimeout, and from undici
+// 6.28 (Node 22.23) a request on a pooled socket waits for a zero-delay timer
+// that a faked clock never fires (about 6 s a test until the double dropped the
+// socket, 12-N, 5 October 2026). A test that stubs fetch again keeps the route by
+// handing on to the global it found; one that unstubs every global itself (the
+// private wiki test, after its sync) leaves the rest of its own body unrouted.
+const redactorFetch = routeSpanModelFetch(globalThis.fetch);
+beforeAll((): void => {
+  process.env.DAY0_REDACTOR_URL = SPAN_MODEL_TEST_URL;
 });
-afterAll(async (): Promise<void> => {
+afterAll((): void => {
   delete process.env.DAY0_REDACTOR_URL;
-  await redactorDouble?.close();
+});
+beforeEach((): void => {
+  vi.stubGlobal('fetch', redactorFetch);
+});
+afterEach((): void => {
+  vi.unstubAllGlobals();
 });
 
 vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {

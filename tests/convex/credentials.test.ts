@@ -4,8 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -550,12 +550,15 @@ describe('a page whose count of values changes (P10-1)', (): void => {
   });
 
   describe('through a folder sync', (): void => {
-    let redactor: { url: string; close: () => Promise<void> } | undefined;
-    beforeAll(async (): Promise<void> => {
-      redactor = await serveSpanModel();
+    // The sync's redaction calls are answered in-process at the reserved test address, never
+    // over a socket: the clock below is fake, and from undici 6.28 (Node 22.23) a request on a
+    // pooled socket waits for a zero-delay timer a faked clock never fires (12-N, 5 October 2026).
+    const redactorFetch = routeSpanModelFetch(globalThis.fetch);
+    beforeEach((): void => {
+      vi.stubGlobal('fetch', redactorFetch);
     });
-    afterAll(async (): Promise<void> => {
-      await redactor?.close();
+    afterEach((): void => {
+      vi.unstubAllGlobals();
     });
 
     it('keeps one row per value as a runbook gains a second token and loses it again', async (): Promise<void> => {
@@ -564,7 +567,7 @@ describe('a page whose count of values changes (P10-1)', (): void => {
       try {
         const root = temporary('day0-credential-refs-');
         vi.stubEnv('DAY0_DOCS_ROOT', root);
-        vi.stubEnv('DAY0_REDACTOR_URL', redactor?.url ?? '');
+        vi.stubEnv('DAY0_REDACTOR_URL', SPAN_MODEL_TEST_URL);
         const linear = ['lin', 'api', 'refs-contract-0123456789abcdef'].join('_');
         const backup = ['lin', 'api', 'backup-contract-0123456789abcdef'].join('_');
         const write = async (...lines: string[]): Promise<void> =>
