@@ -131,6 +131,41 @@ describe('the fake Linear listener', (): void => {
     }
   });
 
+  it("takes the ticket skill's writes from Day0's own MCP client: save_comment, then save_issue", async (): Promise<void> => {
+    const { base } = await start();
+    await fetch(`${base}/graphql`, {
+      method: 'POST',
+      headers: { authorization: 'lin_api_day0_fake_sam', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        query:
+          'mutation { issueCreate(input: { teamId: "REVOPS", title: "Close it" }) { success } }',
+      }),
+    });
+    const client = createSecretMcpClient({
+      servers: {
+        linear: {
+          url: new URL(`${base}/mcp`),
+          requestInit: { headers: { Authorization: 'Bearer lin_api_day0_fake_sam' } },
+        },
+      },
+    });
+    try {
+      const tools = await client.listTools();
+      const comment = (await tools.linear_save_comment?.execute?.(
+        { issueId: 'REVOPS-1', body: 'Done.' },
+        {},
+      )) as { content: { text: string }[] };
+      expect(JSON.parse(comment.content[0]?.text ?? '{}')).toMatchObject({ body: 'Done.' });
+      const saved = (await tools.linear_save_issue?.execute?.(
+        { id: 'REVOPS-1', state: 'Done' },
+        {},
+      )) as { content: { text: string }[] };
+      expect(JSON.parse(saved.content[0]?.text ?? '{}')).toMatchObject({ status: 'Done' });
+    } finally {
+      await client.disconnect();
+    }
+  });
+
   it('refuses a token it does not hold over the wire as recorded', async (): Promise<void> => {
     const { base } = await start();
     const answer = await fetch(`${base}/mcp`, {

@@ -451,7 +451,14 @@ function argumentSchema(tool, name) {
   }
   if (/^(limit|size|page|estimate|priority|customerNeedsLimit)$/.test(name))
     return { type: 'number' };
-  if (/^(include|is|has|unread|resolved|read|draft)[A-Z]?/.test(name)) return { type: 'boolean' };
+  // A switch is named for what it turns on (`includeArchived`, `isGroup`, `hasReleaseNotes`) or is
+  // one of the few bare ones; `issueId` and `issue` are not switches.
+  if (
+    /^(include|is|has)[A-Z]/.test(name) ||
+    ['unreadOnly', 'resolved', 'read', 'draft'].includes(name)
+  ) {
+    return { type: 'boolean' };
+  }
   if (
     /^(fields|labels|links|addLabels|removeLabels|addReleases|removeReleases|setReleases|blocks|blockedBy|relatedTo|removeBlocks|removeBlockedBy|removeRelatedTo|addTeams|removeTeams|setTeams|addInitiatives|removeInitiatives|setInitiatives|releases)$/.test(
       name,
@@ -463,7 +470,8 @@ function argumentSchema(tool, name) {
 }
 
 /**
- * The tool definitions `tools/list` answers for an actor.
+ * The tool definitions `tools/list` answers for an actor: the 66 recorded on 17 September to an
+ * app, the 57 that are not diff tools to a person (the walks counted 68 and 59 on 3 October).
  *
  * @param {boolean} app whether the token acts as an app user
  * @returns {Array<{ name: string, description: string, inputSchema: Record<string, unknown> }>}
