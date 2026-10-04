@@ -375,6 +375,29 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).not.toContain('Once you approve, the card asks for');
   });
 
+  it("says a card still on a pasted key does not use IT's connection yet (the wave 11 review's m19)", (): void => {
+    const pasted = render(
+      listed({
+        ...LINEAR_APPROVED,
+        verdict: 'connected',
+        credentialId: 'credential-1' as ListedSurface['credentialId'],
+        credentialLanded: true,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      {
+        organisation: organisation({ system: 'linear', mode: 'shared' }),
+        credentials: new Map([
+          ['credential-1', { _id: 'credential-1', label: 'Linear API key', source: 'entered' }],
+        ]),
+      },
+      { connect: (): void => undefined },
+    );
+    expect(pasted).toContain('a key someone pasted');
+    expect(fact(pasted, 'Connection')).toBe(
+      'Connected for your organisation by IT on 1 October, not yet used by this card',
+    );
+  });
+
   it('keeps the credential field where no organisation connection covers the system', (): void => {
     const markup = render(listed(LINEAR_APPROVED));
     expect(markup).toMatch(/<input id="credential-[^"\s]+" type="password"/);

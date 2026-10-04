@@ -295,16 +295,21 @@ export function calendarDay(ms: number, zone: string): string {
 
 /**
  * The manager's read-only line for a system IT connected for the organisation: "Connected for
- * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged).
+ * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged). A card
+ * still acting as a pasted key says the connection is not its own yet, so the line is not read as
+ * true of the card beside "Acts as a key someone pasted" (the wave 11 review's m19).
  *
  * @param connection - The organisation's connection for the card's system.
  * @param zone - The zone the day is named in.
+ * @param onPastedKey - Whether the card still acts as a key someone pasted.
  */
 export function connectedForOrganisationWords(
   connection: Pick<OrganisationSystem, 'connectedAt'>,
   zone: string,
+  onPastedKey = false,
 ): string {
-  return `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  const line = `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  return onPastedKey ? `${line}, not yet used by this card` : line;
 }
 
 /**

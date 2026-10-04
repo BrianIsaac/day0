@@ -468,7 +468,11 @@ export function SurfaceCard({
             ) : null}
             {covering !== undefined && showsIdentity ? (
               <Fact label="Connection">
-                {connectedForOrganisationWords(covering, zone ?? deploymentZone())}
+                {connectedForOrganisationWords(
+                  covering,
+                  zone ?? deploymentZone(),
+                  identity.kind === 'shared-key' && !identity.planned,
+                )}
               </Fact>
             ) : null}
             {documentedKeyUnused && showsIdentity ? (
