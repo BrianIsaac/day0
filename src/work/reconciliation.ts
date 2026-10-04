@@ -24,7 +24,12 @@ export type ApplyEnd = 'interrupted' | 'stopped';
  * @param end - What ended the apply.
  */
 export function outcomeUnknownReasonFor(end: ApplyEnd): string {
-  return end === 'stopped' ? OUTCOME_UNKNOWN_AFTER_STOP_REASON : OUTCOME_UNKNOWN_REASON;
+  switch (end) {
+    case 'stopped':
+      return OUTCOME_UNKNOWN_AFTER_STOP_REASON;
+    case 'interrupted':
+      return OUTCOME_UNKNOWN_REASON;
+  }
 }
 
 /**

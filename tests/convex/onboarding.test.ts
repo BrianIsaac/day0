@@ -298,23 +298,40 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     expect(result.events).not.toContain('work.charter-derived');
   });
 
+  /**
+   * Approve a charter (the caller sets mock mode) and hold its seeding at the model call, which never answers: a
+   * seeding Convex ends at its 600 s limit runs no catch, which leaves the deployment as it is
+   * here, mid-call (the 12-FX bed: two of five). Eleven minutes pass on the clock.
+   */
+  async function seedingHeldAtItsModelCall(): Promise<{
+    harness: TestConvex<typeof schema>;
+    agentId: Id<'agents'>;
+  }> {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    generator.gate = new Promise<void>(() => undefined);
+    void harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }); // never settles; the platform ends it
+    await vi.waitFor(() => expect(generator.calls).toBe(1), { timeout: 20_000 });
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    return { harness, agentId };
+  }
+
+  it("reaches the approved charter's model call with nothing seeded yet, the state a seeding killed at the limit leaves", async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { harness, agentId } = await seedingHeldAtItsModelCall();
+    const result = await outcome(harness, agentId);
+    expect(result.workItems).toBe(0);
+    expect(result.events).not.toContain('work.charter-derived');
+  });
+
   it.fails(
     // until wave 13 designs the cure (12-J item 6): a seeding Convex ends at its 600 s limit runs no catch, so nothing records it or tries again
     'records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent',
     async (): Promise<void> => {
-      vi.useFakeTimers();
       useSurfaceMode('mock');
-      const harness = convexTest(schema, allConvexModules());
-      const { agentId, charterId } = await seedApprovedCharter(harness);
-      // The model call never answers: the action is ended at Convex's limit with its catch never
-      // run, which leaves the deployment as it is here, mid-call (the 12-FX bed: two of five).
-      generator.gate = new Promise<void>(() => undefined);
-      void harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }); // never settles; the platform ends it
-      await vi.waitFor(() => expect(generator.calls).toBe(1), { timeout: 20_000 });
-      vi.advanceTimersByTime(11 * 60 * 1000);
-
+      const { harness, agentId } = await seedingHeldAtItsModelCall();
       const result = await outcome(harness, agentId);
-      expect(result.workItems).toBe(0);
       const scheduled = await harness.run(
         async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
       );

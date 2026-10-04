@@ -582,8 +582,14 @@ export interface RecordedReconciliation {
 
 /** The words before the reconciliation's time: who verified it, when the card knows. */
 function verifiedBy(by: Reconciler | undefined): string {
-  if (by === undefined) return 'Verified at';
-  return by === 'you' ? 'Verified by you at' : 'Verified by a previous manager at';
+  switch (by) {
+    case undefined:
+      return 'Verified at';
+    case 'you':
+      return 'Verified by you at';
+    case 'previous-manager':
+      return 'Verified by a previous manager at';
+  }
 }
 
 /** An entry's place in the run, the checklist's key for it. */

@@ -131,7 +131,9 @@ export function runHoldOf(input: {
  * refuses at its claim (`stepMayRun`). A draft not yet claimed, a plan approved and not started,
  * and an apply (automatic, or approved by the manager) not yet claimed each wait there. A step
  * already past its claim runs to its next gate and is under way whatever the pause says: a draft
- * holding `draftClaimedAt`, a run reading and drafting, an apply holding `applyAttemptId`.
+ * holding `draftClaimedAt`, a run reading and drafting, an apply holding `applyAttemptId`. A draft
+ * that died holding its claim reads as under way too until the sweep, which the pause also holds,
+ * finds its lease spent: the card reads no clock for it.
  *
  * @param item - The row's state and claim fields.
  */

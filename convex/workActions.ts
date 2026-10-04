@@ -790,7 +790,14 @@ async function draftPlanHandler(
     return { ok: false, reason: 'this draft no longer holds the work item; a later draft does' };
   }
   if (!stored.stored) {
-    return { ok: false, reason: 'another draft stored a plan for this work item first' };
+    return {
+      ok: false,
+      // A plan pending is another draft's, stored first; any other state is the manager's move.
+      reason:
+        stored.movedOn === undefined || stored.movedOn === 'plan-pending'
+          ? 'another draft stored a plan for this work item first'
+          : `the work item moved on to ${stored.movedOn}; this draft's plan is not stored`,
+    };
   }
   const decision = await ctx.runMutation(internal.work.decidePlan, {
     workItemId: args.workItemId,

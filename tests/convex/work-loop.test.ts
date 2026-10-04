@@ -421,6 +421,32 @@ describe('the server-side steps', (): void => {
     expect(await eventsOf(harness, 'work.plan-drafted')).toHaveLength(1);
   });
 
+  it('says a draft the manager stopped found its item moved on, never that another draft stored first', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-18');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    release();
+
+    await expect(stale).resolves.toEqual({
+      ok: false,
+      reason: "the work item moved on to failed; this draft's plan is not stored",
+    });
+    expect((await readItem(harness, workItemId)).plan).toBeUndefined();
+  });
+
   it('fails nothing when a draft the manager stopped fails its model call after Retry queued its successor', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

@@ -3080,10 +3080,15 @@ export const setPlan = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ stored: boolean; redrafting?: true; superseded?: true }> => {
+  ): Promise<{
+    stored: boolean;
+    redrafting?: true;
+    superseded?: true;
+    movedOn?: Doc<'workItems'>['state'];
+  }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    if (row.state !== 'claimed') return { stored: false };
+    if (row.state !== 'claimed') return { stored: false, movedOn: row.state };
     if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) {
       return { stored: false, superseded: true };
     }
