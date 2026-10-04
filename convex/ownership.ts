@@ -43,6 +43,12 @@ import { notAuthenticatedMessage } from './devAuth';
  * caller presents a verified token, from the local issuer, the customer's OIDC
  * issuer or Clerk (see `convex/auth.config.ts`); the owner key below is what
  * keeps two issuers from ever naming one owner.
+ *
+ * The anonymous-caller guard (wave 12, 12-G; P9-4): a public function's first act is one of these
+ * guards, or `getCallerOrThrow` itself, before it reads a row, checks the deployment's mode or
+ * does anything else, so a caller `getCaller` does not admit gets the not-authenticated refusal and
+ * nothing more. `src/lib/anonymous-access.ts` names the only functions that answer such a caller,
+ * and `tests/convex/anonymous-caller.test.ts` holds every public function to the rule.
  */
 
 /**
@@ -335,10 +341,18 @@ export async function assertOwnsAgent(
   ctx: QueryCtx | MutationCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'agents'>> {
-  const identity = await getCallerOrThrow(ctx);
+  return await callersAgent(ctx, await getCallerOrThrow(ctx), agentId);
+}
+
+/** The employee, if the caller the guard already admitted owns it; throws otherwise. */
+async function callersAgent(
+  ctx: QueryCtx | MutationCtx,
+  caller: Caller,
+  agentId: Id<'agents'>,
+): Promise<Doc<'agents'>> {
   const agent = await ctx.db.get(agentId);
   if (!agent) throw new ConvexError(EMPLOYEE_GONE);
-  assertCallerOwns(agent, identity);
+  assertCallerOwns(agent, caller);
   return agent;
 }
 
@@ -433,14 +447,19 @@ export async function assertNamedInTransfer(
   return { transfer, caller };
 }
 
-/** The charter, if the caller owns its employee; throws otherwise. */
+/**
+ * The charter, if the caller owns its employee; throws otherwise. This guard and the three below
+ * admit the caller before they read the row, so a caller the guard does not admit is refused alike
+ * for an id that is gone and one that is live (the anonymous-caller guard, 12-G).
+ */
 export async function assertOwnsCharter(
   ctx: QueryCtx | MutationCtx,
   charterId: Id<'charters'>,
 ): Promise<Doc<'charters'>> {
+  const caller = await getCallerOrThrow(ctx);
   const charter = await ctx.db.get(charterId);
   if (!charter) throw new Error('charter not found');
-  await assertOwnsAgent(ctx, charter.agentId);
+  await callersAgent(ctx, caller, charter.agentId);
   return charter;
 }
 
@@ -449,9 +468,10 @@ export async function assertOwnsWorkItem(
   ctx: QueryCtx | MutationCtx,
   workItemId: Id<'workItems'>,
 ): Promise<Doc<'workItems'>> {
+  const caller = await getCallerOrThrow(ctx);
   const item = await ctx.db.get(workItemId);
   if (!item) throw new Error('work item not found');
-  await assertOwnsAgent(ctx, item.agentId);
+  await callersAgent(ctx, caller, item.agentId);
   return item;
 }
 
@@ -460,9 +480,10 @@ export async function assertOwnsSkill(
   ctx: QueryCtx | MutationCtx,
   skillId: Id<'skills'>,
 ): Promise<Doc<'skills'>> {
+  const caller = await getCallerOrThrow(ctx);
   const skill = await ctx.db.get(skillId);
   if (!skill) throw new Error('skill not found');
-  await assertOwnsAgent(ctx, skill.agentId);
+  await callersAgent(ctx, caller, skill.agentId);
   return skill;
 }
 
@@ -471,8 +492,9 @@ export async function assertOwnsVoiceSession(
   ctx: QueryCtx | MutationCtx,
   sessionId: Id<'voiceSessions'>,
 ): Promise<Doc<'voiceSessions'>> {
+  const caller = await getCallerOrThrow(ctx);
   const session = await ctx.db.get(sessionId);
   if (!session) throw new Error('voice session not found');
-  await assertOwnsAgent(ctx, session.agentId);
+  await callersAgent(ctx, caller, session.agentId);
   return session;
 }
