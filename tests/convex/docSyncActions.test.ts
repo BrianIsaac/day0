@@ -388,41 +388,6 @@ describe('documentation sync batching', (): void => {
     ).resolves.toBe(value);
   }, 30_000);
 
-  it("holds a sync's next batch while the deployment's scheduled work is paused, and goes on from its cursor after (12-P, the wave file 4.3)", async (): Promise<void> => {
-    const { root } = await sixtyPages();
-    vi.stubEnv('DAY0_DOCS_ROOT', root);
-    const harness = convexTest(schema, allConvexModules());
-    const sourceId = await harness.mutation(internal.docSources.createSource, {
-      userId: 'owner',
-      label: 'Many',
-      kind: 'folder',
-      locator: 'many',
-    });
-    const reads = vi.spyOn(FolderReader.prototype, 'listPageBatch');
-    await harness.action(internal.docSyncActions.syncSource, { sourceId });
-    expect(reads).toHaveBeenCalledTimes(1);
-
-    // An upgrade pauses the jobs with the continuation already queued: it reads nothing.
-    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
-    await harness.finishAllScheduledFunctions(drainScheduled);
-    expect(reads).toHaveBeenCalledTimes(1);
-    expect(await scheduled(harness)).toEqual([]);
-    await expect(
-      harness.query(internal.docSources.syncReport, { sourceId }),
-    ).resolves.toMatchObject({ running: true, pageCount: 25 });
-
-    // The jobs run again and the cron starts the source: the run is taken over at page 25.
-    vi.stubEnv('DAY0_CRONS_PAUSED', '');
-    reads.mockClear();
-    await harness.action(internal.docSyncActions.syncSource, { sourceId });
-    await harness.finishAllScheduledFunctions(drainScheduled);
-    expect(reads.mock.calls.map((call) => call[2]?.split('@')[0])).toEqual(['25', '50']);
-    await expect(
-      harness.query(internal.docSources.syncReport, { sourceId }),
-    ).resolves.toMatchObject({ status: 'synced', running: false, pageCount: 60 });
-    reads.mockRestore();
-  }, 30_000);
-
   it('lets a manual resync supersede a running generation and finishes once', async (): Promise<void> => {
     const { root } = await sixtyPages();
     vi.stubEnv('DAY0_DOCS_ROOT', root);

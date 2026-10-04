@@ -64,7 +64,8 @@ const scheduledJobNames = Object.keys(SCHEDULED_JOBS) as ScheduledJob[];
  * execution or apply starts nothing and its row waits, ready, for the stalled-
  * step sweep's first run after the pause. A step that had already claimed runs
  * to its next claim. The documentation sync's own chain reads it too, at each
- * batch (`docSyncActions.syncBatch`), and goes on from its cursor after.
+ * batch (`docSyncActions.syncBatch`): the run ends short at its cursor, and
+ * this job's first sync after the pause goes on from there.
  */
 export const runScheduledJob = internalAction({
   args: { job: v.union(...scheduledJobNames.map((job) => v.literal(job))) },
