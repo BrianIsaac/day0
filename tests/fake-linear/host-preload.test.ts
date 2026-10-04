@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LINEAR_HOSTS, rerouteOf } from '../../fake-linear/host-preload.mjs';
+import { LINEAR_HOSTS, rerouteOf } from '../../fake-linear/host-reroute.mjs';
 
 const PRELOAD = fileURLToPath(new URL('../../fake-linear/host-preload.mjs', import.meta.url));
 const FAKE = 'https://127.0.0.1:3647';
@@ -64,5 +64,22 @@ describe('the preload in a Node process', (): void => {
     });
     expect(child.stdout.trim()).toBe('200');
     expect(seen).toContain('POST /oauth/revoke');
+  });
+});
+
+describe('the preload loaded without the fake named', (): void => {
+  it('stops the process rather than let a fetch reach Linear', async (): Promise<void> => {
+    // Empty is unset to the preload, which trims the value.
+    const env = { ...process.env, NODE_OPTIONS: `--import ${PRELOAD}`, FAKE_LINEAR_HOST_URL: '' };
+    const run = await new Promise<{ status: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', 'console.log("ran")'], {
+        env,
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on('close', (status) => resolve({ status, stderr }));
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('FAKE_LINEAR_HOST_URL');
   });
 });
