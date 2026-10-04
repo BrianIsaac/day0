@@ -18,7 +18,7 @@ import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
-import { calendarDay, type DecisionButtonsWords } from './card-words';
+import { calendarDay, type DecisionButtonsWords, type TypedCodeWords } from './card-words';
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
@@ -695,6 +695,44 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
 }
 
 /** The decision-buttons row's words, its landing state and its one control. */
+export interface TypedCodeRowProps {
+  readonly words: TypedCodeWords;
+  readonly error?: string;
+  /** Say a person turned the app's messages tab on in Slack. */
+  readonly onConfirm: () => void;
+  readonly confirming: boolean;
+}
+
+/**
+ * Whether the manager's typed code reaches the employee's own Slack app, on a card where it does
+ * not (W12V-7): why, who opens the app's messages tab, Slack's own name for the toggle, and the
+ * control with which the manager says it is on.
+ */
+export function TypedCodeRow(props: TypedCodeRowProps): React.ReactNode {
+  return (
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">{props.words.title}</p>
+      <p className="mt-1 text-[var(--color-fg-2)]">{props.words.note}</p>
+      <div className="mt-3">
+        <Button
+          type="button"
+          size="small"
+          variant="secondary"
+          disabled={props.confirming}
+          onClick={props.onConfirm}
+        >
+          {props.confirming ? 'Recording…' : props.words.confirm}
+        </Button>
+      </div>
+      {props.error ? (
+        <p role="alert" className="mt-2 text-[var(--color-danger)]">
+          {props.error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export interface DecisionButtonsRowProps {
   readonly words: DecisionButtonsWords;
   readonly error?: string;

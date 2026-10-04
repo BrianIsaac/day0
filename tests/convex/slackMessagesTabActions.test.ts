@@ -228,6 +228,12 @@ describe('an app Day0 created before this release', (): void => {
       state: 'day0-opens',
       appName: 'Iris (Day0)',
     });
+    // The card reads the same.
+    const agentId = (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))!.agentId;
+    const [listed] = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+    expect(listed?.typedCode).toEqual({ state: 'day0-opens', appName: 'Iris (Day0)' });
 
     await harness.action(internal.surfaceActions.probeInternal, { surfaceId });
 
@@ -309,11 +315,6 @@ describe('an app Day0 created before this release', (): void => {
     const surfaceId = await employee(harness, 'Otto');
     const appId = await connect(harness, surfaceId);
     await asCreatedBeforeThisRelease(harness, surfaceId, appId);
-    await expect(
-      harness
-        .withIdentity(managerIdentity())
-        .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId }),
-    ).rejects.toThrow(CONFIRM_NOT_NEEDED);
     await harness.mutation(internal.organisationConnections.revokeFromSetup, {
       organisationConnectionId: connectionId,
       reason: 'IT is moving workspaces',
@@ -335,5 +336,10 @@ describe('an app Day0 created before this release', (): void => {
     expect(await openEvents(harness, surfaceId)).toEqual([
       { surfaceId, appId, appName: 'Otto (Day0)', how: 'confirmed' },
     ]);
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId }),
+    ).rejects.toThrow(CONFIRM_NOT_NEEDED);
   });
 });

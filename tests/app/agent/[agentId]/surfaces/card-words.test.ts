@@ -7,6 +7,7 @@ import {
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
+  typedCodeWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -446,6 +447,34 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     ).toBe('Buttons: needs the Slack socket service');
   });
 
+  it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
+    const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
+    expect(on.note).toBe(
+      'Each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+    );
+    const noToken = decisionButtonsWords(
+      { available: false, why: 'no-app-level-token' },
+      'Iris (Day0)',
+      false,
+    );
+    expect(
+      noToken.note.startsWith(
+        'Requests reach you with no buttons and no typed code, so you decide them in day0.',
+      ),
+    ).toBe(true);
+    const noBridge = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: true },
+      'Iris (Day0)',
+      false,
+    );
+    expect(noBridge.note).toContain(
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+    );
+    for (const words of [on, noToken, noBridge]) {
+      expect(words.note).not.toMatch(/typed code (only|still decides|alone)/);
+    }
+  });
+
   it('asks for no token while the socket service is missing, and says the token comes after it (W12-R18)', (): void => {
     const words = decisionButtonsWords(
       { available: false, why: 'no-bridge', tokenStored: false },
@@ -456,5 +485,27 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of Mateo (Day0).',
     );
     expect(words.asksForToken).toBe(false);
+  });
+});
+
+describe('whether the typed code reaches the app, on a Slack card (W12V-7)', (): void => {
+  it('says nothing while the app takes messages', (): void => {
+    expect(typedCodeWords({ state: 'open' })).toBeUndefined();
+  });
+
+  it('says Day0 opens the messages tab at the next check, and the toggle if it stays off', (): void => {
+    expect(typedCodeWords({ state: 'day0-opens', appName: 'Iris (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 opens its messages tab at this card’s next check, with the connection that created it; Check the connection does it now. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+
+  it('names the app and the one toggle a person turns on where Day0 cannot change the app', (): void => {
+    expect(typedCodeWords({ state: 'needs-toggle', appName: 'Otto (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Otto (Day0) yet, so no typed code reaches it, and Day0 cannot change this app’s settings. Someone who manages Otto (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”; then say so here.',
+      confirm: 'It is on in Slack',
+    });
   });
 });

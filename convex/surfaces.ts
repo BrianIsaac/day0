@@ -48,6 +48,8 @@ import { latestRejoins, type LastRejoin } from './channelRejoins';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
 import { purgeAppLevelToken } from './credentials';
+import { typedCodeReachOf } from './slackMessagesTab';
+import type { TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
@@ -289,6 +291,11 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    * Mode bridge, which only the server knows of.
    */
   readonly decisionButtons?: DecisionButtons;
+  /**
+   * On a chat card that carries the manager's decision requests: whether the manager's typed code
+   * reaches its app (W12V-7; `typedCodeReachOf`).
+   */
+  readonly typedCode?: TypedCodeReach;
 }
 
 /**
@@ -450,6 +457,18 @@ export const listForAgent = query({
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
     const bridgeConfigured = socketBridgeConfigured();
+    const typedCodes = new Map(
+      await Promise.all(
+        surfaces
+          .filter(carriesDecisions)
+          .map(
+            async (surface): Promise<[Id<'surfaces'>, TypedCodeReach]> => [
+              surface._id,
+              await typedCodeReachOf(ctx, surface),
+            ],
+          ),
+      ),
+    );
     return orderSurfaceWaterfall(surfaces, documented).map((surface): ListedSurface => {
       const listed = withBrowserComponentState(surface, refusal);
       const drift = listed.intakeScope ? restatedScope(listed.intakeScope, pages).drift : [];
@@ -490,6 +509,7 @@ export const listForAgent = query({
         ...(carriesDecisions(surface)
           ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
           : {}),
+        ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };
     });
   },

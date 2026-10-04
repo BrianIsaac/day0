@@ -141,18 +141,19 @@ export const recordOpened = internalMutation({
   },
 });
 
-/** Why the manager's confirmation is refused: Day0 opens or has opened this app's messages tab. */
+/** Why the manager's confirmation is refused: the record already says the app takes messages. */
 export const CONFIRM_NOT_NEEDED =
-  "This app's messages tab is Day0's to open, or already open: there is nothing to confirm.";
+  'This app already takes messages, or is not one Day0 created: there is nothing to confirm.';
 
 /**
  * Public, owner-guarded: the manager says a person turned on the messages tab of the employee's own
- * Slack app, which Day0 cannot read or update (an app created with a configuration token pasted on
- * the card, or by a connection IT has since revoked). Writes `surface.app-messages-open` with
- * `confirmed`, after which the requests offer the typed code. Real mode only.
+ * Slack app, for an app Day0 cannot read or update (created with a configuration token pasted on
+ * the card, or by a connection IT has since revoked) or one whose opening Slack refused. Writes
+ * `surface.app-messages-open` with `confirmed`, after which the requests offer the typed code.
+ * Real mode only.
  *
- * @throws ConvexError with {@link CONFIRM_NOT_NEEDED} when Day0 opens the app itself or the record
- *   already says it takes messages.
+ * @throws ConvexError with {@link CONFIRM_NOT_NEEDED} when the record already says the app takes
+ *   messages, or the card has no app of Day0's.
  */
 export const confirmMessagesTab = mutation({
   args: { surfaceId: v.id('surfaces') },
@@ -165,9 +166,7 @@ export const confirmMessagesTab = mutation({
     assertRealMode('Confirming an app takes messages');
     const app = surface.provisioning;
     const reach = await typedCodeReachOf(ctx, surface);
-    if (app === undefined || reach.state !== 'needs-toggle') {
-      throw new ConvexError(CONFIRM_NOT_NEEDED);
-    }
+    if (app === undefined || reach.state === 'open') throw new ConvexError(CONFIRM_NOT_NEEDED);
     await recordAppTakesMessages(ctx, surface, app, 'confirmed', Date.now());
     return null;
   },

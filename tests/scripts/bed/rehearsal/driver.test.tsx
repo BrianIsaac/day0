@@ -387,6 +387,7 @@ describe('the dashboard driver', (): void => {
       land: (): void => undefined,
       provision: (): void => undefined,
       landSocketToken: (): void => undefined,
+      confirmMessagesTab: (): void => undefined,
       setDays: async () => ({ expiresAt: NOW }),
       approveTools: async () => undefined,
       disconnect: async () => undefined,
