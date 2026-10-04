@@ -492,6 +492,42 @@ export async function finishSourceRevocation(
   });
 }
 
+/** The most credential rows one owner's purge, or the read of what it would take, reads. */
+const OWNED_CREDENTIAL_LIMIT = 1_000;
+
+/** One owner's credential rows, one past the limit so a read can tell it was reached. */
+async function ownedCredentialRows(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+): Promise<Doc<'credentials'>[]> {
+  return await ctx.db
+    .query('credentials')
+    .withIndex('by_userId', (index) => index.eq('userId', userId))
+    .take(OWNED_CREDENTIAL_LIMIT + 1);
+}
+
+/**
+ * Whether {@link purgeOwnedCredentials} would take a stored value from the owner: a row that still
+ * holds its ciphertext, is not held for its vendor's revocation (which keeps the value until that
+ * call is final) and is not an identity kept for another owner's employee. Bounded as the purge
+ * is; read by `reset.holdings`, so the deletion's card says only what the purge takes (the second
+ * pass's code reader).
+ *
+ * @param ctx - A query's context.
+ * @param userId - The owner.
+ */
+export async function holdsPurgeableCredential(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+): Promise<boolean> {
+  const live = (await ownedCredentialRows(ctx, userId)).filter(
+    (row) => row.ciphertext !== undefined && row.sourceRevocation?.state !== 'pending',
+  );
+  if (live.length === 0) return false;
+  const kept = await identitiesKeptForAnotherOwner(ctx, userId, live);
+  return live.some((row) => !kept.has(row._id));
+}
+
 /**
  * Purge every credential one owner holds, for a reset that unlinks documentation, save an
  * identity another owner's employee still acts as: a token Day0 obtained through IT's
@@ -506,11 +542,10 @@ export async function finishSourceRevocation(
  *   Number of rows purged.
  */
 export async function purgeOwnedCredentials(ctx: MutationCtx, userId: string): Promise<number> {
-  const rows = await ctx.db
-    .query('credentials')
-    .withIndex('by_userId', (index) => index.eq('userId', userId))
-    .take(1_001);
-  if (rows.length > 1_000) throw new Error('Owner exceeds 1,000 credentials.');
+  const rows = await ownedCredentialRows(ctx, userId);
+  if (rows.length > OWNED_CREDENTIAL_LIMIT) {
+    throw new Error('Owner exceeds 1,000 credentials.');
+  }
   const keptForAnother = await identitiesKeptForAnotherOwner(ctx, userId, rows);
   const now = Date.now();
   let purged = 0;
@@ -527,12 +562,12 @@ export async function purgeOwnedCredentials(ctx: MutationCtx, userId: string): P
  * it (A25): each token issued through an organisation connection that a card of an employee the
  * owner no longer has binds, with its refresh token and its app's client secret.
  *
- * @param ctx - The reset's transaction.
+ * @param ctx - The reset's transaction, or the read of what it would take.
  * @param userId - The owner being reset.
  * @param rows - The owner's rows.
  */
 async function identitiesKeptForAnotherOwner(
-  ctx: MutationCtx,
+  ctx: Pick<QueryCtx, 'db'>,
   userId: string,
   rows: readonly Doc<'credentials'>[],
 ): Promise<Set<Id<'credentials'>>> {
@@ -565,7 +600,7 @@ const KEPT_IDENTITY_SCAN_LIMIT = 1_000;
  * left with only its app, then handed over).
  */
 async function boundForAnotherOwner(
-  ctx: MutationCtx,
+  ctx: Pick<QueryCtx, 'db'>,
   userId: string,
   row: Doc<'credentials'>,
 ): Promise<boolean> {

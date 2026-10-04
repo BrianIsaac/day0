@@ -1510,6 +1510,69 @@ describe('holdings: what a deletion would remove, read before its control is pre
     expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
   });
 
+  it("counts no credential the deletion's purge would keep: one held for its vendor's revocation, or an identity kept for another manager's employee (the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Token held for its revocation',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        revokedAt: 1,
+        sourceRevocation: { state: 'pending', end: 'retire', attempts: 0 },
+        createdAt: 1,
+      });
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const kept = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Leo (Day0) bot token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        issuedBy: {
+          system: 'slack',
+          grant: 'oauth-install',
+          organisationConnectionId: connectionId,
+        },
+        createdAt: 1,
+      });
+      const leo = await ctx.db.insert('agents', {
+        bossEmail: 'colleague@day0.local',
+        name: 'Leo',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId: leo,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'proposed',
+        whereFound: [],
+        credentialLanded: false,
+        credentialId: kept,
+        createdAt: 1,
+      });
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
+  });
+
   it('answers an anonymous caller with nothing to read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     expect(await harness.query(api.reset.holdings, {})).toBeNull();

@@ -17,7 +17,7 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
-import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { holdsPurgeableCredential, purgeCredential, purgeOwnedCredentials } from './credentials';
 import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
@@ -1147,7 +1147,7 @@ const holdingsValidator = v.object({
   handoverWords: v.boolean(),
   retiredBoundaries: v.boolean(),
   documentation: v.boolean(),
-  /** A credential the owner stored that still holds its value: the unlink choice purges it. */
+  /** A credential the owner stored that the unlink choice's purge would take. */
   credentials: v.boolean(),
 });
 
@@ -1183,12 +1183,7 @@ async function deletionHoldings(
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', ownerKey))
       .first(),
-    // A purged row keeps its record with no value; the read stops at the first that holds one.
-    db
-      .query('credentials')
-      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
-      .filter((q) => q.neq(q.field('ciphertext'), undefined))
-      .first(),
+    holdsPurgeableCredential({ db }, ownerKey),
     Promise.all(
       MANAGER_TRANSFER_STATES.flatMap((state) => [
         db
@@ -1227,7 +1222,7 @@ async function deletionHoldings(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
     ),
     documentation: source !== null,
-    credentials: credential !== null,
+    credentials: credential,
   };
 }
 
