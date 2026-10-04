@@ -2,6 +2,7 @@ import { summariseAction, type SummaryContext } from '../surfaces/summary';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
+import type { RunHold } from './item-display';
 
 /** How many characters a decision code has. */
 export const DECISION_ID_LENGTH = 6;
@@ -631,10 +632,50 @@ export function batchRequestLines(args: {
 }
 
 /**
+ * When the step an approval queues starts, in the employee's voice (wave 12 review W12-R15): now,
+ * or, while a pause holds it at its claim, when the pause ends. Wording drafts.
+ *
+ * @param step - What the approval starts: the approved plan, or the approved actions.
+ * @param hold - What holds the employee's next step, if anything (`stepHoldOf`).
+ */
+export function approvedStepWords(step: 'plan' | 'actions', hold: RunHold | undefined): string {
+  const doing = step === 'plan' ? 'start the approved plan' : 'apply the approved actions';
+  if (hold === undefined) {
+    return step === 'plan'
+      ? 'I’m starting the approved plan now.'
+      : 'I’m applying the approved actions now.';
+  }
+  switch (hold.by) {
+    case 'employee':
+      return `I’m paused: I’ll ${doing} when you resume me.`;
+    case 'deployment':
+      return `Scheduled work on this deployment is paused: I’ll ${doing} once it runs again.`;
+  }
+}
+
+/**
+ * The acknowledgement for one decided request: what the reply decided and, for an approval, when
+ * the step it queues starts ({@link approvedStepWords}).
+ *
+ * @param args - The request's code, the verb, what it decided and what holds the step.
+ */
+export function decisionNoticeText(args: {
+  readonly id: string;
+  readonly verb: 'approve' | 'reject';
+  readonly kind: 'plan' | 'actions';
+  readonly hold: RunHold | undefined;
+}): string {
+  return args.verb === 'approve'
+    ? `Approval ${args.id} received. ${approvedStepWords(args.kind, args.hold)}`
+    : `Rejection ${args.id} received. I won’t apply it.`;
+}
+
+/**
  * The acknowledgement for a batch reply.
  *
  * Args:
- *   args: The batch code, the verb, and which members were decided or left.
+ *   args: The batch code, the verb, which members were decided or left, and what holds the
+ *     employee's next step.
  *
  * Returns:
  *   One message naming what the reply did.
@@ -644,6 +685,7 @@ export function batchDecisionNoticeText(args: {
   verb: 'approve' | 'reject';
   decided: readonly string[];
   skipped: ReadonlyArray<{ decisionId: string; reason: string }>;
+  hold?: RunHold;
 }): string {
   const noun = args.verb === 'approve' ? 'Approval' : 'Rejection';
   const total = args.decided.length + args.skipped.length;
@@ -651,7 +693,7 @@ export function batchDecisionNoticeText(args: {
     args.decided.length === 0
       ? `${noun} ${args.id} received, but nothing in it was still open.`
       : `${noun} ${args.id} received for ${args.decided.length} of ${total} decisions (${args.decided.join(', ')}). ${
-          args.verb === 'approve' ? 'I’m applying the approved actions now.' : 'I won’t apply them.'
+          args.verb === 'approve' ? approvedStepWords('actions', args.hold) : 'I won’t apply them.'
         }`;
   const left = args.skipped.map((member) => `${member.decisionId}: ${member.reason}`);
   return left.length > 0 ? `${head} Left as they were: ${left.join('; ')}.` : head;

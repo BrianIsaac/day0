@@ -41,6 +41,7 @@ import {
   scheduleApply,
   scheduleNextStep,
   STEP_LEASE_MS,
+  stepHoldOf,
   stepMayRun,
   type StepClaim,
 } from './workLoop';
@@ -95,6 +96,7 @@ import {
   askedFor,
   batchDecisionNoticeText,
   canEditManagerMessage,
+  decisionNoticeText,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -4793,7 +4795,15 @@ async function resolveChannelBatch(
       decisionId: batch.id,
       messageTs: args.messageTs,
       kind: 'received',
-      text: batchDecisionNoticeText({ id: batch.id, verb: args.reply.verb, decided, skipped }),
+      text: batchDecisionNoticeText({
+        id: batch.id,
+        verb: args.reply.verb,
+        decided,
+        skipped,
+        ...(args.reply.verb === 'approve'
+          ? { hold: await stepHoldOf(ctx.db, surface.agentId) }
+          : {}),
+      }),
     });
   }
   return { status: 'decided' as const, outcome: args.reply.verb, decided, skipped };
@@ -6575,13 +6585,13 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       );
     }
   }
-  const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
-  const text =
-    args.reply.verb === 'approve'
-      ? row.decision.kind === 'plan'
-        ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
-        : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
-      : `${noun} ${row.decision.id} received. I won’t apply it.`;
+  // A pause holds the step the approval queues at its claim: the notice says when it starts (W12-R15).
+  const text = decisionNoticeText({
+    id: row.decision.id,
+    verb: args.reply.verb,
+    kind: row.decision.kind,
+    hold: args.reply.verb === 'approve' ? await stepHoldOf(ctx.db, row.agentId) : undefined,
+  });
   await queueManagerReplyNotice(ctx, {
     surfaceId: surface._id,
     workItemId: row._id,

@@ -28,7 +28,8 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { isBeingHandedOver } from './transferInFlight';
 import type { EventType } from '../src/events/contract';
 import { cronsPauseReason } from '../src/lib/crons-pause';
-import { stepHoldReason } from '../src/work/pause';
+import { isPaused, stepHoldReason } from '../src/work/pause';
+import { runHoldOf, type RunHold } from '../src/work/item-display';
 
 /**
  * The server-driven work loop, real mode only.
@@ -140,6 +141,27 @@ export async function stepMayRun(
   if (SURFACE_MODE !== 'real') return { mayRun: true };
   const reason = stepHoldReason(await db.get(agentId), cronsPauseReason());
   return reason === undefined ? { mayRun: true } : { mayRun: false, reason };
+}
+
+/**
+ * What holds this employee's next step, as a card or an acknowledgement names it: the manager's
+ * pause of the employee, then the deployment's pause of its scheduled work, as {@link stepMayRun}
+ * reads them; undefined while a step may start, and always in mock mode.
+ *
+ * @param db - The reader.
+ * @param agentId - The employee.
+ */
+export async function stepHoldOf(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+): Promise<RunHold | undefined> {
+  const agent = await db.get(agentId);
+  return runHoldOf({
+    real: SURFACE_MODE === 'real',
+    employeeName: agent?.name ?? 'the employee',
+    employeePaused: agent !== null && isPaused(agent),
+    scheduledWorkPaused: cronsPauseReason() !== undefined,
+  });
 }
 
 /**

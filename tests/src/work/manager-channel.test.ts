@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
+  batchDecisionNoticeText,
   canEditManagerMessage,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
+  decisionNoticeText,
   decisionRequestText,
   MANAGER_FEEDBACK_MAX_CHARS,
   MANAGER_MESSAGE_MAX_CHARS,
@@ -610,5 +612,33 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
     const line = text.split('\n').find((entry) => entry.startsWith('- Post to Slack'))!;
     expect(line.endsWith('… (reply outside the source channel)')).toBe(true);
     expect(line.length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('the acknowledgement of a decision while a pause holds the step (W12-R15)', (): void => {
+  it('says the approved step runs now, or when the pause that holds it ends', (): void => {
+    const employee = { by: 'employee', employeeName: 'Priya' } as const;
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'approve', kind: 'actions', hold: undefined }),
+    ).toBe('Approval ab12cd received. I’m applying the approved actions now.');
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'approve', kind: 'actions', hold: employee }),
+    ).toBe(
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me.',
+    );
+    expect(decisionNoticeText({ id: 'ab12cd', verb: 'reject', kind: 'plan', hold: employee })).toBe(
+      'Rejection ab12cd received. I won’t apply it.',
+    );
+    expect(
+      batchDecisionNoticeText({
+        id: 'b1',
+        verb: 'approve',
+        decided: ['ab12cd'],
+        skipped: [],
+        hold: { by: 'deployment' },
+      }),
+    ).toBe(
+      'Approval b1 received for 1 of 1 decisions (ab12cd). Scheduled work on this deployment is paused: I’ll apply the approved actions once it runs again.',
+    );
   });
 });
