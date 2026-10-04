@@ -441,6 +441,52 @@ describe('a retry after the reconciliation (P4-1)', (): void => {
   });
 });
 
+describe('a Retry that re-drafts a declined plan (12-M’s replaced request, carried with the move)', (): void => {
+  it('remembers the undecided request the re-draft takes back, so its code stays answerable', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'cancelled');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'abc234',
+          kind: 'actions',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787768400.000100',
+          requestText: 'Priya needs your decision.',
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    expect((await readItem(harness, workItemId)).decision).toBeUndefined();
+    const remembered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', 'abc234'),
+          )
+          .unique(),
+    );
+    expect(remembered).toMatchObject({
+      workItemId,
+      decisionId: 'abc234',
+      kind: 'actions',
+      channel: 'D0MANAGER',
+      ts: '1787768400.000100',
+      requestText: 'Priya needs your decision.',
+    });
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('managerChannelActions:markRequestReplaced');
+  });
+});
+
 describe('Close without retry (E-8)', (): void => {
   /** An apply interrupted after its claim whose approved rows were all refused before sending. */
   async function interruptedWithNothingToReconcile(harness: Harness): Promise<{
