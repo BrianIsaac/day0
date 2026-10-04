@@ -179,8 +179,6 @@ interface SpanReply {
 /**
  * Answer one request to the span model the way the compose component does:
  * `GET /healthz`, `POST /v1/spans`, and a 404 for anything else.
- *
- * @param model - The double that answers.
  */
 async function answerSpanRequest(
   model: SpanModel,
@@ -216,9 +214,11 @@ export function spanModelFetch(
   model: SpanModel = new RecordedSpanModel(),
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
+    // The served double matches the request target as sent, query included.
+    const target = new URL(request.url);
     const reply = await answerSpanRequest(model, {
       method: request.method,
-      path: new URL(request.url).pathname,
+      path: `${target.pathname}${target.search}`,
       readBody: (): Promise<string> => request.text(),
     });
     return new Response(JSON.stringify(reply.body), {

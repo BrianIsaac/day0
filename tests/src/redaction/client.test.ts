@@ -122,6 +122,7 @@ describe('the span model double answered in-process (the test transport)', () =>
           },
         ],
         ['/v1/spans', { method: 'POST', body: 'not json' }],
+        ['/v1/spans?threshold=0.5', { method: 'POST', body: '{}' }],
         ['/healthz', { method: 'GET' }],
         ['/v1/unknown', { method: 'GET' }],
       ];
