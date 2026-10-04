@@ -76,6 +76,12 @@ export interface ChatReader {
   readThread(channelId: string, threadTs: string, since?: number): Promise<ChatMessage[]>;
   /** Who the rung posts as, as the provider reports it now. */
   identity(): Promise<ChatIdentity>;
+  /**
+   * The name the chat system shows for one of its members, or undefined where the rung may not
+   * ask (its allowlist names no such read) or the system gives none (an unknown member, a scope
+   * the token lacks).
+   */
+  memberName(userId: string): Promise<string | undefined>;
   /** The surface action that posts one message; the gate applies it, the reader never sends it. */
   postAction(post: ChatPost): MockAction;
 }
@@ -123,7 +129,8 @@ type SlackReadMethod =
   | 'auth.test'
   | 'conversations.list'
   | 'conversations.history'
-  | 'conversations.replies';
+  | 'conversations.replies'
+  | 'users.info';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -154,6 +161,20 @@ function slackMessage(item: unknown): ChatMessage | undefined {
       marks.flatMap(([field, key]) => (typeof row[key] === 'string' ? [[field, row[key]]] : [])),
     ),
   };
+}
+
+/**
+ * The name a Slack `users.info` answer gives a member, as Slack itself shows it: the display name,
+ * else the full name, else the handle; undefined when it gives none.
+ */
+function slackMemberName(user: unknown): string | undefined {
+  const row = asRecord(user);
+  const profile = asRecord(row?.profile);
+  const names = [profile?.display_name, profile?.real_name, row?.real_name, row?.name];
+  const found = names.find(
+    (name): name is string => typeof name === 'string' && name.trim() !== '',
+  );
+  return found?.trim();
 }
 
 /**
@@ -290,6 +311,18 @@ export function slackChatReader(
         ...(typeof auth.bot_id === 'string' && auth.bot_id ? { botId: auth.bot_id } : {}),
         ...(typeof auth.team_id === 'string' && auth.team_id ? { workspaceId: auth.team_id } : {}),
       };
+    },
+    memberName: async (userId: string): Promise<string | undefined> => {
+      // Optional, as `chat.update` is: a policy that does not name it leaves the asker unnamed.
+      if (!surface.toolAllowlist?.includes('users.info')) return undefined;
+      try {
+        return slackMemberName((await get('users.info', { user: userId })).user);
+      } catch (error) {
+        // Slack's own refusal (`user_not_found`, `missing_scope`) is an answer: no name to give.
+        // A rate limit or a server error is the caller's to wait out or note.
+        if (error instanceof ChatReadRefused) return undefined;
+        throw error;
+      }
     },
     postAction: (post: ChatPost): MockAction => ({
       tool: 'http.request',

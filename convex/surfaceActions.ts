@@ -83,6 +83,9 @@ const SLACK_METHOD_DEFAULTS = [
   // Marks Day0's own decision request decided in the manager DM; optional,
   // so a policy that does not name it leaves the request as sent.
   'chat.update',
+  // Names the asker of an ask intake takes; optional, so a policy that does
+  // not name it leaves the ask under the asker's id.
+  'users.info',
 ] as const;
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
