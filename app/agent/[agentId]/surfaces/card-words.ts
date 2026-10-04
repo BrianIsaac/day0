@@ -102,7 +102,8 @@ export interface StateChipWords {
  * connection, since it is what the manager has to act on.
  *
  * An approved card with nothing landed says what it waits on where that is not a paste: IT, for a
- * card whose access request is out, or the manager's Connect, for a card IT's connection covers.
+ * card whose access request is out, or the manager's Connect, for a card IT's connection covers;
+ * so does one its approval's probe left `ungranted` with no credential, when the caller says so.
  *
  * @param surface - The card's row.
  * @param now - The instant to judge the access against.
@@ -139,6 +140,10 @@ export function stateChip(
     case 'connected':
       return { text: rung ? `Connected ${rung.via}` : 'Connected', tone: 'ok' };
     case 'ungranted':
+      // The approval's own probe finds no credential before IT's install or the manager's
+      // Connect lands one, and the card is waiting on that, not refused (the wave 11 review's m23).
+      if (options.waitsOn === 'it') return { text: 'Waiting on IT', tone: 'muted' };
+      if (options.waitsOn === 'connect') return { text: 'Ready to connect', tone: 'accent' };
       return { text: 'Not granted', tone: 'warn' };
     case 'listed-dead':
       return { text: 'Not answering', tone: 'warn' };

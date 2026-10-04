@@ -529,6 +529,30 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(chip(render(listed(LINEAR_APPROVED)))).toBe('Needs its credential');
   });
 
+  it("keeps a card its approval's own probe found with no credential waiting, never Not granted with the docs' gap (the wave 11 review's m23)", (): void => {
+    const probed = {
+      ...LINEAR_APPROVED,
+      verdict: 'ungranted',
+      reason: 'credential not in the docs; Access',
+    } as Partial<ListedSurface>;
+    const waiting = render(listed(probed), {}, { accessRequest: REQUEST });
+    expect(chip(waiting)).toBe('Waiting on IT');
+    expect(waiting).not.toContain('credential not in the docs');
+    expect(waiting).toContain('Day0 reads nothing from it until its access lands.');
+    const ready = render(
+      listed(probed),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(chip(ready)).toBe('Ready to connect');
+    expect(ready).not.toContain('credential not in the docs');
+    const refused = render(
+      listed({ ...probed, credentialId: 'credential-1' as ListedSurface['credentialId'] }),
+    );
+    expect(chip(refused)).toBe('Not granted');
+    expect(refused).toContain('Skipped: credential not in the docs; Access');
+  });
+
   it("draws no credential lines on a covered card, whose identity the Acts as row names, unless the manager's own key is stored there (bed, 2 Oct)", (): void => {
     const covered = render(
       listed({

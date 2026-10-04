@@ -378,9 +378,14 @@ export function SurfaceCard({
     !accessRequest &&
     !connectable &&
     !slack;
+  const waitsOn =
+    accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined;
+  // The approval's own probe meets no credential and leaves the card `ungranted`; one that waits
+  // on IT or the manager's Connect for it is waiting, not refused (the wave 11 review's m23).
+  const awaitingAccess =
+    surface.verdict === 'ungranted' && surface.credentialId === undefined && waitsOn !== undefined;
   const chip = stateChip(surface, context.now, zone, {
-    waitsOn:
-      accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined,
+    waitsOn: surface.verdict === 'ungranted' && !awaitingAccess ? undefined : waitsOn,
   });
   return (
     <Card
@@ -393,12 +398,19 @@ export function SurfaceCard({
       <div className="grid gap-4">
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
             M13); a reason that is the skip line is said once, as the skip. */}
-        {surface.reason && surface.reason !== skipReason && surface.reason !== 'expired' ? (
+        {surface.reason &&
+        !awaitingAccess &&
+        surface.reason !== skipReason &&
+        surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
             {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
           </p>
         ) : null}
-        {skipReason ? (
+        {awaitingAccess ? (
+          <p className="text-sm text-[var(--color-muted)]">
+            Day0 reads nothing from it until its access lands.
+          </p>
+        ) : skipReason ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
         {surface.lastDecisionError ? (
