@@ -62,3 +62,84 @@ export function socketBridgeConfigured(
 ): boolean {
   return (env[SOCKET_BRIDGE_SECRET_VAR] ?? '').trim() !== '';
 }
+
+/** One button press, as the bridge forwards it from a Socket Mode `block_actions` envelope. */
+export interface SocketPress {
+  /** The Slack user who pressed. */
+  readonly userId: string;
+  readonly teamId?: string;
+  /** The app whose message carried the button. */
+  readonly appId: string;
+  readonly channelId: string;
+  /** The message the button is on. */
+  readonly messageTs: string;
+  /** When the press happened, Slack's own timestamp: the press's key, so a redelivery is one press. */
+  readonly actionTs: string;
+  readonly action: { readonly action_id: string; readonly value?: string };
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * Read a Socket Mode envelope's payload as one button press, or nothing: only a `block_actions`
+ * payload naming the user, the app, the message, its channel and an action with its timestamp.
+ *
+ * @param payload - The envelope's `payload`, as Slack sent it.
+ */
+export function parsePress(payload: unknown): SocketPress | undefined {
+  const body = record(payload);
+  if (body?.type !== 'block_actions') return undefined;
+  const container = record(body.container);
+  const first = Array.isArray(body.actions) ? record(body.actions[0]) : undefined;
+  const userId = text(record(body.user)?.id);
+  const appId = text(body.api_app_id);
+  const channelId = text(container?.channel_id) ?? text(record(body.channel)?.id);
+  const messageTs = text(container?.message_ts);
+  const actionId = text(first?.action_id);
+  const actionTs = text(first?.action_ts);
+  if (!userId || !appId || !channelId || !messageTs || !actionId || !actionTs) return undefined;
+  const teamId = text(record(body.team)?.id);
+  const value = text(first?.value);
+  return {
+    userId,
+    ...(teamId === undefined ? {} : { teamId }),
+    appId,
+    channelId,
+    messageTs,
+    actionTs,
+    action: { action_id: actionId, ...(value === undefined ? {} : { value }) },
+  };
+}
+
+async function digest(value: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
+}
+
+/**
+ * Whether an `Authorization` header presents the bridge's secret as a bearer token. Both sides are
+ * hashed before they are compared byte for byte without an early exit, so the time taken says
+ * nothing about how much of the secret a guess got right. An empty secret matches nothing.
+ *
+ * @param header - The request's `Authorization` header, if any.
+ * @param secret - The deployment's {@link SOCKET_BRIDGE_SECRET_VAR}.
+ */
+export async function bridgeSecretMatches(header: string | null, secret: string): Promise<boolean> {
+  if (secret === '' || header === null || !header.startsWith('Bearer ')) return false;
+  const [presented, expected] = await Promise.all([
+    digest(header.slice('Bearer '.length)),
+    digest(secret),
+  ]);
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= (presented[index] ?? 0) ^ (expected[index] ?? 0);
+  }
+  return difference === 0;
+}
