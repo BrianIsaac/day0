@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  EXIT_BROKEN,
+  EXIT_INCOMPLETE,
+  EXIT_KEPT,
+  EXIT_NOT_RUN,
   anonymousExitCode,
+  main,
   askWithNoIdentity,
   isGuardRefusalData,
   publicFunctionsOf,
@@ -125,8 +130,18 @@ describe('the deployment check for a caller with no identity', (): void => {
       'not asked skills:get',
       'refused work:needsYou',
     ]);
-    expect(anonymousExitCode(checks)).toBe(1);
-    expect(anonymousExitCode(checks.filter((check) => check.status !== 'BROKE THE RULE'))).toBe(0);
+    expect(anonymousExitCode(checks)).toBe(EXIT_BROKEN);
+    // A function it could not ask leaves the run incomplete, never passed.
+    expect(anonymousExitCode(checks.filter((check) => check.status !== 'BROKE THE RULE'))).toBe(
+      EXIT_INCOMPLETE,
+    );
+    expect(
+      anonymousExitCode(
+        checks.filter(
+          (check) => check.status.includes('refused') || check.status.includes('answered'),
+        ),
+      ),
+    ).toBe(EXIT_KEPT);
   });
 
   it("keeps each line to one line when the deployment's refusal spans several", async (): Promise<void> => {
@@ -167,5 +182,61 @@ describe('the deployment check for a caller with no identity', (): void => {
       'refused as named slackProvisionActions:completeInstall',
       'answered as named config:release',
     ]);
+  });
+
+  it('asks every function in both argument shapes, and fails one that answers its emptiest', async (): Promise<void> => {
+    const batch: PublicFunction['args'] = {
+      type: 'object',
+      value: {
+        members: {
+          fieldType: { type: 'array', value: { type: 'id', tableName: 'workItems' } },
+          optional: false,
+        },
+      },
+    };
+    const asked: unknown[] = [];
+    const checks = await sweepWithNoIdentity([fn('work:approveActionsBatch', batch)], {
+      tables: new Set(['workItems']),
+      rowOf: (): string => 'item-row',
+      ask: async (_one, args): Promise<CallOutcome> => {
+        asked.push(args);
+        const members = (args as { members: unknown[] }).members;
+        return members.length === 0
+          ? { kind: 'refused', message: 'a batch approves at least one item', data: undefined }
+          : GUARD;
+      },
+    });
+    expect(asked).toEqual([{ members: ['item-row'] }, { members: [] }]);
+    expect(checks.map((check) => check.status)).toEqual(['BROKE THE RULE']);
+    expect(checks[0]?.detail).toContain('emptiest arguments');
+  });
+
+  it('says a function that gave no answer, and calls the run incomplete', async (): Promise<void> => {
+    const checks = await sweepWithNoIdentity([fn('work:needsYou')], {
+      tables: new Set(),
+      rowOf: (): undefined => undefined,
+      ask: async (): Promise<CallOutcome> => {
+        throw new Error('Unexpected token < in JSON at position 0');
+      },
+    });
+    expect(checks.map((check) => `${check.status} ${check.path}`)).toEqual([
+      'no answer work:needsYou',
+    ]);
+    expect(anonymousExitCode(checks)).toBe(EXIT_INCOMPLETE);
+  });
+});
+
+describe('running the deployment check', (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('asks nothing of any deployment without --yes', async (): Promise<void> => {
+    const fetched = vi.fn();
+    vi.stubGlobal('fetch', fetched);
+    vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    expect(await main(['.env.does-not-exist'])).toBe(EXIT_NOT_RUN);
+    expect(fetched).not.toHaveBeenCalled();
   });
 });
