@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -25,9 +26,9 @@ import { useOverflows } from './use-overflows';
  * The body scrolls inside the panel, under the dimmed page's height; what a caller draws in a
  * {@link DialogFooter} sits in a strip below the body that never scrolls, so a long dialog's
  * answers stay in view at a phone's height (11-AC's item 13). While its content runs past its
- * height the body is a keyboard stop of its own, a region named by the title, so a keyboard can
+ * height the body is a keyboard stop of its own, a group named by the title, so a keyboard can
  * scroll it when every control sits in the footer (the v0.15.0 walk's finding 3); one that fits
- * adds no stop.
+ * adds no stop, and focus on it moves to the panel.
  *
  * @param title - The dialog's heading, which names it.
  * @param description - The sentence that says what the dialog is about, drawn under the heading
@@ -61,6 +62,14 @@ export function Dialog({
   const body = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const scrolls = useOverflows(body, content);
+
+  // A body that held focus as a keyboard stop and then stops scrolling (a section folds, the
+  // phone turns) loses its stop: focus goes to the panel, never out of the modal to the page.
+  useEffect(() => {
+    if (!scrolls && body.current !== null && document.activeElement === body.current) {
+      panel.current?.focus();
+    }
+  }, [scrolls]);
   // The strip a DialogFooter draws into, once it is on the page.
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
 
@@ -105,9 +114,10 @@ export function Dialog({
           ref={body}
           data-dialog-body=""
           // A body that scrolls takes keyboard focus, so its arrow keys reach what runs past the
-          // fold when every control sits in the footer, and says it is the dialog's by its title.
-          {...(scrolls ? { tabIndex: 0, role: 'region', 'aria-labelledby': headingId } : {})}
-          className="min-h-0 overflow-y-auto focus-visible:outline-offset-[-2px]"
+          // fold when every control sits in the footer: a group named by the title, quieter than
+          // a landmark of the dialog's own name. Its ring is drawn inside the panel's curve.
+          {...(scrolls ? { tabIndex: 0, role: 'group', 'aria-labelledby': headingId } : {})}
+          className="min-h-0 overflow-y-auto focus-visible:rounded-[12px] focus-visible:outline-offset-[-4px]"
         >
           <div ref={content} className="grid gap-4 p-6">
             <h2 id={headingId} className="text-lg font-semibold">

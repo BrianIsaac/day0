@@ -303,7 +303,7 @@ describe('a dialog whose body scrolls (the v0.15.0 walk’s finding 3)', (): voi
     lay(body, 1400, 600);
     act((): void => doubles.resize());
     expect(body.tabIndex).toBe(0);
-    expect(body.getAttribute('role')).toBe('region');
+    expect(body.getAttribute('role')).toBe('group');
     expect(document.getElementById(body.getAttribute('aria-labelledby') ?? '')?.textContent).toBe(
       'Take on Lark?',
     );
@@ -313,8 +313,12 @@ describe('a dialog whose body scrolls (the v0.15.0 walk’s finding 3)', (): voi
       'Take on',
     ]);
 
+    // Focused while it scrolls, then its content shrinks to fit: focus stays inside the dialog.
+    act((): void => body.focus());
+    expect(document.activeElement).toBe(body);
     lay(body, 600, 600);
     act((): void => doubles.resize());
+    expect(document.activeElement).toBe(dialog);
     expect(body.hasAttribute('tabindex')).toBe(false);
     expect(body.hasAttribute('role')).toBe(false);
     expect(focusableIn(dialog).map((element) => element.textContent)).toEqual([
