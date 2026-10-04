@@ -1,3 +1,5 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { connect as connectTcp, type Socket as TcpSocket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_BOT_TOKEN, startFakeSlack, type FakeSlack } from './spawn';
 
@@ -12,7 +14,8 @@ import { FAKE_BOT_TOKEN, startFakeSlack, type FakeSlack } from './spawn';
 let fake: FakeSlack;
 
 beforeEach(async (): Promise<void> => {
-  fake = await startFakeSlack();
+  // Pings every 200 ms, so a connection that stops answering is dropped within a test's time.
+  fake = await startFakeSlack({ FAKE_SLACK_PING_MS: '200' });
 }, 20_000);
 
 afterEach((): void => {
@@ -228,5 +231,53 @@ describe('fake Slack: Socket Mode and a press (K1, K2, K3)', (): void => {
     await first.next();
     await expect(connect(String(opened.url))).rejects.toThrow();
     first.socket.close();
+  });
+});
+
+/**
+ * A client that completes the WebSocket handshake and then answers nothing, as a bridge killed
+ * with its container leaves its connection: no close frame and no answer to a ping ever arrives.
+ */
+async function deadClient(url: string): Promise<TcpSocket> {
+  const target = new URL(url);
+  const socket = connectTcp(Number(target.port), target.hostname);
+  await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+  const key = randomBytes(16).toString('base64');
+  socket.write(
+    `GET ${target.pathname}${target.search} HTTP/1.1\r\nHost: ${target.host}\r\n` +
+      `Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\n` +
+      'Sec-WebSocket-Version: 13\r\n\r\n',
+  );
+  const expected = createHash('sha1')
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest('base64');
+  await new Promise<void>((resolve, reject) =>
+    socket.once('data', (chunk) =>
+      String(chunk).includes(expected) ? resolve() : reject(new Error('no handshake')),
+    ),
+  );
+  return socket;
+}
+
+describe('fake Slack: a connection that stops answering (K1)', (): void => {
+  it('drops a connection that answers no ping, so a press reaches the live one', async (): Promise<void> => {
+    const ts = await postRequest();
+    const token = await generateAppLevelToken();
+    const dead = await deadClient(String((await api('apps.connections.open', token)).url));
+    const live = await connect(String((await api('apps.connections.open', token)).url));
+    await live.next();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const shown = (await (await fetch(`${fake.base}/proof`)).json()) as {
+        socketConnections: Record<string, number>;
+      };
+      if (shown.socketConnections.A_DAY0_FAKE === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const pressing = proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });
+    const envelope = await live.next();
+    live.socket.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+    expect(await (await pressing).json()).toMatchObject({ delivered: true, acknowledged: true });
+    dead.destroy();
+    live.socket.close();
   });
 });

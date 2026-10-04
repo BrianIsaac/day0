@@ -98,6 +98,9 @@ const presses = [];
 const MAX_CONNECTIONS_PER_APP = 10;
 // How long a press waits for its envelope's acknowledgement.
 const ACK_WAIT_MS = 3000;
+// How often each connection is pinged; one that answered nothing since the last ping is dropped,
+// as a connection whose client died without closing it (a killed container) would be.
+const PING_MS = Number(process.env.FAKE_SLACK_PING_MS || 10000);
 
 function appByClientId(clientId) {
   return apps.find((app) => app.clientId === clientId);
@@ -614,6 +617,7 @@ function readFrames(connection, onText) {
       connection.socket.end();
       break;
     }
+    connection.alive = true;
     if (opcode === 0x9) sendFrame(connection.socket, payload.toString(), 0xa);
     if (opcode === 0x1) onText(payload.toString());
   }
@@ -637,7 +641,7 @@ server.on('upgrade', (request, socket) => {
     'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
   );
-  const connection = { socket, appId, buffer: Buffer.alloc(0), waiting: new Map() };
+  const connection = { socket, appId, buffer: Buffer.alloc(0), waiting: new Map(), alive: true };
   sockets.add(connection);
   socket.on('data', (chunk) => {
     connection.buffer = Buffer.concat([connection.buffer, chunk]);
@@ -665,6 +669,18 @@ server.on('upgrade', (request, socket) => {
     }),
   );
 });
+
+setInterval(() => {
+  for (const connection of sockets) {
+    if (!connection.alive) {
+      sockets.delete(connection);
+      connection.socket.destroy();
+      continue;
+    }
+    connection.alive = false;
+    sendFrame(connection.socket, 'ping', 0x9);
+  }
+}, PING_MS).unref();
 
 let pressCount = 0;
 
