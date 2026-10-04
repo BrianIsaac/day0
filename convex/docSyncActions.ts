@@ -24,6 +24,8 @@ import {
   type ScopePage,
 } from '../src/surfaces/intake-scope';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { log } from '../src/lib/logger';
 import { FINISHING_CHECKPOINT_EVERY, PAGED_READ, type FinishingPage } from './docSources';
 import {
   FINISHING_CURSOR,
@@ -34,6 +36,10 @@ import {
 } from '../src/docs/finishing';
 
 export const SYNC_BATCH_SIZE = 25;
+
+/** Why a sync batch read nothing: the deployment's scheduled work is paused. */
+export const SYNC_HELD_REASON =
+  "the deployment's scheduled work is paused, so the sync goes on from its cursor once it runs again";
 
 /**
  * The largest page Day0 stores, in UTF-8 bytes: under Convex's one-mebibyte
@@ -360,6 +366,14 @@ export const syncSource = internalAction({
  *
  * After the last batch the run holds `FINISHING_CURSOR` and the same action
  * finishes it; a batch scheduled at that cursor (a resumed run) only finishes.
+ *
+ * Every link of a sync's chain enters here (the first batch, each
+ * continuation, a restart, the finish), so while the deployment's scheduled
+ * work is paused (`DAY0_CRONS_PAUSED`) a batch reads nothing and schedules
+ * nothing: its run stays `running` at its cursor, and the cron's next start
+ * of the source after the pause takes it over from there (`beginSync`), as a
+ * work step queued before the pause holds at its claim (12-P; the wave file's
+ * 4.3).
  */
 export const syncBatch = internalAction({
   args: {
@@ -368,6 +382,14 @@ export const syncBatch = internalAction({
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<SyncResult> => {
+    const paused = cronsPauseReason();
+    if (paused !== undefined) {
+      log.info('documentation sync batch held: crons paused', {
+        sourceId: args.sourceId,
+        reason: paused,
+      });
+      return { ok: false, pages: 0, redactions: 0, complete: false, reason: SYNC_HELD_REASON };
+    }
     const context = await ctx.runQuery(internal.docSources.syncContext, {
       sourceId: args.sourceId,
       runId: args.runId,
