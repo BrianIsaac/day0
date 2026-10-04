@@ -183,9 +183,15 @@ async function reachesHandler(route: { path: string; verb: RouteVerb }): Promise
 
 beforeEach((): void => {
   asked.length = 0;
+  // A refused request reaches no network either: no vendor, no model, no deployment.
+  vi.stubGlobal('fetch', async (input: unknown): Promise<never> => {
+    asked.push(`fetch ${String(input)}`);
+    throw new Error('a refused request reached the network');
+  });
 });
 
 afterEach((): void => {
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.resetModules();
 });
@@ -212,7 +218,7 @@ describe('the routes a request with no session reaches', (): void => {
     },
   );
 
-  it.each(['no-sign-in', 'local-key', 'clerk'] as const)(
+  it.each(['no-sign-in', 'local-key', 'clerk', 'company'] as const)(
     'has every handler not named for it refuse a request with no session itself, asking the deployment nothing (%s)',
     async (mode): Promise<void> => {
       await useSignInMode(mode);
@@ -230,6 +236,33 @@ describe('the routes a request with no session reaches', (): void => {
         expect([401, 403, 404], label).toContain(response.status);
         const body = (await response.json()) as Record<string, unknown>;
         expect(Object.keys(body), label).toEqual(['error']);
+        expect(asked, label).toEqual([]);
+      }
+    },
+  );
+
+  it.each(['no-sign-in', ...GATED_SIGN_IN_MODES] as const)(
+    'has every route a signed secret admits refuse a request with neither a session nor the secret, asking nothing (%s)',
+    async (mode): Promise<void> => {
+      await useSignInMode(mode);
+      for (const route of ROUTES.filter(
+        (candidate) => named(candidate)?.admission === 'signed-secret',
+      )) {
+        asked.length = 0;
+        const handlers = (await import(/* @vite-ignore */ join(ROOT, route.file))) as Record<
+          RouteVerb,
+          (request: Request) => Promise<Response>
+        >;
+        const response = await handlers[route.verb](noSessionRequest(route));
+        const label = `${route.verb} ${route.path} under ${mode}`;
+        expect([307, 401, 503], label).toContain(response.status);
+        if (response.status === 307) {
+          // Sent back to this deployment's own landing with the outcome, never to a caller's address.
+          expect(new URL(response.headers.get('location') ?? '').origin, label).toBe(APP);
+        } else {
+          const body = (await response.json()) as Record<string, unknown>;
+          expect(Object.keys(body), label).toEqual(['error']);
+        }
         expect(asked, label).toEqual([]);
       }
     },
