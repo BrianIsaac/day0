@@ -3,9 +3,15 @@
 This is the recipe we run with a customer's Slack administrator during the
 install (`./setup.sh access`, or `./setup.sh install`, which runs it; the
 runbook is [install.md](install.md)). It connects Slack once, for the whole
-organisation: afterwards each employee Day0 deploys gets **its own Slack app**,
-created by Day0 from the manifest below, so it posts as itself and never as a
-person. Nobody pastes a token on an employee's card.
+organisation: afterwards each employee Day0 deploys can get **its own Slack
+app**, created by Day0 from the manifest below, so it posts as itself and never
+as a person, and nobody pastes a token on its card. That holds when the
+employee's linked documentation describes the app's install: a page about Slack
+that says the employee's app is installed by OAuth or created with the
+organisation's configuration token (a page carrying the manifest of section 2
+does), and that records no bot token of its own. A page that records a bot
+token for the employee makes its card a pasted-token card, and with no page of
+either kind the card says what is missing and offers no app.
 
 Slack is connected **per employee** only: one app per employee, its own bot
 user, its own permissions. The organisation's connection holds what Day0
@@ -81,13 +87,22 @@ that issues an app-level token, so a person generates one per app:
 
 1. Signed in to <https://api.slack.com/apps> as a collaborator on the
    employee's app (`<employee name> (Day0)`), open it.
-2. **Socket Mode**: it is on for an app Day0 created from the manifest in
-   section 2.
-   An app created before this release has it off: turn **Enable Socket Mode**
-   on, and turn on **Interactivity & Shortcuts** (no request URL is asked for).
-3. **Basic Information**, **App-Level Tokens**, **Generate Token and Scopes**:
-   any name (for example `day0-buttons`), the scope **`connections:write`**,
+2. **An app created before this release** has Socket Mode off: on its
+   **Socket Mode** page turn on **Enable Socket Mode**. Slack's own dialog,
+   "Generate an app-level token to enable Socket Mode", already carries the
+   scope `connections:write`: give it any name (for example `day0-buttons`),
+   **Generate**, and **Copy** the token (it starts `xapp-`). Interactivity turns
+   on with it, with no request URL asked for. Go to step 4: the dialog made the
+   token, so step 3 would make a second one.
+3. **An app Day0 created from the manifest in section 2** has Socket Mode and
+   Interactivity on already: **Basic Information**, **App-Level Tokens**,
+   **Generate Token and Scopes**, any name, the scope **`connections:write`**,
    **Generate**. Copy the token (it starts `xapp-`).
+
+   Either way the token stays copyable from its row under **App-Level
+   Tokens** for as long as it lives, to anyone who can open the app's settings
+   (each collaborator), as the configuration token's row does: Day0 never shows
+   it again, but Slack does.
 4. In Day0, the employee's **Slack** card, **App-level token**: paste it and
    press **Turn on buttons**. Day0 checks it by opening a Socket Mode connection
    with it, keeps it encrypted and held by the organisation, and never shows it
@@ -102,7 +117,9 @@ stop reaching Day0 until a new token is landed on the card, and each request is
 decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last, and the `slack-socket` component dials
 with it at its next read of the app list, within half a minute, so a token of
 another app shows in `check:access` (the `socket` row) by then. The `slack-socket` component must run (real-mode setup starts
-it) and reach Slack's Socket Mode hosts outbound over `wss://`; nothing
+it) and reach Slack's Socket Mode host outbound over `wss://`: the host in the
+URL Slack's `apps.connections.open` answers, which was `wss-primary.slack.com`
+in October 2026 (`pnpm check:setup --report` lists it under `egress`); nothing
 inbound is opened.
 
 ## 2. The manifest or the form
@@ -174,8 +191,8 @@ the codes and tokens come back on the redirect.
 
 ## 3. The scopes
 
-Each employee's app asks for exactly the methods Day0 calls in Slack, and no
-more: `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
+Each employee's app asks for the scopes of exactly the methods Day0 calls in
+Slack, and no more: `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
 (`channels:read`, `im:read`), `conversations.history` and
 `conversations.replies` (`channels:history`, `im:history`), `conversations.open`
 (`im:write`), `users.lookupByEmail` (`users:read.email`, which Slack grants
@@ -185,6 +202,17 @@ disconnected, Slack has taken its bot out of every channel; with
 `channels:join` the employee re-joins the public channels its approved intake
 scope names itself. There is no `groups:` scope: a private channel is added by
 hand by someone in it, and the employee's card names each one that needs it.
+
+**What a card may call is read from the documentation.** The scopes let the
+app call these methods; the employee's Slack card calls only the ones its
+linked documentation names, so the Slack page must name each of `auth.test`,
+`users.lookupByEmail` and `conversations.open` (the card does not connect
+without them), `conversations.list`, `conversations.history` and
+`conversations.replies` (intake reads nothing without them), `chat.postMessage`
+(nothing is posted without it), `chat.update` (without it a decided request
+keeps its buttons) and `users.info` (without it an ask is shown under the
+asker's id). A manager's **Change approved tools** cannot add a method the
+pages do not name: the card says it is approved but not offered.
 
 <!-- access-kit: scopes per-employee -->
 
