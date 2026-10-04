@@ -18,7 +18,8 @@ import {
   skillOwnerKeyOf,
   STORED_COPY_CLEARED,
 } from './skillVersions';
-import { applyVerdict, stopRunsInTransaction } from './work';
+import { applyVerdict } from './work';
+import { stopRunsInTransaction } from './workRuns';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';

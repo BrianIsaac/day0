@@ -782,7 +782,7 @@ describe('releasing a claim', (): void => {
     await drain(harness);
     expect((await readItem(harness, refused)).state).toBe('plan-pending');
 
-    await expect(owner.mutation(api.work.retryFailed, { workItemId: held })).rejects.toThrow(
+    await expect(owner.mutation(api.workRuns.retryFailed, { workItemId: held })).rejects.toThrow(
       'another employee holds this: Mateo',
     );
     expect((await readItem(harness, held)).state).toBe('cancelled');
@@ -801,7 +801,7 @@ describe('releasing a claim', (): void => {
     const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.work.cancelPlan, { workItemId: held, reason: 'not yet' });
 
-    const retried = await owner.mutation(api.work.retryFailed, { workItemId: held });
+    const retried = await owner.mutation(api.workRuns.retryFailed, { workItemId: held });
     expect(retried.resumeState).toBe('claimed');
     expect(await readItem(harness, held)).toMatchObject({
       state: 'claimed',
@@ -847,7 +847,7 @@ describe('releasing a claim', (): void => {
     });
 
     expect((await readItem(harness, second)).state).toBe('plan-pending');
-    await expect(owner.mutation(api.work.retryFailed, { workItemId: first })).rejects.toThrow(
+    await expect(owner.mutation(api.workRuns.retryFailed, { workItemId: first })).rejects.toThrow(
       'another employee holds this: Mateo',
     );
     expect((await claimsOf(harness)).filter((claim) => claim.releasedAt === undefined)).toEqual([

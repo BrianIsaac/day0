@@ -156,7 +156,7 @@ describe(
       });
 
       // The card offers Retry as the manager's scope decision; its button sends
-      // exactly the request the page hands to work.retryFailed.
+      // exactly the request the page hands to workRuns.retryFailed.
       const sent: Array<string | undefined> = [];
       const markup = card(skipped, (feedback) => sent.push(feedback));
       expect(markup).toContain('>Take it anyway<');
@@ -170,7 +170,7 @@ describe(
 
       await expect(
         owner.mutation(
-          api.work.retryFailed,
+          api.workRuns.retryFailed,
           retryRequest(skipped._id, 'The venue is ours to book.'),
         ),
       ).resolves.toEqual({

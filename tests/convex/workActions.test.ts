@@ -1755,10 +1755,10 @@ describe("writes the plan left to the manager's answer stop with the question (1
     };
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
@@ -1796,8 +1796,8 @@ describe("writes the plan left to the manager's answer stop with the question (1
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
 
     // The question the first run landed is still the open one.
     recorded.skillOutput = {
@@ -4551,7 +4551,7 @@ describe('executing an approved plan through the gate', (): void => {
     });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -4598,7 +4598,7 @@ describe('executing an approved plan through the gate', (): void => {
       reason: 'not yet',
     });
     // The retry resumes at plan-approved, and the server runs the plan again.
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
     const second = (await readItem(harness, workItemId)).pendingRunId;
     expect(second).toBeDefined();
@@ -5079,7 +5079,7 @@ describe('a registered skill serves every later work item of its shape', (): voi
     );
     expect(await proposedSkills(harness)).toEqual([]);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
   });
 
@@ -5291,7 +5291,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
     expect(await events('work.retry')).toEqual([
       { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
@@ -5574,7 +5574,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(recorded.http).toHaveLength(1);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments']);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -8127,7 +8127,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
     try {
       await harness
         .withIdentity(OWNER)
-        .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+        .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
     } finally {
       vi.useRealTimers();
     }
@@ -8160,7 +8160,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
     };
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 

@@ -973,7 +973,7 @@ describe('one code for every open action decision', (): void => {
       await ctx.db.patch(workItemId, { executionRunId: runId });
       return { workItemId, runId };
     });
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       ...ids,
       output: { draft: 'Reply drafted.', notes: '', actions: [publicPost] },
     });

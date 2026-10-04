@@ -417,7 +417,7 @@ interface Retired {
  * The backend keeps finished records for a week beside the pending ones, so
  * this is far past a team deployment's queue. A pending job older than the
  * window still runs against a missing row: most steps end as a no-op, and a
- * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
+ * few (`workRuns.setFailed`, `work.decidePlan`) throw into the backend log.
  */
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 

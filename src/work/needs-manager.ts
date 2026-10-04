@@ -118,7 +118,7 @@ export function parkedRowNeedsManager(
  * landed it asks for the provider reconciliation first, which is also the
  * manager's. The one row with neither is an interrupted apply whose ledger
  * names nothing to verify: the confirmation and Retry are both disabled and
- * `work.reconcileFailed` refuses, so nothing the manager does moves it. A
+ * `workRuns.reconcileFailed` refuses, so nothing the manager does moves it. A
  * recorded reconciliation needs no reading: it is only ever recorded against
  * a ledger that names entries.
  *

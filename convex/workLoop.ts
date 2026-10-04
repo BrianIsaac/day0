@@ -595,7 +595,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
   if (row.draftClaimedAt !== undefined) {
     const resumed = await draftResumesSinceRetry(ctx, row);
     if (resumed >= MAX_DRAFT_RESUMES) {
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+      await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         reason: `the plan draft died ${resumed + 1} times without an answer; Retry drafts it again`,
         stopped: true,
@@ -716,7 +716,7 @@ export async function resumeStalledStepsInTransaction(
         rescheduled += 1;
         continue;
       }
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+      await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         runId: row.executionRunId,
         reason: 'execution interrupted before the exact-action gate',

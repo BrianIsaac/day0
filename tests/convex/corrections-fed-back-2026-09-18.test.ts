@@ -339,7 +339,7 @@ async function ticketOneRetriedWithNote(
   const ticketOne = await seedStoppedTicketOne(harness, agentId);
   await harness
     .withIdentity(OWNER)
-    .mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: note });
+    .mutation(api.workRuns.retryFailed, { workItemId: ticketOne, feedback: note });
   await drain(harness);
   expect((await readItem(harness, ticketOne)).state).toBe('completed');
   const [correction] = await correctionsOf(harness, agentId);
@@ -427,9 +427,10 @@ describe('a note on item one changes the plan of item two', (): void => {
       role: 'Finance close: handle close tickets in Linear.',
     });
     const financeItem = await seedStoppedTicketOne(harness, finance);
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId: financeItem, feedback: OTHER_EMPLOYEE_NOTE });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
+      workItemId: financeItem,
+      feedback: OTHER_EMPLOYEE_NOTE,
+    });
     await drain(harness);
     expect(await correctionsOf(harness, finance)).toHaveLength(1);
     recorded.model.length = 0;
@@ -636,7 +637,7 @@ describe('a kept correction cannot change authority', (): void => {
     expect(authority.grants).not.toContain('linear:write');
     expect(authority.grants).not.toContain('slack:write');
 
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: {
@@ -797,7 +798,7 @@ describe("the manager's other written reasons are kept too", (): void => {
     const ticketOne = await seedStoppedTicketOne(harness, agentId);
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: '   ' });
+      .mutation(api.workRuns.retryFailed, { workItemId: ticketOne, feedback: '   ' });
     expect(await correctionsOf(harness, agentId)).toEqual([]);
   });
 });
@@ -850,7 +851,9 @@ describe('retrying a cancelled plan', (): void => {
       .withIdentity(OWNER)
       .mutation(api.work.cancelPlan, { workItemId, reason: CANCEL_REASON });
 
-    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId });
 
     expect(result).toEqual({ ok: true, resumeState: 'claimed' });
     const retried = await readItem(harness, workItemId);
@@ -876,7 +879,7 @@ describe('retrying a cancelled plan', (): void => {
     const workItemId = await seedPendingPlan(harness, agentId);
 
     await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId });
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     await drain(harness);
 
     const row = await readItem(harness, workItemId);
@@ -895,7 +898,7 @@ describe('retrying a cancelled plan', (): void => {
     await harness
       .withIdentity(OWNER)
       .mutation(api.work.cancelPlan, { workItemId, reason: CANCEL_REASON });
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
 
     await drain(harness);
 
@@ -928,7 +931,7 @@ describe('mock mode', (): void => {
     const ticketOne = await seedStoppedTicketOne(harness, agentId);
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId: ticketOne, feedback: NOTE });
     expect(await correctionsOf(harness, agentId)).toEqual([]);
     expect((await readItem(harness, ticketOne)).managerFeedback).toMatchObject({
       reason: NOTE,

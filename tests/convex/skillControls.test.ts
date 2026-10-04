@@ -846,7 +846,7 @@ describe('skillControls', (): void => {
         plan: APPROVED_PLAN,
       });
 
-      const claim = await harness.mutation(internal.work.claimForExecution, {
+      const claim = await harness.mutation(internal.workRuns.claimForExecution, {
         workItemId: late,
         skillId: office.mateoSkill,
       });

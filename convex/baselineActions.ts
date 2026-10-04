@@ -139,7 +139,7 @@ export const executeTask = action({
       };
       if (applied.length === 0) {
         const reason = draft || 'ordinary agent finished without a write-tool call';
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: item._id,
           runId: claim.runId,
           reason,
@@ -153,7 +153,7 @@ export const executeTask = action({
         const reason = failures
           .map((row) => `${row.tool}: ${row.reason ?? 'adapter write failed'}`)
           .join('; ');
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: item._id,
           runId: claim.runId,
           reason,
@@ -162,7 +162,7 @@ export const executeTask = action({
         });
         return { ok: false, reason, modelCalls: result.modelCalls, toolCalls };
       }
-      await ctx.runMutation(internal.work.setCompleted, {
+      await ctx.runMutation(internal.workRuns.setCompleted, {
         workItemId: item._id,
         runId: claim.runId,
         output,
@@ -170,7 +170,7 @@ export const executeTask = action({
       return { ok: true, modelCalls: result.modelCalls, toolCalls };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: item._id,
         runId: claim.runId,
         reason,

@@ -821,7 +821,7 @@ async function draftOrFail<T>(
   } catch (err) {
     const failure = itemBoundModelFailure(err);
     if (failure === undefined) throw err;
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: `plan draft failed: ${failure}`,
     });
@@ -931,7 +931,7 @@ async function executeApprovedPlanHandler(
   }
   // Nothing above this line touches a model or an adapter, so a caller that
   // loses the claim costs a handful of reads and stops here.
-  const claim = await ctx.runMutation(internal.work.claimForExecution, {
+  const claim = await ctx.runMutation(internal.workRuns.claimForExecution, {
     workItemId: args.workItemId,
     skillId: pickedSkill._id,
   });
@@ -951,7 +951,7 @@ async function executeApprovedPlanHandler(
       resume,
     });
     if (!reread.ok) {
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: claim.runId,
         reason: reread.failed.reason,
@@ -1285,7 +1285,7 @@ async function holdDay0Actions(
       // Every action waited on the answer to a question an earlier run asked:
       // nothing is left to apply, and the run ends on the question.
       const reason = openQuestionStopReason(stagedOutput.openQuestion);
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
@@ -1317,7 +1317,7 @@ async function holdDay0Actions(
         reason: 'no prerequisite action to apply; dependent actions authoring',
       });
     }
-    const pending = await ctx.runMutation(internal.work.setActionsPending, {
+    const pending = await ctx.runMutation(internal.workRuns.setActionsPending, {
       workItemId: args.workItemId,
       runId: args.runId,
       output: stagedOutput,
@@ -1354,7 +1354,7 @@ async function holdDay0Actions(
       }
       if (resumed.outcome === 'stopped') return result({ ok: false, reason });
     }
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId: args.workItemId,
       reason,
       runId: args.runId,
@@ -2797,7 +2797,7 @@ export const authorDependentActions = internalAction({
             actionIndex: offset + index,
           }),
         }));
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: args.workItemId,
           runId: args.runId,
           reason: stop,
@@ -2846,7 +2846,7 @@ export const authorDependentActions = internalAction({
           ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure)
           : undefined;
         if (reason) {
-          await ctx.runMutation(internal.work.setFailed, {
+          await ctx.runMutation(internal.workRuns.setFailed, {
             workItemId: args.workItemId,
             runId: args.runId,
             reason,
@@ -2854,14 +2854,14 @@ export const authorDependentActions = internalAction({
           });
           return { ok: false, reason };
         }
-        await ctx.runMutation(internal.work.setCompleted, {
+        await ctx.runMutation(internal.workRuns.setCompleted, {
           workItemId: args.workItemId,
           runId: args.runId,
           output: finalOutput,
         });
         return { ok: true };
       }
-      const pending = await ctx.runMutation(internal.work.setActionsPending, {
+      const pending = await ctx.runMutation(internal.workRuns.setActionsPending, {
         workItemId: args.workItemId,
         runId: args.runId,
         authoringAttemptId: claim.authoringAttemptId,
@@ -2888,7 +2888,7 @@ export const authorDependentActions = internalAction({
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
       const refused = gateRefusal ? error.output : authored;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
@@ -3329,7 +3329,7 @@ async function stopForChangedTicket(
     ticketRereadStopReason(held, sentThisRun(output, args)),
     args.knownValues,
   );
-  await ctx.runMutation(internal.work.setFailed, {
+  await ctx.runMutation(internal.workRuns.setFailed, {
     workItemId: args.workItemId,
     runId: args.runId,
     reason,
@@ -3341,7 +3341,7 @@ async function stopForChangedTicket(
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
- * Scheduled by `work.setActionsPending` for the gate's auto rows and by
+ * Scheduled by `workRuns.setActionsPending` for the gate's auto rows and by
  * `work.approveActions` for the manager's. The claim records the apply
  * attempt exactly once, so a second schedule after a restart re-applies with
  * the same idempotency keys rather than alongside a first apply that is
@@ -3357,7 +3357,7 @@ async function stopForChangedTicket(
 export const applyApprovedActions = internalAction({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const claim = await ctx.runMutation(internal.work.claimApprovedActions, {
+    const claim = await ctx.runMutation(internal.workRuns.claimApprovedActions, {
       workItemId: args.workItemId,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
@@ -4293,7 +4293,7 @@ async function finishRun(
       });
     if (finalReason) {
       const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId,
         reason: ended,
         runId: claim.runId,
@@ -4301,7 +4301,7 @@ async function finishRun(
       });
       return { ok: false, reason: ended };
     }
-    await ctx.runMutation(internal.work.setCompleted, {
+    await ctx.runMutation(internal.workRuns.setCompleted, {
       workItemId,
       runId: claim.runId,
       output: finalOutput,
@@ -4331,7 +4331,7 @@ async function finishRun(
     // nothing to audit and the manager nothing to decide: the run stops here.
     if (reason && landedWork({ ...output, applied: settled }, surfaces).length === 0) {
       const ended = gateRefusalStop(output.actions, settled) ?? reason;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId,
         reason: ended,
         runId: claim.runId,
@@ -4362,7 +4362,7 @@ async function finishRun(
   }
   if (reason) {
     const ended = gateRefusalStop(output.actions, settled) ?? reason;
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: ended,
       runId: claim.runId,
@@ -4386,7 +4386,7 @@ async function finishRun(
   // withheld: the run ends on the question, and Retry with a note answers it.
   const openQuestion = openQuestionStop(output);
   if (openQuestion) {
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: openQuestion,
       runId: claim.runId,
@@ -4394,7 +4394,7 @@ async function finishRun(
     });
     return { ok: false, reason: openQuestion };
   }
-  await ctx.runMutation(internal.work.setCompleted, {
+  await ctx.runMutation(internal.workRuns.setCompleted, {
     workItemId,
     runId: claim.runId,
     output: { ...output, applied },

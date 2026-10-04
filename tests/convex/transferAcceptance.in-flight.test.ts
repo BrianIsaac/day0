@@ -306,7 +306,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     });
     await accept(handover);
 
-    const claim = await handover.harness.mutation(internal.work.claimForExecution, {
+    const claim = await handover.harness.mutation(internal.workRuns.claimForExecution, {
       workItemId: approved,
       skillId: handover.skillId,
     });
@@ -326,7 +326,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
       approvedIndexes: [0],
     });
 
-    const claim = await handover.harness.mutation(internal.work.claimApprovedActions, {
+    const claim = await handover.harness.mutation(internal.workRuns.claimApprovedActions, {
       workItemId,
     });
 
@@ -351,7 +351,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     });
     await accept(handover);
 
-    const claim = await handover.harness.mutation(internal.work.claimApprovedActions, {
+    const claim = await handover.harness.mutation(internal.workRuns.claimApprovedActions, {
       workItemId,
     });
 
@@ -364,7 +364,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     await accept(handover);
     vi.setSystemTime(ACCEPTED_AT + 4 * 60_000);
 
-    await handover.harness.mutation(internal.work.setFailed, {
+    await handover.harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'the provider refused',
@@ -385,7 +385,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     const { workItemId, runId } = await seedExecuting(handover, 'REVOPS-1');
     await accept(handover);
 
-    await handover.harness.mutation(internal.work.setCompleted, {
+    await handover.harness.mutation(internal.workRuns.setCompleted, {
       workItemId,
       runId,
       output: { applied: [{ tool: 'ticket.update', ok: true }] },
@@ -401,7 +401,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     const { workItemId, runId } = await seedExecuting(handover, 'REVOPS-1');
     await accept(handover);
 
-    await handover.harness.mutation(internal.work.setActionsPending, {
+    await handover.harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: HELD_OUTPUT,
@@ -469,7 +469,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     const second = await seedExecuting(handover, 'REVOPS-2');
     await accept(handover);
 
-    await handover.harness.mutation(internal.work.setFailed, {
+    await handover.harness.mutation(internal.workRuns.setFailed, {
       workItemId: first.workItemId,
       runId: first.runId,
       reason: 'the provider refused',
@@ -477,7 +477,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     await drain(handover.harness);
     expect(await read(handover.harness, handover.transferId)).toMatchObject({ state: 'accepting' });
 
-    await handover.harness.mutation(internal.work.setFailed, {
+    await handover.harness.mutation(internal.workRuns.setFailed, {
       workItemId: second.workItemId,
       runId: second.runId,
       reason: 'the provider refused',
@@ -567,7 +567,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     expect(await read(handover.harness, handover.maya)).toMatchObject({ userId: 'owner' });
     // The employee is no longer being handed over: its approved plan may start again.
     await expect(
-      handover.harness.mutation(internal.work.claimForExecution, {
+      handover.harness.mutation(internal.workRuns.claimForExecution, {
         workItemId: approved,
         skillId: handover.skillId,
       }),
@@ -642,7 +642,7 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     ]);
     // The employee is no longer being handed over: its approved plan may start again.
     await expect(
-      handover.harness.mutation(internal.work.claimForExecution, {
+      handover.harness.mutation(internal.workRuns.claimForExecution, {
         workItemId: approved,
         skillId: handover.skillId,
       }),
@@ -849,7 +849,7 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
     const output = { ...HELD_OUTPUT, applied: [{ tool: 'ticket.update', ok: true }] };
 
     await expect(
-      handover.harness.mutation(internal.work.setCompleted, { workItemId, runId, output }),
+      handover.harness.mutation(internal.workRuns.setCompleted, { workItemId, runId, output }),
     ).rejects.toThrow('execution run changed before completion');
     await expect(
       handover.harness.mutation(internal.work.setAwaitingApproval, {
@@ -860,7 +860,7 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
       }),
     ).resolves.toEqual({ parked: false });
     await expect(
-      handover.harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
+      handover.harness.mutation(internal.workRuns.setActionsPending, { workItemId, runId, output }),
     ).resolves.toEqual({ pending: false });
     await expect(
       handover.harness.mutation(internal.work.prepareDependentPhase, {
@@ -870,7 +870,7 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
         output: { phase: 'dependent-authoring', actions: [], applied: [] },
       }),
     ).resolves.toEqual({ prepared: false });
-    await handover.harness.mutation(internal.work.setFailed, {
+    await handover.harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'late failure',
@@ -956,7 +956,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
       approvedIndexes: [0],
     });
 
-    await handover.harness.mutation(internal.work.setFailed, {
+    await handover.harness.mutation(internal.workRuns.setFailed, {
       workItemId: run.workItemId,
       runId: run.runId,
       reason: 'the provider refused',

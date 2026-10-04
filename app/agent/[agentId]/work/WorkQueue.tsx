@@ -270,13 +270,13 @@ export function WorkQueue({
   const executePlan = useAction(api.workActions.executeApprovedPlan);
   const approvePlan = useMutation(api.work.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
-  const retryFailed = useMutation(api.work.retryFailed);
-  const reconcileFailed = useMutation(api.work.reconcileFailed);
+  const retryFailed = useMutation(api.workRuns.retryFailed);
+  const reconcileFailed = useMutation(api.workRuns.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
   const approveActionsBatch = useMutation(api.work.approveActionsBatch);
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
-  const dismissFailed = useMutation(api.work.dismissFailed);
+  const dismissFailed = useMutation(api.workRuns.dismissFailed);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
   const [filter, setFilter] = useState<QueueFilter>('all');
@@ -468,7 +468,7 @@ export function nextItemToEvaluate(
  *   feedback: The retry note as typed; a blank note is not sent.
  *
  * Returns:
- *   The arguments for `work.retryFailed`.
+ *   The arguments for `workRuns.retryFailed`.
  */
 export function retryRequest(
   workItemId: Id<'workItems'>,

@@ -299,10 +299,13 @@ describe('the server-side steps', (): void => {
       if (!skill) throw new Error('skill missing');
       return skill._id;
     });
-    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    const claim = await harness.mutation(internal.workRuns.claimForExecution, {
+      workItemId,
+      skillId,
+    });
     expect(claim.claimed).toBe(true);
 
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       reason: 'no registered skill matches source surface linear',
     });
@@ -558,7 +561,7 @@ describe('the server drives the work loop in real mode', (): void => {
 
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: 'Send it again.' });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Send it again.' });
     await drain(harness);
 
     expect(recorded.skillRuns).toEqual(['Triage the Linear close summary REVOPS-25']);
@@ -1002,7 +1005,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
     });
     await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
     expect((await readItem(harness, dying)).state).toBe('deferred');
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: dying });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId: dying });
     const retried = await readItem(harness, dying);
     expect(retried.state).toBe('discovered');
     expect(retried).not.toHaveProperty('evaluationAttempts');
@@ -1152,7 +1155,7 @@ describe('what an outage leaves (P7-18)', (): void => {
     expect(await scheduledCalls(harness, 'workActions:draftPlanInternal')).toHaveLength(
       MAX_DRAFT_RESUMES,
     );
-    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([
+    expect(await scheduledCalls(harness, 'workRuns:setFailed')).toEqual([
       {
         workItemId,
         reason: `the plan draft died ${MAX_DRAFT_RESUMES + 1} times without an answer; Retry drafts it again`,
@@ -1182,7 +1185,7 @@ describe('what an outage leaves (P7-18)', (): void => {
     vi.advanceTimersByTime(10);
     await killDraft(harness, workItemId);
     await harness.mutation(internal.work.resumeStalledSteps, {});
-    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([]);
+    expect(await scheduledCalls(harness, 'workRuns:setFailed')).toEqual([]);
     expect((await eventsOf(harness, 'work.draft-resumed')).at(-1)?.payload).toEqual({
       workItemId,
       attempt: 1,
@@ -1271,7 +1274,7 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
       name: 'work:recoverDependentAuthoring',
       args: { workItemId, runId },
     });
-    expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
+    expect(jobs.map((job) => job.name)).not.toContain('workRuns:setFailed');
   });
 });
 

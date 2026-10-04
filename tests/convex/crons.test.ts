@@ -383,15 +383,15 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
-    expect(await scheduledSteps(harness)).toEqual([['work:setFailed', ids.stuck]]);
-    await harness.mutation(internal.work.setFailed, {
+    expect(await scheduledSteps(harness)).toEqual([['workRuns:setFailed', ids.stuck]]);
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: ids.live,
       runId: ids.liveRun,
       reason: 'execution interrupted before the exact-action gate',
       stopped: true,
       onlyIfStalled: true,
     });
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: ids.stuck,
       runId: ids.oldRun,
       reason: 'execution interrupted before the exact-action gate',
