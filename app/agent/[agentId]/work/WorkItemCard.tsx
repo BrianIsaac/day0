@@ -410,6 +410,7 @@ export function WorkItemCard({
             key={`${item._id}:${item.pendingRunId ?? ''}`}
             actions={output.actions ?? []}
             verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
+            landed={landed.length}
             surfaces={surfaces}
             replyTarget={replyTargetFor(item)}
             autonomousActions={autonomousActions}

@@ -1546,6 +1546,28 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
     view.unmount();
   });
 
+  it("never says nothing has reached a surface beside a read the run already landed (the re-walk's row 8 note)", (): void => {
+    const read = { tool: 'linear.get_issue', ok: true, effect: 'Read REVOPS-5' };
+    const held = {
+      ...executing,
+      state: 'actions-pending',
+      pendingRunId: 'run-1',
+      output: {
+        draft: 'Closing from the ledger.',
+        notes: '',
+        initial: { applied: [read] },
+        actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-5', body: 'Audit' } }],
+        applied: [],
+      },
+      actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(held));
+    expect(view.container.textContent).toContain('Read REVOPS-5');
+    expect(view.container.textContent).not.toContain('nothing has reached a surface');
+    expect(view.container.textContent).toContain('1 action awaiting your approval · not sent yet');
+    view.unmount();
+  });
+
   it('plays the landing for the writes that land after Approve on a run that landed a row before it (M7)', (): void => {
     const prerequisite = { tool: 'linear.get_issue', ok: true, effect: 'Read REVOPS-5' };
     const held = {
