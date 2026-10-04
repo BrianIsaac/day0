@@ -225,6 +225,12 @@ describe('landing an employee app’s app-level token (wave 12, 12-M; RM3 (a))',
       await harness.run(async (ctx) => await ctx.db.delete(gone.surfaceId));
       const { notAuthenticatedMessage } = await import('../../convex/devAuth');
       const refusal = { data: notAuthenticatedMessage() };
+      const rows = async (): Promise<number[]> =>
+        await harness.run(async (ctx) => [
+          (await ctx.db.query('credentials').collect()).length,
+          (await ctx.db.query('events').collect()).length,
+        ]);
+      const before = await rows();
       for (const card of [surfaceId, gone.surfaceId]) {
         await expect(
           harness.action(api.slackSocketActions.landAppLevelToken, {
@@ -234,6 +240,7 @@ describe('landing an employee app’s app-level token (wave 12, 12-M; RM3 (a))',
         ).rejects.toMatchObject(refusal);
       }
       expect(calls).toEqual([]);
+      expect(await rows()).toEqual(before);
       const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
       expect(surface?.provisioning?.appLevelTokenCredentialId).toBeUndefined();
     },

@@ -59,8 +59,8 @@ const MODULES = allConvexModules();
 
 /**
  * Modules the generated `api` does not name: Convex reads them as configuration. `http` is not
- * one: Convex's codegen names every module but `schema` and a name with a second dot, so the sweep
- * reads it, and its HTTP actions, never public, add no function to it.
+ * one: of the files here, Convex's codegen leaves out only `schema` and a name with a second dot,
+ * so the sweep reads it, and its HTTP actions, never public, add no function to it.
  */
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 
