@@ -199,7 +199,14 @@ function askableChannel(surface: Doc<'surfaces'>): boolean {
  * so the last boundary before a send refuses it whatever its row still says.
  */
 export const transportAuthority = internalQuery({
-  args: { agentId: v.id('agents'), surfaceSlug: v.string() },
+  args: {
+    agentId: v.id('agents'),
+    surfaceSlug: v.string(),
+    /** The apply claim the send is made under, when an apply makes it (W12-R11). */
+    applyClaim: v.optional(
+      v.object({ workItemId: v.id('workItems'), applyAttemptId: v.id('events') }),
+    ),
+  },
   handler: async (
     ctx,
     args,
@@ -217,6 +224,8 @@ export const transportAuthority = internalQuery({
          * access end date passed before the hourly sweep ended it (Q5, M21).
          */
         accessEnded?: string;
+        /** Whether the apply still holds the claim it was asked about; absent when none was. */
+        applyClaimHeld?: boolean;
       }
   > => {
     const agent = await ctx.db.get(args.agentId);
@@ -233,6 +242,7 @@ export const transportAuthority = internalQuery({
         .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
+    const claimed = args.applyClaim ? await ctx.db.get(args.applyClaim.workItemId) : undefined;
     const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
     const revoked = [
       ...new Set(
@@ -249,6 +259,13 @@ export const transportAuthority = internalQuery({
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
       ...(surface?.expiresAt !== undefined && accessEnded(surface, Date.now())
         ? { accessEnded: accessEndedReason(surface.expiresAt, agentZone(agent)) }
+        : {}),
+      ...(args.applyClaim
+        ? {
+            applyClaimHeld:
+              claimed?.state === 'executing' &&
+              claimed.applyAttemptId === args.applyClaim.applyAttemptId,
+          }
         : {}),
     };
   },

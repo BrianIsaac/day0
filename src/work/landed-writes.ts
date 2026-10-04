@@ -15,7 +15,12 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { landedEntry, type AppliedAction, type SurfaceRecord } from '../surfaces/types';
 import { messageTexts } from './evidence-claims';
 import { actionIdempotencyKey } from './idempotency';
-import { CONFIRMED_LANDED_REASON, ledgerPhases, type EntryAnswer } from './reconciliation';
+import {
+  CONFIRMED_LANDED_REASON,
+  ledgerPhases,
+  NOT_SENT_AFTER_STOP_REASON,
+  type EntryAnswer,
+} from './reconciliation';
 import type { LandedWrite, MockAction, UnsentWrite } from './types';
 import { escapeRegExp } from '../lib/regex';
 
@@ -201,7 +206,12 @@ export function landedWritesOf(
 ): LandedWrite[] {
   if (!output || typeof output !== 'object') return [];
   const carried = (output as { landedWrites?: unknown }).landedWrites;
-  const unsent = new Set(unsentWritesOf(output, answers).flatMap((write) => write.idempotencyKeys));
+  // Not landed, whatever the row says: carried as not sent, or not sent by this ledger.
+  const unsent = new Set(
+    [...unsentWritesOf(output), ...notSentWritesOf(output, answers)].flatMap(
+      (write) => write.idempotencyKeys,
+    ),
+  );
   const notSent = (applied: AppliedAction): boolean =>
     rowKeys(applied).some((key) => unsent.has(key));
   const earlier: LandedWrite[] = (Array.isArray(carried) ? (carried as LandedWrite[]) : []).filter(
@@ -249,29 +259,33 @@ export function landedWritesOf(
 }
 
 /**
- * The writes the manager answered were not sent (W12-R13). Given the
- * answers of a reconciliation of this output's own ledger, the writes it
- * answered `not-sent`, which replace whatever an earlier reconciliation
- * carried: that earlier run's writes were offered to this one, and what
- * became of them is in this ledger. Without answers, the writes the output
- * carries from the reconciliation before its run.
+ * The writes the output carries as not sent from the reconciliation before its run (W12-R13): the
+ * retry's executor and apply read these.
  *
- * Args:
- *   output: A work item's persisted output, or undefined on a first run.
- *   answers: The manager's per-entry answers from a reconciliation of this output, if any.
- *
- * Returns:
- *   The writes not sent, in ledger order.
+ * @param output - A work item's persisted output, or undefined on a first run.
+ * @returns The carried writes, in the order they were recorded.
  */
-export function unsentWritesOf(
+export function unsentWritesOf(output: unknown): UnsentWrite[] {
+  if (!output || typeof output !== 'object') return [];
+  const carried = (output as { unsentWrites?: unknown }).unsentWrites;
+  return Array.isArray(carried) ? (carried as UnsentWrite[]) : [];
+}
+
+/**
+ * The writes this output's own ledger did not send: those the manager answered `not-sent`
+ * (W12-R13) and those a stopped apply recorded as never sent (W12-R11). They replace whatever an
+ * earlier reconciliation carried: that earlier run's writes were offered to this one, and what
+ * became of them is in this ledger.
+ *
+ * @param output - A work item's persisted output.
+ * @param answers - The manager's per-entry answers from a reconciliation of this output, if any.
+ * @returns The writes not sent, in ledger order.
+ */
+export function notSentWritesOf(
   output: unknown,
   answers: readonly EntryAnswer[] = [],
 ): UnsentWrite[] {
   if (!output || typeof output !== 'object') return [];
-  if (answers.length === 0) {
-    const carried = (output as { unsentWrites?: unknown }).unsentWrites;
-    return Array.isArray(carried) ? (carried as UnsentWrite[]) : [];
-  }
   return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     actions.flatMap((action, index): UnsentWrite[] => {
       const entry = applied[index] as AppliedAction | undefined;
@@ -279,7 +293,8 @@ export function unsentWritesOf(
       const answer = answers.find(
         (row) => row.phase === phase && row.actionIndex === index,
       )?.answer;
-      return answer === 'not-sent' ? [{ action, idempotencyKeys: rowKeys(entry) }] : [];
+      const notSent = answer === 'not-sent' || entry.reason === NOT_SENT_AFTER_STOP_REASON;
+      return notSent ? [{ action, idempotencyKeys: rowKeys(entry) }] : [];
     }),
   );
 }

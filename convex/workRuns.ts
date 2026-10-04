@@ -54,15 +54,19 @@ import {
 } from '../src/work/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
+import { actionIdempotencyKey } from '../src/work/idempotency';
+import type { AppliedAction } from '../src/surfaces/types';
 import {
   answeredEntries,
   ledgerPhases,
+  NOT_SENT_AFTER_STOP_REASON,
+  OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   providerReconciliationEntries,
   reconciliationAnswered,
   reconciliationOwed,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWritesOf, unsentWritesOf } from '../src/work/landed-writes';
+import { landedWritesOf, notSentWritesOf } from '../src/work/landed-writes';
 import {
   isStoppableItem,
   landedNoteRows,
@@ -86,28 +90,35 @@ import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
  */
 
 /**
- * The output a retry carries when the manager answered the reconciliation entry by entry: the
- * landed writes as they answered them (`landedWritesOf` with the answers) kept in `landedWrites`,
- * which the retried run reads as already on the provider, and the writes they answered not sent
- * in `unsentWrites`, which it sends afresh (W12-R13) and never counts landed (W12-R4). Not-sent
- * writes an earlier reconciliation carried are replaced: what became of them is in this ledger.
+ * The output a retry carries from the run it retries: the landed writes as the manager answered
+ * them (`landedWritesOf` with the answers) in `landedWrites`, which the retried run reads as
+ * already on the provider, and the writes that run did not send in `unsentWrites`, those answered
+ * not sent and those a stopped apply never sent, which it sends afresh (W12-R13, W12-R11) and never
+ * counts landed (W12-R4). Not-sent writes an earlier reconciliation carried are replaced: what
+ * became of them is in this ledger.
  *
  * @param output - The output the retry starts from.
  * @param row - The failed row and its reconciliation.
- * @returns The output with the carried writes, or undefined when nothing was answered.
+ * @returns The output with the carried writes, or undefined when nothing was answered or unsent.
  */
-function carriedAfterReconciliation(
+function carriedIntoRetry(
   output: unknown,
   row: Doc<'workItems'>,
 ): Record<string, unknown> | undefined {
   const answered = (row.providerReconciliation?.entries ?? []).filter(
     (entry) => entry.answer !== undefined,
   );
-  if (answered.length === 0 || !output || typeof output !== 'object') return undefined;
-  const unsentWrites = unsentWritesOf(row.output, answered);
+  const unsentWrites = notSentWritesOf(row.output, answered);
+  if (
+    (answered.length === 0 && unsentWrites.length === 0) ||
+    !output ||
+    typeof output !== 'object'
+  ) {
+    return undefined;
+  }
   return {
     ...Object.fromEntries(Object.entries(output).filter(([key]) => key !== 'unsentWrites')),
-    landedWrites: landedWritesOf(row.output, answered),
+    ...(answered.length > 0 ? { landedWrites: landedWritesOf(row.output, answered) } : {}),
     ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
   };
 }
@@ -185,7 +196,7 @@ export const retryFailed = mutation({
         : undefined;
     // The writes the manager confirmed on the provider are carried into the retry, so a write
     // answered landed is never sent again however its row reads (P4-1).
-    const carried = carriedAfterReconciliation(resume ?? row.output, row);
+    const carried = carriedIntoRetry(resume ?? row.output, row);
     if (redraft) await rememberReplacedRequest(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
@@ -1028,6 +1039,58 @@ export const recordApplyOutcome = internalMutation({
       }),
     });
     return true;
+  },
+});
+
+/**
+ * Internal: an apply whose claim a Stop took away records the rows of its phase it never sent
+ * (the wave 12 review's W12-R11). The stop could not know how far the apply had got, so it
+ * recorded every unreported approved row as of unknown outcome; the apply, which reads its claim
+ * before each send and sends nothing once it is gone, knows the first row it did not send. Each
+ * row from there that the stop left unknown, under this run's key, becomes not sent, accounted for
+ * as a held row is, so the manager is never asked to check on the provider a write that was never
+ * sent. Fenced: only a failed item still holding the stopped run's ledger changes; after a Retry
+ * the keys differ and nothing does.
+ *
+ * @returns How many rows were recorded as not sent.
+ */
+export const recordUnsentAfterStop = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events'), firstUnsent: v.number() },
+  handler: async (ctx, args): Promise<number> => {
+    const item = await ctx.db.get(args.workItemId);
+    if (!item || item.state !== 'failed' || !item.output || typeof item.output !== 'object') {
+      return 0;
+    }
+    const output = item.output as { applied?: AppliedAction[]; actionIndexOffset?: unknown };
+    const offset =
+      typeof output.actionIndexOffset === 'number' && Number.isInteger(output.actionIndexOffset)
+        ? output.actionIndexOffset
+        : 0;
+    let recorded = 0;
+    const applied = (output.applied ?? []).map((row, index): AppliedAction => {
+      const key = actionIdempotencyKey({
+        workItemId: args.workItemId,
+        runId: args.runId,
+        actionIndex: index + offset,
+      });
+      if (
+        index < args.firstUnsent ||
+        row.idempotencyKey !== key ||
+        row.reason !== OUTCOME_UNKNOWN_AFTER_STOP_REASON
+      ) {
+        return row;
+      }
+      recorded += 1;
+      return {
+        tool: row.tool,
+        ok: true,
+        held: true,
+        reason: NOT_SENT_AFTER_STOP_REASON,
+        idempotencyKey: row.idempotencyKey,
+      };
+    });
+    if (recorded > 0) await ctx.db.patch(item._id, { output: { ...output, applied } });
+    return recorded;
   },
 });
 

@@ -6,7 +6,7 @@ import {
   landedWriteLines,
   landedWritesOf,
   reusedLedger,
-  unsentWritesOf,
+  notSentWritesOf,
   withReusedRunNumbers,
   writeTarget,
 } from '../../../src/work/landed-writes';
@@ -612,7 +612,7 @@ describe('the writes earlier runs landed', () => {
       landedWritesOf(retried, [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]),
     ).toEqual([]);
     expect(
-      unsentWritesOf(retried, [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]),
+      notSentWritesOf(retried, [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]),
     ).toEqual([{ action: comment, idempotencyKeys: ['work:retry:6', 'work:first:0'] }]);
   });
 

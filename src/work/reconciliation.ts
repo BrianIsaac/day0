@@ -15,6 +15,15 @@ export const OUTCOME_UNKNOWN_REASON =
 export const OUTCOME_UNKNOWN_AFTER_STOP_REASON =
   'outcome unknown after the apply was stopped - verify provider before retry';
 
+/**
+ * The ledger reason on an approved row a stopped apply never sent (the wave 12 review's W12-R11):
+ * the apply reads its claim before each send and stops at the first it no longer holds, so every
+ * row from there on is accounted for as not sent, held, never as one to check on the provider.
+ * Wording draft.
+ */
+export const NOT_SENT_AFTER_STOP_REASON =
+  'not sent: the run was stopped before this write went out';
+
 /** Why an apply's unreported rows are recorded as of unknown outcome: it was interrupted, or stopped. */
 export type ApplyEnd = 'interrupted' | 'stopped';
 

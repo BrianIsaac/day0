@@ -71,6 +71,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { logEvent } from './eventLog';
 import { asAgentId } from '../src/lib/ids';
 import {
+  ApplyClaimLostError,
   applySurfaceActions,
   readSurfaceSnapshot,
   type ClaimHold,
@@ -161,7 +162,11 @@ import {
   noteReleasesRead,
 } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
-import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
+import {
+  ledgerPhases,
+  NOT_SENT_AFTER_STOP_REASON,
+  providerReconciliationEntries,
+} from '../src/work/reconciliation';
 import { redactSecret, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
@@ -3476,7 +3481,10 @@ export const applyApprovedActions = internalAction({
         runId: claim.runId,
       };
       const deps = realAdapterDeps(
-        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
+        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl, {
+          workItemId: args.workItemId,
+          applyAttemptId: claim.applyAttemptId,
+        }),
         browserMcpUrl,
         knownValues,
       );
@@ -3597,6 +3605,14 @@ export const applyApprovedActions = internalAction({
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
       const reason = safeFailureMessage(err, '', 'the apply failed', 300, knownValues);
+      if (err instanceof ApplyClaimLostError) {
+        // A Stop took the claim: the rows from the first this apply did not send were not sent.
+        await ctx.runMutation(internal.workRuns.recordUnsentAfterStop, {
+          workItemId: args.workItemId,
+          runId: claim.runId,
+          firstUnsent: err.firstUnsent,
+        });
+      }
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,
@@ -3840,7 +3856,8 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
 }
 
 /**
- * Re-read every mutable authority input immediately before provider transport.
+ * Re-read every mutable authority input immediately before provider transport, and, for an
+ * apply, the claim it sends under: a row whose claim a Stop took is refused as not sent.
  *
  * A replayed browser call (a sign-in repeated in a new invocation) is judged
  * under the authority its original row landed with, not this phase's rule:
@@ -3851,6 +3868,7 @@ function authorityBeforeTransport(
   agentId: Id<'agents'>,
   phase: 'auto' | 'approved',
   browserMcpUrl: string | undefined,
+  applyClaim?: { readonly workItemId: Id<'workItems'>; readonly applyAttemptId: Id<'events'> },
 ): BeforeSurfaceTransport {
   return async (action, claimedSurface, replay): Promise<string | undefined> => {
     const parsed = parseSurfaceAction(action);
@@ -3858,8 +3876,11 @@ function authorityBeforeTransport(
     const authority = await ctx.runQuery(internal.work.transportAuthority, {
       agentId,
       surfaceSlug: parsed.action.surface,
+      ...(applyClaim ? { applyClaim } : {}),
     });
     if (!authority.agentExists) return 'agent not found';
+    // A Stop took the claim since the last row: nothing more goes out (W12-R11).
+    if (authority.applyClaimHeld === false) return NOT_SENT_AFTER_STOP_REASON;
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
     if (authority.accessEnded) return authority.accessEnded;

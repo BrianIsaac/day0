@@ -25,6 +25,7 @@ import {
 } from '../../../src/surfaces/registry';
 import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import { NOT_SENT_AFTER_STOP_REASON } from '../../../src/work/reconciliation';
 import {
   MANAGER_DM,
   slackClosing,
@@ -652,6 +653,38 @@ describe('applying surface actions', (): void => {
         now,
       }),
     ).rejects.toBeInstanceOf(ApplyClaimLostError);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('names the first row it did not send: the next one after a send, the refused one when the pre-send check refused it (W12-R11)', async (): Promise<void> => {
+    const sentFirst = applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps({ mcp: [], http: [] }),
+      grants,
+      onOutcome: async (): Promise<boolean> => false,
+      now,
+    });
+    await expect(sentFirst).rejects.toMatchObject({ firstUnsent: 1 });
+    // The claim went between the first row's report and the second's send: the transport's own
+    // last check refuses the second, so nothing more leaves and it is the first unsent.
+    const recorded: Recorded = { mcp: [], http: [] };
+    let claimHeld = true;
+    const stoppedBetween = applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: {
+        ...deps(recorded),
+        beforeTransport: async (): Promise<string | undefined> =>
+          claimHeld ? undefined : NOT_SENT_AFTER_STOP_REASON,
+      },
+      grants,
+      onOutcome: async (index): Promise<boolean> => {
+        if (index === 0) {
+          claimHeld = false;
+          return true;
+        }
+        return false;
+      },
+      now,
+    });
+    await expect(stoppedBetween).rejects.toMatchObject({ firstUnsent: 1 });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 

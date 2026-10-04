@@ -164,13 +164,31 @@ export interface ApplyOptions {
 
 /**
  * Why an apply stopped part way: its claim on the run was taken away (a Stop, or the run moved
- * on), so nothing after the row it last reported was sent.
+ * on), so nothing after the row whose report was refused was sent.
  */
 export class ApplyClaimLostError extends Error {
-  constructor() {
+  /**
+   * The first row of the phase this apply did not send: the refused row itself when it never
+   * reached its provider ({@link rowSentNothing}), else the row after it.
+   */
+  readonly firstUnsent: number;
+
+  constructor(index: number, row: AppliedAction) {
     super('the apply no longer holds its claim on the run; nothing more was sent');
     this.name = 'ApplyClaimLostError';
+    this.firstUnsent = rowSentNothing(row) ? index : index + 1;
   }
+}
+
+/**
+ * Whether a ledger row records that nothing reached a provider: a row held or refused before
+ * transport, or one the provider refused outright. A row that landed, a row carried from an
+ * earlier ledger and one whose outcome is unknown may each stand for a write on the provider.
+ *
+ * @param row - The ledger row.
+ */
+export function rowSentNothing(row: AppliedAction): boolean {
+  return row.held === true || (row.ok === false && row.outcomeUnknown !== true);
 }
 
 /**
@@ -538,7 +556,7 @@ export async function applySurfaceActions(
   const settle = async (index: number, row: AppliedAction): Promise<void> => {
     applied.push(row);
     if (options.onOutcome && !(await options.onOutcome(index, row))) {
-      throw new ApplyClaimLostError();
+      throw new ApplyClaimLostError(index, row);
     }
   };
   try {
