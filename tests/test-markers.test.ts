@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -9,10 +10,12 @@ import { describe, expect, it } from 'vitest';
  * from the files themselves, so a marker added without one fails here.
  */
 
-const TESTS = new URL('./', import.meta.url).pathname;
+const TESTS = fileURLToPath(new URL('./', import.meta.url));
 
-/** A marker the rule covers, at the start of a call. */
-const MARKER = new RegExp(String.raw`\b(?:it|test|describe)\.(?:skip|only|todo|fails)\(`);
+/** A marker the rule covers, at the start of a call, behind any chained modifier (`.concurrent`, `.each`). */
+const MARKER = new RegExp(
+  String.raw`\b(?:it|test|describe)(?:\.\w+)*\.(?:skip|only|todo|fails)\b(?:\.\w+)*\(`,
+);
 
 /** Every Vitest test file under `tests/`, by path. */
 function testFiles(directory: string): string[] {
@@ -43,7 +46,7 @@ function markersWithoutReason(file: string, text: string): string[] {
 describe('the markers a committed test may carry (standard 11.6)', (): void => {
   it('finds a reason beside every skip, only, todo and fails in the tree', (): void => {
     // This file's own cases quote markers as data.
-    const self = new URL(import.meta.url).pathname;
+    const self = fileURLToPath(import.meta.url);
     const missing = testFiles(TESTS)
       .filter((path) => path !== self)
       .flatMap((path) => markersWithoutReason(relative(TESTS, path), readFileSync(path, 'utf8')));
@@ -55,5 +58,7 @@ describe('the markers a committed test may carry (standard 11.6)', (): void => {
     expect(markersWithoutReason('a', "it.fails(\n  // until the fix lands\n  'x',")).toEqual([]);
     expect(markersWithoutReason('a', "it.skip('x', run);")).toEqual(['a:1']);
     expect(markersWithoutReason('a', "describe.only(\n  'x',\n  // too late\n")).toEqual(['a:1']);
+    expect(markersWithoutReason('a', "it.concurrent.only('x', run);")).toEqual(['a:1']);
+    expect(markersWithoutReason('a', 'it.skip.each([1])("x", run);')).toEqual(['a:1']);
   });
 });
