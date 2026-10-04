@@ -18,6 +18,6 @@ describe('the house copy rules a drafting prompt states', (): void => {
   });
 
   it('carries no em dash itself, so the model has none to copy (standard 13.3)', (): void => {
-    expect(PLAIN_PUNCTUATION_IN_EVERY_FIELD).not.toContain('—');
+    expect(PLAIN_PUNCTUATION_IN_EVERY_FIELD).not.toContain('\u2014');
   });
 });

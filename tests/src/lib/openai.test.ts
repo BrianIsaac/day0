@@ -125,6 +125,6 @@ describe('the JSON-only instruction a prompt-mode call appends', (): void => {
     };
     const system = body.messages.find((message) => message.role === 'system')?.content ?? '';
     expect(system).toContain('Reply with ONE JSON object and nothing else.');
-    expect(system).not.toContain('—');
+    expect(system).not.toContain('\u2014');
   });
 });
