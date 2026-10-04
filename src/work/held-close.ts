@@ -10,6 +10,9 @@
 import { type ActionVerdict, HELD_CLOSE_AGAINST_WORDS } from '../surfaces/policy';
 import type { AppliedAction } from '../surfaces/types';
 
+/** What a ledger row says of whether it still waits: whose authority sent it, if anything did. */
+export type LedgerMark = Pick<AppliedAction, 'authority'>;
+
 /** The key on a held set's output naming the closes an approval left for their card. */
 export const LEFT_FOR_CARD_KEY = 'leftForCard';
 
@@ -31,22 +34,21 @@ export function isCloseHeldAgainstWords(verdict: ActionVerdict | undefined): boo
 }
 
 /**
- * The held rows still waiting for the manager: held at the hold and not yet settled by an apply. A
- * row an earlier approval of this set sent (or withheld) carries its ledger entry and is decided;
- * a row the auto phase or an earlier approval parked carries the `awaitingApproval` placeholder.
+ * The held rows still waiting for the manager: held at the hold and not sent by an earlier approval
+ * of this set. A row such an approval sent carries the manager's authority on its ledger entry; a
+ * row the auto phase or an earlier approval parked carries the `awaitingApproval` placeholder, and
+ * a row no apply reached has no entry.
  *
  * @param verdicts - The set's verdicts, one per action.
  * @param applied - The set's ledger as the row carries it, aligned with its actions.
  */
 export function awaitingIndexes(
   verdicts: readonly ActionVerdict[],
-  applied: ReadonlyArray<AppliedAction | undefined>,
+  applied: ReadonlyArray<LedgerMark | undefined>,
 ): number[] {
-  return verdicts.flatMap((verdict, index) => {
-    if (verdict.disposition !== 'held') return [];
-    const entry = applied[index];
-    return entry === undefined || entry.awaitingApproval === true ? [index] : [];
-  });
+  return verdicts.flatMap((verdict, index) =>
+    verdict.disposition === 'held' && applied[index]?.authority !== 'manager' ? [index] : [],
+  );
 }
 
 /**
@@ -58,7 +60,7 @@ export function awaitingIndexes(
  */
 export function wholeSetApproval(
   verdicts: readonly ActionVerdict[],
-  applied: ReadonlyArray<AppliedAction | undefined>,
+  applied: ReadonlyArray<LedgerMark | undefined>,
 ): WholeSetApproval {
   const awaiting = awaitingIndexes(verdicts, applied);
   return {

@@ -21,6 +21,7 @@ import {
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
+import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -887,4 +888,55 @@ describe('every drawn card is an anchor the inbox lands on (U17 D13, A D8)', ():
       ).toBe(item.title);
     },
   );
+});
+
+describe('a close Day0 held, after an approval in Slack sent the rest (12-H, R-12D-1)', (): void => {
+  const CLOSE = {
+    tool: 'mcp.call' as const,
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: JSON.stringify({ id: 'REVOPS-202', state: 'Done' }),
+    },
+  };
+  const parkedAgain = (): Doc<'workItems'> => {
+    const held = DRAWN.held as unknown as {
+      output: { actions: unknown[]; draft: string; notes: string };
+    };
+    return {
+      ...DRAWN.held,
+      output: {
+        ...held.output,
+        actions: [THREAD_REPLY, CLOSE],
+        closeAgainstWords: 'I could not find the stale tile.',
+        applied: [
+          {
+            tool: 'http.request',
+            ok: true,
+            effect: 'Replied in #revops-asks: “Draft for Manager Review.”',
+            providerId: '1790000000.000300',
+            authority: 'manager',
+          },
+          { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, reason: 'awaiting' },
+        ],
+      },
+      actionVerdicts: [
+        { disposition: 'held', reason: 'public post held for the manager' },
+        { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+      ],
+    } as unknown as Doc<'workItems'>;
+  };
+
+  it('lists what the approval sent as landed, offers only the close, and finishes without it on a choice of its own', async (): Promise<void> => {
+    const view = card(parkedAgain());
+    expect(view.text()).toContain('Landed: Replied in #revops-asks');
+    expect(view.container.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+    expect(view.text()).toContain('Close held:');
+    expect(view.text()).toContain('the ticket close Day0 held among them');
+    await press(view.container, 'Send nothing more');
+    expect(view.calls).toEqual([['approveActions', []]]);
+    expect(said(view.container)).toContain(
+      'Nothing more sent: Draft response for new tier-two RevOps ask is finished, and what you left out stays withheld.',
+    );
+  });
 });

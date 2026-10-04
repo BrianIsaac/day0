@@ -182,3 +182,62 @@ describe('a close the tripwire sent to the manager (12-D)', (): void => {
     );
   });
 });
+
+describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void => {
+  const resolved = async (): Promise<void> => undefined;
+  const close = {
+    tool: 'ticket.update' as const,
+    args: { slug: 'REVOPS-204', status: 'done' as const, comment: 'Reconciled all three.' },
+  };
+  const dm = {
+    tool: 'slack.postMessage' as const,
+    args: { channelSlug: 'dm-manager', body: 'Done.' },
+  };
+  const clause = 'I could not find the deals.';
+
+  it('names the held close beside Approve all, so all is never pressed blind', (): void => {
+    expect(heldActionsWhy('Quill', false, false, 'real', true)).toBe(
+      'Approve selected sends the ticked writes as Quill wrote them; Approve all sends every held write, the ticket close Day0 held among them. Rejecting ends this run with nothing held sent and keeps your reason on the item.',
+    );
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[close, dm]}
+        verdicts={[
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+          { disposition: 'held', reason: 'write held for the manager' },
+        ]}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('the ticket close Day0 held among them');
+  });
+
+  it('shows only the close once an approval in Slack sent the rest, and lets the manager finish without it', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[dm, close]}
+        verdicts={[
+          { disposition: 'held', reason: 'write held for the manager' },
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+        ]}
+        decidedEarlier={[0]}
+        landed={1}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup.match(/type="checkbox"/g) ?? []).toHaveLength(1);
+    expect(markup).toContain('1 action awaiting your approval');
+    expect(markup).toContain('Close held:');
+    // Nothing ticked: finishing sends nothing more, the close stays withheld.
+    expect(markup).toMatch(/<button[^>]*>Send nothing more<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Send nothing more<\/button>/);
+  });
+});

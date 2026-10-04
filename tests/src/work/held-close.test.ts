@@ -19,7 +19,13 @@ const close: ActionVerdict = { disposition: 'held', reason: HELD_CLOSE_AGAINST_W
 const auto: ActionVerdict = { disposition: 'auto' };
 const refused: ActionVerdict = { disposition: 'refused', reason: 'no grant' };
 
-const landed: AppliedAction = { tool: 'mcp.call', ok: true, idempotencyKey: 'k0' };
+const landed: AppliedAction = {
+  tool: 'mcp.call',
+  ok: true,
+  idempotencyKey: 'k0',
+  authority: 'manager',
+};
+const onItsOwn: AppliedAction = { ...landed, authority: 'standing' };
 const parked: AppliedAction = {
   tool: 'mcp.call',
   ok: true,
@@ -37,10 +43,12 @@ describe('held-close', (): void => {
     expect(isCloseHeldAgainstWords(undefined)).toBe(false);
   });
 
-  it('counts a held row as waiting until an apply settles it, and a parked placeholder as waiting still', (): void => {
+  it('counts a held row as waiting until the manager’s approval sends it, and a parked placeholder as waiting still', (): void => {
     const verdicts = [comment, close, auto, comment, refused];
     expect(awaitingIndexes(verdicts, [])).toEqual([0, 1, 3]);
-    expect(awaitingIndexes(verdicts, [landed, parked, landed, parked])).toEqual([1, 3]);
+    expect(awaitingIndexes(verdicts, [landed, parked, onItsOwn, parked])).toEqual([1, 3]);
+    // Only the manager's approval decides a held row; anything else at its place leaves it waiting.
+    expect(awaitingIndexes(verdicts, [onItsOwn])).toEqual([0, 1, 3]);
   });
 
   it('approves every waiting write of a whole set but a tripped close, which is left for its card', (): void => {
