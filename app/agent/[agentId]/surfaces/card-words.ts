@@ -536,7 +536,7 @@ export function decisionButtonsWords(
   if (buttons.available) {
     return {
       title: 'Decisions in Slack: buttons and typed codes',
-      note: `Requests to you carry Approve and Reject buttons, which reach Day0 over ${app}'s Socket Mode connection; the typed code beside them always decides too.`,
+      note: `Requests to you carry Approve and Reject buttons, which reach Day0 over the Socket Mode connection of ${app}; the typed code beside them always decides too.`,
       asksForToken: false,
       offersReplacement: true,
     };

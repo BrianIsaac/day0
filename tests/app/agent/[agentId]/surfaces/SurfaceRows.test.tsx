@@ -475,6 +475,8 @@ describe('DecisionButtonsRow (wave 12, 12-M; RM3)', (): void => {
     });
     expect(markup).toContain('Decisions in Slack: buttons and typed codes');
     expect(markup).toContain('<summary');
+    // The tree's disclosure, so the toggle is a 44 px target (N14).
+    expect(markup).toMatch(/<summary class="[^"]*min-h-11/);
     expect(markup).toContain('Replace the app-level token');
     expect(markup).toContain('role="alert"');
   });

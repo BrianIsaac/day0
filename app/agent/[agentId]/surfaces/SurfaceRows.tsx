@@ -13,6 +13,7 @@ import type { AccessRequestReason } from '@/surfaces/access-identity';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { Button, buttonClass } from '../../../components/Button';
 import { Card } from '../../../components/Card';
+import { Disclosure } from '../../../components/Disclosure';
 import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
@@ -740,12 +741,9 @@ export function DecisionButtonsRow(props: DecisionButtonsRowProps): React.ReactN
       <p className="mt-1 text-[var(--color-fg-2)]">{props.words.note}</p>
       {props.words.asksForToken ? field : null}
       {props.words.offersReplacement ? (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[13px] text-[var(--color-fg-2)] underline decoration-[var(--color-link-line)] underline-offset-4">
-            Replace the app-level token
-          </summary>
-          {field}
-        </details>
+        <div className="mt-1">
+          <Disclosure summary="Replace the app-level token">{field}</Disclosure>
+        </div>
       ) : null}
       {props.error ? (
         <p role="alert" className="mt-1 text-[var(--color-danger)]">
