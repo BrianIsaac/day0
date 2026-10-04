@@ -648,6 +648,9 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     expect(body.blocks.map((block) => block.type)).toEqual(['section']);
     expect(body.blocks[0]!.text!.text).toBe(body.text);
     expect(body.text).toContain(`Decided: approved in this DM (${decisionId}).`);
+    // The buttons are gone, so the message no longer asks for a press.
+    expect(body.text).not.toContain('Press Approve or Reject below');
+    expect(body.text).toContain(`Reply “approve ${decisionId}”`);
   });
 });
 
@@ -820,6 +823,7 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     expect(body.ts).toBe('provider-1');
     expect(body.text).toContain('needs your decision');
     expect(body.text).toContain(`Replaced (${oldCode}): this request no longer decides anything.`);
+    expect(body.text).not.toContain('Press Approve or Reject below');
     expect(body.blocks.map((block) => block.type)).toEqual(['section']);
     expect(await harness.run(async (ctx) => await ctx.db.get(replacedId))).toMatchObject({
       editClaimedAt: expect.any(Number),

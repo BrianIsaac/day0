@@ -4,6 +4,7 @@ import {
   DECISION_REJECT_ACTION,
   decisionRequestBlocks,
   parseDecisionPress,
+  pressFreeText,
   SECTION_TEXT_MAX_CHARS,
   settledRequestBlocks,
   type SlackActionsBlock,
@@ -121,5 +122,16 @@ describe('parseDecisionPress', (): void => {
       parseDecisionPress({ action_id: DECISION_APPROVE_ACTION, value: 'ab3xyz extra' }),
     ).toBeUndefined();
     expect(parseDecisionPress({ action_id: DECISION_APPROVE_ACTION })).toBeUndefined();
+  });
+});
+
+describe('pressFreeText', (): void => {
+  it('turns the reply line that names the buttons back into the typed one, for a message without them', (): void => {
+    expect(
+      pressFreeText(
+        'Decide this.\n\nPress Approve or Reject below, or reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+      ),
+    ).toBe('Decide this.\n\nReply “approve ab3xyz” or “reject ab3xyz <reason>”.');
+    expect(pressFreeText('Reply “approve ab3xyz”.')).toBe('Reply “approve ab3xyz”.');
   });
 });

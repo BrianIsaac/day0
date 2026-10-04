@@ -1,4 +1,9 @@
-import { DECISION_ID_ALPHABET, DECISION_ID_LENGTH, type DecisionReply } from './manager-channel';
+import {
+  BUTTONS_REPLY_LEAD,
+  DECISION_ID_ALPHABET,
+  DECISION_ID_LENGTH,
+  type DecisionReply,
+} from './manager-channel';
 import type { SlackActionsBlock, SlackBlock, SlackSectionBlock, SlackText } from './slack-blocks';
 
 export type {
@@ -110,6 +115,14 @@ export function decisionRequestBlocks(args: {
  */
 export function settledRequestBlocks(text: string): SlackBlock[] {
   return sections(text);
+}
+
+/**
+ * A request's text as it reads once its buttons are gone (decided, or replaced): the reply line
+ * that named the buttons becomes the typed one, so the edited message never asks for a press.
+ */
+export function pressFreeText(text: string): string {
+  return text.split(BUTTONS_REPLY_LEAD).join('Reply ');
 }
 
 /** What a pressed button carries, as a `block_actions` payload names it. */

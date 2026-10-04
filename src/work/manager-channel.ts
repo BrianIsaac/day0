@@ -379,6 +379,9 @@ function oneLine(value: unknown, fallback: string): string {
   return line || fallback;
 }
 
+/** How a request with buttons opens its reply line; the line without them opens "Reply ". */
+export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
+
 /**
  * Plain decision request sent when a supervised run parks.
  *
@@ -412,9 +415,7 @@ export function decisionRequestText(args: {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
   const typed = `“approve ${args.id}” or “reject ${args.id} <reason>”`;
-  const reply = args.buttons
-    ? `Press Approve or Reject below, or reply ${typed}.`
-    : `Reply ${typed}.`;
+  const reply = args.buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
   // A request is read on its own, so its action lines name the ask's channel
   // and quote a body as far as a plan line does (U9 step 24).
   const summary: SummaryContext = {

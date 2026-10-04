@@ -135,6 +135,7 @@ import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
 
@@ -4290,7 +4291,7 @@ export const prepareRequestClose = internalMutation({
       channel: decision.channel,
       ts: decision.ts,
       withButtons: decision.withButtons === true,
-      text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
+      text: `${pressFreeText(decision.requestText)}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
     };
   },
 });
@@ -4368,7 +4369,7 @@ export const prepareReplacedEdit = internalMutation({
       channel: replaced.channel,
       ts: replaced.ts,
       withButtons: replaced.withButtons === true,
-      text: `${replaced.requestText}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
+      text: `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
     };
   },
 });
