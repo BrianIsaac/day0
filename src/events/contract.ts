@@ -481,6 +481,13 @@ export interface VoiceFinalisationFailedPayload {
   readonly retryScheduled: boolean;
 }
 
+/** The payload of `voice.restarted`: the manager held the one-to-one again after its draft failed (m16). */
+export interface VoiceRestartedPayload {
+  readonly sessionId: SessionId;
+  /** The conversation the session moved on to; a write for an earlier one is refused. */
+  readonly conversation: number;
+}
+
 /** The payload of `voice.finalisation-abandoned`. */
 export interface VoiceFinalisationAbandonedPayload {
   readonly sessionId: SessionId;
@@ -1559,6 +1566,7 @@ export interface EventPayloads {
   'voice.completed': VoiceCompletedPayload;
   'voice.finalisation-failed': VoiceFinalisationFailedPayload;
   'voice.finalisation-abandoned': VoiceFinalisationAbandonedPayload;
+  'voice.restarted': VoiceRestartedPayload;
   'skill.authoring-refused': SkillAuthoringRefusedPayload;
   'skill.builtin-installed': SkillBuiltinInstalledPayload;
   'skill.proposed': SkillProposedPayload;
@@ -1737,6 +1745,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'voice.completed',
   'voice.finalisation-failed',
   'voice.finalisation-abandoned',
+  'voice.restarted',
   'skill.authoring-refused',
   'skill.builtin-installed',
   'skill.proposed',

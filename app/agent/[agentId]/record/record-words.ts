@@ -672,6 +672,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'voice.finalisation-abandoned': (p) =>
     `The one-to-one's wrap-up was given up${because(p.reason)}`,
+  'voice.restarted': () => 'The one-to-one was held again, from a new conversation',
   'skill.authoring-refused': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} was not moved on: it is ${
       text(p.state) ?? 'elsewhere'

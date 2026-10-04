@@ -368,6 +368,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'voice.finalisation-failed': (payload) =>
     `1:1 wrap-up failed${because(payload.reason)}${payload.retryScheduled === true ? ' · trying again' : ''}`,
   'voice.finalisation-abandoned': (payload) => `1:1 wrap-up given up${because(payload.reason)}`,
+  'voice.restarted': '1:1 held again',
   'skill.authoring-refused': (payload) =>
     `skill ${text(payload.name) ?? 'unnamed'} not moved on: it is ${text(payload.state) ?? 'elsewhere'} now`,
   'skill.builtin-installed': (payload) =>
