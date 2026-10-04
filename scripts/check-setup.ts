@@ -1799,6 +1799,12 @@ export function egressHosts(
     add('registry.modelcontextprotocol.io', "orientation, looking up a system's MCP server");
     add('mcp.linear.app', 'Linear intake and writes, once a Linear card is approved');
     add('slack.com', 'Slack intake and posts, once a Slack card is approved');
+    // The bridge dials the URL the backend's apps.connections.open answers, whose host Slack
+    // chooses; the walk on real Slack (5 October 2026) met this one (W12V-17).
+    add(
+      'wss-primary.slack.com',
+      "the slack-socket component's Socket Mode connections over wss:// (the host is the one in the URL Slack's apps.connections.open answers; this was it on Slack in October 2026)",
+    );
     add('github.com', 'a git documentation source on GitHub, when one is linked');
     add('gitlab.com', 'a git documentation source on GitLab, when one is linked');
     add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
