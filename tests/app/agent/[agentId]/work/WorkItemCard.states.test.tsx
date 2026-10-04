@@ -407,32 +407,21 @@ describe('landed (work-landed.html)', (): void => {
       field(view.container, 'Note for the retry: say what to change or answer what Mira asked'),
       'Add the escalation note.',
     );
-    // The writes landed, so a send-back first asks for the provider check (U17 D1), one answer
-    // each: it landed, or it was not sent (re-pinned in wave 12 from one tick each).
+    // The writes landed, so a send-back first asks for the provider check (U17 D1). Re-pinned
+    // for W12V-14: each write the ledger records as landed is shown as landed and asked nothing,
+    // so the check is one confirmation, and each is recorded as landed.
     expect(view.text()).toContain('Provider reconciliation required');
     expect(send()?.disabled).toBe(true);
-    const landedAnswers = [...view.container.querySelectorAll('input[type="radio"]')].filter(
-      (radio) => radio.closest('label')?.textContent === 'It landed',
-    );
-    const notSentAnswers = [...view.container.querySelectorAll('input[type="radio"]')].filter(
-      (radio) => radio.closest('label')?.textContent === 'It was not sent',
-    );
-    expect(landedAnswers).toHaveLength(3);
-    expect(notSentAnswers).toHaveLength(3);
-    expect(() => button(view.container, 'Confirm reconciliation')).toThrow();
-    // The count beside Confirm says what is still owed (the second pass's design finding).
-    expect(view.text()).toContain('0 of 3 answered');
-    await act(async (): Promise<void> => (landedAnswers[0] as HTMLInputElement).click());
-    expect(view.text()).toContain('1 of 3 answered');
-    await act(async (): Promise<void> => (notSentAnswers[1] as HTMLInputElement).click());
-    await act(async (): Promise<void> => (landedAnswers[2] as HTMLInputElement).click());
+    expect(view.container.querySelectorAll('input[type="radio"]')).toHaveLength(0);
+    expect(view.text()).toContain('Each write below landed, as Day0 recorded it from the provider');
+    expect(view.text()).not.toContain('answered');
     await press(view.container, 'Confirm reconciliation');
     expect(view.calls).toEqual([
       [
         'reconcile',
         [
           { phase: 'single', actionIndex: 0, answer: 'landed' },
-          { phase: 'single', actionIndex: 1, answer: 'not-sent' },
+          { phase: 'single', actionIndex: 1, answer: 'landed' },
           { phase: 'single', actionIndex: 2, answer: 'landed' },
         ],
       ],

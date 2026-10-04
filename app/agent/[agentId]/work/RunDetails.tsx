@@ -616,12 +616,20 @@ function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
 }
 
+/** Whether the manager is asked about an entry: only a write whose outcome is unknown (W12V-14). */
+function asked(entry: ReconciliationEntry): boolean {
+  return entry.outcome === 'outcome-unknown';
+}
+
 /**
  * The checklist a run shows before a retry when a write landed or may have (U17 D1, answered per
  * entry since wave 12): each entry the provider must be checked for, what the ledger recorded of
- * it, and the manager's answer for it, that it landed or that it was not sent. Every entry is
- * answered before the confirmation is recorded, and only then does Retry open; a retry never sends
- * again a write answered landed, and sends afresh one answered not sent.
+ * it, and, for a write whose outcome is unknown, the manager's answer, that it landed or that it
+ * was not sent. A write the ledger records as landed, with the provider's own id where it gave one,
+ * is shown as landed and asked nothing (W12V-14; the server owes it no answer either). Every
+ * unknown entry is answered before the confirmation is recorded, and only then does Retry open; a
+ * retry never sends again a write that landed or was answered landed, and sends afresh one
+ * answered not sent.
  *
  * @param entries - The entries to check, from the run's ledger.
  * @param reconciliation - When the check was confirmed and who confirmed it, once they did.
@@ -648,7 +656,8 @@ export function ProviderReconciliationControl({
   const [answers, setAnswers] = useState<ReadonlyMap<string, ReconciliationAnswer>>(
     () => new Map(),
   );
-  const all = entries.length > 0 && entries.every((entry) => answers.has(entryKey(entry)));
+  const questions = entries.filter(asked);
+  const all = entries.length > 0 && questions.every((entry) => answers.has(entryKey(entry)));
   const answer = (key: string, value: ReconciliationAnswer): void =>
     setAnswers((current) => new Map(current).set(key, value));
   return (
@@ -661,8 +670,9 @@ export function ProviderReconciliationControl({
           {askedAgain
             ? 'You confirmed this run as a whole before Day0 asked about each write, so each is asked again. '
             : null}
-          Check each entry on the provider before a retry. Say for each whether it landed or was not
-          sent: a retry never sends again a write you say landed.
+          {questions.length > 0
+            ? 'Check each write whose outcome is unknown on the provider before a retry, and say whether it landed or was not sent: a retry never sends again a write you say landed, nor one Day0 recorded as landed.'
+            : 'Each write below landed, as Day0 recorded it from the provider: a retry never sends one again. Confirm to open Retry.'}
         </p>
       )}
       {entries.length > 0 ? (
@@ -708,7 +718,7 @@ export function ProviderReconciliationControl({
                 </span>
               </Disclosure>
             ) : null;
-            if (reconciliation) {
+            if (reconciliation || !asked(entry)) {
               return (
                 <li key={key} className="min-w-0">
                   {words}
@@ -770,7 +780,7 @@ export function ProviderReconciliationControl({
         <div className="flex flex-wrap items-center gap-3">
           <Button
             size="small"
-            aria-describedby={`${group}-answered`}
+            aria-describedby={questions.length > 0 ? `${group}-answered` : undefined}
             disabled={!all || busy || entries.length === 0}
             onClick={() =>
               onConfirm(
@@ -784,9 +794,11 @@ export function ProviderReconciliationControl({
           >
             Confirm reconciliation
           </Button>
-          <span id={`${group}-answered`} className="text-[13px] text-[var(--color-fg-2)]">
-            {answeredCount(entries, answers)} of {entries.length} answered
-          </span>
+          {questions.length > 0 ? (
+            <span id={`${group}-answered`} className="text-[13px] text-[var(--color-fg-2)]">
+              {answeredCount(questions, answers)} of {questions.length} answered
+            </span>
+          ) : null}
         </div>
       )}
     </div>
