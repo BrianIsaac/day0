@@ -11,24 +11,34 @@ import {
 import { modelName } from '../src/lib/model-name';
 import { browserComponent } from '../src/surfaces/browser';
 import { evaluationBedName } from '../src/evaluation/bed-flag';
+import { cronsPauseReason } from '../src/lib/crons-pause';
 
 /**
  * Return the non-secret surface mode for consistent UI labels, and the deployment profile, so
  * People can say which installation it is without guessing from the mode (the transfer plan,
  * section 8): under `local-dev` with the local sign-in every browser is one manager, and a
- * handover has nobody to go to. Public, guarded by `getCallerOrThrow` (12-G): both are the same
- * for every caller, and nobody but a signed-in caller is told them. Writes nothing.
+ * handover has nobody to go to. It says too whether the deployment's scheduled work is paused
+ * (`DAY0_CRONS_PAUSED`), which holds every work step at its claim, so the Work tab's cards say a
+ * held step is held (wave 12, 12-J); the switch's reason is the operator's and is not returned.
+ * Public, guarded by `getCallerOrThrow` (12-G): all three are the same for every caller, and
+ * nobody but a signed-in caller is told them. Writes nothing.
  */
 export const surfaceMode = query({
   args: {},
   handler: async (
     ctx,
-  ): Promise<{ mode: 'mock' | 'real'; label: string; deploymentProfile: DeploymentProfile }> => {
+  ): Promise<{
+    mode: 'mock' | 'real';
+    label: string;
+    deploymentProfile: DeploymentProfile;
+    scheduledWorkPaused: boolean;
+  }> => {
     await getCallerOrThrow(ctx);
     return {
       mode: SURFACE_MODE,
       label: SURFACE_MODE === 'real' ? 'real (local)' : 'mock',
       deploymentProfile: resolveDeploymentProfile(),
+      scheduledWorkPaused: cronsPauseReason() !== undefined,
     };
   },
 });

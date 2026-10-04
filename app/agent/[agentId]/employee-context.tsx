@@ -18,6 +18,11 @@ export interface Employee {
   readonly charter: Doc<'charters'> | null;
   /** The deployment's mode, undefined until the backend has answered. */
   readonly surfaceMode: 'mock' | 'real' | undefined;
+  /**
+   * Whether the deployment's scheduled work is paused (`DAY0_CRONS_PAUSED`, an upgrade or the
+   * operator's own pause), which holds every step at its claim; false until the backend answers.
+   */
+  readonly scheduledWorkPaused: boolean;
   /** The employee's systems (real mode only; the mock has none). */
   readonly surfaces: SurfaceRecord[];
   /**

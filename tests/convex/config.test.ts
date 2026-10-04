@@ -20,14 +20,24 @@ describe('public surface configuration', (): void => {
     vi.unstubAllEnvs();
   });
 
-  it('returns only the mock mode, its public label and the deployment profile', async (): Promise<void> => {
+  it('returns only the mock mode, its public label, the deployment profile and whether scheduled work is paused', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules()).withIdentity(managerIdentity());
     vi.stubEnv('DAY0_PROFILE', '');
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
     await expect(harness.query(api.config.surfaceMode, {})).resolves.toEqual({
       mode: 'mock',
       label: 'mock',
       deploymentProfile: 'local-dev',
+      scheduledWorkPaused: false,
     });
+  });
+
+  it("says the deployment's scheduled work is paused, without the operator's reason", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules()).withIdentity(managerIdentity());
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
+    const answer = await harness.query(api.config.surfaceMode, {});
+    expect(answer.scheduledWorkPaused).toBe(true);
+    expect(JSON.stringify(answer)).not.toContain('upgrade');
   });
 
   it('names the customer-local profile, so People can say which installation it is', async (): Promise<void> => {

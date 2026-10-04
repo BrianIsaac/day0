@@ -92,28 +92,149 @@ export interface RunProgress {
   readonly title: string;
   /** Where that part stands, one sentence. */
   readonly detail: string;
-  /** The parts in order, the one under way marked. */
+  /** The parts in order, the one under way (or the one a pause holds) marked. */
   readonly parts: ReadonlyArray<{
     readonly name: string;
-    readonly status: 'done' | 'now' | 'next';
+    readonly status: 'done' | 'now' | 'held' | 'next';
   }>;
+}
+
+/**
+ * What holds the employee's next step, in real mode (wave 12, 12-P): the manager's pause of this
+ * employee, or the deployment's own pause of its scheduled work (`DAY0_CRONS_PAUSED`). Either
+ * holds a step at its claim; the employee's own is named first, as `stepHoldReason` names it.
+ */
+export type RunHold =
+  | { readonly by: 'employee'; readonly employeeName: string }
+  | { readonly by: 'deployment' };
+
+/**
+ * The hold the Work tab's cards say, or undefined while nothing holds a step. Real mode only: a
+ * pause is refused in mock mode, where the page drives every step.
+ *
+ * @param input - Whether the deployment serves the real loop, the employee's name and pause, and
+ *   whether the deployment's scheduled work is paused.
+ */
+export function runHoldOf(input: {
+  readonly real: boolean;
+  readonly employeeName: string;
+  readonly employeePaused: boolean;
+  readonly scheduledWorkPaused: boolean;
+}): RunHold | undefined {
+  if (!input.real) return undefined;
+  if (input.employeePaused) return { by: 'employee', employeeName: input.employeeName };
+  return input.scheduledWorkPaused ? { by: 'deployment' } : undefined;
+}
+
+/**
+ * Whether the row's next step is one a pause holds: a step not yet claimed, which a pause
+ * refuses at its claim (`stepMayRun`). A draft not yet claimed, a plan approved and not started,
+ * and an apply (automatic, or approved by the manager) not yet claimed each wait there. A step
+ * already past its claim runs to its next gate and is under way whatever the pause says: a draft
+ * holding `draftClaimedAt`, a run reading and drafting, an apply holding `applyAttemptId`.
+ *
+ * @param item - The row's state and claim fields.
+ */
+export function waitsAtClaim(
+  item: Pick<
+    Doc<'workItems'>,
+    'state' | 'draftClaimedAt' | 'applyPhase' | 'applyAttemptId' | 'approvedIndexes'
+  >,
+): boolean {
+  switch (item.state) {
+    case 'claimed':
+      return item.draftClaimedAt === undefined;
+    case 'plan-approved':
+      return true;
+    case 'executing':
+      return item.applyPhase === 'auto' && item.applyAttemptId === undefined;
+    case 'actions-pending':
+      return item.approvedIndexes !== undefined && item.applyAttemptId === undefined;
+    // No run is drawn for these: not yet judged, waiting on the manager, parked, or settled.
+    case 'discovered':
+    case 'plan-pending':
+    case 'deferred':
+    case 'needs-skill':
+    case 'completed':
+    case 'cancelled':
+    case 'failed':
+    case 'skipped':
+      return false;
+  }
+}
+
+/**
+ * What a card says of a step a pause holds, in place of the step under way: a heading and the
+ * sentence saying when it goes on.
+ *
+ * @param hold - What holds the step.
+ */
+export function heldStepWords(hold: RunHold): { readonly title: string; readonly detail: string } {
+  if (hold.by === 'employee') {
+    return {
+      title: `Held while ${hold.employeeName} is paused`,
+      detail: `Nothing starts until you resume ${hold.employeeName} on Manage.`,
+    };
+  }
+  return {
+    title: "Held while this deployment's scheduled work is paused",
+    detail: 'It goes on once the scheduled work runs again.',
+  };
+}
+
+/** How a run's progress is read: the switch, the gate, and what holds its next step, if anything. */
+export interface RunProgressContext {
+  /** Whether autonomous actions are on, for how automatic writes are named. */
+  readonly autonomous: boolean;
+  /** The deployment's gate; the mock one applies nothing on its own. */
+  readonly gate?: WorkGate;
+  /** What holds the employee's next step (`runHoldOf`), undefined while nothing does. */
+  readonly hold?: RunHold;
 }
 
 /**
  * How far a working item has got, from what the row records while it runs: the plan being
  * drafted, the run started, its reads and draft, its automatic writes, and for a run in two
  * phases its closing phase. A run records its steps' outcomes only when it finishes, so the
- * progress is by part, never a made-up step count.
+ * progress is by part, never a made-up step count. While a pause holds the row's next step
+ * (`waitsAtClaim`), the heading and the sentence say the hold and the held part is marked so.
  *
  * @param item - A row in `claimed`, `plan-approved` or `executing`.
- * @param autonomous - Whether autonomous actions are on, for how automatic writes are named.
- * @param gate - The deployment's gate; the mock one applies nothing on its own.
+ * @param context - The switch, the gate and the hold.
  * @returns The progress, or undefined for a row in any other state.
  */
 export function runProgress(
+  item: Pick<
+    Doc<'workItems'>,
+    | 'state'
+    | 'plan'
+    | 'applyPhase'
+    | 'approvedIndexes'
+    | 'output'
+    | 'draftClaimedAt'
+    | 'applyAttemptId'
+  >,
+  { autonomous, gate = 'real', hold }: RunProgressContext,
+): RunProgress | undefined {
+  const progress = progressUnderWay(item, autonomous, gate);
+  if (progress === undefined || hold === undefined || !waitsAtClaim(item)) return progress;
+  const words = heldStepWords(hold);
+  // The part the claim would start: the next one after the last done.
+  const heldIndex = progress.parts.findIndex((part) => part.status !== 'done');
+  return {
+    title: words.title,
+    detail: words.detail,
+    parts: progress.parts.map((part, index) =>
+      index === heldIndex ? { name: part.name, status: 'held' } : part,
+    ),
+  };
+}
+
+/** The progress of a run as if nothing held it: the part under way and the parts in order. */
+function progressUnderWay(
   item: Pick<Doc<'workItems'>, 'state' | 'plan' | 'applyPhase' | 'approvedIndexes' | 'output'>,
   autonomous: boolean,
-  gate: WorkGate = 'real',
+  gate: WorkGate,
 ): RunProgress | undefined {
   if (item.state === 'claimed') {
     return {

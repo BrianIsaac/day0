@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { verdictFor } from '@/surfaces/verdict';
-import { runProgress, type WorkGate } from '@/work/item-display';
+import { runProgress, type RunHold, type RunProgress, type WorkGate } from '@/work/item-display';
 import { attemptsSpent } from '@/work/needs-manager';
 import { needsSkillReason } from '@/work/skill-rationale';
 import { Help, ItemSection, Lead, Note } from './ItemParts';
@@ -229,25 +229,45 @@ export function VerdictSection({
   );
 }
 
+/** How each part of a run's progress is drawn, by where it stands. */
+const PART_CLASS: Record<RunProgress['parts'][number]['status'], string> = {
+  now: 'border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]',
+  held: 'border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] text-[var(--color-warn)]',
+  done: 'border-[var(--color-ok-line)] text-[var(--color-ok)]',
+  next: 'border-[var(--color-border)] text-[var(--color-muted)]',
+};
+
+/** What a screen reader hears after each part's name, by where it stands. */
+const PART_STATUS_WORDS: Record<RunProgress['parts'][number]['status'], string> = {
+  now: ', under way',
+  held: ', held',
+  done: ', done',
+  next: ', next',
+};
+
 /**
  * How far a working item has got (`runProgress`): the part under way, the parts in order, and
  * what reaches a surface meanwhile. A run records its steps' outcomes only when it finishes, so
- * the progress is by part.
+ * the progress is by part. While a pause holds the row's next step, the heading says the hold
+ * and the held part is drawn in the warning colour.
  *
  * @param item - A row in `claimed`, `plan-approved` or `executing`.
  * @param autonomous - Whether autonomous actions are on.
  * @param gate - The deployment's gate.
+ * @param hold - What holds the employee's next step, when anything does.
  */
 export function ProgressSection({
   item,
   autonomous,
   gate = 'real',
+  hold,
 }: {
   item: Doc<'workItems'>;
   autonomous: boolean;
   gate?: WorkGate;
+  hold?: RunHold;
 }) {
-  const progress = runProgress(item, autonomous, gate);
+  const progress = runProgress(item, { autonomous, gate, hold });
   if (!progress) return null;
   return (
     <ItemSection title={progress.title}>
@@ -257,17 +277,11 @@ export function ProgressSection({
             key={part.name}
             aria-current={part.status === 'now' ? 'step' : undefined}
             className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[13px] ${
-              part.status === 'now'
-                ? 'border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                : part.status === 'done'
-                  ? 'border-[var(--color-ok-line)] text-[var(--color-ok)]'
-                  : 'border-[var(--color-border)] text-[var(--color-muted)]'
+              PART_CLASS[part.status]
             }`}
           >
             {part.name}
-            <span className="sr-only">
-              {part.status === 'now' ? ', under way' : part.status === 'done' ? ', done' : ', next'}
-            </span>
+            <span className="sr-only">{PART_STATUS_WORDS[part.status]}</span>
           </li>
         ))}
       </ol>
