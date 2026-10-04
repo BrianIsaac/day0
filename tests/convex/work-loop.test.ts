@@ -127,6 +127,13 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = managerIdentity();
 
+/**
+ * How long a test waits, in real time, for an action held at a gate to reach its model call. The
+ * first action a file runs imports every Convex module, which takes longer than `vi.waitFor`'s
+ * one-second default when the test runs alone (`-t`) or first.
+ */
+const COLD_ACTION_MS = 20_000;
+
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
@@ -363,7 +370,7 @@ describe('the server-side steps', (): void => {
     });
 
     const first = harness.action(internal.workActions.draftPlanInternal, { workItemId });
-    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await expect(
       harness.action(internal.workActions.draftPlanInternal, { workItemId }),
     ).resolves.toEqual({ ok: false, reason: 'another draft of this work item is running' });
@@ -389,7 +396,7 @@ describe('the server-side steps', (): void => {
     });
 
     const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
-    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
     await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).state).toBe('claimed');
@@ -625,7 +632,9 @@ describe('the server drives the work loop in real mode', (): void => {
 
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-26');
     vi.advanceTimersByTime(0);
-    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1), {
+      timeout: COLD_ACTION_MS,
+    });
 
     const second = await harness.action(internal.workActions.evaluateWorkItemInternal, {
       workItemId,
@@ -1737,7 +1746,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     const running = drain(harness);
-    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await pause(harness, agentId);
     release();
     await running;
@@ -2048,7 +2057,7 @@ describe("the deployment's pause holds queued steps too (12-P; crons.ts)", (): v
       release = resolve;
     });
     const running = drain(harness);
-    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
     vi.stubEnv('DAY0_CRONS_PAUSED', 'restore from backup');
     release();
     await running;
