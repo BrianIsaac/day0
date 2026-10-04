@@ -147,6 +147,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [],
@@ -155,6 +157,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [],
@@ -166,6 +170,8 @@ describe('executor output contract', (): void => {
     expect(
       dependentExecuteSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         actions: [],
         planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No prerequisite result.' }],
@@ -177,6 +183,8 @@ describe('executor output contract', (): void => {
     const schema = executeSchemaForProcedureContract(ticketProcedureContract);
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       actions: [],
@@ -210,6 +218,8 @@ describe('executor output contract', (): void => {
     );
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: true,
       actions: [],
@@ -284,6 +294,8 @@ describe('executor output contract', (): void => {
     const schema = executeSchemaForProcedureContract(contract, candidate, plan);
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
@@ -357,6 +369,8 @@ describe('executor output contract', (): void => {
         draft: 'Escalated safely.',
         notes: 'The candidate supplied no structured destination.',
         needsDependentPhase: false,
+        workDone: 'done',
+        workDoneWhy: 'The request is escalated by the documented route.',
         actions: [
           {
             tool: 'slack.postMessage',
@@ -886,7 +900,7 @@ describe('executor output contract', (): void => {
     ]);
   });
 
-  it('tells the executor never to close a ticket its own words say is not done', (): void => {
+  it('tells the executor to close a ticket only when it answers that the work was done', (): void => {
     const prompt = executorInstructions({
       mode: 'mock',
       autonomousActions: false,
@@ -903,7 +917,7 @@ describe('executor output contract', (): void => {
       now: 0,
     });
     expect(prompt).toContain(
-      'Never use `done` when your own draft, comment or message says any of the work was not done or could not be done: use `in-progress` and say in the comment what is left.',
+      'Use `done` only when your `workDone` is "done"; when it is "partial" or "not-done", use `in-progress` and say in the comment what is left.',
     );
   });
 
@@ -1367,6 +1381,8 @@ describe('executor output contract', (): void => {
     for (const action of Object.values(actions)) {
       const parsed = executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [action],
@@ -1379,6 +1395,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1428,6 +1446,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1441,6 +1461,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1460,6 +1482,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [{ tool: 'jira.update', args: {} }],
@@ -1471,6 +1495,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1486,6 +1512,8 @@ describe('executor output contract', (): void => {
   it('caps the one dependent phase at the closing set plus one deferred sequence', (): void => {
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
@@ -1557,6 +1585,8 @@ describe('executor output contract', (): void => {
     ).toBe(CLOSING_SET_CAP);
     const closing = (count: number) => ({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       openQuestion: null,
       procedureTrails: [],
@@ -1590,6 +1620,8 @@ describe('executor output contract', (): void => {
   it('uses the same strict tagged branch contract in the dependent phase', (): void => {
     const parsed = dependentExecuteSchema.safeParse({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       actions: [
@@ -1620,6 +1652,8 @@ describe('executor output contract', (): void => {
     };
     const validParsed = dependentExecuteSchema.safeParse({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       actions: [valid],
@@ -1882,13 +1916,23 @@ describe('advisory plan steps in the closing phase', (): void => {
     const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
     const mockFirst = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       actions: [],
       procedureTrails: [],
     };
     const first = { ...mockFirst, deferredActions: null };
-    const last = { draft: 'd', notes: 'n', actions: [], procedureTrails: [], planStepOutcomes: [] };
+    const last = {
+      draft: 'd',
+      notes: 'n',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [],
+    };
     for (const openQuestion of [
       '请确认通知使用哪个模板。',
       'Please confirm which template the notice should use.',
@@ -1913,6 +1957,8 @@ describe('advisory plan steps in the closing phase', (): void => {
     const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
     const reply = (outcome: Record<string, unknown>) => ({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       openQuestion: null,
       actions: [],
@@ -1943,6 +1989,8 @@ describe('advisory plan steps in the closing phase', (): void => {
   it('accepts not-verifiable only in the real closing schema', (): void => {
     const row = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       actions: [],
       procedureTrails: [],
@@ -1996,7 +2044,9 @@ describe('frozen prompt text', (): void => {
   // Its preamble, and the surface list rendered without probed argument
   // names, are pinned byte for byte, and a change re-pins with its cause:
   // v0.16.0 took the preamble's own dashes out and gave it the punctuation
-  // rule (the v0.15.0 walk's finding 2), after those beds were recorded.
+  // rule (the v0.15.0 walk's finding 2), after those beds were recorded,
+  // and in the same release added item 5, the run's answer on whether the
+  // work was done (decision D-1 (b)), with the provider schema's two fields.
   it("asks for plain punctuation in every field and carries no dash to copy, in both modes (the v0.15.0 walk's finding 2)", (): void => {
     for (const mode of ['mock', 'real'] as const) {
       const preamble = executorPreamble(mode);
@@ -2015,6 +2065,7 @@ describe('frozen prompt text', (): void => {
         2. Notes: short assumptions or open questions (single sentence).
         3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
         4. Procedure trails: one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+        5. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
@@ -2306,6 +2357,6 @@ it('keeps the mock phase-one provider schema byte-identical', () => {
     z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')),
   );
   expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
-    `"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`,
+    `"51b468bba40b43bab5184557185981354603c6f854599746100e42628f3ea0c2"`,
   );
 });

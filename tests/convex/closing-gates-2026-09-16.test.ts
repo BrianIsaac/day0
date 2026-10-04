@@ -88,13 +88,15 @@ vi.mock('../../src/lib/mastra', () => ({
   }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name.endsWith('-dependent') && recorded.closingReply) {
-      return args.schema.parse(
-        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.closingReply),
+      return (await import('./fakes/executor-reply')).parseRecordedReply(
+        args.schema,
+        recorded.closingReply,
       ) as T;
     }
     if (args.agent.name.endsWith('-initial') && recorded.initialReply) {
-      return args.schema.parse(
-        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.initialReply),
+      return (await import('./fakes/executor-reply')).parseRecordedReply(
+        args.schema,
+        recorded.initialReply,
       ) as T;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);

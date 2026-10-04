@@ -8,8 +8,11 @@ import { env } from '../../../src/env';
 import { log } from '../../../src/lib/logger';
 
 const priya = fixtures[0];
+// The GLM replies were captured before v0.16.0 asked the run whether the work was done, so the
+// schema they are repaired against leaves the two answer fields out, as the rule for output
+// recorded before the release reads them (`src/work/work-done.ts`).
 const schemaFor = (fixture: (typeof fixtures)[number]) =>
-  executeSchema.extend({
+  executeSchema.omit({ workDone: true, workDoneWhy: true }).extend({
     actions: z.array(generatedActionSchema).min(fixture.actionsMinimum),
   });
 const violation = (fixture: { message: string; value: unknown }) =>

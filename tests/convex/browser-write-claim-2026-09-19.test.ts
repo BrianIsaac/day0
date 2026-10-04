@@ -75,7 +75,7 @@ vi.mock('../../src/lib/mastra', () => ({
     schema: { parse(value: unknown): unknown };
   }): Promise<T> => {
     if (args.agent.name.endsWith('-dependent')) {
-      return args.schema.parse({
+      return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
         draft: 'The tile was read back in the same session.',
         notes: '',
         openQuestion: null,
@@ -102,7 +102,7 @@ vi.mock('../../src/lib/mastra', () => ({
     if (!args.agent.name.endsWith('-initial'))
       throw new Error(`unscripted agent ${args.agent.name}`);
     recorded.prompts.set(args.agent.name, args.user);
-    return args.schema.parse({
+    return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
       draft: 'Signing in to the tile, entering 74%, saving and reading it back.',
       notes: '',
       needsDependentPhase: false,

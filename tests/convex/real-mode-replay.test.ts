@@ -282,9 +282,9 @@ vi.mock('../../src/lib/mastra', () => ({
     };
     // The recorded executor replies predate the declared question; they declare none.
     const executor = args.agent.name.endsWith('-initial') || args.agent.name.endsWith('-dependent');
-    return args.schema.parse(
-      executor ? (await import('./fakes/executor-reply')).asCurrentExecutorReply(reply()) : reply(),
-    ) as T;
+    return executor
+      ? (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, reply())
+      : (args.schema.parse(reply()) as T);
   },
   agentText: async (): Promise<string> => '',
 }));

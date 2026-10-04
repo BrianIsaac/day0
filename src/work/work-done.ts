@@ -103,6 +103,17 @@ export function closingAgainstFact(
   return closingChanges(actions)[0]?.state;
 }
 
+/**
+ * Why a close may not stand against the run's own answer, as the repair turn, the withheld row and
+ * the closing gate say it.
+ *
+ * @param fact - The run's answer, `partial` or `not-done`.
+ * @param state - The closing state the set lands.
+ */
+export function closingAgainstFactReason(fact: WorkDoneFact, state: string): string {
+  return `sets the ticket to ${state} while workDone is "${fact.workDone}" ("${fact.workDoneWhy}")`;
+}
+
 /** What the tripwire reads: the run's answer, its words and its set. */
 export interface AnsweredRun {
   readonly workDone?: unknown;
@@ -133,7 +144,7 @@ export function doneAgainstWords(run: AnsweredRun): string | undefined {
  * @param state - The closing state the set lands.
  */
 export function doneAgainstWordsIssue(clause: string, state: string): string {
-  return `workDone is "done" and the set moves the ticket to ${state}, but your own words say "${clause}". Answer workDone again from what you did: "partial" or "not-done" if any of the work this item asks for was not done, and then leave the ticket open and say in the comment what is left; keep "done" only if every part of it was done`;
+  return `workDone is "done" and the set moves the ticket to ${state}, but your own words say "${clause.replace(/[.!?]+$/, '')}". Answer workDone again from what you did: "partial" or "not-done" if any of the work this item asks for was not done, and then leave the ticket open and say in the comment what is left; keep "done" only if every part of it was done`;
 }
 
 /** The audit record of a close the tripwire sent to the manager after the run answered done twice. */

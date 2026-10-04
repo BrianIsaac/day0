@@ -20,6 +20,7 @@ import {
   type ProcedureTrailAttestation,
   type ProcedureTrailLimitation,
   type WorkCandidate,
+  type WorkDoneFields,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import {
@@ -65,7 +66,18 @@ import {
   type HeldExternalItem,
 } from './claim-key';
 import { notDoneStatements, runOwnWords } from './not-done';
-import { type WorkDoneFact, workDoneFactOf } from './work-done';
+import {
+  CLOSE_HELD_AGAINST_WORDS,
+  closingAgainstFact,
+  closingAgainstFactReason,
+  closingChanges,
+  doneAgainstWords,
+  doneAgainstWordsIssue,
+  type WorkDoneFact,
+  workDoneFactOf,
+  workDoneSchema,
+  workDoneWhySchema,
+} from './work-done';
 import { escapeRegExp } from '../lib/regex';
 
 export { replyTargetLine };
@@ -131,6 +143,14 @@ const PROCEDURE_TRAIL_OUTPUT =
 
 const REAL_PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails: one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
+/**
+ * The run's answer on its own work (decision D-1 (b)): asked in both modes, in the executor's
+ * reply and the closing set's, and the status the run sets is held to it.
+ */
+function workDoneOutput(item: number): string {
+  return `  ${item}. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.`;
+}
+
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 /**
@@ -170,6 +190,7 @@ const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
+  workDoneOutput(5),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
@@ -443,7 +464,7 @@ function ticketClosureFromContract(
 function mockActionContract(contract: ProcedureContract): string {
   const closure = ticketClosureFromContract(contract);
   const ticketRule = closure
-    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}, or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open). Never use \`${closure.full}\` when your own draft, comment or message says any of the work was not done or could not be done: use \`${closure.partial}\` and say in the comment what is left.`
+    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}, or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open). Use \`${closure.full}\` only when your \`workDone\` is "done"; when it is "partial" or "not-done", use \`${closure.partial}\` and say in the comment what is left.`
     : '  - For ticket-queue work, follow the candidate and loaded ticket procedure. Do not invent an originating-ticket status or audit requirement when both are silent.';
   return [
     '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
@@ -464,6 +485,7 @@ const REAL_PREAMBLE = [
   '  3. Actions: typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
+  workDoneOutput(6),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -649,6 +671,8 @@ export const executeSchema = z
     draft: z.string(),
     notes: z.string(),
     needsDependentPhase: z.boolean(),
+    workDone: workDoneSchema,
+    workDoneWhy: workDoneWhySchema,
     actions: z.array(generatedActionSchema),
     procedureTrails: z.array(procedureTrailAttestationSchema),
   })
@@ -682,6 +706,8 @@ export const dependentExecuteSchema = z
   .object({
     draft: z.string(),
     notes: z.string(),
+    workDone: workDoneSchema,
+    workDoneWhy: workDoneWhySchema,
     actions: z.array(generatedActionSchema).max(DEPENDENT_ACTION_CAP),
     procedureTrails: z.array(procedureTrailAttestationSchema),
     planStepOutcomes: z.array(planStepOutcomeSchema),
@@ -1377,6 +1403,76 @@ async function withholdUnsupported<T extends CorrectableOutput>(
     );
   }
   return corrected;
+}
+
+/** The event reason when a close the run's own answer contradicts was withheld after the one repair. */
+export const WITHHELD_AGAINST_WORK_DONE = 'close withheld by the work-done check';
+
+/**
+ * The answer a reply contributes to its output: both fields, or neither for a reply recorded
+ * before the release (a fixture or a trace replayed without the field), which then reads by the
+ * rule in `./work-done.ts` and is never given an answer it did not make.
+ */
+function workDoneFieldsOf(raw: unknown): Pick<ExecutionOutput, 'workDone' | 'workDoneWhy'> {
+  const fact = workDoneFactOf(raw);
+  return fact ? { workDone: fact.workDone, workDoneWhy: fact.workDoneWhy } : {};
+}
+
+/** The repair turn's line for a set that closes the ticket while the run answers the work was not all done. */
+function closingAgainstFactIssues(output: CorrectableOutput & WorkDoneFields): string[] {
+  const fact = workDoneFactOf(output);
+  const state = closingAgainstFact(fact, output.actions);
+  return fact !== undefined && state !== undefined
+    ? [
+        `${closingAgainstFactReason(fact, state)}: a run that did not do all of the work leaves the ticket open, so leave the state change out and say in the comment what is left`,
+      ]
+    : [];
+}
+
+/** The repair turn's line when the tripwire trips; see `doneAgainstWords`. */
+function doneAgainstWordsIssues(
+  output: CorrectableOutput & WorkDoneFields & { draft?: string },
+): string[] {
+  const clause = doneAgainstWords(output);
+  const state = closingChanges(output.actions)[0]?.state;
+  return clause !== undefined && state !== undefined ? [doneAgainstWordsIssue(clause, state)] : [];
+}
+
+/**
+ * After the one repair: a set that still closes the ticket while the run answers `partial` or
+ * `not-done` has its closing changes withheld with the reason, and the rest goes on. Real phase
+ * one only: the mock contract fails such a run, and the closing gate refuses such a set.
+ */
+async function withheldAgainstFact<T extends CorrectableOutput & WorkDoneFields>(
+  output: T,
+  record: RunSkillArgs['onAuditCorrection'],
+): Promise<T> {
+  const fact = workDoneFactOf(output);
+  if (fact === undefined || closingAgainstFact(fact, output.actions) === undefined) return output;
+  const refusals = closingChanges(output.actions).map(({ index, state }) => ({
+    index,
+    reason: closingAgainstFactReason(fact, state),
+  }));
+  await record?.(
+    refusals.map((refusal) => refusal.index),
+    `${WITHHELD_AGAINST_WORK_DONE}: ${refusals.map((refusal) => refusal.reason).join('; ')}`,
+  );
+  return withholdActions(output, refusals, 'by the work-done check');
+}
+
+/**
+ * After the one repair: a run that answers `done` again over words the tripwire reads as not done
+ * keeps its close, which then waits for the manager with the clause beside it (the gate reads
+ * `closeAgainstWords`); the tripwire never changes the answer or the status.
+ */
+async function heldAgainstWords<T extends CorrectableOutput & WorkDoneFields & { draft?: string }>(
+  output: T,
+  record: RunSkillArgs['onAuditCorrection'],
+): Promise<T> {
+  const clause = doneAgainstWords(output);
+  if (clause === undefined) return output;
+  await record?.([], `${CLOSE_HELD_AGAINST_WORDS}: "${clause}"`);
+  return { ...output, closeAgainstWords: clause };
 }
 
 /** The audit record of a reply Day0 completed with where a held item's work is. */
@@ -2898,6 +2994,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: raw.draft,
     notes: raw.notes,
     needsDependentPhase: closingPhase(raw.needsDependentPhase),
+    ...workDoneFieldsOf(raw),
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
     ...(mode === 'real'
@@ -2951,6 +3048,8 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     const issues = [
       ...trailAttention.issues,
       ...deferralAudit(output, candidate, deferralContext),
+      ...closingAgainstFactIssues(output),
+      ...doneAgainstWordsIssues(output),
       ...claimIssues(output.actions),
       ...heldItemReplyFindings(output.actions, args.heldElsewhere, chatSurfaces).map(
         (finding) => finding.issue,
@@ -2984,6 +3083,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       draft: repairedRaw.draft,
       notes: repairedRaw.notes,
       needsDependentPhase: closingPhase(repairedRaw.needsDependentPhase),
+      ...workDoneFieldsOf(repairedRaw),
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
       deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
@@ -3027,10 +3127,17 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
         ),
       args.onAuditCorrection,
     );
-    return await sayHeldItems(supported, args, output.actions);
+    const agreed = await heldAgainstWords(
+      await withheldAgainstFact(supported, args.onAuditCorrection),
+      args.onAuditCorrection,
+    );
+    return await sayHeldItems(agreed, args, output.actions);
   }
 
-  const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
+  const issues = [
+    ...mockActionContractIssues(output, candidate, plan, procedureContract),
+    ...doneAgainstWordsIssues(output),
+  ];
   if (issues.length === 0) return output;
 
   const repairPrompt = [
@@ -3056,6 +3163,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: repairedRaw.draft,
     notes: repairedRaw.notes,
     needsDependentPhase: repairedRaw.needsDependentPhase,
+    ...workDoneFieldsOf(repairedRaw),
     actions: repairedRaw.actions.map(materialiseGeneratedAction),
     procedureTrails: repairedRaw.procedureTrails,
   };
@@ -3065,7 +3173,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       `executor action contract remained invalid after one repair: ${remaining.join('; ')}`,
     );
   }
-  return repaired;
+  return await heldAgainstWords(repaired, args.onAuditCorrection);
 }
 
 /**
@@ -3553,6 +3661,7 @@ async function authorDependentSkillRun(
     `Emit at most ${cap} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
+    'Answer `workDone` for the whole run as it stands once this closing set lands, from the applied ledger: the ticket state you set agrees with it, and a run that answers "partial" or "not-done" leaves the state as it is and records the step it could not finish as blocked.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
     ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback), CHARTER_CLAUSE_RULE] : []),
     ...(advisory.length > 0
@@ -3624,6 +3733,7 @@ async function authorDependentSkillRun(
     return {
       draft: raw.draft,
       notes: raw.notes,
+      ...workDoneFieldsOf(raw),
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
       planStepOutcomes: normalisePlanStepOutcomes(
@@ -3673,6 +3783,7 @@ async function authorDependentSkillRun(
     ...trailAttention.issues,
     ...claimFindings(output.actions).map((finding) => finding.issue),
     ...gateIssues(output),
+    ...doneAgainstWordsIssues(output),
     ...(mode === 'real'
       ? heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []).map(
           (finding) => finding.issue,
@@ -3730,6 +3841,7 @@ async function authorDependentSkillRun(
         `${WITHHELD_BY_EVIDENCE}: ${orphaned.map((refusal) => refusal.reason).join('; ')}`,
       );
     }
+    output = await heldAgainstWords(output, args.onAuditCorrection);
     if (mode === 'real') output = await sayHeldItems(output, args, firstResponse);
   }
   return trailAttention.limitations.length > 0
