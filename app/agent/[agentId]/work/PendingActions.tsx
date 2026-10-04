@@ -48,6 +48,15 @@ export function closeAgainstWordsNote(employeeName: string, clause: string): str
   return `${employeeName} answered that the work is done, but wrote ${quoted} Approve the close only if the work was done; otherwise withhold it.`;
 }
 
+/**
+ * The row's toggle: withhold a ticked write, or include one left out, "again" only when it was the
+ * manager who left it out.
+ */
+function toggleLabel(on: boolean, leftOutByDay0: boolean): string {
+  if (on) return 'Withhold this one';
+  return leftOutByDay0 ? 'Include it' : 'Include it again';
+}
+
 /** Whether a row's verdict is a close the tripwire held for the manager (12-D). */
 function closeHeldAgainstWords(verdict: ActionVerdict | undefined): boolean {
   return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
@@ -158,6 +167,10 @@ export function PendingActions({
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(heldIndexes.filter((index) => !closeHeldAgainstWords(verdicts[index]))),
   );
+  // Such a close is Day0's to leave out until the manager touches it, and is not counted as theirs.
+  const [untouched, setUntouched] = useState<Set<number>>(
+    () => new Set(heldIndexes.filter((index) => closeHeldAgainstWords(verdicts[index]))),
+  );
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const reasonField = useRef<HTMLInputElement>(null);
@@ -172,6 +185,12 @@ export function PendingActions({
   }, [rejecting]);
 
   function toggle(index: number, on: boolean): void {
+    setUntouched((current) => {
+      if (!current.has(index)) return current;
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
     setSelected((current) => {
       const next = new Set(current);
       if (on) next.add(index);
@@ -181,7 +200,9 @@ export function PendingActions({
   }
 
   const anyRefused = refusedIndexes.size > 0;
-  const withheld = heldIndexes.filter((index) => !selected.has(index)).length;
+  const withheld = heldIndexes.filter(
+    (index) => !selected.has(index) && !untouched.has(index),
+  ).length;
   return (
     <>
       <ItemSection tone="warn">
@@ -253,11 +274,13 @@ export function PendingActions({
                     <p className="text-[13px] text-[var(--color-muted)]">
                       {refused
                         ? `Refused by Day0's gate: ${verdict.reason}. It cannot be sent.`
-                        : !on
-                          ? 'Withheld by you: it will not be sent, and stays in the record.'
-                          : verdict?.disposition === 'held' && verdict.reason
-                            ? heldSentence(verdict.reason)
-                            : null}
+                        : !on && untouched.has(index)
+                          ? 'Not ticked: approve it only if the work was done. Until you tick it, it will not be sent.'
+                          : !on
+                            ? 'Withheld by you: it will not be sent, and stays in the record.'
+                            : verdict?.disposition === 'held' && verdict.reason
+                              ? heldSentence(verdict.reason)
+                              : null}
                     </p>
                     <div className="flex flex-wrap items-center gap-x-4">
                       {refused ? null : (
@@ -266,9 +289,9 @@ export function PendingActions({
                           size="small"
                           disabled={busy}
                           onClick={() => toggle(index, !on)}
-                          aria-label={`${on ? 'Withhold this one' : 'Include it again'}: ${summary}`}
+                          aria-label={`${toggleLabel(on, untouched.has(index))}: ${summary}`}
                         >
-                          {on ? 'Withhold this one' : 'Include it again'}
+                          {toggleLabel(on, untouched.has(index))}
                         </Button>
                       )}
                       <Disclosure summary="Exact payload">

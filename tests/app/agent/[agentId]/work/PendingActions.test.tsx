@@ -153,6 +153,13 @@ describe('a close the tripwire sent to the manager (12-D)', (): void => {
     );
     expect(markup).toContain('Approve selected (1)');
     expect(markup.match(/type="checkbox"[^>]*checked=""/g) ?? []).toHaveLength(1);
+    // Day0 left it unticked, not the manager: the card says so and does not count it as theirs.
+    expect(markup).toContain(
+      'Not ticked: approve it only if the work was done. Until you tick it, it will not be sent.',
+    );
+    expect(markup).toContain('>Include it<');
+    expect(markup).not.toContain('withheld by you');
+    expect(markup).not.toContain('Withheld by you');
   });
 
   it('says nothing of the kind on a set the tripwire did not trip', (): void => {
