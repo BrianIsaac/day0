@@ -4116,9 +4116,14 @@ describe('listForAgent: whether a manager channel’s requests carry buttons (wa
       { available: false, why: 'no-app-level-token' },
     ]);
     vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    // Re-pinned for W12-R18: the bridge is read before the token and says whether one is stored.
     expect(await buttonsOf(withToken)).toContainEqual([
       'slack',
-      { available: false, why: 'no-bridge' },
+      { available: false, why: 'no-bridge', tokenStored: true },
+    ]);
+    expect(await buttonsOf(without)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-bridge', tokenStored: false },
     ]);
   });
 });

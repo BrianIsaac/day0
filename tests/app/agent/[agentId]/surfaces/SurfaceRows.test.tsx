@@ -501,7 +501,10 @@ describe('DecisionButtonsRow (wave 12, 12-M; RM3)', (): void => {
 
   it('asks for nothing where the token is not the reason', (): void => {
     const markup = render({
-      words: decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)'),
+      words: decisionButtonsWords(
+        { available: false, why: 'no-bridge', tokenStored: true },
+        'Mateo (Day0)',
+      ),
     });
     expect(markup).not.toContain('<input');
     expect(markup).toContain('Buttons: needs the Slack socket service');

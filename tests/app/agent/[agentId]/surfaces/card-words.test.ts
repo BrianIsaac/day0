@@ -423,13 +423,33 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   });
 
   it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
-    for (const why of ['no-bridge', 'no-own-app', 'not-slack-api'] as const) {
-      const words = decisionButtonsWords({ available: false, why }, 'Mateo (Day0)');
-      expect(`${words.title} ${words.note}`, why).toContain('typed code');
-      expect(words.asksForToken, why).toBe(false);
+    for (const buttons of [
+      { available: false, why: 'no-bridge', tokenStored: true },
+      { available: false, why: 'no-bridge', tokenStored: false },
+      { available: false, why: 'no-own-app' },
+      { available: false, why: 'not-slack-api' },
+    ] as const) {
+      const words = decisionButtonsWords(buttons, 'Mateo (Day0)');
+      expect(`${words.title} ${words.note}`, buttons.why).toContain('typed code');
+      expect(words.asksForToken, buttons.why).toBe(false);
     }
-    expect(decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)').title).toBe(
-      'Buttons: needs the Slack socket service',
+    expect(
+      decisionButtonsWords(
+        { available: false, why: 'no-bridge', tokenStored: true },
+        'Mateo (Day0)',
+      ).title,
+    ).toBe('Buttons: needs the Slack socket service');
+  });
+
+  it('asks for no token while the socket service is missing, and says the token comes after it (W12-R18)', (): void => {
+    const words = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: false },
+      'Mateo (Day0)',
     );
+    expect(words.title).toBe('Buttons: needs the Slack socket service');
+    expect(words.note).toBe(
+      "This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for Mateo (Day0)'s app-level token.",
+    );
+    expect(words.asksForToken).toBe(false);
   });
 });

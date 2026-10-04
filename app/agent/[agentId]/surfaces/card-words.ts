@@ -587,7 +587,9 @@ export function decisionButtonsWords(
     case 'no-bridge':
       return typedOnly(
         'Buttons: needs the Slack socket service',
-        `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`,
+        buttons.tokenStored
+          ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
+          : `This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for ${app}'s app-level token.`,
       );
     case 'no-own-app':
       return typedOnly(
@@ -600,8 +602,8 @@ export function decisionButtonsWords(
         "This connection can only send plain messages; buttons need Slack's own API.",
       );
     default: {
-      const unknown: never = buttons.why;
-      throw new Error(`unhandled reason ${String(unknown)}`);
+      const unknown: never = buttons;
+      throw new Error(`unhandled reason ${JSON.stringify(unknown)}`);
     }
   }
 }
