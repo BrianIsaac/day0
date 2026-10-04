@@ -55,6 +55,19 @@ export function isStoppable(state: string): state is StoppableState {
 }
 
 /**
+ * The manager's own words on a stop they made: their reason, the empty string when they gave
+ * none, or undefined when the stop was not theirs.
+ *
+ * @param skipReason - The item's recorded reason.
+ */
+export function managerStopNote(skipReason: string | undefined): string | undefined {
+  if (!isStopped(skipReason)) return undefined;
+  const detail = stopDetail(skipReason ?? '');
+  if (detail === MANAGER_STOP) return '';
+  return detail.startsWith(`${MANAGER_STOP}: `) ? detail.slice(MANAGER_STOP.length + 2) : undefined;
+}
+
+/**
  * The recorded reason of a stop the manager made, with their words when they gave any.
  *
  * @param note - The manager's reason, already trimmed and capped; empty when they gave none.

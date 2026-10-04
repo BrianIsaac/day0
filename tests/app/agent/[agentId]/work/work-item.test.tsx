@@ -7,6 +7,7 @@ import {
   justLanded,
   landedPlaces,
   TICKET_REREAD_STOP,
+  unfinishedInOwnWords,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   ticketRereadStopReason,
@@ -128,5 +129,57 @@ describe('the landing moment’s key (M7)', (): void => {
     expect([...justLanded('0', [0, 2, 3])]).toEqual([2, 3]);
     expect([...justLanded('', [0])]).toEqual([0]);
     expect([...justLanded(undefined, [0, 1])]).toEqual([]);
+  });
+});
+
+describe('a stop the manager made, in the card’s words (wave 12)', (): void => {
+  const unknownWrite = {
+    actions: [
+      {
+        tool: 'http.request',
+        args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', body: '{}' },
+      },
+    ],
+    applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+  };
+
+  it('says you stopped it, with your reason quoted once, and what is left to check', (): void => {
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager: The variance note is wrong.',
+        output: unknownWrite,
+      }),
+    ).toBe(
+      'You stopped the run: “The variance note is wrong.” A write landed or may have; confirm the provider below before Retry.',
+    );
+  });
+
+  it('says nothing landed when nothing did, and gives no reason you did not give', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: stopped by the manager' })).toBe(
+      'You stopped the run. Nothing landed, and nothing is left to decide.',
+    );
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager',
+        output: unknownWrite,
+        providerReconciliation: { confirmedAt: 1 },
+      }),
+    ).toBe('You stopped the run. A write landed before it stopped; nothing is left to decide.');
+  });
+});
+
+describe('what a finished run says it did not do (the 4 October demo)', (): void => {
+  it('quotes at most three clauses, the first ones the run wrote', (): void => {
+    expect(
+      unfinishedInOwnWords({
+        draft:
+          "I could not reconcile the deals. I can't find them. Nothing was reconciled. The list is not yet identified.",
+        notes: '',
+      }),
+    ).toEqual([
+      'I could not reconcile the deals.',
+      "I can't find them.",
+      'Nothing was reconciled.',
+    ]);
   });
 });
