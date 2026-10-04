@@ -51,6 +51,7 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * @typedef {object} AppState
  * @property {string} surfaceId
  * @property {string} appId
+ * @property {string | undefined} appName The app's name, as the backend lists it.
  * @property {Set<WebSocket>} sockets Every socket open or opening for the app (at most two).
  * @property {WebSocket | undefined} live The socket whose hello arrived last.
  * @property {WebSocket | undefined} pending The socket opened and not yet greeted.
@@ -108,16 +109,23 @@ export function createBridge(options) {
       const listed = new Map(
         answer.body.apps
           .filter((app) => typeof app?.surfaceId === 'string' && typeof app?.appId === 'string')
-          .map((app) => [app.surfaceId, app.appId]),
+          .map((app) => [
+            app.surfaceId,
+            {
+              appId: app.appId,
+              appName: typeof app.appName === 'string' ? app.appName : undefined,
+            },
+          ]),
       );
       for (const [surfaceId, state] of apps) {
-        if (listed.get(surfaceId) !== state.appId) remove(state);
+        if (listed.get(surfaceId)?.appId !== state.appId) remove(state);
       }
-      for (const [surfaceId, appId] of listed) {
+      for (const [surfaceId, { appId, appName }] of listed) {
         if (apps.has(surfaceId)) continue;
         const state = {
           surfaceId,
           appId,
+          appName,
           sockets: new Set(),
           live: undefined,
           pending: undefined,
@@ -370,6 +378,7 @@ export function createBridge(options) {
         syncedAt: lastSync.at,
         apps: [...apps.values()].map((state) => ({
           appId: state.appId,
+          ...(state.appName !== undefined ? { appName: state.appName } : {}),
           connected: state.live !== undefined,
           sockets: state.sockets.size,
           ...(state.mismatch ? { mismatch: true } : {}),

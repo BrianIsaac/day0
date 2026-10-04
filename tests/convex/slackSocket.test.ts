@@ -219,8 +219,11 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
       body: '{}',
     });
     expect(response.status).toBe(200);
+    // Re-pinned for W12-R32: each app comes with its name, so check:access can name its card.
     const listed = (await response.json()) as { apps: unknown[] };
-    expect(listed).toEqual({ apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS' }] });
+    expect(listed).toEqual({
+      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS', appName: 'Ops (Day0)' }],
+    });
     expect(JSON.stringify(listed)).not.toContain('xapp-');
   });
 
@@ -254,7 +257,7 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
       body: '{}',
     });
     expect(await response.json()).toEqual({
-      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS' }],
+      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS', appName: 'Ops (Day0)' }],
     });
   });
 

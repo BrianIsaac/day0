@@ -34,7 +34,7 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
   const state = {
     presses: [] as Backend['presses'],
     authorisations: [] as string[],
-    apps: [{ surfaceId: 'surface-mateo', appId: 'A_DAY0_FAKE' }],
+    apps: [{ surfaceId: 'surface-mateo', appId: 'A_DAY0_FAKE', appName: 'Mateo (Day0)' }],
     failPresses: 0,
     opened: 0,
   };
@@ -192,7 +192,8 @@ describe('the Socket Mode bridge (wave 12, 12-M; RM7)', (): void => {
     expect(new Set(backend.authorisations)).toEqual(new Set([`Bearer ${SECRET}`]));
     expect(running.status()).toMatchObject({
       synced: true,
-      apps: [{ appId: 'A_DAY0_FAKE', connected: true, sockets: 1 }],
+      // The app's name rides along, so check:access names the card (W12-R32).
+      apps: [{ appId: 'A_DAY0_FAKE', appName: 'Mateo (Day0)', connected: true, sockets: 1 }],
     });
   });
 
