@@ -426,6 +426,32 @@ export async function purgeCredential(
 }
 
 /**
+ * End in Day0 the app-level token a Slack card's app was given for its Socket Mode connection
+ * (wave 12, 12-M), when the card's end takes the app with it (the wave 12 review's W12-R2): a
+ * retire or "Delete my data" deletes the card, and a rejection or a handover's cut makes the
+ * deployment forget the app. A person pasted the token and no Slack API revokes one (K2), so it is
+ * never sent to Slack: its ciphertext is deleted here, as a pasted key's is. The organisation
+ * holds it, which the retire's sort reads as the organisation's own shared row and leaves alone;
+ * only the card that names it can end it. Nothing else names it: each landing stores a fresh row
+ * and ends the one before.
+ *
+ * @param ctx - The ending transaction.
+ * @param credentialId - The card's `provisioning.appLevelTokenCredentialId`, if it has one.
+ * @param now - The end's time.
+ * @returns Whether a row was there to end.
+ */
+export async function purgeAppLevelToken(
+  ctx: MutationCtx,
+  credentialId: Id<'credentials'> | undefined,
+  now: number,
+): Promise<boolean> {
+  const row = credentialId === undefined ? null : await ctx.db.get(credentialId);
+  if (row === null) return false;
+  await purgeCredential(ctx, row, now);
+  return true;
+}
+
+/**
  * Stop using a credential Day0 itself obtained and hold it for its revocation at the vendor (the
  * access plan, section 4.4; F19): revoked at once, so `decrypt` refuses it from this transaction
  * on, with its revocation `pending` for the end that asked and its ciphertext kept for the vendor

@@ -53,7 +53,7 @@ import {
   type ClaimFinding,
   type GroundingRead,
 } from './evidence-claims';
-import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
+import type { LandedWrite, RefusedClosing, UnsentWrite, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
 import {
   heldElsewhereLines,
@@ -1022,6 +1022,8 @@ export interface RunSkillArgs {
   managerAnswers?: readonly ManagerAnswer[];
   /** Writes earlier runs of this item landed; the prompts list them and a same-target comment is reused, not sent. */
   landedWrites?: readonly LandedWrite[];
+  /** Writes the earlier run attempted that the manager answered were not sent; the prompts list them to send again. */
+  unsentWrites?: readonly UnsentWrite[];
   /**
    * The external items other work items of the company hold, with what has
    * landed on them, scrubbed; real mode only. The prompts list them so a
@@ -2800,7 +2802,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...managerFeedbackLines(args.managerFeedback),
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
-    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
     '',
     '--- Candidate ---',
@@ -2872,7 +2874,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     // on 19 September a draft DM was withheld for the ticket's own sentence.
     const claimEvidence: ClaimEvidence = {
       ledger: [
-        ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+        ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
         ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
       ].join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
@@ -3526,7 +3528,7 @@ async function authorDependentSkillRun(
     ...managerFeedbackLines(args.managerFeedback),
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
-    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
     '',
     '--- Candidate ---',
@@ -3591,7 +3593,7 @@ async function authorDependentSkillRun(
   const claimEvidence: ClaimEvidence = {
     ledger: [
       appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
-      ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+      ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
       ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
     ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(

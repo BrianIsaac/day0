@@ -1271,13 +1271,41 @@ describe('what an outage leaves (P7-18)', (): void => {
     expect(await scheduledCalls(harness, 'workActions:draftPlanInternal')).toHaveLength(
       MAX_DRAFT_RESUMES,
     );
+    // Re-pinned for W12-R7: the stop carries the dead draft's claim, so it fails only that draft.
     expect(await scheduledCalls(harness, 'workRuns:setFailed')).toEqual([
       {
         workItemId,
         reason: `the plan draft died ${MAX_DRAFT_RESUMES + 1} times without an answer; Retry drafts it again`,
         stopped: true,
+        draftClaimedAt: expect.any(Number),
       },
     ]);
+  });
+
+  it('fails nothing when the manager stopped and retried the row before the sweep’s stop ran (W12-R7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-43');
+    for (let attempt = 0; attempt <= MAX_DRAFT_RESUMES; attempt += 1) {
+      await killDraft(harness, workItemId);
+      await harness.mutation(internal.work.resumeStalledSteps, {});
+    }
+    const [stop] = (await scheduledCalls(harness, 'workRuns:setFailed')) as Array<
+      Record<string, unknown>
+    >;
+    if (!stop) throw new Error('the sweep scheduled no stop');
+    // Before the job runs, the manager stops the row and retries it: a new draft holds it now.
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { draftClaimedAt: Date.now() });
+    });
+
+    await harness.mutation(internal.workRuns.setFailed, stop as never);
+
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'claimed' });
   });
 
   it("counts the dead drafts again from the manager's last Retry", async (): Promise<void> => {

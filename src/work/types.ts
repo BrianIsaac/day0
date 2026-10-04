@@ -331,6 +331,18 @@ export interface LandedWrite {
 }
 
 /**
+ * A write an earlier run of this work item attempted that the manager,
+ * checking the provider before the retry, answered was not sent (wave 12
+ * review W12-R13): the retry sends it afresh, and the landed write that
+ * shares its target no longer stands in for every write to that target.
+ */
+export interface UnsentWrite {
+  readonly action: MockAction;
+  /** The keys its ledger row was recorded under: the row's own and, for a reuse, the row it reused. */
+  readonly idempotencyKeys: readonly string[];
+}
+
+/**
  * An action an audit withheld after its one repair: never sent, kept on the
  * row with the reason so the manager can read what was written against why
  * it was turned away, while the rest of the response went on.
@@ -379,6 +391,11 @@ export interface ExecutionOutput {
   earlierQuestion?: string | null;
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
+  /**
+   * Writes the earlier run attempted that the manager answered were not sent;
+   * server-derived on the retry that follows the reconciliation, absent otherwise.
+   */
+  unsentWrites?: UnsentWrite[];
   draft: string;
   notes: string;
   actions: MockAction[];

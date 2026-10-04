@@ -12,8 +12,12 @@ import {
   INTERRUPTED_APPLY_REASON,
   OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   OUTCOME_UNKNOWN_REASON,
+  providerReconciliationEntries,
+  reconciliationOwed,
 } from '../../src/work/reconciliation';
+import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
+import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
 import { eventTypesIn } from '../../src/events/record-filters';
@@ -344,6 +348,45 @@ describe('Stop on a working item', (): void => {
     expect(stopped?.payload).toMatchObject({ applyInFlight: true });
   });
 
+  it('takes back an approval a pause holds: the set is stopped before its apply claims and sends nothing (W12-R14, D-7 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: heldOutput,
+    });
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1],
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'actions-pending',
+      approvedIndexes: [0, 1],
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.stopRun, { workItemId, reason: 'Not this quarter.' });
+
+    const row = await readItem(harness, workItemId);
+    expect(row).toMatchObject({
+      state: 'failed',
+      skipReason: `${STOPPED_PREFIX}stopped by the manager: Not this quarter.`,
+    });
+    expect(row.approvedIndexes).toBeUndefined();
+    // Nothing was sent, so nothing is owed a check before a retry.
+    expect(providerReconciliationEntries(row.output)).toEqual([]);
+    // The resume that would have sent the set finds nothing to send.
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    await expect(
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ claimed: false });
+  });
+
   it('refuses an item that is not under way, and another manager’s item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'plan-pending');
@@ -357,6 +400,70 @@ describe('Stop on a working item', (): void => {
         .mutation(api.workRuns.stopRun, { workItemId: working.workItemId }),
     ).rejects.toThrow();
     expect(await readItem(harness, working.workItemId)).toMatchObject({ state: 'executing' });
+  });
+});
+
+describe('a stop that meets an apply in flight, told in Slack (W12-R12)', (): void => {
+  /** Give the employee a manager channel, so a note has somewhere to go. */
+  async function withManagerChannel(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        credentialLanded: true,
+        credentialId,
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+  }
+
+  const notes = async (harness: Harness): Promise<Doc<'managerNotes'>[]> =>
+    await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+
+  it('names the rows whose outcome is unknown when a handover stops the apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, applyAttemptId } = await applyInFlight(harness);
+    await withManagerChannel(harness, agentId);
+    await harness.mutation(internal.workRuns.recordApplyOutcome, {
+      workItemId,
+      applyAttemptId,
+      index: 0,
+      row: landedComment,
+    });
+
+    await harness.run(async (ctx) => {
+      await stopRunsForHandover(ctx, agentId);
+    });
+
+    const [note] = await notes(harness);
+    expect(note).toMatchObject({ kind: 'landed', workItemId });
+    expect(note?.text).toContain('the employee was handed over to a new manager');
+    expect(note?.text).toContain('(outcome unknown)');
+  });
+
+  it('sends nothing for the manager’s own Stop: they are at the card that lists each row', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await applyInFlight(harness);
+    await withManagerChannel(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    expect(await notes(harness)).toEqual([]);
   });
 });
 
@@ -443,6 +550,127 @@ describe('a retry after the reconciliation (P4-1)', (): void => {
     expect(carried?.map((write) => write.action)).toEqual([status]);
     expect(carried?.[0].applied).toMatchObject({ ok: true });
     expect(carried?.[0].applied.outcomeUnknown).toBeUndefined();
+  });
+
+  it('never counts landed, in what the retried executor reads, a landed row the manager answered not sent (W12-R4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stoppedMidApply(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [
+        { phase: 'single', actionIndex: 0, answer: 'not-sent' },
+        { phase: 'single', actionIndex: 1, answer: 'landed' },
+      ],
+    });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    // The executor reads the row's output with no answers (`convex/workActions.ts`, at its claim).
+    const output = (await readItem(harness, workItemId)).output;
+    expect(landedWritesOf(output).map((write) => write.action)).toEqual([status]);
+    expect(unsentWritesOf(output).map((write) => write.action)).toEqual([comment]);
+  });
+  it('runs the plan again from its first phase, never a resumed closing set, when a prerequisite write is answered not sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const read = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-1"}' },
+    };
+    const retried = async (answer: 'landed' | 'not-sent'): Promise<Doc<'workItems'>> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { workItemId } = await seed(harness, 'failed');
+      // A run whose closing gate refused its set: the prerequisites landed, a resume is on offer.
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, {
+          skipReason: 'stopped: the closing gate refused the close',
+          output: {
+            phase: 'dependent-authoring',
+            draft: 'd',
+            notes: '',
+            actions: [read, comment],
+            applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'key-read' }, landedComment],
+            refusedClosing: {
+              actions: [status],
+              planStepOutcomes: [],
+              draft: '',
+              notes: '',
+              reason: 'refused',
+              at: 1,
+            },
+          },
+        });
+      });
+      await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+        answers: [{ phase: 'single', actionIndex: 1, answer }],
+      });
+      await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+      return await readItem(harness, workItemId);
+    };
+    expect((await retried('landed')).output).toMatchObject({ resumedClosing: true });
+    const sentAgain = await retried('not-sent');
+    expect((sentAgain.output as { resumedClosing?: boolean }).resumedClosing).toBeUndefined();
+    expect(unsentWritesOf(sentAgain.output).map((write) => write.action)).toEqual([comment]);
+  });
+});
+
+describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a))', (): void => {
+  /** A stopped run reconciled at v0.15.0: the entries stored whole, with no answer on any. */
+  async function reconciledAtV0150(harness: Harness): Promise<Id<'workItems'>> {
+    const { workItemId } = await stoppedMidApply(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      // The ledger's entries, which carry no answer, stored whole as v0.15.0 stored them.
+      const entries = providerReconciliationEntries(row?.output);
+      await ctx.db.patch(workItemId, {
+        providerReconciliation: { actor: 'owner', confirmedAt: 5, entries },
+      });
+    });
+    return workItemId;
+  }
+
+  it('asks again for the write of unknown outcome, and takes the answers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await reconciledAtV0150(harness);
+    const row = await readItem(harness, workItemId);
+    expect(reconciliationOwed(row)).toBe(true);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId }),
+    ).rejects.toThrow('confirm it against the provider before you dismiss it');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [{ phase: 'single', actionIndex: 1, answer: 'landed' }],
+    });
+    const answered = await readItem(harness, workItemId);
+    expect(answered.providerReconciliation?.entries.map((entry) => entry.answer)).toEqual([
+      'landed',
+      'landed',
+    ]);
+    expect(reconciliationOwed(answered)).toBe(false);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    // Both writes now ride into the retry as landed, so neither is sent again.
+    expect(
+      landedWritesOf((await readItem(harness, workItemId)).output).map((write) => write.action),
+    ).toEqual([comment, status]);
+  });
+
+  it('still refuses a confirmation that leaves the unknown write unanswered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await reconciledAtV0150(harness);
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true }),
+    ).rejects.toThrow('Say for each write whose outcome is unknown whether it landed');
   });
 });
 

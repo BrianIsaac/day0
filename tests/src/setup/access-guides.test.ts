@@ -4,6 +4,7 @@ import { parseSetupArguments } from '../../../scripts/setup';
 import { ACCESS_KIT, type AccessKitSystem } from '../../../src/surfaces/access-kit';
 import { linearKitManifest } from '../../../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../../../src/surfaces/access-kit/slack';
+import { decisionButtonsWords } from '../../../app/agent/[agentId]/surfaces/card-words';
 
 /**
  * The access recipes are what we run with a customer's IT, so each is pinned to the kit
@@ -174,5 +175,13 @@ describe('the access recipes', (): void => {
     ]) {
       expect(page(path), path).not.toContain('\u2014');
     }
+  });
+});
+
+describe('the Slack recipe and the card it describes', (): void => {
+  it('quotes the title the card shows once the buttons are on (W12-R17)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    const { title } = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
+    expect(text).toContain(`The card then says "${title}"`);
   });
 });

@@ -35,7 +35,20 @@ describe('decisionButtonsFor', (): void => {
       available: false,
       why: 'no-app-level-token',
     });
-    expect(decisionButtonsFor(ownApp, false)).toEqual({ available: false, why: 'no-bridge' });
+    // Re-pinned for W12-R18: the bridge is read before the token, and says whether one is stored.
+    expect(decisionButtonsFor(ownApp, false)).toEqual({
+      available: false,
+      why: 'no-bridge',
+      tokenStored: true,
+    });
+  });
+
+  it('reads the bridge before the token, so a card on a deployment with no bridge asks for none (W12-R18)', (): void => {
+    expect(decisionButtonsFor({ ...ownApp, provisioning: {} }, false)).toEqual({
+      available: false,
+      why: 'no-bridge',
+      tokenStored: false,
+    });
   });
 });
 

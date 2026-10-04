@@ -38,6 +38,8 @@ import {
 } from '../../convex/work';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
+// Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -1945,6 +1947,50 @@ describe('single-use manager decisions', (): void => {
     ).rejects.toThrow('expected plan-pending');
   });
 
+  it('says, while a pause holds the approved step, that it runs at the resume, not now (W12-R15)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const noticeAfter = async (hold: 'employee' | 'deployment'): Promise<string | undefined> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+        withSlack: true,
+      });
+      const surfaceId = await chatSurfaceId(harness, agentId);
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'pz4qrs',
+      });
+      if (hold === 'employee') {
+        await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+      } else {
+        vi.stubEnv('DAY0_CRONS_PAUSED', 'maintenance');
+      }
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.200',
+        reply: { verb: 'approve', id: 'pz4qrs' },
+      });
+      vi.unstubAllEnvs();
+      const notice = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('managerDecisionNotices')
+            .withIndex('by_surface_message', (q) =>
+              q.eq('surfaceId', surfaceId).eq('messageTs', '1.200'),
+            )
+            .unique(),
+      );
+      return notice?.text;
+    };
+    expect(await noticeAfter('employee')).toBe(
+      'Approval pz4qrs received. I’m paused: I’ll start the approved plan when you resume me.',
+    );
+    expect(await noticeAfter('deployment')).toBe(
+      'Approval pz4qrs received. Scheduled work on this deployment is paused: I’ll start the approved plan once it runs again.',
+    );
+  });
+
   it('keeps the reason of a plan rejected from the manager channel on the item and as a correction', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -3398,7 +3444,7 @@ describe('the exact-action gate', (): void => {
       {
         tool: 'mcp.call',
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
         idempotencyKey: `${workItemId}:${runId}:0`,
       },
       {
@@ -4492,7 +4538,7 @@ describe('the exact-action gate', (): void => {
         entry.reason,
       ]),
     ).toEqual([
-      [false, false, 'outcome unknown after interrupted apply - verify provider before retry'],
+      [false, false, OUTCOME_UNKNOWN_REASON],
       [true, true, HELD_PUBLIC_POST],
     ]);
   });
@@ -4540,7 +4586,7 @@ describe('the exact-action gate', (): void => {
       landed,
       expect.objectContaining({
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
       }),
     ]);
   });

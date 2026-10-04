@@ -54,15 +54,22 @@ import {
 } from '../src/work/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
+import { actionIdempotencyKey } from '../src/work/idempotency';
+import { describeAction } from '../src/surfaces/policy';
+import type { AppliedAction } from '../src/surfaces/types';
 import {
   answeredEntries,
   ledgerPhases,
+  NOT_SENT_AFTER_STOP_REASON,
+  OUTCOME_UNKNOWN_AFTER_STOP_REASON,
   providerReconciliationEntries,
+  reconciliationAnswered,
+  reconciliationOwed,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWritesOf } from '../src/work/landed-writes';
+import { landedWritesOf, notSentWritesOf } from '../src/work/landed-writes';
 import {
-  isStoppable,
+  isStoppableItem,
   landedNoteRows,
   landedWork,
   managerStopReason,
@@ -84,25 +91,36 @@ import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
  */
 
 /**
- * The output a retry carries when the manager answered the reconciliation entry by entry: the
- * landed writes as they answered them (`landedWritesOf` with the answers) kept in `landedWrites`,
- * which the retried run reads as already on the provider.
+ * The output a retry carries from the run it retries: the landed writes as the manager answered
+ * them (`landedWritesOf` with the answers) in `landedWrites`, which the retried run reads as
+ * already on the provider, and the writes that run did not send in `unsentWrites`, those answered
+ * not sent and those a stopped apply never sent, which it sends afresh (W12-R13, W12-R11) and never
+ * counts landed (W12-R4). Not-sent writes an earlier reconciliation carried are replaced: what
+ * became of them is in this ledger.
  *
  * @param output - The output the retry starts from.
  * @param row - The failed row and its reconciliation.
- * @returns The output with the carried writes, or undefined when nothing was answered.
+ * @returns The output with the carried writes, or undefined when nothing was answered or unsent.
  */
-function carriedAfterReconciliation(
+function carriedIntoRetry(
   output: unknown,
   row: Doc<'workItems'>,
 ): Record<string, unknown> | undefined {
   const answered = (row.providerReconciliation?.entries ?? []).filter(
     (entry) => entry.answer !== undefined,
   );
-  if (answered.length === 0 || !output || typeof output !== 'object') return undefined;
+  const unsentWrites = notSentWritesOf(row.output, answered);
+  if (
+    (answered.length === 0 && unsentWrites.length === 0) ||
+    !output ||
+    typeof output !== 'object'
+  ) {
+    return undefined;
+  }
   return {
-    ...(output as Record<string, unknown>),
-    landedWrites: landedWritesOf(row.output, answered),
+    ...Object.fromEntries(Object.entries(output).filter(([key]) => key !== 'unsentWrites')),
+    ...(answered.length > 0 ? { landedWrites: landedWritesOf(row.output, answered) } : {}),
+    ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
   };
 }
 
@@ -128,10 +146,7 @@ export const retryFailed = mutation({
     if (row.state === 'completed' && !feedback) {
       throw new Error('a completed item is sent back with a note saying what to change');
     }
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
+    if (reconciliationOwed(row)) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );
@@ -159,8 +174,13 @@ export const retryFailed = mutation({
       : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
         ? 'scope'
         : undefined;
+    // A write the manager says was not sent leaves the ledger a resumed closing set would author
+    // from untrue, so the retry runs the plan again from its first phase.
+    const answeredNotSent = (row.providerReconciliation?.entries ?? []).some(
+      (entry) => entry.answer === 'not-sent',
+    );
     const resume =
-      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
+      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan && !answeredNotSent
         ? closingResume(
             row.output,
             row.plan as ExecutionPlan,
@@ -177,7 +197,7 @@ export const retryFailed = mutation({
         : undefined;
     // The writes the manager confirmed on the provider are carried into the retry, so a write
     // answered landed is never sent again however its row reads (P4-1).
-    const carried = carriedAfterReconciliation(resume ?? row.output, row);
+    const carried = carriedIntoRetry(resume ?? row.output, row);
     if (redraft) await rememberReplacedRequest(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
@@ -271,8 +291,9 @@ export const reconcileFailed = mutation({
       throw new Error(`workItem state is ${row.state}; expected failed or completed`);
     }
     if (!args.confirmed) throw new Error('explicit provider verification is required');
-    if (row.providerReconciliation) {
-      return { ok: true, reconciledEntries: row.providerReconciliation.entries.length };
+    // One recorded before the per-entry answers is asked again and replaced (D-9 (a)).
+    if (reconciliationAnswered(row.providerReconciliation)) {
+      return { ok: true, reconciledEntries: row.providerReconciliation?.entries.length ?? 0 };
     }
     const entries = providerReconciliationEntries(row.output);
     if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) {
@@ -330,10 +351,7 @@ export const dismissFailed = mutation({
     if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
     // The inbox's entry is the one prompt that a write may have landed; it
     // stays until the manager has checked the provider.
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
+    if (reconciliationOwed(row)) {
       throw new ConvexError(
         'A write on this item may have landed: confirm it against the provider before you dismiss it.',
       );
@@ -646,8 +664,41 @@ export async function stopRunsForHandover(
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
     .collect();
-  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
+  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON, { tellManager: true });
   return running.length;
+}
+
+/**
+ * Tell the manager, in their channel, that a stop met an apply in flight: the rows it reported and
+ * each row whose outcome is now unknown, with the stop's reason, for them to check on the provider
+ * before a retry.
+ *
+ * @param ctx - The stop's mutation context.
+ * @param row - The item as it stood before the stop.
+ * @param output - The stopped run's output with its ledger.
+ * @param reason - Why it stopped.
+ */
+async function noteApplyStopped(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  output: Record<string, unknown>,
+  reason: string,
+): Promise<void> {
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .take(100)
+  ).map(toSurfaceRecord);
+  await queueManagerNote(ctx, row, 'landed', (agentName) =>
+    landedNoteText({
+      agentName,
+      title: row.title,
+      rows: landedNoteRows(output, surfaces, replyTargetFor(row)),
+      outcome: 'failed',
+      reason: stopDetail(reason),
+    }),
+  );
 }
 
 /**
@@ -659,16 +710,21 @@ export async function stopRunsForHandover(
  * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
  * nothing it ran landed. A handover's deadline stops an employee's runs this way
  * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
- * (`skillControls.withdraw`; the wave 10 review, M4).
+ * (`skillControls.withdraw`; the wave 10 review, M4). A stop the manager did not make themselves
+ * tells them in their channel of an apply it met, naming each row whose outcome is now theirs to
+ * check, as the apply's dead-man switch does (W12-R12); their own Stop is made at the card that
+ * lists the rows, so it sends nothing.
  *
  * @param ctx - The caller's mutation context.
  * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
  * @param reason - Why, in the words the item and the record carry after `stopped: `.
+ * @param options - Whether the manager is told of an apply in flight: not when they stopped it.
  */
 export async function stopRunsInTransaction(
   ctx: MutationCtx,
   rows: readonly Doc<'workItems'>[],
   reason: string,
+  options: { readonly tellManager: boolean },
 ): Promise<void> {
   for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
@@ -678,6 +734,7 @@ export async function stopRunsInTransaction(
         output: { ...output, applied },
         stopped: false,
       });
+      if (options.tellManager) await noteApplyStopped(ctx, row, { ...output, applied }, reason);
     } else {
       await failInTransaction(ctx, row, {
         reason,
@@ -987,6 +1044,72 @@ export const recordApplyOutcome = internalMutation({
 });
 
 /**
+ * Internal: an apply whose claim a Stop took away records the rows of its phase it never sent
+ * (the wave 12 review's W12-R11). The stop could not know how far the apply had got, so it
+ * recorded every unreported approved row as of unknown outcome; the apply, which reads its claim
+ * before each send and sends nothing once it is gone, knows the first row it did not send. Each
+ * row from there that the stop left unknown, under this run's key, becomes not sent, accounted for
+ * as a held row is, so the manager is never asked to check on the provider a write that was never
+ * sent. Fenced: only a failed item still holding the stopped run's ledger changes; after a Retry
+ * the keys differ and nothing does.
+ *
+ * @returns How many rows were recorded as not sent.
+ */
+export const recordUnsentAfterStop = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events'), firstUnsent: v.number() },
+  handler: async (ctx, args): Promise<number> => {
+    const item = await ctx.db.get(args.workItemId);
+    // Once the manager has reconciled the row, their answers stand and the ledger is not rewritten.
+    if (
+      !item ||
+      item.state !== 'failed' ||
+      item.providerReconciliation !== undefined ||
+      !item.output ||
+      typeof item.output !== 'object'
+    ) {
+      return 0;
+    }
+    const output = item.output as {
+      actions?: MockAction[];
+      applied?: AppliedAction[];
+      actionIndexOffset?: unknown;
+    };
+    const offset =
+      typeof output.actionIndexOffset === 'number' && Number.isInteger(output.actionIndexOffset)
+        ? output.actionIndexOffset
+        : 0;
+    let recorded = 0;
+    const applied = (output.applied ?? []).map((row, index): AppliedAction => {
+      const key = actionIdempotencyKey({
+        workItemId: args.workItemId,
+        runId: args.runId,
+        actionIndex: index + offset,
+      });
+      if (
+        index < args.firstUnsent ||
+        row.idempotencyKey !== key ||
+        row.reason !== OUTCOME_UNKNOWN_AFTER_STOP_REASON
+      ) {
+        return row;
+      }
+      recorded += 1;
+      const action = output.actions?.[index];
+      return {
+        tool: row.tool,
+        ok: true,
+        held: true,
+        reason: NOT_SENT_AFTER_STOP_REASON,
+        // The ledger's words for the write, which the card's not-sent list names it by.
+        ...(action ? { effect: describeAction(action) } : {}),
+        idempotencyKey: row.idempotencyKey,
+      };
+    });
+    if (recorded > 0) await ctx.db.patch(item._id, { output: { ...output, applied } });
+    return recorded;
+  },
+});
+
+/**
  * Cancel the step the loop last queued for a row (`stepJobId`), when it has not started.
  *
  * A step already running is not cancelled here: it is held off by the fences the stop clears
@@ -1007,7 +1130,8 @@ async function cancelQueuedStep(ctx: MutationCtx, row: Doc<'workItems'>): Promis
 
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): the manager stops an item the employee is working
- * (`claimed`, `plan-approved`, `executing`; wave 6 B D3, built in wave 12).
+ * (`claimed`, `plan-approved`, `executing`; wave 6 B D3, built in wave 12), or a set they approved
+ * whose apply has not claimed it, which takes the approval back (W12-R14, D-7 (b)).
  *
  * The queued step is cancelled, and the run ends through the stop every run's end shares
  * (`stopRunsInTransaction`, the handover's and the withdraw's): its run id and apply claim are
@@ -1021,14 +1145,14 @@ export const stopRun = mutation({
   args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (!isStoppable(row.state)) {
+    if (!isStoppableItem(row)) {
       throw new ConvexError('Only work under way can be stopped; this item has moved on.');
     }
     const identity = await getCallerOrThrow(ctx);
     const note = managerText(args.reason);
     const applyInFlight = row.applyAttemptId !== undefined && row.pendingRunId !== undefined;
     await cancelQueuedStep(ctx, row);
-    await stopRunsInTransaction(ctx, [row], managerStopReason(note));
+    await stopRunsInTransaction(ctx, [row], managerStopReason(note), { tellManager: false });
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.stopped',

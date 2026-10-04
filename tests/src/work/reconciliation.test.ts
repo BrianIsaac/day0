@@ -7,6 +7,8 @@ import {
   OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   reconcilerOf,
+  reconciliationAnswered,
+  reconciliationOwed,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 
@@ -99,9 +101,32 @@ describe('an outcome unknown, whichever ended the apply', (): void => {
     expect(isOutcomeUnknownReason('HTTP 500 · {"ok":false}')).toBe(false);
   });
 
+  // Re-pinned for W12-R9: the reasons reach the manager on the card, in their words.
   it('says a stopped apply was stopped, never that it was interrupted', (): void => {
     expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).not.toContain('interrupted');
-    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain('verify provider before retry');
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain(
+      'check whether it arrived before you retry',
+    );
+  });
+
+  it('words both reasons for a manager, with no spaced hyphen, and still reads the old words (W12-R9)', (): void => {
+    for (const reason of [OUTCOME_UNKNOWN_REASON, OUTCOME_UNKNOWN_AFTER_STOP_REASON]) {
+      expect(reason).not.toMatch(/ - |\bapply\b|\bprovider\b/);
+    }
+    const legacy = 'outcome unknown after interrupted apply - verify provider before retry';
+    expect(isOutcomeUnknownReason(legacy)).toBe(true);
+    expect(
+      isOutcomeUnknownReason(
+        'outcome unknown after the apply was stopped - verify provider before retry',
+      ),
+    ).toBe(true);
+    // A row recorded before v0.16.0 is listed in the words a row carries now.
+    expect(
+      providerReconciliationEntries({
+        actions: [{ tool: 'http.request', args: {} }],
+        applied: [{ tool: 'http.request', ok: false, reason: legacy, idempotencyKey: 'k' }],
+      })[0]?.reason,
+    ).toBe(OUTCOME_UNKNOWN_REASON);
   });
 });
 
@@ -110,5 +135,42 @@ describe('reconcilerOf', (): void => {
     expect(reconcilerOf('dev-no-auth|local-boss', 'dev-no-auth|local-boss')).toBe('you');
     expect(reconcilerOf('issuer|old-manager', 'issuer|new-manager')).toBe('previous-manager');
     expect(reconcilerOf('issuer|old-manager', undefined)).toBeUndefined();
+  });
+});
+
+describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a))', (): void => {
+  const unknown: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'mcp.call',
+    outcome: 'outcome-unknown',
+  };
+  const landed: ReconciliationEntry = { ...unknown, actionIndex: 1, outcome: 'landed' };
+  const output = {
+    actions: [{ tool: 'mcp.call', args: {} }],
+    applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+  };
+
+  it('counts as answered only once every write of unknown outcome has an answer', (): void => {
+    expect(reconciliationAnswered(undefined)).toBe(false);
+    expect(reconciliationAnswered({ entries: [unknown, landed] })).toBe(false);
+    expect(reconciliationAnswered({ entries: [{ ...unknown, answer: 'not-sent' }, landed] })).toBe(
+      true,
+    );
+    expect(reconciliationAnswered({ entries: [landed] })).toBe(true);
+  });
+
+  it('owes the check until it is answered, and never where nothing may have landed', (): void => {
+    expect(reconciliationOwed({ output })).toBe(true);
+    expect(reconciliationOwed({ output, providerReconciliation: { entries: [unknown] } })).toBe(
+      true,
+    );
+    expect(
+      reconciliationOwed({
+        output,
+        providerReconciliation: { entries: [{ ...unknown, answer: 'landed' }] },
+      }),
+    ).toBe(false);
+    expect(reconciliationOwed({ output: { actions: [], applied: [] } })).toBe(false);
   });
 });

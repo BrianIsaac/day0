@@ -40,9 +40,17 @@ function carriesPresses(surface: Doc<'surfaces'>, now: number): boolean {
   );
 }
 
+/** One app the bridge carries presses for: its card, its id and its name, never its token. */
+interface BridgeApp {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly appId: string;
+  /** The app's name, which `check:access` names its card by (W12-R32). */
+  readonly appName: string;
+}
+
 /**
- * Internal: one page of the apps whose presses the bridge carries, each by its card and its app
- * id, never its token: every card that can carry buttons (its own app with its app-level token)
+ * Internal: one page of the apps whose presses the bridge carries, each by its card, its app id
+ * and its name, never its token: every card that can carry buttons (its own app with its app-level token)
  * and is connected with its access running.
  */
 export const appsForBridge = internalQuery({
@@ -51,7 +59,7 @@ export const appsForBridge = internalQuery({
     ctx,
     args,
   ): Promise<{
-    apps: Array<{ surfaceId: Id<'surfaces'>; appId: string }>;
+    apps: BridgeApp[];
     cursor: string | null;
   }> => {
     const now = Date.now();
@@ -62,7 +70,13 @@ export const appsForBridge = internalQuery({
     return {
       apps: page.page.flatMap((surface) =>
         carriesPresses(surface, now) && surface.provisioning !== undefined
-          ? [{ surfaceId: surface._id, appId: surface.provisioning.appId }]
+          ? [
+              {
+                surfaceId: surface._id,
+                appId: surface.provisioning.appId,
+                appName: surface.provisioning.appName,
+              },
+            ]
           : [],
       ),
       cursor: page.isDone ? null : page.continueCursor,
@@ -217,7 +231,7 @@ async function bodyOf(request: Request): Promise<Record<string, unknown> | undef
 export const bridgeApps = httpAction(async (ctx, request) => {
   const refused = await refusal(request);
   if (refused !== undefined) return refused;
-  const apps: Array<{ surfaceId: Id<'surfaces'>; appId: string }> = [];
+  const apps: BridgeApp[] = [];
   let cursor: string | null = null;
   for (let read = 0; read < BRIDGE_PAGES; read += 1) {
     const page: { apps: typeof apps; cursor: string | null } = await ctx.runQuery(

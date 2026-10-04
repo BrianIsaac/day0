@@ -41,6 +41,7 @@ import {
   scheduleApply,
   scheduleNextStep,
   STEP_LEASE_MS,
+  stepHoldOf,
   stepMayRun,
   type StepClaim,
 } from './workLoop';
@@ -95,6 +96,7 @@ import {
   askedFor,
   batchDecisionNoticeText,
   canEditManagerMessage,
+  decisionNoticeText,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -197,7 +199,14 @@ function askableChannel(surface: Doc<'surfaces'>): boolean {
  * so the last boundary before a send refuses it whatever its row still says.
  */
 export const transportAuthority = internalQuery({
-  args: { agentId: v.id('agents'), surfaceSlug: v.string() },
+  args: {
+    agentId: v.id('agents'),
+    surfaceSlug: v.string(),
+    /** The apply claim the send is made under, when an apply makes it (W12-R11). */
+    applyClaim: v.optional(
+      v.object({ workItemId: v.id('workItems'), applyAttemptId: v.id('events') }),
+    ),
+  },
   handler: async (
     ctx,
     args,
@@ -215,6 +224,8 @@ export const transportAuthority = internalQuery({
          * access end date passed before the hourly sweep ended it (Q5, M21).
          */
         accessEnded?: string;
+        /** Whether the apply still holds the claim it was asked about; absent when none was. */
+        applyClaimHeld?: boolean;
       }
   > => {
     const agent = await ctx.db.get(args.agentId);
@@ -231,6 +242,7 @@ export const transportAuthority = internalQuery({
         .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
+    const claimed = args.applyClaim ? await ctx.db.get(args.applyClaim.workItemId) : undefined;
     const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
     const revoked = [
       ...new Set(
@@ -247,6 +259,13 @@ export const transportAuthority = internalQuery({
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
       ...(surface?.expiresAt !== undefined && accessEnded(surface, Date.now())
         ? { accessEnded: accessEndedReason(surface.expiresAt, agentZone(agent)) }
+        : {}),
+      ...(args.applyClaim
+        ? {
+            applyClaimHeld:
+              claimed?.state === 'executing' &&
+              claimed.applyAttemptId === args.applyClaim.applyAttemptId,
+          }
         : {}),
     };
   },
@@ -4793,7 +4812,15 @@ async function resolveChannelBatch(
       decisionId: batch.id,
       messageTs: args.messageTs,
       kind: 'received',
-      text: batchDecisionNoticeText({ id: batch.id, verb: args.reply.verb, decided, skipped }),
+      text: batchDecisionNoticeText({
+        id: batch.id,
+        verb: args.reply.verb,
+        decided,
+        skipped,
+        ...(args.reply.verb === 'approve'
+          ? { hold: await stepHoldOf(ctx.db, surface.agentId) }
+          : {}),
+      }),
     });
   }
   return { status: 'decided' as const, outcome: args.reply.verb, decided, skipped };
@@ -6575,13 +6602,13 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       );
     }
   }
-  const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
-  const text =
-    args.reply.verb === 'approve'
-      ? row.decision.kind === 'plan'
-        ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
-        : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
-      : `${noun} ${row.decision.id} received. I won’t apply it.`;
+  // A pause holds the step the approval queues at its claim: the notice says when it starts (W12-R15).
+  const text = decisionNoticeText({
+    id: row.decision.id,
+    verb: args.reply.verb,
+    kind: row.decision.kind,
+    hold: args.reply.verb === 'approve' ? await stepHoldOf(ctx.db, row.agentId) : undefined,
+  });
   await queueManagerReplyNotice(ctx, {
     surfaceId: surface._id,
     workItemId: row._id,

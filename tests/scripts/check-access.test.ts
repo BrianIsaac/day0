@@ -644,7 +644,7 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
           socket: {
             state: 'running',
             synced: true,
-            apps: [{ appId: 'A0PRIYA', connected: false, mismatch: true }],
+            apps: [{ appId: 'A0PRIYA', appName: 'Priya (Day0)', connected: false, mismatch: true }],
           },
         }),
       ),
@@ -652,7 +652,32 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
       'socket',
     );
     expect(socket.status).toBe('gap');
-    expect(socket.detail).toContain("A0PRIYA's card holds the app-level token of another app");
+    // Re-pinned for W12-R32: the card is named, and its verb agrees with it.
+    expect(socket.detail).toContain("Priya (Day0)'s card holds the app-level token of another app");
+  });
+
+  it('names every card that holds another app’s token, with a verb for several, and an app id only where no name came (W12-R32)', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({
+          socket: {
+            state: 'running',
+            synced: true,
+            apps: [
+              { appId: 'A0PRIYA', appName: 'Priya (Day0)', connected: false, mismatch: true },
+              { appId: 'A0MATEO', connected: false, mismatch: true },
+            ],
+          },
+        }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.detail).toContain(
+      'The cards of Priya (Day0) and app A0MATEO each hold the app-level token of another app',
+    );
   });
 
   it('names the secret when the service cannot read the backend’s list', async (): Promise<void> => {

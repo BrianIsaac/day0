@@ -47,6 +47,7 @@ import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { latestRejoins, type LastRejoin } from './channelRejoins';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
+import { purgeAppLevelToken } from './credentials';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
@@ -2811,7 +2812,9 @@ export const approve = mutation({
  * End at the vendor what a rejected card bound (11-AR; D4): every credential it binds that no
  * other card binds, its app's client secret and its token's pair included, so an app Day0 created
  * is deleted (S4) and its tokens revoked. A pasted key is never sent to a vendor and stays in the
- * owner's store, as the rejection always left it; its line says so.
+ * owner's store, as the rejection always left it; its line says so. The app-level token the app
+ * was given is ended in Day0 with the app the card forgets (`purgeAppLevelToken`, W12-R2), and
+ * writes no line of its own.
  *
  * @param ctx - The rejection's transaction.
  * @param surface - The card as it stood before the rejection.
@@ -2841,9 +2844,13 @@ async function endRejectedAtSource(
       provisioning: surface.provisioning,
     },
   ]);
-  const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
-    (row): row is Doc<'credentials'> => row !== null,
-  );
+  const appLevelToken = surface.provisioning?.appLevelTokenCredentialId;
+  await purgeAppLevelToken(ctx, appLevelToken, now);
+  const rows = (
+    await Promise.all(
+      [...bound].filter((id) => id !== appLevelToken).map(async (id) => await ctx.db.get(id)),
+    )
+  ).filter((row): row is Doc<'credentials'> => row !== null);
   if (rows.length === 0) return;
   await endAccessAtSource(ctx, {
     agentId: surface.agentId,
@@ -3625,6 +3632,8 @@ export interface CutSurface {
   readonly displayName: string;
   /** The credentials it bound, which the move sorts by the retire's rule. */
   readonly boundCredentials: readonly Id<'credentials'>[];
+  /** The app-level token its app was given, which the cut ends with the app it forgets (W12-R2). */
+  readonly appLevelTokenCredentialId?: Id<'credentials'>;
 }
 
 /** One surface a handover returned for re-approval with the employee's own identity kept (A25). */
@@ -3714,6 +3723,9 @@ export async function handOverSurfaces(
           slug: surface.slug,
           displayName: surface.displayName,
           boundCredentials: [...(await credentialsBoundBy(ctx.db, [surface]))],
+          ...(surface.provisioning?.appLevelTokenCredentialId === undefined
+            ? {}
+            : { appLevelTokenCredentialId: surface.provisioning.appLevelTokenCredentialId }),
         });
         break;
       }

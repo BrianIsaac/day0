@@ -400,11 +400,16 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 });
 
 describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
-  it('says buttons are on, with the typed code beside them', (): void => {
+  // Re-pinned for the wave 12 review: the card no longer says the buttons are on whether the
+  // bridge runs or not (W12-R16, D-6 (b)), nor that a request asked before they were on has them
+  // (W12-R10).
+  it('says buttons are on while the socket service runs, on each new request, with the typed code beside them', (): void => {
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
-    expect(words.title).toBe('Decisions in Slack: buttons are on');
+    expect(words.title).toBe(
+      'Decisions in Slack: buttons are on while the Slack socket service runs',
+    );
     expect(words.note).toBe(
-      'Each request to you arrives with Approve and Reject buttons and a typed code; either one decides it.',
+      'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -423,13 +428,33 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   });
 
   it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
-    for (const why of ['no-bridge', 'no-own-app', 'not-slack-api'] as const) {
-      const words = decisionButtonsWords({ available: false, why }, 'Mateo (Day0)');
-      expect(`${words.title} ${words.note}`, why).toContain('typed code');
-      expect(words.asksForToken, why).toBe(false);
+    for (const buttons of [
+      { available: false, why: 'no-bridge', tokenStored: true },
+      { available: false, why: 'no-bridge', tokenStored: false },
+      { available: false, why: 'no-own-app' },
+      { available: false, why: 'not-slack-api' },
+    ] as const) {
+      const words = decisionButtonsWords(buttons, 'Mateo (Day0)');
+      expect(`${words.title} ${words.note}`, buttons.why).toContain('typed code');
+      expect(words.asksForToken, buttons.why).toBe(false);
     }
-    expect(decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)').title).toBe(
-      'Buttons: needs the Slack socket service',
+    expect(
+      decisionButtonsWords(
+        { available: false, why: 'no-bridge', tokenStored: true },
+        'Mateo (Day0)',
+      ).title,
+    ).toBe('Buttons: needs the Slack socket service');
+  });
+
+  it('asks for no token while the socket service is missing, and says the token comes after it (W12-R18)', (): void => {
+    const words = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: false },
+      'Mateo (Day0)',
     );
+    expect(words.title).toBe('Buttons: needs the Slack socket service');
+    expect(words.note).toBe(
+      'This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of Mateo (Day0).',
+    );
+    expect(words.asksForToken).toBe(false);
   });
 });

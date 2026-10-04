@@ -158,7 +158,7 @@ Violates also: `tests/src/docs/system-discovery.test.ts:60` asserts the exact lo
 
 11.5 A test that schedules Convex work drains it explicitly with fake timers and `t.finishInProgressScheduledFunctions()` or `t.finishAllScheduledFunctions(vi.runAllTimers)`; it never sleeps. Reason: convex-test's documented shape, and the only way the test is deterministic.
 
-11.6 MUST NOT leave `.skip`, `.only`, `.todo` or `.fails` in a committed test without a reason on the same line. A bug fix lands the reproducing test in the same commit as the fix (CONTRIBUTING). Follows: the tree has none.
+11.6 MUST NOT leave `.skip`, `.only`, `.todo` or `.fails` in a committed test without its reason as a comment on the same line or, where the formatter breaks the call, on the line after it (Prettier moves a comment after `it.fails(` to the next line). A bug fix lands the reproducing test in the same commit as the fix (CONTRIBUTING). Gate: `tests/test-markers.test.ts` checks every Vitest file. Follows: `tests/convex/onboarding.test.ts` and `tests/bed/company-docs.test.ts`, each `it.fails` with its reason on the line after it (wave 12 review, W12-R6).
 
 11.7 Every `describe` name is the module or behaviour; every `it` name is a sentence that states the expected outcome, so the failure line reads as a bug report.
 
@@ -200,7 +200,7 @@ Violates also: `tests/src/docs/system-discovery.test.ts:60` asserts the exact lo
 
 15.1 British spelling in comments, docstrings, commit messages, user-facing copy and documentation (`serialise`, `colour`, `behaviour`). US spelling only inside an identifier or string that mirrors an SDK or protocol. Follows: `src/work/autonomy.ts:29`.
 
-15.2 No emojis in code, comments, copy, commits or documentation. The one permitted occurrence is a unicode round-trip fixture where the emoji is data (`tests/src/lib/credential-crypto.test.ts:71`). The same data exception covers text pinned byte for byte to recorded runs, so the em dashes 13.3 and 15.3 forbid stay where the runs were recorded with them: the mock author prompt in `convex/skillAuthorPrompt.ts` and the test that pins it, until the runs are recorded again (decision D4, 3 October 2026).
+15.2 No emojis in code, comments, copy, commits or documentation. The one permitted occurrence is a unicode round-trip fixture where the emoji is data (`tests/src/lib/credential-crypto.test.ts:71`). The same data exception covers text pinned byte for byte to recorded runs, so the em dashes 13.3 and 15.3 forbid stay where the runs were recorded with them: the mock author prompt in `convex/skillAuthorPrompt.ts` and the test that pins it, until the runs are recorded again (decision D4, 3 October 2026). The mock executor preamble (`MOCK_PREAMBLE` in `src/work/execute-skill.ts`) moved at v0.16.0: its nine dashes became colons, with one rule line added, so every mock run from v0.16.0 sees the new preamble, a frozen bed re-recorded from it does too, and runs before and after are not byte-comparable on that prompt (decision D-4 (a), 4 October 2026).
 
 15.3 No em dashes anywhere (13.3 for code; the same for documentation and commits).
 

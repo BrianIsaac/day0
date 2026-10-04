@@ -110,8 +110,8 @@ Keep a copy, put it back, or move to this checkout's release:
 Hold the scheduled jobs, with the stack up:
   ./setup.sh pause     the intake and decision polls, the digests, the sweeps and
                        the documentation sync skip until unpause; the backend
-                       restarts so every job reads it. Work already scheduled
-                       runs to its end.
+                       restarts so every job reads it. A step already under way
+                       finishes the step it is on and holds before the next.
   ./setup.sh unpause   lift the pause; each job runs again at its next turn
 
 The company sign-in, with the customer's IT, on an installation this command made

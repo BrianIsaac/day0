@@ -13,6 +13,10 @@ import {
   ticketRereadStopReason,
   withheldBeforeFirstWrite,
 } from '../../../../../src/work/ticket-ownership';
+import {
+  INTERRUPTED_APPLY_REASON,
+  type ReconciliationEntry,
+} from '../../../../../src/work/reconciliation';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -142,6 +146,12 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
     ],
     applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
   };
+  const unknownEntry: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'http.request',
+    outcome: 'outcome-unknown',
+  };
 
   it('says you stopped it, with your reason quoted once, and what is left to check', (): void => {
     expect(
@@ -154,6 +164,31 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
     );
   });
 
+  it('says an interrupted apply in a manager’s words, not the engine’s (W12-R9, from the bed)', (): void => {
+    expect(failedItemReason({ skipReason: INTERRUPTED_APPLY_REASON, output: unknownWrite })).toBe(
+      'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.',
+    );
+    expect(
+      failedItemReason({
+        skipReason: INTERRUPTED_APPLY_REASON,
+        output: { actions: [], applied: [] },
+      }),
+    ).toBe(
+      'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.',
+    );
+  });
+
+  it('ends the quoted reason with a full stop when the manager gave none (W12-R9)', (): void => {
+    expect(
+      failedItemReason({
+        skipReason:
+          'stopped: stopped by the manager: Wrong quarter, stopping before anything is sent',
+      }),
+    ).toBe(
+      'You stopped the run: “Wrong quarter, stopping before anything is sent”. Nothing landed, so there is nothing to check.',
+    );
+  });
+
   it('says nothing landed when nothing did, and gives no reason you did not give', (): void => {
     expect(failedItemReason({ skipReason: 'stopped: stopped by the manager' })).toBe(
       'You stopped the run. Nothing landed, so there is nothing to check.',
@@ -162,10 +197,20 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
       failedItemReason({
         skipReason: 'stopped: stopped by the manager',
         output: unknownWrite,
-        providerReconciliation: { confirmedAt: 1 },
+        providerReconciliation: { entries: [{ ...unknownEntry, answer: 'landed' }] },
       }),
     ).toBe(
       'You stopped the run. A write landed before it stopped; a retry does not send it again.',
+    );
+    // A reconciliation recorded before the per-entry answers is asked again (W12-R3, D-9 (a)).
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager',
+        output: unknownWrite,
+        providerReconciliation: { entries: [unknownEntry] },
+      }),
+    ).toBe(
+      'You stopped the run. A write landed or may have; confirm the provider below before Retry.',
     );
   });
 });

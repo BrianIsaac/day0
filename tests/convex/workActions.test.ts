@@ -137,6 +137,8 @@ import {
   log1RefusedClosing,
 } from '../fixtures/work/full-run-3-2026-09-19-log-1';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+// Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -4627,7 +4629,7 @@ describe('executing an approved plan through the gate', (): void => {
     });
     expect(ledger(failed)[0]).toMatchObject({
       ok: false,
-      reason: 'outcome unknown after interrupted apply - verify provider before retry',
+      reason: OUTCOME_UNKNOWN_REASON,
     });
   });
 

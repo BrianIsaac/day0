@@ -268,6 +268,33 @@ describe('Stop on a working card (wave 12)', (): void => {
   });
 });
 
+describe('Stop on an approval that has not started (W12-R14, D-7 (b))', (): void => {
+  it('offers Stop on a set you approved that waits, and says the approval is taken back', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.held,
+      approvedIndexes: [1, 2],
+      applyPhase: 'approved',
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain(
+      'Mira has not sent the writes you approved yet. Stop takes your approval back and sends none of them.',
+    );
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep the approval');
+    await press(document.body, 'Take the approval back');
+    expect(view.calls).toEqual([['stop', '']]);
+  });
+
+  it('offers no Stop on a held set still waiting for your decision', (): void => {
+    const view = card(DRAWN.held);
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Stop',
+    );
+  });
+});
+
 describe('write held for you (work-held.html, work-held-withheld.html)', (): void => {
   it('ticks every held write, withholds one, counts the ticks on Approve and sends only what is ticked', async (): Promise<void> => {
     const view = card(DRAWN.held);
@@ -522,11 +549,52 @@ describe('stopped with a write that may have landed', (): void => {
       },
     } as unknown as Doc<'workItems'>);
     const group = view.container.querySelector('fieldset');
-    expect(group?.querySelector('legend')?.textContent).toContain('outcome unknown');
+    // Re-pinned for W12-R9: the group is named by what the write does, then its outcome.
+    expect(group?.querySelector('legend')?.textContent).toContain('Reply in #revops-asks thread');
+    expect(group?.querySelector('legend')?.textContent).toContain('Outcome unknown');
+    expect(group?.querySelector('legend')?.textContent).not.toContain('http.request');
+    // The run record's list names the write the same way, with no tool id and no spaced hyphen.
+    expect(view.text()).toContain('with an unknown outcome · may have landed');
+    expect(view.text()).not.toContain('http.request - ');
+    expect(
+      [...view.container.querySelectorAll('details > summary')].map(
+        (summary) => summary.textContent,
+      ),
+    ).toContain('Ledger key (for support)');
     for (const radio of group?.querySelectorAll('input[type="radio"]') ?? []) {
       expect(radio.closest('label')?.className).toMatch(/(^|\s)min-h-11(\s|$)/);
     }
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
+  });
+});
+
+describe('the rows a stopped apply never sent (W12-R11, second pass)', (): void => {
+  it('names each by what it would have done and says once that it was not sent', (): void => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: stopped by the manager',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY, THREAD_REPLY],
+        applied: [
+          { tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' },
+          {
+            tool: 'http.request',
+            ok: true,
+            held: true,
+            reason: 'not sent: the run was stopped before this write went out',
+            effect: 'http.request slack · POST /chat.postMessage · body "{...}"',
+            idempotencyKey: 'w:1',
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('1 action held · never sent');
+    expect(view.text()).toContain('Reply in #revops-asks thread');
+    expect(view.text()).toContain('not sent: the run stopped before it went out');
+    expect(view.text()).not.toContain('POST /chat.postMessage');
   });
 });
 

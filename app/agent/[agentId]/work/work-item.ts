@@ -16,7 +16,14 @@ import {
   managerStopNote,
 } from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
-import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  landedRowCount,
+  providerReconciliationEntries,
+  reconciliationAnswered,
+  retryRequiresProviderReconciliation,
+  type ReconciliationEntry,
+} from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
@@ -106,7 +113,11 @@ export interface RefusedClosingRow {
 }
 
 /** A ledger row labelled with the phase that applied it, when the run had two. */
-export type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+export type PhasedLedgerRow = LedgerRow & {
+  phase?: 'prerequisite' | 'closing';
+  /** What the row's action does, in a manager's words, where the card has named it. */
+  summary?: string;
+};
 
 /**
  * Every applied row of a run, prerequisite phase first, each labelled with the
@@ -328,8 +339,14 @@ export function failedItemReason(item: {
     applied?: unknown;
     initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
   } | null;
-  providerReconciliation?: { confirmedAt: number };
+  providerReconciliation?: { entries: readonly ReconciliationEntry[] };
 }): string | undefined {
+  // The engine's own reason for an interrupted apply, said to the manager plainly (W12-R9, bed).
+  if (item.skipReason === INTERRUPTED_APPLY_REASON) {
+    return providerReconciliationEntries(item.output).length > 0
+      ? 'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.'
+      : 'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.';
+  }
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
@@ -340,11 +357,15 @@ export function failedItemReason(item: {
   }
   if (item.skipReason && isStopped(item.skipReason)) {
     const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
-    const unconfirmed = landed && !item.providerReconciliation;
+    const unconfirmed = landed && !reconciliationAnswered(item.providerReconciliation);
     // The manager's own stop says so in their words, once, then what is left (wave 12).
     const note = managerStopNote(item.skipReason);
     if (note !== undefined) {
-      const said = note === '' ? 'You stopped the run.' : `You stopped the run: “${note}”`;
+      // The quoted reason ends the sentence: a full stop after it unless it carries its own (W12-R9).
+      const said =
+        note === ''
+          ? 'You stopped the run.'
+          : `You stopped the run: “${note}”${/[.!?…]$/.test(note) ? '' : '.'}`;
       if (unconfirmed) {
         return `${said} A write landed or may have; confirm the provider below before Retry.`;
       }

@@ -22,7 +22,13 @@ export type ButtonsUnavailable =
 /** Whether an employee's decision requests carry Approve and Reject buttons, and why not. */
 export type DecisionButtons =
   | { readonly available: true }
-  | { readonly available: false; readonly why: ButtonsUnavailable };
+  | { readonly available: false; readonly why: Exclude<ButtonsUnavailable, 'no-bridge'> }
+  | {
+      readonly available: false;
+      readonly why: 'no-bridge';
+      /** Whether the app's app-level token is stored, so the bridge is all that is missing. */
+      readonly tokenStored: boolean;
+    };
 
 /** The fields of a chat card the buttons depend on. */
 export interface ButtonsCard {
@@ -33,9 +39,10 @@ export interface ButtonsCard {
 
 /**
  * Whether a chat card's decision requests carry buttons (wave 12, 12-M; RM3 (a)): only on Slack's
- * documented Web API, through the employee's own app, once its app-level token has landed, on a
- * deployment whose Socket Mode bridge is configured. Otherwise the typed code alone, which always
- * decides, and the reason the card shows.
+ * documented Web API, through the employee's own app, on a deployment whose Socket Mode bridge is
+ * configured, once the app's app-level token has landed. The bridge is read before the token, so a
+ * card on a deployment that runs none asks for no token it could not use (W12-R18). Otherwise the
+ * typed code alone, which always decides, and the reason the card shows.
  *
  * @param card - The chat card the requests go through.
  * @param bridgeConfigured - Whether the deployment holds the bridge's secret.
@@ -45,10 +52,9 @@ export function decisionButtonsFor(card: ButtonsCard, bridgeConfigured: boolean)
     return { available: false, why: 'not-slack-api' };
   }
   if (card.provisioning === undefined) return { available: false, why: 'no-own-app' };
-  if (card.provisioning.appLevelTokenCredentialId === undefined) {
-    return { available: false, why: 'no-app-level-token' };
-  }
-  if (!bridgeConfigured) return { available: false, why: 'no-bridge' };
+  const tokenStored = card.provisioning.appLevelTokenCredentialId !== undefined;
+  if (!bridgeConfigured) return { available: false, why: 'no-bridge', tokenStored };
+  if (!tokenStored) return { available: false, why: 'no-app-level-token' };
   return { available: true };
 }
 

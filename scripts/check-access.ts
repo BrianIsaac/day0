@@ -126,6 +126,8 @@ export type SocketBridgeReading =
       readonly synced: boolean;
       readonly apps: ReadonlyArray<{
         readonly appId: string;
+        /** The app's name, which a line names its card by; absent from a service before v0.16.0. */
+        readonly appName?: string;
         readonly connected: boolean;
         /** The app's connection answered for another app: its card holds another app's token. */
         readonly mismatch?: boolean;
@@ -765,6 +767,25 @@ async function reachCheck(
 }
 
 /**
+ * The gap for cards that hold another app's app-level token, each named by its app (W12-R32).
+ *
+ * @param names - The apps' names, or `app <id>` where the service gave none.
+ */
+function mismatchedTokenWords(names: readonly string[]): string {
+  if (names.length === 1) {
+    return (
+      `${names[0]}'s card holds the app-level token of another app: generate a token in its own ` +
+      'app and land it on that card again.'
+    );
+  }
+  const listed = `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+  return (
+    `The cards of ${listed} each hold the app-level token of another app: generate a token in ` +
+    "each card's own app and land it on that card again."
+  );
+}
+
+/**
  * Whether the Slack socket service carries the Approve and Reject presses (12-M; RM7): running,
  * reading the backend's app list, and holding a connection for each employee app with an
  * app-level token. Not running is a note, since the typed code always decides; a list it cannot
@@ -795,15 +816,11 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
         'the service.',
     );
   }
-  const mismatched = reading.apps.filter((app) => app.mismatch === true).map((app) => app.appId);
+  const mismatched = reading.apps
+    .filter((app) => app.mismatch === true)
+    .map((app) => app.appName ?? `app ${app.appId}`);
   if (mismatched.length > 0) {
-    return check(
-      row.system,
-      'socket',
-      'gap',
-      `${mismatched.map((appId) => `${appId}'s card`).join(' and ')} holds the app-level token of ` +
-        "another app: generate the token in that employee's own app and land it on its card again.",
-    );
+    return check(row.system, 'socket', 'gap', mismatchedTokenWords(mismatched));
   }
   const unconnected = reading.apps.filter((app) => !app.connected).map((app) => app.appId);
   if (unconnected.length > 0) {
@@ -1060,6 +1077,7 @@ function socketReadingOf(stdout: string): SocketBridgeReading {
         ? [
             {
               appId: row.appId,
+              ...(typeof row.appName === 'string' ? { appName: row.appName } : {}),
               connected: row.connected === true,
               ...(row.mismatch === true ? { mismatch: true } : {}),
             },

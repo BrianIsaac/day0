@@ -15,12 +15,16 @@ import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
   isOutcomeUnknownReason,
+  ledgerPhases,
+  type ReconciliationEntry,
   providerReconciliationEntries,
   reconcilerOf,
+  reconciliationAnswered,
+  reconciliationOwed,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
-import { isStopped } from '@/work/stop';
+import { approvedNotStarted, isStoppableItem, isStopped } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
@@ -37,9 +41,9 @@ import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { type ItemPlan, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
-import { ManagerFeedbackNote, WorkingFromNote } from './RunDetails';
+import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
-import { StopDialog, stopWhy } from './StopDialog';
+import { StopDialog, stopWhy, type StopMoment } from './StopDialog';
 import { TicketNowLine } from './TicketNowLine';
 import {
   type ItemVerdict,
@@ -56,6 +60,7 @@ import {
   landedPlaces,
   pendingVerdicts,
   phasedLedger,
+  type PhasedLedgerRow,
   type RunOutput,
   unfinishedInOwnWords,
   waitingLine,
@@ -227,7 +232,22 @@ export function WorkItemCard({
   const landedBefore = usePreviousValue(places.join(','), LANDING_MS);
   const fresh = justLanded(landedBefore, places);
   // A row the auto phase deferred is in the gate box, not in the ledger's held list.
-  const held = ledger.filter((row) => row.held && !row.awaitingApproval);
+  // A row that never sent, or whose outcome is unknown, is named by what its action does, as the
+  // reconciliation names it, never by the ledger's technical description (the bed's second pass).
+  const ledgerActions = output?.initial
+    ? [...(output.initial.actions ?? []), ...(output.actions ?? [])]
+    : (output?.actions ?? []);
+  const named = (rows: readonly PhasedLedgerRow[]): PhasedLedgerRow[] =>
+    rows.map((row) => {
+      const action = ledgerActions[ledger.indexOf(row)];
+      return action
+        ? {
+            ...row,
+            summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
+          }
+        : row;
+    });
+  const held = named(ledger.filter((row) => row.held && !row.awaitingApproval));
   // A row Day0's own gate refused was never sent: it is listed apart from a
   // row the provider failed, whose outcome someone may have to check.
   const unlanded = ledger.filter((row) => !row.ok && !row.held);
@@ -239,6 +259,7 @@ export function WorkItemCard({
       !refused.includes(row) && (row.outcomeUnknown === true || isOutcomeUnknownReason(row.reason)),
   );
   const failed = unlanded.filter((row) => !refused.includes(row) && !unknown.includes(row));
+  const namedUnknown = named(unknown);
   const landedAutonomously = landed.filter((row) => row.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -260,6 +281,27 @@ export function WorkItemCard({
   // The per-action box already names every action that failed, so the
   // row-level reason only earns its space for the other failures: no
   // registered skill, a model error, a mid-run throw.
+  // Each entry to check is named by what its action does, as the held actions are (W12-R9).
+  const namedEntries = (entries: readonly ReconciliationEntry[]): ReconciliationRow[] => {
+    const phases = ledgerPhases(output);
+    return entries.map((entry) => {
+      const action = phases.find((phase) => phase.phase === entry.phase)?.actions[
+        entry.actionIndex
+      ];
+      return action
+        ? {
+            ...entry,
+            summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
+          }
+        : entry;
+    });
+  };
+  // An apply sending writes holds both; a closing phase being written holds only the claim.
+  const stopMoment: StopMoment = approvedNotStarted(item)
+    ? 'approved'
+    : item.applyAttemptId !== undefined && item.pendingRunId !== undefined
+      ? 'applying'
+      : 'working';
   const stopReason =
     item.state === 'failed' && !rejection && failed.length === 0
       ? failedItemReason(item)
@@ -343,7 +385,7 @@ export function WorkItemCard({
       rows={ledger}
       refused={refused}
       failed={failed}
-      unknown={unknown}
+      unknown={namedUnknown}
       title={item.title}
     />
   );
@@ -419,8 +461,7 @@ export function WorkItemCard({
         <StopDialog
           title={item.title}
           employeeName={employeeName}
-          // An apply sending writes holds both; a closing phase being written holds only the claim.
-          applying={item.applyAttemptId !== undefined && item.pendingRunId !== undefined}
+          moment={stopMoment}
           onStop={onStop}
           onClose={() => setStopping(false)}
           onDone={(words) => {
@@ -538,15 +579,19 @@ export function WorkItemCard({
           reason={stopReason}
           reconciliation={{
             needed: retryRequiresProviderReconciliation(output, item.skipReason),
-            entries: item.providerReconciliation?.entries ?? providerReconciliationEntries(output),
-            ...(item.providerReconciliation
+            // One recorded before the per-entry answers is asked again (W12-R3, D-9 (a)).
+            ...(item.providerReconciliation && reconciliationAnswered(item.providerReconciliation)
               ? {
+                  entries: namedEntries(item.providerReconciliation.entries),
                   recorded: {
                     confirmedAt: item.providerReconciliation.confirmedAt,
                     by: reconcilerOf(item.providerReconciliation.actor, managerKey),
                   },
                 }
-              : {}),
+              : {
+                  entries: namedEntries(providerReconciliationEntries(output)),
+                  askedAgain: item.providerReconciliation !== undefined,
+                }),
           }}
           employeeName={employeeName}
           autonomous={autonomousActions}
@@ -582,10 +627,7 @@ export function WorkItemCard({
             : item.state === 'failed' &&
                 onDismiss &&
                 // A write that may have landed keeps the item in the inbox until it is reconciled.
-                !(
-                  retryRequiresProviderReconciliation(output, item.skipReason) &&
-                  !item.providerReconciliation
-                )
+                !reconciliationOwed(item)
               ? {
                   dismiss: {
                     kind: 'dismiss' as const,
@@ -602,8 +644,8 @@ export function WorkItemCard({
         />
       ) : null}
       {/* A run under way is stopped from the card's foot, where every card keeps its controls. */}
-      {WORKING_STATES.has(item.state) && onStop ? (
-        <ItemFoot why={stopWhy(employeeName)}>
+      {isStoppableItem(item) && onStop ? (
+        <ItemFoot why={stopWhy(employeeName, stopMoment)}>
           <Button variant="danger" disabled={deciding} onClick={() => setStopping(true)}>
             Stop
           </Button>

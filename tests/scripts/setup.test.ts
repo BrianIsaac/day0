@@ -36,6 +36,7 @@ import {
   readEnvValues,
   runSetup,
   SetupCancelled,
+  SETUP_USAGE,
   firstSuccessLines,
   pushRefusalAdvice,
   sequenceSteps,
@@ -335,6 +336,9 @@ describe('reading the command line', (): void => {
 
   it('answers --help with the usage text rather than doing anything', (): void => {
     expect(parseSetupArguments(['--help']).help).toBe(true);
+    // The pause verbs' help says queued work steps hold (W12-R5).
+    expect(SETUP_USAGE).toContain('every job skips and queued work steps hold until');
+    expect(SETUP_USAGE).toContain('each job runs again at its next turn, and the held');
   });
 });
 

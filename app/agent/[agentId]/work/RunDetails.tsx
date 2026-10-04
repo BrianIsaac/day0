@@ -16,11 +16,12 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
-import type {
-  GivenAnswer,
-  ReconciliationAnswer,
-  ReconciliationEntry,
-  Reconciler,
+import {
+  outcomeUnknownDetail,
+  type GivenAnswer,
+  type ReconciliationAnswer,
+  type ReconciliationEntry,
+  type Reconciler,
 } from '@/work/reconciliation';
 import { type ReactNode, useId, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -592,6 +593,24 @@ function verifiedBy(by: Reconciler | undefined): string {
   }
 }
 
+/** One entry the checklist shows: the ledger's entry, and what its action does in the manager's words. */
+export interface ReconciliationRow extends ReconciliationEntry {
+  /** The action's summary (`summariseAction`), when the card can read the action. */
+  readonly summary?: string;
+}
+
+/** Where an entry sits in a run of two phases, said plainly; nothing for a run of one. */
+function phaseWords(phase: ReconciliationEntry['phase']): string {
+  switch (phase) {
+    case 'single':
+      return '';
+    case 'prerequisite':
+      return ' · prerequisites';
+    case 'closing':
+      return ' · closing actions';
+  }
+}
+
 /** An entry's place in the run, the checklist's key for it. */
 function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
@@ -606,17 +625,21 @@ function entryKey(entry: ReconciliationEntry): string {
  *
  * @param entries - The entries to check, from the run's ledger.
  * @param reconciliation - When the check was confirmed and who confirmed it, once they did.
+ * @param askedAgain - The run was confirmed as a whole before Day0 asked about each write, so it
+ *   is asked again (W12-R3, D-9 (a)).
  * @param busy - A decision on the card is in flight; the confirmation waits for it.
  * @param onConfirm - Record the answers; the card says what it came to.
  */
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
+  askedAgain = false,
   busy = false,
   onConfirm,
 }: {
-  entries: readonly ReconciliationEntry[];
+  entries: readonly ReconciliationRow[];
   reconciliation?: RecordedReconciliation;
+  askedAgain?: boolean;
   busy?: boolean;
   onConfirm: (answers: readonly GivenAnswer[]) => void;
 }) {
@@ -635,6 +658,9 @@ export function ProviderReconciliationControl({
       </p>
       {reconciliation ? null : (
         <p className="text-[13px] text-[var(--color-fg-2)]">
+          {askedAgain
+            ? 'You confirmed this run as a whole before Day0 asked about each write, so each is asked again. '
+            : null}
           Check each entry on the provider before a retry. Say for each whether it landed or was not
           sent: a retry never sends again a write you say landed.
         </p>
@@ -645,22 +671,26 @@ export function ProviderReconciliationControl({
             const key = entryKey(entry);
             const words = (
               <span className="grid min-w-0 gap-0.5 break-words">
-                <span className="font-mono text-[13px]">
-                  {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
-                  {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
+                {/* Named by what it does (W12-R9); the ledger's place and key stay to hand. */}
+                <span className="font-medium">
+                  {entry.summary ?? (entry.effect ? clipLedgerRow(entry.effect) : 'A write')}
                 </span>
-                {entry.effect ? <span>{clipLedgerRow(entry.effect)}</span> : null}
-                {entry.reason ? <span>{entry.reason}</span> : null}
+                <span className="text-[13px] text-[var(--color-fg-2)]">
+                  {entry.outcome === 'outcome-unknown' ? 'Outcome unknown' : 'Landed'}
+                  {phaseWords(entry.phase)}
+                </span>
+                {entry.effect && entry.summary && clipLedgerRow(entry.effect) !== entry.summary ? (
+                  <span>{clipLedgerRow(entry.effect)}</span>
+                ) : null}
+                {entry.reason ? (
+                  <span>{outcomeUnknownDetail(entry.reason) ?? entry.reason}</span>
+                ) : null}
                 {entry.providerId ? (
                   <span className="font-mono text-[13px] text-[var(--color-muted)]">
                     provider id {entry.providerId}
                   </span>
                 ) : null}
-                {entry.idempotencyKey ? (
-                  <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
-                    idempotency key {entry.idempotencyKey}
-                  </span>
-                ) : null}
+
                 {reconciliation && entry.answer ? (
                   <span className="text-[13px] text-[var(--color-fg)]">
                     {entry.answer === 'landed'
@@ -670,10 +700,25 @@ export function ProviderReconciliationControl({
                 ) : null}
               </span>
             );
-            if (reconciliation) return <li key={key}>{words}</li>;
+            // Outside the legend, which takes phrasing content only.
+            const ledgerKey = entry.idempotencyKey ? (
+              <Disclosure summary="Ledger key (for support)">
+                <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
+                  {entry.idempotencyKey}
+                </span>
+              </Disclosure>
+            ) : null;
+            if (reconciliation) {
+              return (
+                <li key={key} className="min-w-0">
+                  {words}
+                  {ledgerKey}
+                </li>
+              );
+            }
             const name = `${group}-${index}`;
             return (
-              <li key={key}>
+              <li key={key} className="min-w-0">
                 <fieldset className="grid min-w-0 gap-1.5" disabled={busy}>
                   <legend className="min-w-0">{words}</legend>
                   <span className="flex flex-wrap gap-x-4">
@@ -700,6 +745,7 @@ export function ProviderReconciliationControl({
                     ))}
                   </span>
                 </fieldset>
+                {ledgerKey}
               </li>
             );
           })}

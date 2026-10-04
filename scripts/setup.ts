@@ -424,7 +424,8 @@ export class ProtectedProjectError extends Error {
   }
 }
 
-const USAGE = `Usage: pnpm setup:local [options]
+/** The helper's usage text, which `--help` prints. */
+export const SETUP_USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear | backup | upgrade | pause | unpause [options]
        pnpm setup:local restore <backup.tar.gz> [options]
        pnpm setup:local sign-in --provider <entra|okta|google> [sign-in options]
@@ -533,8 +534,10 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
                                           kept by later pushes)
 
 Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the sync):
-  ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
-  ./setup.sh unpause                      each job runs again at its next turn
+  ./setup.sh pause                        every job skips and queued work steps hold until
+                                          unpause; an upgrade leaves it so
+  ./setup.sh unpause                      each job runs again at its next turn, and the held
+                                          work steps go on
 
 Your own copy on Convex cloud and Vercel, as the hosted demo runs, is the cloud
 verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
@@ -4643,8 +4646,9 @@ async function switchScheduledJobs(
       verb === 'pause'
         ? `Paused ${project}'s scheduled jobs: the intake and decision polls, the digests, the sweeps and ` +
             `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. A step ` +
-            'already under way runs to its next gate and holds there, and a documentation sync stops ' +
-            'at its next batch; each goes on from where it stopped once the jobs run again.'
+            'already under way finishes the step it is on and holds before the next, and a ' +
+            'documentation sync stops once its current batch is read; each goes on from where it ' +
+            'stopped once the jobs run again.'
         : `Lifted the pause on ${project}'s scheduled jobs: each runs again at its next turn, and the ` +
             'polls start from where they stopped.',
     );
@@ -5750,7 +5754,7 @@ async function main(): Promise<number> {
     return 2;
   }
   if (options.help) {
-    console.log(USAGE);
+    console.log(SETUP_USAGE);
     return 0;
   }
   try {
