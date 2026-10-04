@@ -59,9 +59,14 @@ function vendors(
     /** What the backend container's dial of an address finds; reached by default. */
     readonly backend?: (url: URL) => ModelDial | undefined;
   } = {},
-): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
+): VendorProbes & {
+  readonly calls: string[];
+  readonly fromTheBackend: string[];
+  readonly requestedScopes: (string | null)[];
+} {
   const calls: string[] = [];
   const fromTheBackend: string[] = [];
+  const requestedScopes: (string | null)[] = [];
   const opened: Readonly<Record<string, string | Error>> = overrides.opened ?? {
     'cred-slack': CONFIGURATION_TOKEN,
     'cred-linear': LINEAR_SECRET,
@@ -69,6 +74,7 @@ function vendors(
   return {
     calls,
     fromTheBackend,
+    requestedScopes,
     slackApiBase: new URL('https://slack.com/api/'),
     fromBackend: async (url: URL): Promise<ModelDial> => {
       fromTheBackend.push(url.href);
@@ -95,6 +101,7 @@ function vendors(
         const form = new URLSearchParams(await request.text());
         expect(form.get('grant_type')).toBe('client_credentials');
         expect(form.get('client_secret')).toBe(LINEAR_SECRET);
+        requestedScopes.push(form.get('scope'));
         // Linear's own answer to the set, 3 October: `scope: "app:assignable read write"`.
         const answer = overrides.linearToken ?? {
           status: 200,
@@ -216,11 +223,15 @@ describe('check:access', (): void => {
   });
 
   it('passes a shared Linear connection landed read, write, app:assignable, with no note to remove a scope (R41V-3)', async (): Promise<void> => {
-    const checks = await accessChecks([LINEAR], VALUES, vendors());
+    const probes = vendors();
+    const checks = await accessChecks([LINEAR], VALUES, probes);
     expect(only(checks, 'linear', 'scopes')).toMatchObject({
       status: 'ok',
       detail: 'Holds read, write, app:assignable.',
     });
+    // The token is asked for with the set the connection landed, exactly: Linear revokes every
+    // token of the app when one is asked for with another (L2; the round review's m20).
+    expect(probes.requestedScopes).toEqual(['read,write,app:assignable']);
   });
 
   it('says a shared Linear connection landed without app:assignable takes no delegated ticket, cured by revoke and land again', async (): Promise<void> => {
