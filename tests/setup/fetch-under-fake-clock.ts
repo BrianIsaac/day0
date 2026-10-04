@@ -15,6 +15,12 @@ import { setTimeout as nodeSetTimeout } from 'node:timers';
  * own, before any socket is opened, and the test that made it fails after it ends, even when the
  * code under test caught the refusal. A test that needs a double under a faked clock answers it
  * in-process at a reserved `.test` address (`spanModelFetch` in `tests/fixtures/redaction-double.ts`).
+ *
+ * Its limits: it sees requests through the global `fetch`, so a module importing the `undici`
+ * package directly would pass by it (none in the tests' graph but the Convex CLI), and `node:http`
+ * is out of its reach and of this cause (its timers are Node's internal ones). It refuses under
+ * any fake of `setTimeout`, `shouldAdvanceTime` included, though such a clock could not stall the
+ * request. Under `it.concurrent` a refusal is charged to whichever test ends next.
  */
 
 /** The setup file that installs the guard, as the suite's configuration names it. */
@@ -30,9 +36,15 @@ function setTimeoutIsFaked(): boolean {
   return globalThis.setTimeout !== nodeSetTimeout;
 }
 
-/** The address a `fetch` was called with, whichever of its three shapes it came in. */
+/**
+ * The origin and path a `fetch` was called with, whichever of its three shapes it came in: never
+ * its query or credentials, which may carry a secret into the test's output.
+ */
 function addressOf(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : String(input);
+  const address = input instanceof Request ? input.url : String(input);
+  if (!URL.canParse(address)) return 'an address fetch cannot parse';
+  const url = new URL(address);
+  return `${url.origin}${url.pathname}`;
 }
 
 /**

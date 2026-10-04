@@ -31,13 +31,20 @@ interface NestedReport {
   }>;
 }
 
-/** A `fetch` that answers every request itself and records what it was asked. */
-function answeringFetch(): { readonly fetch: typeof fetch; readonly asked: string[] } {
+/** A `fetch` that answers every request itself and records what it was asked, `init` included. */
+function answeringFetch(): {
+  readonly fetch: typeof fetch;
+  readonly asked: string[];
+  readonly inits: Array<RequestInit | undefined>;
+} {
   const asked: string[] = [];
+  const inits: Array<RequestInit | undefined> = [];
   return {
     asked,
-    fetch: async (input: RequestInfo | URL): Promise<Response> => {
+    inits,
+    fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       asked.push(input instanceof Request ? input.url : String(input));
+      inits.push(init);
       return new Response('answered');
     },
   };
@@ -88,10 +95,14 @@ describe('fetch under a faked clock', (): void => {
       reported.push(address);
     });
 
-    const response = await guarded('http://double.test:8000/healthz');
+    const init: RequestInit = { method: 'POST', body: '{}', headers: { 'x-probe': '1' } };
+
+    const response = await guarded('http://double.test:8000/healthz', init);
 
     expect(await response.text()).toBe('answered');
     expect(transport.asked).toEqual(['http://double.test:8000/healthz']);
+    expect(transport.inits).toEqual([init]);
+    expect(transport.inits[0]).toBe(init);
     expect(reported).toEqual([]);
   });
 
@@ -104,6 +115,20 @@ describe('fetch under a faked clock', (): void => {
 
     await expect(guarded('http://double.test:8000/healthz')).resolves.toBeInstanceOf(Response);
     expect(transport.asked).toEqual(['http://double.test:8000/healthz']);
+  });
+
+  it('names a refused request by its origin and path, never its query or credentials', async (): Promise<void> => {
+    const reported: string[] = [];
+    const guarded = refuseFetchUnderFakeClock(answeringFetch().fetch, (address): void => {
+      reported.push(address);
+    });
+    vi.useFakeTimers();
+
+    const refusal = guarded('http://operator:hunter2@double.test:8000/v1/spans?token=abc123');
+
+    await expect(refusal).rejects.toThrow('http://double.test:8000/v1/spans refused');
+    await expect(refusal).rejects.not.toThrow(/hunter2|abc123/);
+    expect(reported).toEqual(['http://double.test:8000/v1/spans']);
   });
 
   it('fails a test that made refused requests, naming each address once', (): void => {
@@ -143,7 +168,7 @@ describe('fetch under a faked clock', (): void => {
           '--reporter=json',
           `--outputFile.json=${reportFile}`,
         ],
-        { cwd: ROOT, encoding: 'utf8', timeout: 60_000 },
+        { cwd: ROOT, encoding: 'utf8', timeout: 15_000 },
       );
       expect(run.status, run.stdout + run.stderr).toBe(1);
       const report = JSON.parse(readFileSync(reportFile, 'utf8')) as NestedReport;
@@ -152,16 +177,21 @@ describe('fetch under a faked clock', (): void => {
       );
       const swallowed = results.filter((test) => test.title.startsWith('swallows'));
       const quiet = results.filter((test) => test.title.startsWith('fetches nothing'));
+      const passedThrough = results.filter((test) =>
+        test.title.startsWith('reaches the transport'),
+      );
       expect(swallowed).toHaveLength(2);
       expect(quiet).toHaveLength(2);
+      expect(passedThrough).toHaveLength(2);
       for (const test of swallowed) {
         expect(test.status).toBe('failed');
         expect(test.failureMessages.join('\n')).toContain('http://double.test:8000/v1/spans');
-        expect(test.duration ?? Number.POSITIVE_INFINITY).toBeLessThan(1_000);
+        // Under the nested run's 5 s test timeout: a stall would end there, a refusal in milliseconds.
+        expect(test.duration ?? Number.POSITIVE_INFINITY).toBeLessThan(3_000);
       }
-      for (const test of quiet) expect(test.status).toBe('passed');
+      for (const test of [...quiet, ...passedThrough]) expect(test.status).toBe('passed');
     } finally {
       rmSync(reportDir, { recursive: true, force: true });
     }
-  }, 70_000);
+  });
 });
