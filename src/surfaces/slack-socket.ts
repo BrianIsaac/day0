@@ -143,3 +143,29 @@ export async function bridgeSecretMatches(header: string | null, secret: string)
   }
   return difference === 0;
 }
+
+/** An app-level token's shape: Slack's `xapp-` prefix and its token characters. */
+const APP_LEVEL_TOKEN = /^xapp-[A-Za-z0-9_-]{8,}$/;
+
+/** Whether a pasted value has an app-level token's shape. */
+export function isAppLevelTokenShape(value: string): boolean {
+  return APP_LEVEL_TOKEN.test(value);
+}
+
+/** Why a pasted value was refused before Slack was asked: it is not an app-level token. */
+export const NOT_AN_APP_LEVEL_TOKEN =
+  "That is not an app-level token: Slack's app-level tokens start with xapp-. Generate one in the app's settings under Basic Information, App-Level Tokens, with the connections:write scope.";
+
+/** Why a card takes no app-level token: it connects through no app of the employee's own. */
+export const NO_OWN_APP_FOR_TOKEN =
+  "This card has no Slack app of the employee's own, so it takes no app-level token. Create the employee's own Slack app on this card first; until then the request's typed code decides.";
+
+/**
+ * Why Slack refused an app-level token when Day0 opened a connection with it.
+ *
+ * @param appName - The employee's app, as the card names it.
+ * @param reason - Slack's refusal, the token already removed.
+ */
+export function appLevelTokenRefused(appName: string, reason: string): string {
+  return `Slack did not accept this app-level token (${reason}). Check that it was generated for ${appName} with the connections:write scope, and that Socket Mode is on in the app's settings.`;
+}

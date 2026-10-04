@@ -782,6 +782,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Finding a way to reach ${subject.connection ?? 'a system'} failed${because(p.reason)}`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
+  'surface.socket-token-landed': (p, subject) =>
+    `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,
   'surface.install-failed': (p, subject) =>
     `Installing the app for ${connectionOf(subject)} failed${because(p.reason)}`,
   'surface.shared-credential-retired': (p, subject) =>

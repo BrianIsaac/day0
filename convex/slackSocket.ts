@@ -1,7 +1,8 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { httpAction, internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { resolveManagerReply } from './work';
 import {
@@ -238,4 +239,69 @@ export const cardOf = internalQuery({
   args: { surfaceId: v.string() },
   handler: async (ctx, args): Promise<Id<'surfaces'> | null> =>
     ctx.db.normalizeId('surfaces', args.surfaceId),
+});
+
+/**
+ * Internal, the landing's: the card's employee and its own app, when it has one (null when it
+ * connects through no app Day0 created for the employee); null when the card is not a chat card.
+ */
+export const appLevelTokenTarget = internalQuery({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    agentId: Id<'agents'>;
+    app: { appId: string; appName: string } | null;
+  } | null> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (surface === null || surface.class !== 'chat') return null;
+    const provisioning = surface.provisioning;
+    return {
+      agentId: surface.agentId,
+      app:
+        provisioning === undefined
+          ? null
+          : { appId: provisioning.appId, appName: provisioning.appName },
+    };
+  },
+});
+
+/**
+ * Internal, the landing's: point the card's app at its new app-level token, and end the earlier
+ * token's row in Day0. Refused when the card's app changed since the landing read it (the new row
+ * is then ended by the caller). Writes `surface.socket-token-landed`, naming no token.
+ */
+export const recordAppLevelToken = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    appId: v.string(),
+    credentialId: v.id('credentials'),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    const provisioning = surface?.provisioning;
+    if (surface === null || provisioning === undefined || provisioning.appId !== args.appId) {
+      throw new ConvexError("The card's Slack app changed while its token was checked.");
+    }
+    const earlierId = provisioning.appLevelTokenCredentialId;
+    const now = Date.now();
+    if (earlierId !== undefined && earlierId !== args.credentialId) {
+      const earlier = await ctx.db.get(earlierId);
+      if (earlier !== null) await purgeCredential(ctx, earlier, now);
+    }
+    await ctx.db.patch(surface._id, {
+      provisioning: { ...provisioning, appLevelTokenCredentialId: args.credentialId },
+    });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.socket-token-landed',
+      payload: {
+        surfaceId: surface._id,
+        appName: provisioning.appName,
+        replaced: earlierId !== undefined,
+      },
+      createdAt: now,
+    });
+  },
 });

@@ -93,6 +93,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'surface.proposal-requested': DECISIONS,
   'surface.orientation-failed': NONE,
   'surface.app-provisioned': NONE,
+  'surface.socket-token-landed': NONE,
   'surface.install-failed': NONE,
   'surface.shared-credential-retired': NONE,
   'credential.superseded': READS,

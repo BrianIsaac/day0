@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -75,7 +76,7 @@ async function seedButtonedRequest(
     await ctx.db.insert('permissionGrants', { agentId, scope: 'boss:message', createdAt: 1 });
     const credential = async (label: string): Promise<Id<'credentials'>> =>
       await ctx.db.insert('credentials', {
-        userId: 'organisation',
+        userId: ORGANISATION_OWNER_KEY,
         holder: 'organisation',
         kind: 'oauth',
         label,

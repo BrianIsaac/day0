@@ -720,6 +720,16 @@ export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
   readonly appName: string;
 }
 
+/**
+ * The payload of `surface.socket-token-landed`: a person's app-level token landed for the
+ * employee's own Slack app, so its decision requests carry buttons (12-M; RM3 (a)). Names no token.
+ */
+export interface SurfaceSocketTokenLandedPayload extends SurfaceNamed {
+  readonly appName: string;
+  /** An earlier token was replaced, and its row ended in Day0. */
+  readonly replaced: boolean;
+}
+
 /** The payload of `surface.install-failed`. */
 export type SurfaceInstallFailedPayload = SurfaceReason;
 
@@ -1574,6 +1584,7 @@ export interface EventPayloads {
   'surface.proposal-requested': SurfaceProposalRequestedPayload;
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
+  'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
   'credential.superseded': CredentialSupersededPayload;
@@ -1751,6 +1762,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.proposal-requested',
   'surface.orientation-failed',
   'surface.app-provisioned',
+  'surface.socket-token-landed',
   'surface.install-failed',
   'surface.shared-credential-retired',
   'credential.superseded',

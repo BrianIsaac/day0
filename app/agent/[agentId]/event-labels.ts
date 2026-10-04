@@ -457,6 +457,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
+  'surface.socket-token-landed': (payload) =>
+    `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
