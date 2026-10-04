@@ -374,6 +374,40 @@ describe('the server-side steps', (): void => {
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
   });
 
+  it('stores no plan from a draft the manager stopped once Retry has queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-14');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1));
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    release();
+    await expect(stale).resolves.toMatchObject({ ok: false });
+    const afterStale = await readItem(harness, workItemId);
+    expect(afterStale.state).toBe('claimed');
+    expect(afterStale.plan).toBeUndefined();
+    expect(await eventsOf(harness, 'work.plan-drafted')).toEqual([]);
+
+    // The draft Retry queued holds the claim now, and its plan is the one stored.
+    await drain(harness);
+    expect(recorded.planCalls).toHaveLength(2);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.plan-drafted')).toHaveLength(1);
+  });
+
   it('leaves a failed step claimed until the lease passes, then lets the next run take it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

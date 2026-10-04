@@ -3057,17 +3057,32 @@ async function withAppliedCorrections(
  * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
  * plan drafted while its system was down, which is connected by now, is not
  * stored: the row goes straight back to drafting (`redrafting`).
+ *
+ * `draftClaimedAt` is the claim a real-mode draft took before its model call
+ * (`claimLoopStep`). Only the draft that still holds that claim stores its
+ * plan: a draft the manager stopped, whose row Retry sent back to `claimed`
+ * with the claim cleared, finds the row ready again and would otherwise land
+ * the plan drafted before the Retry over its successor's (`superseded`; wave
+ * 12, 12-W and 12-P Findings 3). A caller that took no claim (the page's
+ * mock-mode draft) is fenced by the state alone.
  */
 export const setPlan = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     plan: v.any(),
     draftedWithout: v.optional(planDraftedWithoutValidator),
+    draftClaimedAt: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{ stored: boolean; redrafting?: true }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ stored: boolean; redrafting?: true; superseded?: true }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
+    if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) {
+      return { stored: false, superseded: true };
+    }
     // The system the draft could not read connected while the model drafted:
     // a connection that landed first found no plan to send back, so this does.
     if (args.draftedWithout?.cause === 'not-connected') {

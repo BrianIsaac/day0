@@ -713,6 +713,7 @@ async function draftPlanHandler(
   if (item.state !== 'claimed') {
     return { ok: false, reason: `state is ${item.state}; expected claimed` };
   }
+  let draftClaimedAt: number | undefined;
   if (SURFACE_MODE === 'real') {
     const claim = await ctx.runMutation(internal.work.claimLoopStep, {
       workItemId: args.workItemId,
@@ -727,6 +728,7 @@ async function draftPlanHandler(
             : `${claim.reason}; expected claimed`,
       };
     }
+    draftClaimedAt = claim.claimedAt;
   }
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
@@ -780,9 +782,13 @@ async function draftPlanHandler(
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
+    ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
   });
   // Its system connected while it was drafting, so it is being drafted again.
   if (stored.redrafting) return { ok: true };
+  if (stored.superseded) {
+    return { ok: false, reason: 'this draft no longer holds the work item; a later draft does' };
+  }
   if (!stored.stored) {
     return { ok: false, reason: 'another draft stored a plan for this work item first' };
   }
