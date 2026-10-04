@@ -1,7 +1,11 @@
 'use client';
 
 import type { MockAction, ArgumentRepairAttempt } from '@/work/types';
-import { type ActionVerdict, HELD_WITHHELD_TRANSITION } from '@/surfaces/policy';
+import {
+  type ActionVerdict,
+  HELD_CLOSE_AGAINST_WORDS,
+  HELD_WITHHELD_TRANSITION,
+} from '@/surfaces/policy';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type ReplyTarget, summariseAction } from '@/surfaces/summary';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -28,6 +32,20 @@ export function heldSentence(reason: string): string {
   const text = reason.trim().replace(/\bthe manager\b/g, 'you');
   const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
   return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
+/**
+ * Why a close waits for the manager after the tripwire (12-D): the run answered that the work was
+ * done, twice, while its own words said otherwise. The sentence is quoted, its full stop moved
+ * outside the quotation marks and a question or exclamation mark kept inside them.
+ *
+ * @param employeeName - Who wrote the words.
+ * @param clause - The sentence the tripwire read.
+ */
+export function closeAgainstWordsNote(employeeName: string, clause: string): string {
+  const sentence = clause.trim();
+  const quoted = /[?!]$/.test(sentence) ? `“${sentence}”` : `“${sentence.replace(/\.+$/, '')}”.`;
+  return `${employeeName} answered that the work is done, but its own words say ${quoted} Approve the close only if the work was done.`;
 }
 
 /**
@@ -73,6 +91,7 @@ export function PendingActions({
   employeeName = 'the employee',
   closing = false,
   gate = 'real',
+  closeAgainstWords,
   onApprove,
   onReject,
   children,
@@ -95,6 +114,8 @@ export function PendingActions({
   closing?: boolean;
   /** The deployment's gate, for what the closing phase applies. */
   gate?: WorkGate;
+  /** The sentence the tripwire read when the run answered done over it twice (12-D). */
+  closeAgainstWords?: string;
   /** Approve the rows; the card says what it came to in its live region. */
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
@@ -169,6 +190,15 @@ export function PendingActions({
               : autonomousActions
                 ? HELD_BEFORE_AUTONOMY_NOTE
                 : HELD_WHILE_SUPERVISED_NOTE}
+          </p>
+        ) : null}
+        {closeAgainstWords !== undefined &&
+        heldIndexes.some((index) => {
+          const verdict = verdicts[index];
+          return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
+        }) ? (
+          <p className="text-[15px] text-[var(--color-fg)]">
+            {closeAgainstWordsNote(employeeName, closeAgainstWords)}
           </p>
         ) : null}
         {actions.length === 0 ? (

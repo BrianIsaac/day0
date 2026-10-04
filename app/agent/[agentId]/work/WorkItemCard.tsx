@@ -62,7 +62,7 @@ import {
   phasedLedger,
   type PhasedLedgerRow,
   type RunOutput,
-  unfinishedInOwnWords,
+  notDoneOnCard,
   waitingLine,
 } from './work-item';
 
@@ -351,15 +351,19 @@ export function WorkItemCard({
       </ItemSection>
     ) : null;
   const leadsWithResult = item.state === 'completed' || rejection !== undefined;
-  // What the run's own words say it did not do, said beside what landed (the 4 October demo).
-  const unfinished = item.state === 'completed' ? unfinishedInOwnWords(output) : [];
+  // What the run says was not done, beside what landed: its own answer and its one line of why
+  // (12-D), or for a row recorded before the answer, the clauses its words said it in.
+  const notDone = item.state === 'completed' ? notDoneOnCard(output) : undefined;
   const unfinishedSection =
-    unfinished.length > 0 ? (
+    notDone !== undefined ? (
       <ItemSection>
         <Note tone="warn">
-          <Lead>Not done, in {employeeName}’s own words:</Lead>
+          <Lead>
+            {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}, in {employeeName}’s own
+            words:
+          </Lead>
           <ul className="mt-1.5 grid list-disc gap-1 pl-5 text-[15px]">
-            {unfinished.map((statement) => (
+            {notDone.statements.map((statement) => (
               <li key={statement}>
                 <Quote>{statement}</Quote>
               </li>
@@ -522,6 +526,7 @@ export function WorkItemCard({
             employeeName={employeeName}
             closing={output.needsDependentPhase === true}
             gate={gate}
+            closeAgainstWords={output.closeAgainstWords}
             onApprove={(approvedIndexes) =>
               decide(
                 () => onApproveActions(approvedIndexes),

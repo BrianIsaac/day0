@@ -20,6 +20,7 @@ import {
   THREAD_REPLY,
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
+import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -658,6 +659,53 @@ describe('what a finished run says it did not do (the 4 October demo)', (): void
 
   it('says nothing of the kind for a run whose words say the work was done', (): void => {
     expect(card(DRAWN.landed).text()).not.toContain('Not done, in');
+  });
+});
+
+describe('what the run answered about its own work (12-D, decision D-1 (b))', (): void => {
+  /** A finished row whose run answered, with its comment as its own words. */
+  function answered(
+    workDone: 'done' | 'partial' | 'not-done',
+    words: string,
+    why: string,
+  ): Doc<'workItems'> {
+    return {
+      ...DRAWN.landed,
+      output: { ...(DRAWN.landed.output as object), draft: words, workDone, workDoneWhy: why },
+    } as unknown as Doc<'workItems'>;
+  }
+
+  it('reads a finished run as finished when it answered done, whatever the detector reads in its words (Quill)', (): void => {
+    const view = card(answered('done', QUILL_COMMENT, 'All three deals match the tracker.'));
+    expect(view.text()).not.toContain('Not done, in');
+    expect(view.text()).not.toContain('Partly done, in');
+  });
+
+  it('says what was left in the run’s one line of why when it answered partial (Pip), and not done when it answered so (Nell)', (): void => {
+    const pip = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    ).text();
+    expect(pip).toContain('Partly done, in Mira’s own words');
+    expect(pip).toContain('One of the three deals is reconciled; two need the CRM export.');
+    expect(pip).not.toContain('Not done, in');
+    const nell = card(
+      answered('not-done', ROOK_COMMENT, 'The October deal list is not in the tracker.'),
+    ).text();
+    expect(nell).toContain('Not done, in Mira’s own words');
+    expect(nell).toContain('The October deal list is not in the tracker.');
+  });
+
+  it('reads a row recorded before the release, with no answer, as it read before', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: { ...(DRAWN.landed.output as object), draft: QUILL_COMMENT },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Not done, in Mira’s own words');
+    expect(view.text()).toContain('I could not find a mismatch');
   });
 });
 

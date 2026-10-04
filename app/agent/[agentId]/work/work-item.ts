@@ -6,6 +6,7 @@ import {
   type CharterClauseRef,
   type ArgumentRepairAttempt,
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+  type WorkDoneAnswer,
 } from '@/work/types';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
@@ -28,6 +29,7 @@ import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
+import { workDoneFactOf } from '@/work/work-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -92,6 +94,12 @@ export interface RunOutput {
   withheldActions?: WithheldActionRow[];
   /** A first phase whose approval starts the closing phase. */
   needsDependentPhase?: boolean;
+  /** The run's answer on whether the work was done; absent on a row recorded before v0.16.0. */
+  workDone?: WorkDoneAnswer;
+  /** The run's one line of why it answered so. */
+  workDoneWhy?: string;
+  /** The clause the tripwire read when the run answered done twice over it; its close waits for the manager. */
+  closeAgainstWords?: string;
 }
 
 /** An action withheld from a run and never sent, with the reason. */
@@ -557,4 +565,31 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
   return notDoneStatements(
     runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
   ).slice(0, UNFINISHED_SHOWN);
+}
+
+/** What a finished run's card says was not done: the run's answer, and the words it says it in. */
+export interface NotDoneOnCard {
+  readonly answer: 'partial' | 'not-done';
+  readonly statements: readonly string[];
+}
+
+/**
+ * What a finished run's card says was not done (12-D, decision D-1 (b)). It follows the run's own
+ * answer: `partial` or `not-done` with its one line of why, and nothing for a run that answered
+ * `done`, whatever its words read as. A row recorded before v0.16.0 carries no answer and reads as
+ * it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
+ *
+ * @param output - The finished run's output.
+ * @returns The answer and its words, or undefined for a run that reads as finished.
+ */
+export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | undefined {
+  if (!output) return undefined;
+  const fact = workDoneFactOf(output);
+  if (fact !== undefined) {
+    return fact.workDone === 'done'
+      ? undefined
+      : { answer: fact.workDone, statements: [fact.workDoneWhy] };
+  }
+  const statements = unfinishedInOwnWords(output);
+  return statements.length > 0 ? { answer: 'not-done', statements } : undefined;
 }
