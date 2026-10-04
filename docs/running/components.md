@@ -441,8 +441,9 @@ bridge acknowledges each press at once and hands it to the backend's internal
 route, `/slack-socket/press` on the site port, presenting
 `DAY0_SOCKET_BRIDGE_SECRET`; the backend decides it exactly as it decides a
 typed `approve <code>` reply, with the same checks and the same record. Without
-the bridge the requests carry the typed code alone, which always decides, and
-the employee's Slack card says why there are no buttons.
+the bridge the requests carry no buttons: each is decided by its typed code
+where the employee's app takes messages (`access-slack.md`, "Typed codes"), or
+in Day0, and the employee's Slack card says why there are no buttons.
 
 **When you need it.** When decisions should be one press in Slack. Real-mode
 setup starts it and mints the secret (`pnpm dev:no-auth-key`, which every setup
@@ -451,8 +452,8 @@ app then needs its app-level token, which a person generates in the app's
 settings (Slack offers no API for it): see `access-slack.md`.
 
 **When you do not.** When the typed code is enough, or Slack is not one of your
-systems. Stop it with `pnpm convex:down --profile slack-socket`; requests keep
-the typed code.
+systems. Stop it with `pnpm convex:down --profile slack-socket`; requests then
+carry no buttons.
 
 **What it never sees.** The app-level tokens: the backend opens each
 connection with the app's token and hands the bridge only the short-lived URL,

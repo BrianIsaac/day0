@@ -39,14 +39,44 @@ needs to create those apps: an app configuration token and its refresh token.
    administrator installs each employee's app from the install link Day0 gives
    the employee's manager. Installing is the approval.
 5. **For decision buttons, each app's app-level token** (optional, one click
-   per app; below). Until an app has one, its manager decides by the typed
-   code in each request, which always works.
+   per app; below). Until an app has one, its manager decides each request by
+   its typed code, a reply in the DM with the app (once the app takes
+   messages, below), or in Day0.
+
+### Typed codes: each app's messages tab
+
+Each request Day0 sends an employee's manager ends with a typed code
+(`approve ab3xyz`), a reply in the manager's DM with the employee's app. Slack
+refuses any message to an app whose App Home messages tab is off or read-only:
+the DM says "Sending messages to this app has been turned off." and offers no
+place to type. So:
+
+- An app Day0 creates from the manifest in section 2 takes messages from the
+  start.
+- An app Day0 created before v0.16.0 has the tab read-only. Day0 opens it
+  itself with `apps.manifest.update`, changing nothing else, at the next check
+  of the app's card (the hourly re-check, or **Check the connection** on the
+  card), while the organisation's configuration connection that created it is
+  still active. Both calls (`apps.manifest.export`, then the update) are on
+  that connection's ledger.
+- Where Day0 cannot (the app was created with a configuration token pasted on
+  its card, the connection that created it was revoked, or Slack refused the
+  update), a collaborator on the app opens it: signed in to
+  <https://api.slack.com/apps>, open the app, **App Home**, and under
+  **Messages Tab** tick **Allow users to send Slash commands and messages from
+  the messages tab** (turn **Messages Tab** on first if it is off). Then the
+  manager presses **It is on in Slack** on the employee's Slack card.
+
+Until an app takes messages, each request to its manager says a typed reply
+cannot reach it and offers its buttons and Day0 instead, and the card and
+`check:access` (the `messages` row) name the app.
 
 ### Decision buttons: each app's app-level token
 
 Each request Day0 sends an employee's manager carries a typed code (`approve
-ab3xyz`), which always decides. With the employee's app's **app-level token**,
-the request also carries **Approve** and **Reject** buttons. Slack offers no API
+ab3xyz`), which decides it once the app takes messages (above). With the
+employee's app's **app-level token**, the request also carries **Approve** and
+**Reject** buttons. Slack offers no API
 that issues an app-level token, so a person generates one per app:
 
 1. Signed in to <https://api.slack.com/apps> as a collaborator on the
@@ -62,13 +92,14 @@ that issues an app-level token, so a person generates one per app:
    press **Turn on buttons**. Day0 checks it by opening a Socket Mode connection
    with it, keeps it encrypted and held by the organisation, and never shows it
    again. The card then says "Decisions in Slack: buttons are on while the Slack
-   socket service runs", and each new request carries the buttons beside its
-   typed code; a request asked before the token landed keeps its code alone.
+   socket service runs", and each new request carries the buttons, beside its
+   typed code where the app takes messages; a request asked before the token
+   landed carries no buttons.
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page; presses then
-stop reaching Day0 until a new token is landed on the card, and the typed code
-in each request still decides. A token landed again replaces the last. The `slack-socket` component must run (real-mode setup starts
+stop reaching Day0 until a new token is landed on the card, and each request is
+decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last. The `slack-socket` component must run (real-mode setup starts
 it) and reach Slack's Socket Mode hosts outbound over `wss://`; nothing
 inbound is opened.
 
@@ -238,7 +269,8 @@ redirect URI above.
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token has lapsed, which the refresh token renews at Day0's next use of it |
 | `reach` | `pass`: the backend container reached Slack's Web API (`api.test`, no token sent); a `GAP` names curl's words, cured by opening the deployment's way out to `slack.com` |
-| `socket` | `pass`: the `slack-socket` service runs and holds a Socket Mode connection for each employee app with an app-level token; a `note` when it is not running (requests then carry the typed code only); a `GAP` names an app with no connection (open the service's way out to Slack's Socket Mode hosts over `wss://`) or a secret the service and the deployment do not share |
+| `socket` | `pass`: the `slack-socket` service runs and holds a Socket Mode connection for each employee app with an app-level token; a `note` when it is not running (requests then carry no buttons); a `GAP` names an app with no connection (open the service's way out to Slack's Socket Mode hosts over `wss://`) or a secret the service and the deployment do not share |
+| `messages` | `pass`: the typed code reaches every installed employee app (each takes messages); a `note` names an app Day0 opens at its card's next check; a `GAP` names an app only a person can open, with Slack's toggle (section 1, "Typed codes") |
 
 A `GAP` names what to fix: a redirect that is not Day0's (the public address
 changed since the connection was landed), a scope the connection lacks, a

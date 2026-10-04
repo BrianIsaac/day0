@@ -8,7 +8,7 @@ import { isSlackApiEndpoint } from './slack-endpoint';
  */
 export const SOCKET_BRIDGE_SECRET_VAR = 'DAY0_SOCKET_BRIDGE_SECRET';
 
-/** Why an employee's decision requests carry the typed code alone, without buttons. */
+/** Why an employee's decision requests carry no Approve and Reject buttons. */
 export type ButtonsUnavailable =
   /** The card is not Slack's documented Web API (an MCP chat tool sends text alone). */
   | 'not-slack-api'
@@ -42,7 +42,7 @@ export interface ButtonsCard {
  * documented Web API, through the employee's own app, on a deployment whose Socket Mode bridge is
  * configured, once the app's app-level token has landed. The bridge is read before the token, so a
  * card on a deployment that runs none asks for no token it could not use (W12-R18). Otherwise the
- * typed code alone, which always decides, and the reason the card shows.
+ * reason the card shows; the typed code still decides where the app takes messages (W12V-7).
  *
  * @param card - The chat card the requests go through.
  * @param bridgeConfigured - Whether the deployment holds the bridge's secret.
