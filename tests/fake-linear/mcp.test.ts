@@ -265,7 +265,7 @@ describe('the fake Linear MCP server', (): void => {
     expect(issue.history[0]?.actorId).toBe(leo.id);
   });
 
-  it("refuses a delegate to an app user with no live app:assignable token, in the walk's words", async (): Promise<void> => {
+  it('refuses a delegate to an app user with no live app:assignable token, in the words the walk saw on GraphQL (not seen on MCP)', async (): Promise<void> => {
     const fake = linear();
     await appActorToken(fake, 'read,write');
     const refused = await tool(fake, SAM_KEY, 'save_issue', {

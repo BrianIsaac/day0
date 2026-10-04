@@ -270,6 +270,8 @@ export function createMcp(context) {
     }
     const issue = issueOrFail(id);
     const refusal = workspace.updateIssue(issue, change, actor);
+    // Not seen on MCP: the walks met the capability refusal through GraphQL only. The tool answers
+    // the GraphQL error's words; a real walk must delegate to an app user through `save_issue`.
     if (refusal) throw new ToolFailure(refusal.userPresentableMessage);
     // Recorded (17 and 19 September): `save_issue` answers with the issue as `get_issue` prints it.
     return issueRecord(issue, true);
