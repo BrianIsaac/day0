@@ -148,6 +148,29 @@ describe('doneAgainstWords (the tripwire)', (): void => {
     ).toBeUndefined();
   });
 
+  it('costs one repair turn on most of the attack corpus’s finished words, never a status (the measured price of keeping the list)', (): void => {
+    const trips = (words: readonly { label: string; text: string }[]): string[] =>
+      words
+        .filter(
+          ({ text }) =>
+            doneAgainstWords({
+              workDone: 'done',
+              workDoneWhy: 'All of it is done.',
+              draft: '',
+              actions: [ticketUpdate(text, 'done')],
+            }) !== undefined,
+        )
+        .map(({ label }) => label);
+    // 21 of 26 finished sentences written to break the list trip it; each costs one repair turn
+    // and, if the run answers done again, a close that waits for the manager (the review found no
+    // finished recorded run flagged among 42). It misses all nine recorded unfinished statements:
+    // a run that answered done over one of them would close, so what holds those is the run's
+    // own answer, partial or not-done, never the list.
+    expect(trips(FINISHED_WORDS)).toHaveLength(21);
+    expect(trips(FINISHED_WORDS)).not.toContain('Rook (the review bed)');
+    expect(trips(RECORDED_UNFINISHED)).toEqual([]);
+  });
+
   it('is silent when the run does not close, when it answers partial or not-done, and on output with no fact', (): void => {
     expect(
       doneAgainstWords({
