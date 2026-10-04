@@ -980,6 +980,9 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
   });
 
   it('records why the edit failed, once, and does not try it again', async (): Promise<void> => {
+    // This double refuses the edit, so it is not recordSlack's; the scheduled acknowledgement and
+    // close stay on fake timers all the same, so neither posts through a later test's fetch.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
