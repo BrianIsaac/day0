@@ -48,6 +48,7 @@ import {
   USERNAME_REFUSED,
   type ParsedSurfaceAction,
   type ReviewScope,
+  HELD_CLOSE_AGAINST_WORDS,
 } from '../../../src/surfaces/policy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
@@ -1847,6 +1848,27 @@ describe('a ticket state transition the approved plan withholds', (): void => {
       disposition: 'held',
       reason: HELD_WITHHELD_TRANSITION,
     });
+  });
+});
+
+describe('a ticket close the tripwire sent to the manager (12-D)', (): void => {
+  const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:write']);
+  const done: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }),
+    },
+  };
+
+  it('is held for the manager under the switch, with its own reason, while the comment still applies on its own', (): void => {
+    expect(
+      reviewActions([comment('Audit note.', 'REVOPS-5'), done], [linear, slack], grants, now, {
+        autonomousActions: true,
+        closeAgainstWords: true,
+      }),
+    ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS }]);
   });
 });
 
