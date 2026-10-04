@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { redraftPlansDraftedWithout } from '../../convex/work';
 import {
   NOTICE_TO_A_GUEST,
   NOTICE_CARD_NOT_APPROVED,
@@ -491,6 +492,385 @@ describe('the outbound manager-channel action', (): void => {
   });
 });
 
+/**
+ * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), and the
+ * deployment its Socket Mode bridge's secret, so its requests can carry buttons.
+ */
+async function landAppLevelToken(
+  harness: TestConvex<typeof schema>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+  await harness.run(async (ctx): Promise<void> => {
+    const surface = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+      .unique();
+    const secret = await ctx.db.insert('credentials', {
+      userId: 'organisation',
+      kind: 'oauth',
+      label: 'Ops (Day0) client secret',
+      ciphertext: 'ciphertext',
+      iv: 'iv',
+      source: 'oauth',
+      createdAt: 1,
+    });
+    const appLevel = await ctx.db.insert('credentials', {
+      userId: 'organisation',
+      kind: 'value',
+      label: 'Ops (Day0) app-level token',
+      ciphertext: 'ciphertext',
+      iv: 'iv',
+      source: 'entered',
+      createdAt: 1,
+    });
+    // The employee's own app, installed: it posts as itself, so no trailer is added.
+    await ctx.db.patch(surface!._id, {
+      credentialKind: 'oauth',
+      toolAllowlist: ['chat.postMessage', 'chat.update'],
+      provisioning: {
+        appId: 'A0OPS',
+        appName: 'Ops (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: secret,
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.example/api/oauth/slack',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+        appLevelTokenCredentialId: appLevel,
+      },
+    });
+  });
+}
+
+describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  function recordSlack(): void {
+    // Scheduled acknowledgements stay on fake timers, so none posts through a later test's stub.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  it('sends Approve and Reject buttons with the typed code where the app has its app-level token', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, { workItemId, kind: 'plan' }),
+    ).resolves.toEqual({ sent: true });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!;
+    const body = JSON.parse(sent[0]!.body) as {
+      text: string;
+      blocks: Array<{ type: string; elements?: Array<{ action_id: string; value: string }> }>;
+    };
+    expect(body.text).toContain(`reply “approve ${decision.id}”`);
+    const actions = body.blocks.find((block) => block.type === 'actions');
+    expect(actions?.elements?.map((button) => [button.action_id, button.value])).toEqual([
+      ['day0.decision.approve', decision.id],
+      ['day0.decision.reject', decision.id],
+    ]);
+    expect(decision.withButtons).toBe(true);
+  });
+
+  it('sends the typed code only where the app has no app-level token', async (): Promise<void> => {
+    recordSlack();
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const body = JSON.parse(sent[0]!.body) as { text: string; blocks?: unknown };
+    expect(body.blocks).toBeUndefined();
+    expect(body.text).toMatch(/Reply “approve [a-z0-9]{6}”/);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.withButtons,
+    ).toBeUndefined();
+  });
+
+  it('sends the typed code only where the deployment runs no Socket Mode bridge', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    expect((JSON.parse(sent[0]!.body) as { blocks?: unknown }).blocks).toBeUndefined();
+  });
+
+  it('closes a request that had buttons with its text as blocks and no buttons', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    const decisionId = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!
+      .id;
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768407.000100',
+      reply: { verb: 'approve', id: decisionId },
+    });
+    await harness.action(internal.managerChannelActions.closeDecisionRequest, {
+      workItemId,
+      decisionId,
+    });
+    const update = sent.find((call) => call.url.endsWith('/chat.update'));
+    const body = JSON.parse(update!.body) as {
+      text: string;
+      blocks: Array<{ type: string; text?: { text: string } }>;
+    };
+    expect(body.blocks.map((block) => block.type)).toEqual(['section']);
+    expect(body.blocks[0]!.text!.text).toBe(body.text);
+    expect(body.text).toContain(`Decided: approved in this DM (${decisionId}).`);
+    // The buttons are gone, so the message no longer asks for a press.
+    expect(body.text).not.toContain('Press Approve or Reject below');
+    expect(body.text).toContain(`Reply “approve ${decisionId}”`);
+  });
+});
+
+describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  function recordSlack(): void {
+    // Scheduled acknowledgements stay on fake timers, so none posts through a later test's stub.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  /** A delivered plan request, then replaced by a fresh one under a new code. */
+  async function replaceDeliveredRequest(harness: TestConvex<typeof schema>): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    surfaceId: Id<'surfaces'>;
+    oldCode: string;
+    newCode: string;
+  }> {
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: oldCode });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+      supersedes: oldCode,
+    });
+    const newCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    return { agentId, workItemId, surfaceId, oldCode, newCode };
+  }
+
+  it('remembers the replaced code with the code that replaced it', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    expect(newCode).not.toBe(oldCode);
+    const remembered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique(),
+    );
+    expect(remembered).toMatchObject({
+      workItemId,
+      decisionId: oldCode,
+      replacedBy: newCode,
+      kind: 'plan',
+      ts: 'provider-1',
+      withButtons: true,
+      requestText: expect.stringContaining('needs your decision'),
+    });
+  });
+
+  it('answers a reply to the replaced code with the request that replaced it, and decides nothing', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: newCode });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row?.state).toBe('plan-pending');
+    expect(row?.decision?.decidedAt).toBeUndefined();
+    const notice = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').first(),
+    );
+    expect(notice).toMatchObject({
+      kind: 'replaced',
+      decisionId: oldCode,
+      text: `That request (${oldCode}) was replaced by ${newCode}. Decide on ${newCode} instead.`,
+    });
+  });
+
+  it('answers with the replacement’s own decision once it was decided', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768410.000100',
+      reply: { verb: 'approve', id: newCode },
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768411.000100',
+      reply: { verb: 'reject', id: oldCode, reason: '' },
+    });
+    const notice = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .filter((q) => q.eq(q.field('kind'), 'replaced'))
+          .first(),
+    );
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced by ${newCode}, which was already approved.`,
+    );
+  });
+
+  it('answers another Slack user’s reply to a replaced code with nothing', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'USOMEONE',
+        messageTs: '1787768412.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'manager identity mismatch' });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([]);
+  });
+
+  it('edits the replaced message once to say so, without its buttons, and records the edit', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, oldCode } = await replaceDeliveredRequest(harness);
+    const replacedId = await harness.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique())!._id,
+    );
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('managerChannelActions:markRequestReplaced');
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: true });
+    const updates = sent.filter((call) => call.url.endsWith('/chat.update'));
+    expect(updates).toHaveLength(1);
+    const body = JSON.parse(updates[0]!.body) as {
+      ts: string;
+      text: string;
+      blocks: Array<{ type: string }>;
+    };
+    expect(body.ts).toBe('provider-1');
+    expect(body.text).toContain('needs your decision');
+    expect(body.text).toContain(`Replaced (${oldCode}): this request no longer decides anything.`);
+    expect(body.text).not.toContain('Press Approve or Reject below');
+    expect(body.blocks.map((block) => block.type)).toEqual(['section']);
+    expect(await harness.run(async (ctx) => await ctx.db.get(replacedId))).toMatchObject({
+      editClaimedAt: expect.any(Number),
+      editedAt: expect.any(Number),
+    });
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+  });
+
+  it('remembers a request a re-draft took back, with nothing replacing it yet', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.patch(workItemId, {
+        planDraftedWithout: { surfaceSlug: 'team-chat', subject: 'thread', cause: 'not-connected' },
+      });
+      const surface = (await ctx.db.query('surfaces').first())!;
+      await redraftPlansDraftedWithout(ctx, surface, Date.now());
+      return surface._id;
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision).toBe(
+      undefined,
+    );
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768413.000100',
+      reply: { verb: 'approve', id: oldCode },
+    });
+    const notice = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').first(),
+    );
+    expect(notice).toMatchObject({ agentId, kind: 'replaced' });
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+    );
+  });
+});
+
 describe('a decided request in the manager DM (M finding 3)', (): void => {
   /** A Slack double that answers every call, recording it. */
   function recordSlack(): void {
@@ -571,6 +951,94 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
       }),
     ).resolves.toEqual({ closed: false });
     expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+  });
+
+  it('records when the edit landed, so the lease sweep never reads the claim as open', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    await harness.action(internal.managerChannelActions.closeDecisionRequest, {
+      workItemId,
+      decisionId,
+    });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closeClaimedAt).toEqual(expect.any(Number));
+    expect(decision?.closedAt).toEqual(expect.any(Number));
+    expect(decision?.closeFailure).toBeUndefined();
+  });
+
+  it('records why the edit failed, once, and does not try it again', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        const refused = input.href.endsWith('/chat.update');
+        return new Response(
+          JSON.stringify(
+            refused ? { ok: false, error: 'cant_update_message' } : { ok: true, ts: 'provider-1' },
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: false });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closedAt).toBeUndefined();
+    expect(decision?.closeFailure).toContain('cant_update_message');
+    expect(decision?.closeFailure?.length).toBeLessThanOrEqual(240);
+  });
+
+  it('writes no result for a claim the lease sweep already settled', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    const claim = await harness.mutation(internal.work.prepareRequestClose, {
+      workItemId,
+      decisionId,
+    });
+    expect(claim.prepared).toBe(true);
+    const claimedAt = claim.prepared ? claim.claimedAt : 0;
+    await harness.run(async (ctx): Promise<void> => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        decision: { ...row!.decision!, closeFailure: "the edit's claim lapsed with no result" },
+      });
+    });
+    await expect(
+      harness.mutation(internal.work.recordRequestClose, {
+        workItemId,
+        decisionId,
+        claimedAt,
+        closedAt: Date.now(),
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.work.recordRequestClose, {
+        workItemId,
+        decisionId,
+        claimedAt: claimedAt - 1,
+        failure: 'late',
+      }),
+    ).resolves.toBe(false);
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closedAt).toBeUndefined();
+    expect(decision?.closeFailure).toBe("the edit's claim lapsed with no result");
   });
 
   it('leaves the request as sent when the card does not allow chat.update', async (): Promise<void> => {

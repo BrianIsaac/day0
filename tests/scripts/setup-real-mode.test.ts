@@ -440,8 +440,9 @@ describe('the order the real-mode helpers run in', (): void => {
     expect(sequenceSteps('key')).toEqual(sequenceSteps('key', { mode: 'mock' }));
   });
 
-  it('hands the three demo profiles to convex:up and names every profile on a reset', (): void => {
-    expect(REAL_MODE_PROFILES).toEqual(['docs-notion', 'browser', 'demo']);
+  it('hands the three demo profiles and the Slack socket bridge to convex:up and names every profile on a reset', (): void => {
+    // Re-pinned for 12-M: real mode starts the Socket Mode bridge, whose secret it mints (RM7).
+    expect(REAL_MODE_PROFILES).toEqual(['docs-notion', 'browser', 'demo', 'slack-socket']);
     const [up] = stepCommands('convex:up', {
       mode: 'real',
       route: 'featherless',
@@ -457,6 +458,8 @@ describe('the order the real-mode helpers run in', (): void => {
       'browser',
       '--profile',
       'demo',
+      '--profile',
+      'slack-socket',
     ]);
     const reset = resetArguments();
     expect(reset.slice(-3)).toEqual(['down', '-v', '--remove-orphans']);
@@ -470,6 +473,7 @@ describe('the order the real-mode helpers run in', (): void => {
       'docs-notion',
       'dev',
       'test',
+      'slack-socket',
     ]) {
       expect(reset).toContain(profile);
     }

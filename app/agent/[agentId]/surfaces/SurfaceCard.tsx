@@ -30,6 +30,7 @@ import {
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
+  decisionButtonsWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -59,6 +60,7 @@ import {
   IntakeScopeRow,
   ONE_APPROVER,
   PageScanRow,
+  DecisionButtonsRow,
   ProvisioningRow,
   SurfaceLadder,
 } from './SurfaceRows';
@@ -98,7 +100,15 @@ interface ConnectRequestBody {
 /** A change in flight on one card, and its refusal once refused. */
 export interface Operation {
   readonly error?: string;
-  readonly kind: 'approve' | 'connect' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
+  readonly kind:
+    | 'approve'
+    | 'connect'
+    | 'landing'
+    | 'probe'
+    | 'propose'
+    | 'provision'
+    | 'reject'
+    | 'socket-token';
   readonly surfaceId: string;
 }
 
@@ -143,6 +153,8 @@ export interface SurfaceCardContext {
    * request can be sent there (`accessRequests`'s `managerDmCardOf`, without its grant check).
    */
   readonly managerDmReachable: boolean;
+  /** How many app-level tokens each card landed since the tab opened, by card id (12-M). */
+  readonly socketTokenLandings?: ReadonlyMap<string, number>;
 }
 
 /** What a card's controls do, each bound to the card's own change. */
@@ -154,6 +166,8 @@ export interface SurfaceCardActions {
   readonly land: (label: string, plaintext: string) => void;
   /** Register or install the employee's own Slack app: with a pasted token, or through IT's. */
   readonly provision: (configurationToken?: string) => void;
+  /** Land the app-level token a person generated for the employee's own Slack app (12-M). */
+  readonly landSocketToken: (token: string) => void;
   readonly setDays: (days: number) => Promise<Renewed>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
   /** Connect through the organisation's connection, where the card's system has an issuer. */
@@ -509,6 +523,16 @@ export function SurfaceCard({
             onProvision={actions.provision}
             presentation={provisioningPresentation}
             provisioning={pending === 'provision'}
+            surfaceSlug={surface.slug}
+          />
+        ) : null}
+        {surface.decisionButtons !== undefined ? (
+          <DecisionButtonsRow
+            words={decisionButtonsWords(surface.decisionButtons, provisioning?.appName)}
+            error={failed('socket-token')}
+            onLand={actions.landSocketToken}
+            landing={pending === 'socket-token'}
+            landings={context.socketTokenLandings?.get(String(surface._id))}
             surfaceSlug={surface.slug}
           />
         ) : null}

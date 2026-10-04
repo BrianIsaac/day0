@@ -23,15 +23,17 @@ export const TRACE_FORMAT = 'day0-trace';
  * 4 adds the employee's accepted handovers to the manifest, so a recompute
  * from traces cuts each manager's figures by tenure, each owner key as a
  * salted digest ({@link ownerKeyDigest}); 5 adds the organisation's ledger
- * lines about the connections the employee's cards use (wave 11, F17).
+ * lines about the connections the employee's cards use (wave 11, F17); 6 adds
+ * the decision requests a newer one replaced (wave 12, 12-M; F2 D14).
  */
-export const TRACE_VERSION = 5;
+export const TRACE_VERSION = 6;
 
 /**
  * The earlier versions this release still reads: a version 2 trace has no
- * delivery records, and neither 2 nor 3 carries the handovers.
+ * delivery records, neither 2 nor 3 carries the handovers, and none before 6
+ * the replaced decision requests.
  */
-const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, TRACE_VERSION]);
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, 5, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -46,11 +48,15 @@ export const TRACE_SECTIONS = [
   'surfaces',
   'managerNotes',
   'decisionNotices',
+  'replacedRequests',
   'events',
 ] as const;
 
 /** The sections a version 2 trace did not carry, read from one as empty. */
 const ADDED_IN_VERSION_3: readonly TraceSection[] = ['managerNotes', 'decisionNotices'];
+
+/** The sections a trace before version 6 did not carry, read from one as empty. */
+const ADDED_IN_VERSION_6: readonly TraceSection[] = ['replacedRequests'];
 
 /** One section of a trace. */
 export type TraceSection = (typeof TRACE_SECTIONS)[number];
@@ -71,6 +77,11 @@ export interface TraceRows {
   managerNotes: Doc<'managerNotes'>[];
   /** Each acknowledgement Day0 posted of a reply the manager gave a decision request. */
   decisionNotices: Doc<'managerDecisionNotices'>[];
+  /**
+   * Each decision request a newer one replaced or a path took back, with the code that replaced
+   * it and the result of the one edit that marked its message (12-M; F2 D14).
+   */
+  replacedRequests: Doc<'replacedDecisionRequests'>[];
   events: Doc<'events'>[];
 }
 
@@ -123,7 +134,7 @@ export type TraceRetirement = Omit<Doc<'retirements'>, 'userId'> | TombstoneReti
 export interface TraceManifest {
   readonly format: typeof TRACE_FORMAT;
   /** This release's version, or the earlier one a file read from an older export keeps. */
-  readonly version: 2 | 3 | 4 | typeof TRACE_VERSION;
+  readonly version: 2 | 3 | 4 | 5 | typeof TRACE_VERSION;
   readonly exportedAt: number;
   /** The export's date, `YYYY-MM-DD`, in the agent's zone. */
   readonly exportedOn: string;
@@ -316,8 +327,8 @@ export async function assembleTrace(
 
 /**
  * A parsed file as an assembled trace of this version, or undefined when it is
- * not a day0 trace this release reads. A version 2 trace is read with the
- * sections it did not carry as empty.
+ * not a day0 trace this release reads. A trace is read with the sections its
+ * version did not carry yet as empty.
  *
  * @param value - The parsed file.
  * @returns The trace, its manifest's version the one it was written with.
@@ -342,7 +353,9 @@ export function readAgentTrace(value: unknown): AgentTrace | undefined {
   const complete = TRACE_SECTIONS.every(
     (section) =>
       Array.isArray(carried[section]) ||
-      (version === 2 && ADDED_IN_VERSION_3.includes(section) && carried[section] === undefined),
+      (carried[section] === undefined &&
+        ((version === 2 && ADDED_IN_VERSION_3.includes(section)) ||
+          (typeof version === 'number' && version < 6 && ADDED_IN_VERSION_6.includes(section)))),
   );
   if (!complete) return undefined;
   const filled = Object.fromEntries(

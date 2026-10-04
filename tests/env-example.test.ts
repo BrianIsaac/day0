@@ -69,6 +69,11 @@ describe('.env.example', (): void => {
     expect(EXAMPLE).toContain('DAY0_NANGO_URL=http://nango-server:3003');
   });
 
+  it('declares the Slack socket bridge secret empty, for setup to mint, and the compose file reads it (12-M)', (): void => {
+    expect(EXAMPLE).toMatch(/^DAY0_SOCKET_BRIDGE_SECRET=$/m);
+    expect(COMPOSE).toContain('${DAY0_SOCKET_BRIDGE_SECRET:-}');
+  });
+
   it('declares the shared-skills switch, on by default (K4)', (): void => {
     expect(DECLARED).toContain('DAY0_SHARED_SKILLS');
     expect(EXAMPLE).toMatch(/^DAY0_SHARED_SKILLS=$/m);

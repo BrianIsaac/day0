@@ -38,6 +38,37 @@ needs to create those apps: an app configuration token and its refresh token.
 4. Where the workspace requires an administrator to approve app installs, an
    administrator installs each employee's app from the install link Day0 gives
    the employee's manager. Installing is the approval.
+5. **For decision buttons, each app's app-level token** (optional, one click
+   per app; below). Until an app has one, its manager decides by the typed
+   code in each request, which always works.
+
+### Decision buttons: each app's app-level token
+
+Each request Day0 sends an employee's manager carries a typed code (`approve
+ab3xyz`), which always decides. With the employee's app's **app-level token**,
+the request also carries **Approve** and **Reject** buttons. Slack offers no API
+that issues an app-level token, so a person generates one per app:
+
+1. Signed in to <https://api.slack.com/apps> as a collaborator on the
+   employee's app (`<employee name> (Day0)`), open it.
+2. **Socket Mode**: it is on for an app Day0 created from the manifest in
+   section 2.
+   An app created before this release has it off: turn **Enable Socket Mode**
+   on, and turn on **Interactivity & Shortcuts** (no request URL is asked for).
+3. **Basic Information**, **App-Level Tokens**, **Generate Token and Scopes**:
+   any name (for example `day0-buttons`), the scope **`connections:write`**,
+   **Generate**. Copy the token (it starts `xapp-`).
+4. In Day0, the employee's **Slack** card, **App-level token**: paste it and
+   press **Turn on buttons**. Day0 checks it by opening a Socket Mode connection
+   with it, keeps it encrypted and held by the organisation, and never shows it
+   again. The card then says "Decisions in Slack: buttons and typed codes".
+
+Slack sets no expiry on the token. It ends when the app is deleted (a retire
+deletes it) or when a collaborator revokes it on the same page; presses then
+stop reaching Day0 until a new token is landed on the card, and the typed code
+in each request still decides. A token landed again replaces the last. The `slack-socket` component must run (real-mode setup starts
+it) and reach Slack's Socket Mode hosts outbound over `wss://`; nothing
+inbound is opened.
 
 ## 2. The manifest or the form
 
@@ -81,11 +112,20 @@ same app, since Day0's documentation reader finds it there.
   },
   "settings": {
     "org_deploy_enabled": false,
-    "socket_mode_enabled": false,
-    "token_rotation_enabled": false
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false,
+    "interactivity": {
+      "is_enabled": true
+    }
   }
 }
 ```
+
+Socket Mode and interactivity are on with **no request URL**: a press of a
+decision request's Approve or Reject button reaches Day0 over a WebSocket Day0
+dials out (the `slack-socket` component), so the app declares no inbound
+address. Slack's manifest check refuses interactivity with neither a request
+URL nor Socket Mode.
 
 The redirect is `<Day0 public URL>/api/oauth/slack`, with `DAY0_PUBLIC_URL`
 the https origin people reach Day0 on through the customer's proxy. https is
@@ -191,6 +231,7 @@ redirect URI above.
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token has lapsed, which the refresh token renews at Day0's next use of it |
 | `reach` | `pass`: the backend container reached Slack's Web API (`api.test`, no token sent); a `GAP` names curl's words, cured by opening the deployment's way out to `slack.com` |
+| `socket` | `pass`: the `slack-socket` service runs and holds a Socket Mode connection for each employee app with an app-level token; a `note` when it is not running (requests then carry the typed code only); a `GAP` names an app with no connection (open the service's way out to Slack's Socket Mode hosts over `wss://`) or a secret the service and the deployment do not share |
 
 A `GAP` names what to fix: a redirect that is not Day0's (the public address
 changed since the connection was landed), a scope the connection lacks, a

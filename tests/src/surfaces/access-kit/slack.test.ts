@@ -37,10 +37,13 @@ describe('the Slack recipe', (): void => {
       scopes: { bot: [...SLACK_KIT_BOT_SCOPES] },
     });
     expect(scopes).toEqual([...SLACK_KIT_BOT_SCOPES]);
+    // Re-pinned for 12-M: the kit's apps turn on Socket Mode and interactivity with no request URL,
+    // so Approve and Reject presses reach Day0 over the bridge's outbound socket (RM7, Q13).
     expect(manifest.settings).toEqual({
       org_deploy_enabled: false,
-      socket_mode_enabled: false,
+      socket_mode_enabled: true,
       token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
     });
   });
 

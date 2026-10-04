@@ -1271,6 +1271,8 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 1,
         landedThisMonth: NOTHING_LANDED,
+        // No chat surface: decisions reach the manager in this dashboard alone (12-M; H D6).
+        decisionsReach: { kind: 'dashboard' },
       },
       {
         agentId: mateo,
@@ -1287,6 +1289,7 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 2,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
       {
         agentId: priya,
@@ -1306,6 +1309,7 @@ describe('the employee roster', (): void => {
         needsYou: 3,
         docSourceCount: 2,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
     ]);
     await expect(
@@ -1326,11 +1330,68 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 1,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
     ]);
     await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(
       await guardRefusal(),
     );
+  });
+
+  it('says where each employee’s decisions reach the manager: a DM with buttons, a DM with typed codes, or here (12-M; H D6)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const buttons = await deployEmployee(harness, 'owner', 'Mateo');
+    const typed = await deployEmployee(harness, 'owner', 'Priya');
+    const here = await deployEmployee(harness, 'owner', 'Aiko');
+    await harness.run(async (ctx): Promise<void> => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = async (agentId: Id<'agents'>, withToken: boolean): Promise<void> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          path: 'documented-api',
+          endpoint: 'https://slack.com/api/',
+          managerDmChannelId: 'D0MANAGER',
+          managerUserId: 'UMANAGER',
+          credentialLanded: true,
+          credentialId: secret,
+          provisioning: {
+            appId: `A0${String(agentId).slice(-4)}`,
+            appName: 'App (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: secret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: [],
+            createdAt: 1,
+            installedAt: 2,
+            ...(withToken ? { appLevelTokenCredentialId: secret } : {}),
+          },
+          createdAt: 1,
+        });
+      };
+      await slack(buttons, true);
+      await slack(typed, false);
+    });
+    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const reach = new Map(rows.map((row) => [row.agentId, row.decisionsReach]));
+    expect(reach.get(buttons)).toEqual({ kind: 'dm', channel: 'Slack', buttons: true });
+    expect(reach.get(typed)).toEqual({ kind: 'dm', channel: 'Slack', buttons: false });
+    expect(reach.get(here)).toEqual({ kind: 'dashboard' });
+    vi.unstubAllEnvs();
   });
 
   it('gives each row the state the employee’s own page shows, a charter outranking the row (m6)', async (): Promise<void> => {

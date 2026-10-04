@@ -30,6 +30,7 @@ describe('the trace sections', (): void => {
       'surfaces',
       'managerNotes',
       'decisionNotices',
+      'replacedRequests',
       'events',
       undefined,
     ]);
@@ -75,8 +76,9 @@ describe('assembling a trace from its pages', (): void => {
             : null,
         }) as TracePage,
     });
-    const { managerNotes, decisionNotices, ...older } = trace.sections;
+    const { managerNotes, decisionNotices, replacedRequests, ...older } = trace.sections;
     const version2 = { ...trace, manifest: { ...trace.manifest, version: 2 }, sections: older };
+    expect(replacedRequests).toEqual([]);
     expect([managerNotes, decisionNotices]).toEqual([[], []]);
     expect(readAgentTrace(version2)?.sections).toMatchObject({
       managerNotes: [],
@@ -86,8 +88,14 @@ describe('assembling a trace from its pages', (): void => {
       readAgentTrace({ ...version2, manifest: { ...trace.manifest, version: 3 } }),
     ).toBeUndefined();
     // A version 3 trace, complete but without the handovers version 4 adds, is still read.
+    const withoutReplaced = { ...trace.sections } as Record<string, unknown>;
+    delete withoutReplaced.replacedRequests;
     expect(
-      readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 3 } })?.manifest.version,
+      readAgentTrace({
+        ...trace,
+        manifest: { ...trace.manifest, version: 3 },
+        sections: withoutReplaced,
+      })?.manifest.version,
     ).toBe(3);
     // A version 4 trace, without the organisation's ledger version 5 adds, is read with none.
     const { organisationLedger, ...version4 } = trace;
@@ -96,7 +104,23 @@ describe('assembling a trace from its pages', (): void => {
       readAgentTrace({ ...version4, manifest: { ...trace.manifest, version: 4 } })
         ?.organisationLedger,
     ).toEqual([]);
-    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 6 } })).toBe(
+    // A version 5 trace, without the replaced requests version 6 adds (12-M), is read with none.
+    expect(
+      readAgentTrace({
+        ...trace,
+        manifest: { ...trace.manifest, version: 5 },
+        sections: withoutReplaced,
+      })?.sections.replacedRequests,
+    ).toEqual([]);
+    // A version 6 trace must carry them.
+    expect(
+      readAgentTrace({
+        ...trace,
+        manifest: { ...trace.manifest, version: 6 },
+        sections: withoutReplaced,
+      }),
+    ).toBeUndefined();
+    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 7 } })).toBe(
       undefined,
     );
   });

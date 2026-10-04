@@ -55,6 +55,7 @@ export const PROVIDER_SHAPES = [
   { pattern: /xoxp-[A-Za-z0-9_-]{8,}/, label: 'slack user token' },
   { pattern: /xoxa-[A-Za-z0-9_-]{8,}/, label: 'slack app token' },
   { pattern: /xox[es]-[A-Za-z0-9_-]{8,}/, label: 'slack token' },
+  { pattern: /xapp-[A-Za-z0-9_-]{8,}/, label: 'slack app-level token' },
   { pattern: /ntn_[A-Za-z0-9_-]{8,}/, label: 'notion connection token' },
   { pattern: /secret_[A-Za-z0-9_-]{16,}/, label: 'secret' },
   { pattern: /AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/, label: 'aws access key' },

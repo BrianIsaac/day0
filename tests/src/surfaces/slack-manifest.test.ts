@@ -252,6 +252,32 @@ describe('the manifest Day0 sends', (): void => {
     });
   });
 
+  it('keeps interactivity with Socket Mode on and never its request URL, so buttons reach Day0 over the socket (12-M)', (): void => {
+    const parsed = JSON.parse(widened()) as Record<string, Record<string, unknown>>;
+    parsed.settings.socket_mode_enabled = true;
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: JSON.stringify(parsed),
+    });
+    expect(JSON.stringify(built.manifest)).not.toContain('attacker.example');
+    expect(built.manifest.settings).toEqual({
+      org_deploy_enabled: true,
+      socket_mode_enabled: true,
+      token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
+    });
+  });
+
+  it('drops interactivity without Socket Mode, which Slack refuses with no request URL', (): void => {
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: widened(),
+    });
+    expect(built.manifest.settings).not.toHaveProperty('interactivity');
+  });
+
   it('refuses a bot scope that is not a Slack scope', (): void => {
     const odd = JSON.parse(template()) as SlackManifest;
     odd.oauth_config.scopes.bot = ['chat:write', 'admin'];

@@ -9,6 +9,7 @@ import {
   slackApiBaseForCheck,
   type AccessCheck,
   type ConnectionRow,
+  type SocketBridgeReading,
   type VendorProbes,
 } from '../../scripts/check-access';
 import type { ModelDial } from '../../scripts/model-reach';
@@ -58,6 +59,8 @@ function vendors(
     readonly opened?: Readonly<Record<string, string | Error>>;
     /** What the backend container's dial of an address finds; reached by default. */
     readonly backend?: (url: URL) => ModelDial | undefined;
+    /** What the Slack socket service says of itself; running, with no app, by default. */
+    readonly socket?: SocketBridgeReading;
   } = {},
 ): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
   const calls: string[] = [];
@@ -70,6 +73,8 @@ function vendors(
     calls,
     fromTheBackend,
     slackApiBase: new URL('https://slack.com/api/'),
+    socketBridge: async (): Promise<SocketBridgeReading> =>
+      overrides.socket ?? { state: 'running', synced: true, apps: [] },
     fromBackend: async (url: URL): Promise<ModelDial> => {
       fromTheBackend.push(url.href);
       return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
@@ -141,6 +146,8 @@ describe('check:access', (): void => {
       'slack secret',
       'slack identity',
       'slack reach',
+      // Re-pinned for 12-M: Slack's checks end with whether the socket service carries presses.
+      'slack socket',
       'linear status',
       'linear redirect',
       'linear scopes',
@@ -553,5 +560,90 @@ describe('the check with nothing to check', (): void => {
       '  None is connected: `./setup.sh access` connects them with the customer’s IT.',
     );
     expect(noConnectionLine('linear')).toBe('  Nothing is connected for linear.');
+  });
+});
+
+describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void => {
+  it('passes when the service holds a connection for every app with an app-level token', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK, LINEAR],
+      VALUES,
+      vendors({
+        socket: { state: 'running', synced: true, apps: [{ appId: 'A0MATEO', connected: true }] },
+      }),
+    );
+    expect(only(checks, 'slack', 'socket')).toMatchObject({
+      status: 'ok',
+      detail: expect.stringContaining('1 employee app'),
+    });
+    expect(checks.some((one) => one.subject === 'linear' && one.name === 'socket')).toBe(false);
+  });
+
+  it('notes a service that is not running: requests carry the typed code', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ socket: { state: 'absent', detail: 'service "slack-socket" is not running' } }),
+    );
+    const socket = only(checks, 'slack', 'socket');
+    expect(socket.status).toBe('warn');
+    expect(socket.detail).toContain('typed code');
+    expect(socket.detail).toContain('pnpm convex:up --profile slack-socket');
+    expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('names an app that holds no connection, and the way out it needs', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        socket: {
+          state: 'running',
+          synced: true,
+          apps: [
+            { appId: 'A0MATEO', connected: true },
+            { appId: 'A0PRIYA', connected: false },
+          ],
+        },
+      }),
+    );
+    const socket = only(checks, 'slack', 'socket');
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain('A0PRIYA');
+    expect(socket.detail).toContain('wss://');
+  });
+
+  it('names an app whose card holds another app’s token', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({
+          socket: {
+            state: 'running',
+            synced: true,
+            apps: [{ appId: 'A0PRIYA', connected: false, mismatch: true }],
+          },
+        }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain("A0PRIYA's card holds the app-level token of another app");
+  });
+
+  it('names the secret when the service cannot read the backend’s list', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({ socket: { state: 'running', synced: false, apps: [] } }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain('DAY0_SOCKET_BRIDGE_SECRET');
   });
 });

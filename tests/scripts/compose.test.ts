@@ -116,6 +116,7 @@ describe('the profile list and the compose file agree', (): void => {
     expect(profileFor.get('looker-tile')).toBe('demo');
     expect(profileFor.get('fake-slack')).toBe('test');
     expect(profileFor.get('dashboard')).toBe('dev');
+    expect(profileFor.get('slack-socket')).toBe('slack-socket');
   });
 
   it('keeps notion-mcp reachable as an alias, so links made before the rename still sync', (): void => {

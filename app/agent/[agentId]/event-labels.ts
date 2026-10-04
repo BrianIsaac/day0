@@ -457,6 +457,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
+  'surface.socket-token-landed': (payload) =>
+    `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
@@ -606,6 +608,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${decisionNoun(payload.kind)} request asked on the chat surface`,
   'work.decision-notifying': 'telling the manager what was decided',
   'work.decision-request-closing': 'marking the decided request in the manager DM',
+  'work.decision-request-replacing': 'marking the replaced request in the manager DM',
   'work.decision-acknowledging': (payload) =>
     ACKNOWLEDGEMENT_LABELS[payload.kind ?? 'received'] ?? ACKNOWLEDGEMENT_LABELS.received,
   'work.decision-ignored': (payload) => `a chat reply ignored${because(payload.reason)}`,
