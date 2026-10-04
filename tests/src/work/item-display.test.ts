@@ -121,6 +121,42 @@ describe('runProgress', (): void => {
     ]);
   });
 
+  it('says the writes the manager approved are being sent, and what a stop leaves (W12-R8)', (): void => {
+    const sending = runProgress(
+      row({
+        state: 'executing',
+        applyPhase: 'approved',
+        approvedIndexes: [0, 1, 2],
+        applyAttemptId: 'attempt-1',
+      }),
+      { autonomous: false },
+    );
+    expect(sending?.title).toBe('Sending the 3 writes you approved');
+    expect(sending?.detail).toBe(
+      'A stop sends nothing more; a write already sent stays sent, and one on its way when you stop is listed for you to check.',
+    );
+    expect(sending?.parts).toEqual([
+      { name: 'Read and draft', status: 'done' },
+      { name: 'Your approval', status: 'done' },
+      { name: 'Approved writes', status: 'now' },
+    ]);
+    const closing = runProgress(
+      row({
+        state: 'executing',
+        applyPhase: 'approved',
+        approvedIndexes: [0],
+        applyAttemptId: 'attempt-1',
+        output: { initial: { applied: [] } },
+      }),
+      { autonomous: false },
+    );
+    expect(closing?.title).toBe('Sending the 1 write you approved');
+    expect(closing?.parts).toEqual([
+      { name: 'Prerequisites', status: 'done' },
+      { name: 'Closing actions', status: 'now' },
+    ]);
+  });
+
   it('says the mock gate holds every write, and draws no automatic part it never runs', (): void => {
     const mock = runProgress(row({ state: 'executing' }), { autonomous: false, gate: 'mock' });
     expect(mock?.detail).toBe(

@@ -296,6 +296,25 @@ function progressUnderWay(
   }
   if (item.state !== 'plan-approved' && item.state !== 'executing') return undefined;
   const twoPhase = (item.output as { initial?: unknown } | undefined)?.initial !== undefined;
+  // The manager's approval is being sent: the step under way since Stop reached this card (W12-R8).
+  if (item.state === 'executing' && item.applyPhase === 'approved') {
+    const count = item.approvedIndexes?.length ?? 0;
+    return {
+      title: `Sending the ${count} ${count === 1 ? 'write' : 'writes'} you approved`,
+      detail:
+        'A stop sends nothing more; a write already sent stays sent, and one on its way when you stop is listed for you to check.',
+      parts: twoPhase
+        ? [
+            { name: 'Prerequisites', status: 'done' },
+            { name: 'Closing actions', status: 'now' },
+          ]
+        : [
+            { name: 'Read and draft', status: 'done' },
+            { name: 'Your approval', status: 'done' },
+            { name: 'Approved writes', status: 'now' },
+          ],
+    };
+  }
   const applying = item.state === 'executing' && item.applyPhase === 'auto';
   const count = item.approvedIndexes?.length ?? 0;
   const writes = `${count} ${count === 1 ? 'action' : 'actions'}`;
