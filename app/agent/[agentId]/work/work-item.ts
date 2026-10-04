@@ -348,8 +348,9 @@ export function failedItemReason(item: {
       if (unconfirmed) {
         return `${said} A write landed or may have; confirm the provider below before Retry.`;
       }
-      if (landed) return `${said} A write landed before it stopped; nothing is left to decide.`;
-      return `${said} Nothing landed, and nothing is left to decide.`;
+      if (landed)
+        return `${said} A write landed before it stopped; a retry does not send it again.`;
+      return `${said} Nothing landed, so there is nothing to check.`;
     }
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.

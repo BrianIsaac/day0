@@ -81,7 +81,7 @@ describe('StopDialog', (): void => {
 
   it('says what the Stop control does and what a stop came to, in words for the card', (): void => {
     expect(stopWhy('the employee')).toBe(
-      'Stop ends this run: the employee sends nothing more, and the item waits for you with Retry.',
+      'The employee, once stopped, sends nothing more, and the item waits for you with Retry.',
     );
     expect(stoppedOutcome('Close the Q3 audit note')).toBe(
       'Stopped: Close the Q3 audit note. It waits for you with Retry.',

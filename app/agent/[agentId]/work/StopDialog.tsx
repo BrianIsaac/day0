@@ -22,8 +22,8 @@ function capitalised(name: string): string {
 export function stopDialogDescription(employeeName: string, applying: boolean): string {
   const name = capitalised(employeeName);
   return applying
-    ? `${name} is sending the writes you approved. Stopping sends nothing more; a write it was sending when you stop may still land, so the item lists each one for you to check before any retry.`
-    : `${name} stops now and sends nothing more. Nothing already sent is undone; the item waits for you as stopped, with Retry.`;
+    ? `${name} is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.`
+    : `${name} stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.`;
 }
 
 /**
@@ -32,7 +32,7 @@ export function stopDialogDescription(employeeName: string, applying: boolean): 
  * @param employeeName - Who is working the item.
  */
 export function stopWhy(employeeName: string): string {
-  return `Stop ends this run: ${employeeName} sends nothing more, and the item waits for you with Retry.`;
+  return `${capitalised(employeeName)}, once stopped, sends nothing more, and the item waits for you with Retry.`;
 }
 
 /**
@@ -96,7 +96,7 @@ export function StopDialog({
           });
         }}
       >
-        <Field label="Reason (optional)" hint="Kept with the item and on the record.">
+        <Field label="Reason (optional)" hint="Shown on the item and kept in the record.">
           {(control) => (
             <input
               {...control}

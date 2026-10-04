@@ -156,7 +156,7 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
 
   it('says nothing landed when nothing did, and gives no reason you did not give', (): void => {
     expect(failedItemReason({ skipReason: 'stopped: stopped by the manager' })).toBe(
-      'You stopped the run. Nothing landed, and nothing is left to decide.',
+      'You stopped the run. Nothing landed, so there is nothing to check.',
     );
     expect(
       failedItemReason({
@@ -164,7 +164,9 @@ describe('a stop the manager made, in the card’s words (wave 12)', (): void =>
         output: unknownWrite,
         providerReconciliation: { confirmedAt: 1 },
       }),
-    ).toBe('You stopped the run. A write landed before it stopped; nothing is left to decide.');
+    ).toBe(
+      'You stopped the run. A write landed before it stopped; a retry does not send it again.',
+    );
   });
 });
 

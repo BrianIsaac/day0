@@ -305,14 +305,17 @@ export function WorkItemCard({
   const unfinished = item.state === 'completed' ? unfinishedInOwnWords(output) : [];
   const unfinishedSection =
     unfinished.length > 0 ? (
-      <ItemSection title={`Not done, in ${employeeName}’s own words`}>
-        <ul className="grid gap-1.5 text-[15px]">
-          {unfinished.map((statement) => (
-            <li key={statement}>
-              <Quote>{statement}</Quote>
-            </li>
-          ))}
-        </ul>
+      <ItemSection>
+        <Note tone="warn">
+          <Lead>Not done, in {employeeName}’s own words:</Lead>
+          <ul className="mt-1.5 grid list-disc gap-1 pl-5 text-[15px]">
+            {unfinished.map((statement) => (
+              <li key={statement}>
+                <Quote>{statement}</Quote>
+              </li>
+            ))}
+          </ul>
+        </Note>
       </ItemSection>
     ) : null;
   // A stopped item that left nothing to reconcile, and the interrupted apply that cannot say what

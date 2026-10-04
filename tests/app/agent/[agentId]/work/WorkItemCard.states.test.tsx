@@ -216,7 +216,7 @@ describe('Stop on a working card (wave 12)', (): void => {
   it('asks first, keeps working by default, and stops with the reason given', async (): Promise<void> => {
     const view = card(DRAWN.working);
     expect(view.text()).toContain(
-      'Stop ends this run: Mira sends nothing more, and the item waits for you with Retry.',
+      'Mira, once stopped, sends nothing more, and the item waits for you with Retry.',
     );
     await press(view.container, 'Stop');
     const dialog = document.body.querySelector('[role="alertdialog"]');
@@ -224,7 +224,7 @@ describe('Stop on a working card (wave 12)', (): void => {
       'Stop work on “Draft response for new tier-two RevOps ask”?',
     );
     expect(dialog?.textContent).toContain(
-      'Mira stops now and sends nothing more. Nothing already sent is undone; the item waits for you as stopped, with Retry.',
+      'Mira stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.',
     );
     expect(focusedName()).toBe('Keep working');
     typeInto(field(document.body, 'Reason (optional)'), 'Wrong ticket.');
@@ -252,7 +252,7 @@ describe('Stop on a working card (wave 12)', (): void => {
     } as unknown as Doc<'workItems'>);
     await press(view.container, 'Stop');
     expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      'Mira is sending the writes you approved. Stopping sends nothing more; a write it was sending when you stop may still land, so the item lists each one for you to check before any retry.',
+      'Mira is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.',
     );
   });
 });
@@ -380,7 +380,10 @@ describe('landed (work-landed.html)', (): void => {
     expect(landedAnswers).toHaveLength(3);
     expect(notSentAnswers).toHaveLength(3);
     expect(() => button(view.container, 'Confirm reconciliation')).toThrow();
+    // The count beside Confirm says what is still owed (the second pass's design finding).
+    expect(view.text()).toContain('0 of 3 answered');
     await act(async (): Promise<void> => (landedAnswers[0] as HTMLInputElement).click());
+    expect(view.text()).toContain('1 of 3 answered');
     await act(async (): Promise<void> => (notSentAnswers[1] as HTMLInputElement).click());
     await act(async (): Promise<void> => (landedAnswers[2] as HTMLInputElement).click());
     await press(view.container, 'Confirm reconciliation');
@@ -529,7 +532,7 @@ describe('Close without retry (E-8)', (): void => {
     expect(() => button(view.container, 'Dismiss')).toThrow();
     expect(button(view.container, 'Retry').disabled).toBe(false);
     expect(view.text()).toContain(
-      'Close without retry takes it out of your inbox and keeps it in the record; Retry stays here.',
+      'Close without retry takes it out of your inbox and keeps it in the record; Retry is still here if you change your mind.',
     );
     await press(view.container, 'Close without retry');
     expect(view.calls).toEqual([['closeWithoutRetry', undefined]]);

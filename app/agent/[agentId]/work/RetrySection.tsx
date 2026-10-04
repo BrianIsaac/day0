@@ -96,7 +96,7 @@ export type SetAside = 'dismiss' | 'close';
 export function dismissWhy(mode: RetryMode, kind: SetAside = 'dismiss', retryOpen = true): string {
   if (kind === 'close') {
     return retryOpen
-      ? 'Close without retry takes it out of your inbox and keeps it in the record; Retry stays here.'
+      ? 'Close without retry takes it out of your inbox and keeps it in the record; Retry is still here if you change your mind.'
       : 'Close without retry takes it out of your inbox and keeps it in the record.';
   }
   return mode.kind === 'retry-failed' && mode.rejected
@@ -290,13 +290,18 @@ export function RetrySection({
   const disabled =
     busy || blocked || ((mode.kind === 'send-back' || mode.kind === 'answer') && !writing);
   const body: ReactNode[] = [];
+  if (reason) {
+    body.push(
+      <Note key="reason" tone="warn">
+        {reason}
+      </Note>,
+    );
+  }
   if (dismiss?.at !== undefined) {
     body.push(
       <Note key="dismissed">
         <Lead>
-          {dismiss.kind === 'close'
-            ? 'You closed this without a retry at'
-            : 'You dismissed this at'}{' '}
+          {dismiss.kind === 'close' ? 'You closed this at' : 'You dismissed this at'}{' '}
           <time
             dateTime={new Date(dismiss.at).toISOString()}
             title={clockTimeWithSeconds(dismiss.at, zone)}
@@ -307,14 +312,9 @@ export function RetrySection({
         </Lead>{' '}
         {blocked
           ? 'It is out of your inbox and stays in the record.'
-          : 'It is out of your inbox and stays in the record; Retry still sends it back.'}
-      </Note>,
-    );
-  }
-  if (reason) {
-    body.push(
-      <Note key="reason" tone="warn">
-        {reason}
+          : dismiss.kind === 'close'
+            ? 'It is out of your inbox and stays in the record; Retry is still here if you change your mind.'
+            : 'It is out of your inbox and stays in the record; Retry still sends it back.'}
       </Note>,
     );
   }

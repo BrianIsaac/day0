@@ -560,6 +560,14 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
   );
 }
 
+/** How many of the entries the manager has answered so far. */
+function answeredCount(
+  entries: readonly ReconciliationEntry[],
+  answers: ReadonlyMap<string, ReconciliationAnswer>,
+): number {
+  return entries.filter((entry) => answers.has(entryKey(entry))).length;
+}
+
 /** An entry's place in the run, the checklist's key for it. */
 function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
@@ -608,7 +616,7 @@ export function ProviderReconciliationControl({
         </p>
       )}
       {entries.length > 0 ? (
-        <ul className="grid gap-2 text-sm text-[var(--color-fg)]">
+        <ul className="grid text-sm text-[var(--color-fg)] [&>li+li]:mt-2 [&>li+li]:border-t [&>li+li]:border-[var(--color-warn-line)] [&>li+li]:pt-2">
           {entries.map((entry, index) => {
             const key = entryKey(entry);
             const words = (
@@ -625,12 +633,12 @@ export function ProviderReconciliationControl({
                   </span>
                 ) : null}
                 {entry.idempotencyKey ? (
-                  <span className="font-mono text-[13px] text-[var(--color-muted)]">
+                  <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
                     idempotency key {entry.idempotencyKey}
                   </span>
                 ) : null}
                 {reconciliation && entry.answer ? (
-                  <span className="text-[13px] text-[var(--color-fg-2)]">
+                  <span className="text-[13px] text-[var(--color-fg)]">
                     {entry.answer === 'landed'
                       ? 'You said it landed.'
                       : 'You said it was not sent.'}
@@ -689,9 +697,10 @@ export function ProviderReconciliationControl({
           . Retry is enabled.
         </p>
       ) : (
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             size="small"
+            aria-describedby={`${group}-answered`}
             disabled={!all || busy || entries.length === 0}
             onClick={() =>
               onConfirm(
@@ -705,6 +714,9 @@ export function ProviderReconciliationControl({
           >
             Confirm reconciliation
           </Button>
+          <span id={`${group}-answered`} className="text-[13px] text-[var(--color-fg-2)]">
+            {answeredCount(entries, answers)} of {entries.length} answered
+          </span>
         </div>
       )}
     </div>
