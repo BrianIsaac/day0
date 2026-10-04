@@ -6868,6 +6868,15 @@ describe('work.needsYou', (): void => {
     ]);
   });
 
+  it('shows a token with an empty subject nothing, the rows keyed on an empty owner included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const malformed = await employee(harness, 'Malformed owner', { userId: '' });
+    await item(harness, malformed, 'Keyed on nobody', 'plan-pending', { planPendingAt: 1 });
+    await expect(
+      harness.withIdentity(managerIdentity('')).query(api.work.needsYou, {}),
+    ).resolves.toEqual({ entries: [], total: 0, waitingByEmployee: [] });
+  });
+
   it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mine = await employee(harness, 'Mira');
