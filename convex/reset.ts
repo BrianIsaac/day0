@@ -700,10 +700,27 @@ export async function stillBound(
 }
 
 /**
+ * Whether a credential is the own identity of the employee whose card binds it, whoever's key it
+ * is held under: a per-employee identity the organisation holds (the wave 11 common rules), or
+ * one a release before v0.14.0 stored under the old owner's key through an organisation
+ * connection, which a handover keeps for the new manager (the wave 11 review's m6). A token the
+ * organisation shares between employees is none.
+ *
+ * @param credential - A credential a leaving employee's card binds.
+ */
+function employeeIdentityOf(credential: Doc<'credentials'>): boolean {
+  if (credential.holder !== undefined) return !sharedByOrganisation(credential);
+  return (
+    credential.issuedBy?.organisationConnectionId !== undefined &&
+    credential.issuedBy.grant !== 'client-credentials'
+  );
+}
+
+/**
  * Which of a leaving employee's credentials a retire or a handover would revoke and which it
- * would keep for what still binds them; a credential that is gone, or neither the owner's nor a
- * per-employee identity the organisation holds for the owner's employee (the wave 11 common
- * rules), is in neither, so the organisation's own rows never are.
+ * would keep for what still binds them; a credential that is gone, or neither the owner's nor the
+ * employee's own identity ({@link employeeIdentityOf}), is in neither, so the organisation's own
+ * rows never are.
  *
  * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
@@ -721,8 +738,7 @@ export async function sortCredentials(
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
     if (!credential) continue;
-    const employeeIdentity = credential.holder !== undefined && !sharedByOrganisation(credential);
-    if (credential.userId !== userId && !employeeIdentity) continue;
+    if (credential.userId !== userId && !employeeIdentityOf(credential)) continue;
     if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }

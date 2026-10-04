@@ -182,6 +182,22 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     expect((await read(harness, leo.slack.surfaceId))?.keptIdentitySince).toBeUndefined();
   });
 
+  it("ends at Slack, on the new manager's retire, a kept identity a release before v0.14.0 stored under the old owner's key (the wave 11 review's m6)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const kept = await read(harness, leo.slack.token);
+    expect(kept).toMatchObject({ userId: 'owner' });
+    expect(kept?.holder).toBeUndefined();
+
+    await harness.withIdentity(COLLEAGUE).mutation(api.reset.retire, { agentId: leo.agentId });
+
+    const token = await read(harness, leo.slack.token);
+    expect(token?.revokedAt).toEqual(expect.any(Number));
+    expect(token?.sourceRevocation?.end).toBe('retire');
+  });
+
   it("keeps a per-employee Linear identity as the product lands it, and calls neither vendor (the review's M11 c)", async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });
