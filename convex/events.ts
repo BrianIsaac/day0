@@ -35,6 +35,7 @@ import {
 } from '../src/events/contract';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
+import { CREDENTIAL_VALUE_REDACTION, isCredentialKey } from '../src/lib/credential-keys';
 
 /**
  * Events feed - inserted only through `eventLog.ts` (`appendEvent` in a
@@ -263,9 +264,11 @@ function withoutEmbeddedPersonalValues(text: string): string {
 }
 
 /**
- * Redact one value for export: personal keys are dropped, every string has
- * the personal values it quotes and its recognisable credential shapes
- * replaced, and containers are walked.
+ * Redact one value for export: personal keys are dropped, a value under a
+ * credential-class key is blanked (`src/lib/credential-keys.ts`, the list the
+ * record's payload floor reads), every other string has the personal values
+ * it quotes and its recognisable credential shapes replaced, and containers
+ * are walked.
  *
  * Args:
  *   value: A stored payload, ledger entry or nested part of one.
@@ -280,7 +283,10 @@ export function redactForExport(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .filter(([key]) => !PERSONAL_KEYS.has(key))
-        .map(([key, entry]) => [key, redactForExport(entry)]),
+        .map(([key, entry]) => [
+          key,
+          isCredentialKey(key) ? CREDENTIAL_VALUE_REDACTION : redactForExport(entry),
+        ]),
     );
   }
   return value;

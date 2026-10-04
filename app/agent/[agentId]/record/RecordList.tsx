@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { RecordEntry, RecordFilter } from '@/events/record-filters';
 import { redactTokenShapes } from '@/surfaces/redact';
+import { CREDENTIAL_VALUE_REDACTION, isCredentialKey } from '@/lib/credential-keys';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { RecordLine } from '../../../components/RecordLine';
@@ -62,7 +63,10 @@ export const RECORD_CHIPS: readonly RecordChip[] = [
   },
 ];
 
-/** A payload's strings with every structural secret replaced, for a line read on a screen. */
+/**
+ * A payload as a line read on a screen shows it: every value under a credential-class key name
+ * blanked (m30), and every other string with its structural secrets replaced.
+ */
 function shownPayload(value: unknown): unknown {
   if (typeof value === 'string') return redactTokenShapes(value);
   if (Array.isArray(value)) return value.map(shownPayload);
@@ -70,7 +74,7 @@ function shownPayload(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
         key,
-        shownPayload(entry),
+        isCredentialKey(key) ? CREDENTIAL_VALUE_REDACTION : shownPayload(entry),
       ]),
     );
   }

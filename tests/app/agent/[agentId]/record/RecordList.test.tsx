@@ -4,6 +4,7 @@ import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
 import type { RecordEntry } from '../../../../../src/events/record-filters';
+import { CREDENTIAL_VALUE_REDACTION } from '../../../../../src/lib/credential-keys';
 
 /** What the record's paginated query answers, and every argument set and page request it saw. */
 const backend = vi.hoisted(() => ({
@@ -147,6 +148,39 @@ describe('RecordList', (): void => {
       payload: { workItemId: 'w1', heldIndexes: [0] },
     });
     expect(view.container.textContent).toContain('That is the whole record.');
+    view.unmount();
+  });
+
+  it('blanks a value under a credential-class key name, whatever its shape (m30)', (): void => {
+    backend.entries = [
+      entry(
+        'e1',
+        'surface.connected',
+        {
+          surfaceId: 's1',
+          probe: {
+            apiKey: 'a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+            client_secret: 'plainwordsecret',
+            headers: [{ Authorization: 'Basic dXNlcjpwYXNz' }],
+            tokenCount: 3,
+          },
+        },
+        Date.UTC(2026, 8, 26, 6, 23),
+      ),
+    ];
+    const view = mount(<Recorded />);
+    const shown = JSON.parse(view.container.querySelector('details pre')?.textContent ?? '') as {
+      payload: unknown;
+    };
+    expect(shown.payload).toEqual({
+      surfaceId: 's1',
+      probe: {
+        apiKey: CREDENTIAL_VALUE_REDACTION,
+        client_secret: CREDENTIAL_VALUE_REDACTION,
+        headers: [{ Authorization: CREDENTIAL_VALUE_REDACTION }],
+        tokenCount: 3,
+      },
+    });
     view.unmount();
   });
 
