@@ -309,6 +309,7 @@ async function cutConnections(
           surfaceId: surface.surfaceId,
           displayName: surface.displayName,
           bound: new Set(surface.boundCredentials),
+          appLevelToken: surface.appLevelTokenCredentialId,
         })),
       },
     ],

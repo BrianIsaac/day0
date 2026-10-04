@@ -11,6 +11,7 @@ import {
   surfaceHandoversOf,
 } from '../../convex/surfaces';
 import { LINEAR_MCP_ENDPOINT } from '../../src/surfaces/fixed-endpoints';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -113,7 +114,19 @@ describe('the app-level token a card binds (wave 12, 12-M)', (): void => {
           createdAt: 1,
         });
       const secret = await row('Slack client secret');
-      const appLevel = await row('Maya (Day0) app-level token');
+      // As `landAppLevelToken` writes it: held by the organisation, with the app's id, no issuer
+      // (re-pinned for the wave 12 review's W12-R2 from an owner's row, which the product never writes).
+      const appLevel = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Maya (Day0) app-level token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        appId: 'A0W12M',
+        createdAt: 1,
+      });
       const agentId = await ctx.db.insert('agents', {
         bossEmail: MANAGER_ADDRESS,
         name: 'Maya',

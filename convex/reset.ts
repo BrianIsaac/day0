@@ -16,7 +16,12 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
-import { holdsPurgeableCredential, purgeCredential, purgeOwnedCredentials } from './credentials';
+import {
+  holdsPurgeableCredential,
+  purgeAppLevelToken,
+  purgeCredential,
+  purgeOwnedCredentials,
+} from './credentials';
 import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
@@ -408,6 +413,8 @@ export interface RetiredCard {
   readonly surfaceId: Id<'surfaces'>;
   readonly displayName: string;
   readonly bound: ReadonlySet<Id<'credentials'>>;
+  /** The app-level token the card's app was given, which ends with the card (W12-R2). */
+  readonly appLevelToken?: Id<'credentials'>;
 }
 
 /** What one employee's retire deleted and revoked, for its tombstone. */
@@ -585,6 +592,7 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
       surfaceId: surface._id,
       displayName: surface.displayName,
       bound: await credentialsBoundBy(ctx.db, [surface]),
+      appLevelToken: surface.provisioning?.appLevelTokenCredentialId,
     })),
   );
   return {
@@ -758,8 +766,10 @@ export async function sortCredentials(
  * the access plan, section 4.4): what Day0 obtained is revoked at once and held for its vendor
  * call (`endAccessAtSource`), its ciphertext kept until the call is final; a pasted key that
  * nothing else binds is revoked with its ciphertext deleted, and never sent to a vendor (D5,
- * AC4); a pasted key a colleague or a documentation source still binds is kept. Each card's end
- * writes its system's ledger line on the retired employee's record, which real mode keeps.
+ * AC4); a pasted key a colleague or a documentation source still binds is kept. The app-level
+ * token a card's app was given ends in Day0 with the card (`purgeAppLevelToken`, W12-R2), whoever
+ * holds it. Each card's end writes its system's ledger line on the retired employee's record,
+ * which real mode keeps.
  *
  * @param ctx - The reset's mutation context.
  * @param userId - The owner.
@@ -783,7 +793,13 @@ export async function revokeUnbound(
   const bound = new Set(retired.flatMap(({ cards }) => cards.flatMap((card) => [...card.bound])));
   const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, leaving);
   const revoking = new Map(revoke.map((credential) => [credential._id, credential]));
-  const ended = new Set<Id<'credentials'>>();
+  // Ended in Day0 below, never at the vendor, and never a line of its own.
+  const appLevelTokens = new Set(
+    retired.flatMap(({ cards }) =>
+      cards.flatMap((card) => (card.appLevelToken === undefined ? [] : [card.appLevelToken])),
+    ),
+  );
+  const ended = new Set<Id<'credentials'>>(appLevelTokens);
   for (const { agentId, cards } of retired) {
     for (const card of cards) {
       const rows: Doc<'credentials'>[] = [];
@@ -811,7 +827,11 @@ export async function revokeUnbound(
   for (const credential of revoke) {
     if (credential.issuedBy === undefined) await purgeCredential(ctx, credential, now);
   }
-  return { revoked: new Set(revoking.keys()), kept };
+  const revoked = new Set(revoking.keys());
+  for (const token of appLevelTokens) {
+    if (await purgeAppLevelToken(ctx, token, now)) revoked.add(token);
+  }
+  return { revoked, kept: new Set([...kept].filter((id) => !revoked.has(id))) };
 }
 
 /**
@@ -1367,9 +1387,13 @@ export const retirePreview = query({
         .map(({ surface }) => ({ slug: surface.slug, displayName: surface.displayName }));
     const outcomes: Infer<typeof previewOutcome>[] = [];
     for (const { surface, bound } of cards) {
-      const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
-        (row): row is Doc<'credentials'> => row !== null,
-      );
+      // The app's app-level token ends in Day0 with the card and is no line of its own (W12-R2).
+      const appLevelToken = surface.provisioning?.appLevelTokenCredentialId;
+      const rows = (
+        await Promise.all(
+          [...bound].filter((id) => id !== appLevelToken).map(async (id) => await ctx.db.get(id)),
+        )
+      ).filter((row): row is Doc<'credentials'> => row !== null);
       const planned = await plannedAtSource(
         ctx.db,
         {

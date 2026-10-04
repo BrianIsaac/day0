@@ -16,6 +16,7 @@ import {
   seedIssuedIdentities,
 } from './fakes/issued-identities';
 import { SLACK_AUTH_REVOKE_OK, SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
+import { landAppLevelTokenRow } from './fakes/app-level-token';
 
 /*
  * The ends of access on a card (11-AR; the wave 11 file's 11-AR with the 1 October correction):
@@ -257,6 +258,29 @@ describe('the ends of access on a card (11-AR)', (): void => {
     expect([token?.sourceRevocation?.state, secret?.sourceRevocation?.state]).toEqual([
       'done',
       'done',
+    ]);
+  });
+
+  it('ends in Day0 the app-level token of the app a rejection deletes (W12-R2)', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    const appLevel = await landAppLevelTokenRow(harness, leo.slack.surfaceId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(leo.slack.surfaceId, { verdict: 'approved' }),
+    );
+    network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.reject, { surfaceId: leo.slack.surfaceId, reason: 'Not this one.' });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const row = await read(harness, appLevel);
+    expect(row).toMatchObject({ revokedAt: expect.any(Number) });
+    expect([row?.ciphertext, row?.iv]).toEqual([undefined, undefined]);
+    // One line for the card, the app's deletion: the token's end in Day0 writes no line of its own.
+    expect(await eventsOf(harness, leo.agentId, 'credential.revoked-at-source')).toEqual([
+      expect.objectContaining({ end: 'reject', outcome: 'app-deleted' }),
     ]);
   });
 
