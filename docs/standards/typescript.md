@@ -158,7 +158,7 @@ Violates also: `tests/src/docs/system-discovery.test.ts:60` asserts the exact lo
 
 11.5 A test that schedules Convex work drains it explicitly with fake timers and `t.finishInProgressScheduledFunctions()` or `t.finishAllScheduledFunctions(vi.runAllTimers)`; it never sleeps. Reason: convex-test's documented shape, and the only way the test is deterministic.
 
-11.6 MUST NOT leave `.skip`, `.only`, `.todo` or `.fails` in a committed test without a reason on the same line. A bug fix lands the reproducing test in the same commit as the fix (CONTRIBUTING). Follows: the tree has none.
+11.6 MUST NOT leave `.skip`, `.only`, `.todo` or `.fails` in a committed test without its reason as a comment on the same line or, where the formatter breaks the call, on the line after it (Prettier moves a comment after `it.fails(` to the next line). A bug fix lands the reproducing test in the same commit as the fix (CONTRIBUTING). Gate: `tests/test-markers.test.ts` checks every Vitest file. Follows: `tests/convex/onboarding.test.ts` and `tests/bed/company-docs.test.ts`, each `it.fails` with its reason on the line after it (wave 12 review, W12-R6).
 
 11.7 Every `describe` name is the module or behaviour; every `it` name is a sentence that states the expected outcome, so the failure line reads as a bug report.
 
