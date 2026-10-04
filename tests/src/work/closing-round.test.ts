@@ -119,7 +119,7 @@ describe('a message withheld with a claimed write', (): void => {
     expect(withheldWithClaimedWrite({ reason })).toBe(false);
   });
 
-  it('shows the second authoring why a row was withheld, and leaves every other row as it was printed', (): void => {
+  it('shows the second authoring why a row was withheld or held, and leaves every other row as it was printed', (): void => {
     const prompt = appliedLedgerPrompt(revopsAsksClosing, [
       ...revopsAsksClosingLedger.slice(0, 3),
       {
@@ -146,7 +146,9 @@ describe('a message withheld with a claimed write', (): void => {
         idempotencyKey: 'k',
       },
     ]);
-    expect(awaiting).toMatch(/· mcp\.call fill$/);
+    // Re-pinned for W12V-11: every held row says why it was not sent, so a write the manager
+    // declined never reads like one waiting or one that landed.
+    expect(awaiting).toMatch(/· mcp\.call fill · awaiting approval$/);
   });
 });
 
