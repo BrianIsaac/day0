@@ -174,8 +174,12 @@ function slackMemberName(user: unknown): string | undefined {
   const found = names.find(
     (name): name is string => typeof name === 'string' && name.trim() !== '',
   );
-  return found?.trim();
+  // One short line: the name sits in the card's ask line and in the prompts' "From:" lines.
+  return found?.replace(/\s+/g, ' ').trim().slice(0, MEMBER_NAME_MAX).trimEnd();
 }
+
+/** The longest member name the reader hands on. */
+const MEMBER_NAME_MAX = 80;
 
 /**
  * The reader for a Slack workspace reached over its documented Web API.
@@ -318,9 +322,10 @@ export function slackChatReader(
       try {
         return slackMemberName((await get('users.info', { user: userId })).user);
       } catch (error) {
-        // Slack's own refusal (`user_not_found`, `missing_scope`) is an answer: no name to give.
-        // A rate limit or a server error is the caller's to wait out or note.
-        if (error instanceof ChatReadRefused) return undefined;
+        // A member Slack does not know is an answer: no name to give. Any other refusal
+        // (`missing_scope`, `invalid_auth`) is a misconfiguration, and a rate limit or a server
+        // error is not an answer at all: the caller notes either.
+        if (error instanceof ChatReadRefused && error.code === 'user_not_found') return undefined;
         throw error;
       }
     },
