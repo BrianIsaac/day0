@@ -34,15 +34,12 @@ import {
   finishingStep,
   type FinishingStep,
 } from '../src/docs/finishing';
+import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 
 export const SYNC_BATCH_SIZE = 25;
 
-/**
- * Why a sync stopped short with nothing read: the deployment's scheduled work is paused. Shown
- * on the documentation page as the source's last error.
- */
-export const SYNC_HELD_REASON =
-  "Held: this deployment's scheduled work is paused, and the sync goes on from where it stopped once it runs again.";
+/** Why a sync stopped short with nothing read (W12V-2's words, in `src/docs/sync-held.ts`). */
+export { SYNC_HELD_REASON };
 
 /**
  * The largest page Day0 stores, in UTF-8 bytes: under Convex's one-mebibyte
