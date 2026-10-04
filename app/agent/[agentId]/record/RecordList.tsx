@@ -6,7 +6,11 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { RecordEntry, RecordFilter } from '@/events/record-filters';
 import { redactTokenShapes } from '@/surfaces/redact';
-import { CREDENTIAL_VALUE_REDACTION, isCredentialKey } from '@/lib/credential-keys';
+import {
+  CREDENTIAL_VALUE_REDACTION,
+  isCredentialKey,
+  withEmbeddedCredentialsBlanked,
+} from '@/lib/credential-keys';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { RecordLine } from '../../../components/RecordLine';
@@ -68,7 +72,7 @@ export const RECORD_CHIPS: readonly RecordChip[] = [
  * blanked (m30), and every other string with its structural secrets replaced.
  */
 function shownPayload(value: unknown): unknown {
-  if (typeof value === 'string') return redactTokenShapes(value);
+  if (typeof value === 'string') return redactTokenShapes(withEmbeddedCredentialsBlanked(value));
   if (Array.isArray(value)) return value.map(shownPayload);
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(

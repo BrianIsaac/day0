@@ -18,14 +18,17 @@ const CREDENTIAL_KEYS: ReadonlySet<string> = new Set([
   'accesstoken',
   'apikey',
   'apisecret',
+  'apitoken',
   'appleveltoken',
   'apptoken',
   'authorization',
+  'authtoken',
   'bearer',
   'bottoken',
   'clientsecret',
   'cookie',
   'idtoken',
+  'oauthtoken',
   'passphrase',
   'password',
   'privatekey',
@@ -38,6 +41,7 @@ const CREDENTIAL_KEYS: ReadonlySet<string> = new Set([
   'token',
   'webhooksecret',
   'webhooktoken',
+  'xapikey',
 ]);
 
 /** A key name as the list holds it: lower case, without separators (`API-KEY`, `api_key`, `apiKey`). */
@@ -54,6 +58,21 @@ export function isCredentialKey(key: string): boolean {
   return CREDENTIAL_KEYS.has(credentialKeyWords(key));
 }
 
+/** A key and its string value as a JSON text quotes them, escapes kept whole. */
+const QUOTED_PAIR = /"((?:[^"\\]|\\.)*)"(\s*:\s*)"((?:[^"\\]|\\.)*)"/g;
+
+/**
+ * A text with the value of every credential-class key it quotes as JSON replaced, as an action's
+ * arguments carry them (`toolArgsJson`): the object walk never sees inside a string.
+ *
+ * @param text - A stored string, JSON or not.
+ */
+export function withEmbeddedCredentialsBlanked(text: string): string {
+  return text.replace(QUOTED_PAIR, (pair: string, key: string, colon: string) =>
+    isCredentialKey(key) ? `"${key}"${colon}"${CREDENTIAL_VALUE_REDACTION}"` : pair,
+  );
+}
+
 /**
  * The value with whatever sits under a credential-class key replaced by
  * {@link CREDENTIAL_VALUE_REDACTION}, at any depth; every other value as it is.
@@ -61,6 +80,7 @@ export function isCredentialKey(key: string): boolean {
  * @param value - A stored payload or any part of one.
  */
 export function withCredentialValuesBlanked(value: unknown): unknown {
+  if (typeof value === 'string') return withEmbeddedCredentialsBlanked(value);
   if (Array.isArray(value)) return value.map(withCredentialValuesBlanked);
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(

@@ -51,6 +51,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
 import {
   answeredEntries,
+  ledgerPhases,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
@@ -63,7 +64,7 @@ import {
   stopDetail,
 } from '../src/work/stop';
 import { landedNoteText } from '../src/work/manager-notes';
-import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import type { WithheldRow, WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
 
 /**
@@ -429,25 +430,26 @@ export const claimForExecution = internalMutation({
 });
 
 /**
- * The rows a finished run held and never sent, by index, with why: what `work.actions-withheld`
- * lists.
+ * The rows a finished run held and never sent, by phase and index, with why: what
+ * `work.actions-withheld` lists.
  *
- * @param applied - The run's ledger as `setCompleted` received it.
+ * @param output - The run's output as `setCompleted` received it, in either of its shapes.
  */
-function withheldRows(
-  applied: ReadonlyArray<{ tool: string; held?: boolean; reason?: string; effect?: string }>,
-): Array<{ index: number; tool: string; reason?: string; effect?: string }> {
-  return applied.flatMap((row, index) =>
-    row.held === true
-      ? [
-          {
-            index,
-            tool: row.tool,
-            ...(row.reason !== undefined ? { reason: row.reason } : {}),
-            ...(row.effect !== undefined ? { effect: row.effect } : {}),
-          },
-        ]
-      : [],
+function withheldRows(output: unknown): WithheldRow[] {
+  return ledgerPhases(output).flatMap(({ phase, applied }) =>
+    applied.flatMap((row, index): WithheldRow[] =>
+      row.held === true
+        ? [
+            {
+              phase,
+              index,
+              tool: typeof row.tool === 'string' ? row.tool : 'unknown',
+              ...(typeof row.reason === 'string' ? { reason: row.reason } : {}),
+              ...(typeof row.effect === 'string' ? { effect: row.effect } : {}),
+            },
+          ]
+        : [],
+    ),
   );
 }
 
@@ -526,7 +528,7 @@ export const setCompleted = internalMutation({
       createdAt: Date.now(),
     });
     // What the run held and never sent is a line of its own under "Refused and withheld" (D4).
-    const withheld = withheldRows(applied);
+    const withheld = withheldRows(args.output);
     if (withheld.length > 0) {
       await appendEvent(ctx, {
         agentId: row.agentId,
@@ -925,6 +927,8 @@ const reportedRowValidator = v.object({
     ),
   ),
   redaction: v.optional(v.literal('structural-only')),
+  elements: v.optional(v.array(v.object({ ref: v.string(), name: v.string(), role: v.string() }))),
+  repair: v.optional(v.object({ reason: v.string(), toolArgsJson: v.string() })),
 });
 
 /**

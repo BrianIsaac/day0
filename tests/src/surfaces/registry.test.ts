@@ -655,7 +655,8 @@ describe('applying surface actions', (): void => {
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 
-  it('reports no row an earlier phase already decided', async (): Promise<void> => {
+  // Re-pinned in the second pass: a carried row is reported too, so a stop keeps it as it stood.
+  it('reports a row an earlier phase already decided, without sending it again', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const reported: number[] = [];
     await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
@@ -668,7 +669,8 @@ describe('applying surface actions', (): void => {
       },
       now,
     });
-    expect(reported).toEqual([1]);
+    expect(reported).toEqual([0, 1]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_issue']);
   });
 
   it('records unapproved indexes as held and applies the approved ones', async (): Promise<void> => {

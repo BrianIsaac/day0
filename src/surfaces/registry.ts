@@ -152,9 +152,9 @@ export interface ApplyOptions {
   /** Original authority of reads taken again on a resumed closing run. */
   authorityByIndex?: ReadonlyMap<number, ActionAuthority>;
   /**
-   * Told of each row this invocation decides, in order, before the next action is considered: the
-   * apply persists it at once under its claim (P4-2). Rows carried from `priorLedger` are not
-   * reported. Answering false says the apply no longer holds its claim (the run was stopped or
+   * Told of each row this invocation decides or carries, in order, before the next action is
+   * considered: the apply persists it at once under its claim (P4-2), a row carried from
+   * `priorLedger` included, so a stop keeps it as it stood. Answering false says the apply no longer holds its claim (the run was stopped or
    * moved on): nothing more is sent and the call rejects with {@link ApplyClaimLostError}.
    */
   onOutcome?: (index: number, row: AppliedAction) => Promise<boolean>;
@@ -553,7 +553,8 @@ export async function applySurfaceActions(
       if (prior) {
         const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
         if (parsed?.ok) parsedByIndex[index] = parsed.action;
-        applied.push(prior);
+        // Carried, never sent again: reported too, so a stop keeps it as it stood.
+        await settle(index, prior);
         continue;
       }
       if (options.approvedIndexes && !options.approvedIndexes.has(index)) {

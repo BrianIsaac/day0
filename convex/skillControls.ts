@@ -194,6 +194,8 @@ async function parkForSkill(
   const behind = await liveSkillNamed(ctx, item.agentId, wait.name);
   await ctx.db.patch(item._id, {
     state: 'needs-skill',
+    // A wait on a skill is stamped as every wait is (wave 12, 12-W).
+    waitingSince: wait.now,
     verdict: {
       decision: 'needs-skill',
       reason: wait.reason,

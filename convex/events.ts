@@ -35,7 +35,11 @@ import {
 } from '../src/events/contract';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
-import { CREDENTIAL_VALUE_REDACTION, isCredentialKey } from '../src/lib/credential-keys';
+import {
+  CREDENTIAL_VALUE_REDACTION,
+  isCredentialKey,
+  withEmbeddedCredentialsBlanked,
+} from '../src/lib/credential-keys';
 
 /**
  * Events feed - inserted only through `eventLog.ts` (`appendEvent` in a
@@ -277,7 +281,9 @@ function withoutEmbeddedPersonalValues(text: string): string {
  *   The same shape with nothing an export should not carry.
  */
 export function redactForExport(value: unknown): unknown {
-  if (typeof value === 'string') return redactTokenShapes(withoutEmbeddedPersonalValues(value));
+  if (typeof value === 'string') {
+    return redactTokenShapes(withoutEmbeddedPersonalValues(withEmbeddedCredentialsBlanked(value)));
+  }
   if (Array.isArray(value)) return value.map(redactForExport);
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(

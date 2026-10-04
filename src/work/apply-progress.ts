@@ -10,7 +10,13 @@
  * reported stays as it reported, and only a row that never did is unknown.
  */
 
-import type { ActionAuthority, ActionClass, AppliedAction } from '../surfaces/types';
+import type {
+  ActedElement,
+  ActionAuthority,
+  ActionClass,
+  ActionRepair,
+  AppliedAction,
+} from '../surfaces/types';
 
 /** One row of an apply in flight, as it is reported: what the recovery needs of the ledger row. */
 export interface ReportedRow {
@@ -27,6 +33,10 @@ export interface ReportedRow {
   readonly authority?: ActionAuthority;
   readonly actionClass?: ActionClass;
   readonly redaction?: 'structural-only';
+  /** The elements a browser action pressed, which a resumed run's sign-in replay reads. */
+  readonly elements?: ActedElement[];
+  /** The one argument repair the provider's refusal earned. */
+  readonly repair?: ActionRepair;
 }
 
 /** A reported row as it is kept, with its index in the phase's actions. */
@@ -47,9 +57,10 @@ export const APPLY_PROGRESS_KEY = 'applyProgress';
 /**
  * The row an apply reports, cut to what is kept while the apply runs.
  *
- * The browser floor's element names, its session replay and a repair's refused
- * arguments are left out: the finished ledger carries them, and a recovered
- * one only needs to say what reached the provider.
+ * The elements a browser action pressed and a repair are kept, since a resumed
+ * run's sign-in replay and the audit read them; the session replay is left out:
+ * the finished ledger carries it, and a recovered one only needs what reached
+ * the provider.
  *
  * @param row - The ledger row, already scrubbed of the owner's values.
  */
@@ -68,6 +79,8 @@ export function reportedRow(row: AppliedAction): ReportedRow {
     ...(row.authority !== undefined ? { authority: row.authority } : {}),
     ...(row.actionClass !== undefined ? { actionClass: row.actionClass } : {}),
     ...(row.redaction !== undefined ? { redaction: row.redaction } : {}),
+    ...(row.elements !== undefined ? { elements: row.elements } : {}),
+    ...(row.repair !== undefined ? { repair: row.repair } : {}),
   };
 }
 

@@ -22,8 +22,10 @@ const landed: AppliedAction = {
 };
 
 describe('the apply persisted per action', (): void => {
-  it('keeps what the recovery needs of a row and leaves out the browser detail', (): void => {
+  // Re-pinned in the second pass: the elements a browser action pressed and a repair are kept.
+  it('keeps what the recovery needs of a row, the elements and a repair, and leaves out the session replay', (): void => {
     expect(reportedRow(landed)).toEqual({
+      elements: [{ ref: 'e1', name: 'Save', role: 'button' }],
       tool: 'mcp.call',
       ok: true,
       effect: 'comment on REVOPS-1',

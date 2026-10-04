@@ -45,4 +45,17 @@ describe('credential-class key names', () => {
     });
     expect(withCredentialValuesBlanked('text')).toBe('text');
   });
+
+  it('blanks a credential quoted inside a JSON text, as an action’s arguments carry one', () => {
+    expect(
+      withCredentialValuesBlanked({
+        toolArgsJson: '{"issueId":"REVOPS-1","apiKey":"a0b1c2d3","x-api-key":"k","body":"ok"}',
+      }),
+    ).toEqual({
+      toolArgsJson: `{"issueId":"REVOPS-1","apiKey":"${CREDENTIAL_VALUE_REDACTION}","x-api-key":"${CREDENTIAL_VALUE_REDACTION}","body":"ok"}`,
+    });
+    for (const key of ['apiToken', 'auth_token', 'X-Api-Key', 'oauthToken']) {
+      expect(isCredentialKey(key), key).toBe(true);
+    }
+  });
 });

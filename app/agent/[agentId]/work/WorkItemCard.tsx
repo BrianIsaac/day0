@@ -411,7 +411,8 @@ export function WorkItemCard({
         <StopDialog
           title={item.title}
           employeeName={employeeName}
-          applying={item.applyAttemptId !== undefined}
+          // An apply sending writes holds both; a closing phase being written holds only the claim.
+          applying={item.applyAttemptId !== undefined && item.pendingRunId !== undefined}
           onStop={onStop}
           onClose={() => setStopping(false)}
           onDone={(words) => {

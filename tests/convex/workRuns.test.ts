@@ -608,11 +608,54 @@ describe('a completion that withheld writes (the wave 6 review’s D4)', (): voi
         workItemId,
         runId,
         withheld: [
-          { index: 1, tool: 'mcp.call', reason: HELD_NOT_APPROVED, effect: 'set REVOPS-1 to Done' },
+          {
+            phase: 'single',
+            index: 1,
+            tool: 'mcp.call',
+            reason: HELD_NOT_APPROVED,
+            effect: 'set REVOPS-1 to Done',
+          },
         ],
       },
     ]);
     expect(eventTypesIn('refused')).toContain('work.actions-withheld');
+  });
+
+  it('names the phase of each withheld row of a two-phase run', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    const held = {
+      tool: 'mcp.call',
+      ok: true,
+      held: true,
+      reason: HELD_NOT_APPROVED,
+      idempotencyKey: 'held',
+    };
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...heldOutput,
+        initial: { actions: [comment, status], applied: [landedComment, held] },
+        applied: [held, { ...landedComment, idempotencyKey: 'closing-1' }],
+      },
+    });
+    const withheld = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.actions-withheld'))
+          .first(),
+    );
+    expect(
+      (withheld?.payload as { withheld: Array<{ phase: string; index: number }> }).withheld.map(
+        (row) => [row.phase, row.index],
+      ),
+    ).toEqual([
+      ['prerequisite', 1],
+      ['closing', 0],
+    ]);
   });
 
   it('writes no such event for a completion that withheld nothing', async (): Promise<void> => {

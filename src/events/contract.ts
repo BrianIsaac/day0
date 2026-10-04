@@ -1368,7 +1368,9 @@ export interface WorkClosedWithoutRetryPayload extends WorkItemNamed {
 
 /** One row a finished run held and never sent. */
 export interface WithheldRow {
-  /** The row's index in the run's actions. */
+  /** The phase of the run the row belongs to: one phase, or the prerequisite or closing one. */
+  readonly phase: 'single' | 'prerequisite' | 'closing';
+  /** The row's index in its phase's actions. */
   readonly index: number;
   readonly tool: string;
   /** Why it was held: the manager left it out, the gate refused it, or a write before it failed. */

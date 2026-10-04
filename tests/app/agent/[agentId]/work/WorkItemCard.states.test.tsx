@@ -244,6 +244,17 @@ describe('Stop on a working card (wave 12)', (): void => {
     expect(view.calls).toEqual([]);
   });
 
+  it('does not say writes are being sent while the closing phase is only being written', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.working,
+      applyAttemptId: 'authoring-1',
+    } as unknown as Doc<'workItems'>);
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira stops now and sends nothing more.',
+    );
+  });
+
   it('says, while the approved writes are being sent, that one may still land and is listed to check', async (): Promise<void> => {
     const view = card({
       ...DRAWN.working,
