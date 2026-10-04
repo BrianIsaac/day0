@@ -9,6 +9,7 @@ import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { redraftPlansDraftedWithout } from '../../convex/work';
+import { MANAGER_CLAIM_LAPSED_REASON, MANAGER_CLAIM_LEASE_MS } from '../../convex/workLoop';
 import {
   NOTICE_TO_A_GUEST,
   NOTICE_CARD_NOT_APPROVED,
@@ -52,6 +53,16 @@ const QUARTER_PAST = Date.UTC(2026, 8, 28, 9, 16);
 function clockAt(ms: number): void {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(ms);
+}
+
+/**
+ * Move the clock a minute past the manager-channel claims' lease (12-W's N-3 sweep), keeping the
+ * scheduler's timers fake, so a claim made before the move reads as one an action died holding.
+ */
+function pastTheClaimLease(): void {
+  const now = Date.now();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  vi.setSystemTime(now + MANAGER_CLAIM_LEASE_MS + 60_000);
 }
 
 async function seedParkedPlan(
@@ -838,6 +849,80 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
   });
 
+  /** The replaced row 12-M remembered for the old code. */
+  async function replacedRowId(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    oldCode: string,
+  ): Promise<Id<'replacedDecisionRequests'>> {
+    return await harness.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique())!._id,
+    );
+  }
+
+  it('keeps an edit it recorded as landed when the lease sweep runs past the lease (the 12-W seam)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, oldCode } = await replaceDeliveredRequest(harness);
+    const replacedId = await replacedRowId(harness, agentId, oldCode);
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: true });
+    const edited = await harness.run(async (ctx) => await ctx.db.get(replacedId));
+
+    pastTheClaimLease();
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 0,
+    });
+    const after = await harness.run(async (ctx) => await ctx.db.get(replacedId));
+    expect(after?.editFailure).toBeUndefined();
+    expect(after?.editedAt).toBe(edited?.editedAt);
+    expect(after?.editClaimedAt).toBe(edited?.editClaimedAt);
+  });
+
+  it('has an edit claim that died with no result settled once by the lease sweep, and never re-sent (the 12-W seam)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, oldCode } = await replaceDeliveredRequest(harness);
+    const replacedId = await replacedRowId(harness, agentId, oldCode);
+    // The edit's action claimed the edit and died before its provider call returned.
+    const claim = await harness.mutation(internal.work.prepareReplacedEdit, { replacedId });
+    expect(claim.prepared).toBe(true);
+    const claimedAt = claim.prepared ? claim.claimedAt : 0;
+
+    pastTheClaimLease();
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 1,
+    });
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 0,
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(replacedId))).toMatchObject({
+      editClaimedAt: claimedAt,
+      editFailure: MANAGER_CLAIM_LAPSED_REASON,
+    });
+
+    // A result that arrives after the sweep writes nothing, and the edit is not sent again.
+    await expect(
+      harness.mutation(internal.work.recordReplacedEdit, {
+        replacedId,
+        claimedAt,
+        editedAt: Date.now(),
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.action(internal.managerChannelActions.markRequestReplaced, { replacedId }),
+    ).resolves.toEqual({ edited: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toEqual([]);
+    const after = await harness.run(async (ctx) => await ctx.db.get(replacedId));
+    expect(after?.editedAt).toBeUndefined();
+    expect(after?.editFailure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+  });
+
   it('remembers a request a re-draft took back, with nothing replacing it yet', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
@@ -1064,6 +1149,83 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
       }),
     ).resolves.toEqual({ closed: false });
     expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toEqual([]);
+  });
+
+  it('keeps a close it recorded as landed when the lease sweep runs past the lease (the 12-W seam)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: true });
+    const closed = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(closed?.closedAt).toEqual(expect.any(Number));
+
+    pastTheClaimLease();
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 0,
+    });
+    const after = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(after?.closeFailure).toBeUndefined();
+    expect(after?.closedAt).toBe(closed?.closedAt);
+    expect(after?.closeClaimedAt).toBe(closed?.closeClaimedAt);
+  });
+
+  it('has a close claim that died with no result settled once by the lease sweep, and never re-sent (the 12-W seam)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    // The close's action claimed the edit and died before its provider call returned.
+    const claim = await harness.mutation(internal.work.prepareRequestClose, {
+      workItemId,
+      decisionId,
+    });
+    expect(claim.prepared).toBe(true);
+    const claimedAt = claim.prepared ? claim.claimedAt : 0;
+
+    pastTheClaimLease();
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 1,
+    });
+    await expect(harness.mutation(internal.workLoop.settleLapsedClaims, {})).resolves.toEqual({
+      settled: 0,
+    });
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision,
+    ).toMatchObject({
+      id: decisionId,
+      closeClaimedAt: claimedAt,
+      closeFailure: MANAGER_CLAIM_LAPSED_REASON,
+    });
+
+    // A result that arrives after the sweep writes nothing, and the edit is not sent again.
+    await expect(
+      harness.mutation(internal.work.recordRequestClose, {
+        workItemId,
+        decisionId,
+        claimedAt,
+        closedAt: Date.now(),
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toEqual([]);
+    const after = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(after?.closedAt).toBeUndefined();
+    expect(after?.closeFailure).toBe(MANAGER_CLAIM_LAPSED_REASON);
   });
 });
 
