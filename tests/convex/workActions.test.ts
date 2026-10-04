@@ -153,7 +153,8 @@ import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 // in-process from the recorded span model by the fetch stub below, never over a
 // socket: from undici 6.28 (Node 22.23, the release CI pins) a pooled socket is
 // reused only after a zero-delay setTimeout fires, which the many tests here
-// that fake setTimeout would hold until the test timed out (12-H's CI run).
+// that fake setTimeout would hold until the test timed out (two of 12-H's, on
+// CI run 37225855013, 4 October 2026).
 const REDACTOR_URL = 'http://redactor.test:8000';
 const answerRedactor = spanModelFetch();
 beforeAll((): void => {
