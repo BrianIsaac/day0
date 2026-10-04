@@ -1,6 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { seedItemInTransaction, workItemSeedFields } from './work';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { isTerminalWorkState } from '../src/evaluation/states';
@@ -41,6 +41,7 @@ export const seedTasks = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.seedTasks');
     await assertOwnsAgent(ctx, args.agentId);
     if (args.tasks.length === 0 || args.tasks.length > 50) {
@@ -82,6 +83,7 @@ export const seedTasks = mutation({
 export const timeoutTask = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.timeoutTask');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -114,6 +116,7 @@ export const timeoutTask = mutation({
 export const failSkillAuthoringAttempts = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ failed: boolean }> => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.failSkillAuthoringAttempts');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -146,6 +149,7 @@ export const failSkillAuthoringAttempts = mutation({
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.snapshot');
     await assertOwnsAgent(ctx, args.agentId);
     const [workItems, events, spreadsheets, slackMessages, tweetReplies, tickets] =

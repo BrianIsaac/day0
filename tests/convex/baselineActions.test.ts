@@ -8,6 +8,7 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { EVALUATION_SCOPES } from '../../src/evaluation/scopes';
 import { managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 /** The reserved address the harness deploys the control arm under, its evaluation marker. */
 const BASELINE_ADDRESS = 'eval-baseline-r1-1758150000000@day0.local';
@@ -300,4 +301,29 @@ describe('ordinary-agent comparison arm', (): void => {
     );
     expect(model.calls).toBe(0);
   });
+});
+
+describe('the anonymous-caller guard before the bed check (12-G)', (): void => {
+  it.each([
+    ['mock', ''],
+    ['real', 'comparison'],
+  ] as const)(
+    'refuses a caller with no identity before it says the mode, the bed or whether the item exists (%s)',
+    async (mode, bed): Promise<void> => {
+      useSurfaceMode(mode);
+      vi.stubEnv('DAY0_EVALUATION_BED', bed);
+      const { api } = await import('../../convex/_generated/api');
+      const harness = convexTest(schema, allConvexModules());
+      const refusal = await guardRefusal();
+      await expect(
+        harness.action(api.baselineActions.deployBaseline, { evaluationAddress: BASELINE_ADDRESS }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.action(api.baselineActions.executeTask, {
+          workItemId: await goneRowOf(harness, 'workItems'),
+        }),
+      ).rejects.toMatchObject(refusal);
+      expect(model.calls).toBe(0);
+    },
+  );
 });

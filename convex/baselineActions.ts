@@ -4,7 +4,7 @@ import { ConvexError, v } from 'convex/values';
 import { action } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { applySurfaceActions, readSurfaceSnapshot } from '../src/surfaces/registry';
 import type { AppliedAction } from '../src/surfaces/types';
@@ -49,6 +49,7 @@ const STUB_CHARTER = {
 export const deployBaseline = action({
   args: { evaluationAddress: v.string(), name: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> => {
+    await getCallerOrThrow(ctx);
     requireBaselineBed('baselineActions.deployBaseline');
     const agentId: Id<'agents'> = await ctx.runMutation(api.agents.deploy, {
       evaluationAddress: args.evaluationAddress,
@@ -83,6 +84,7 @@ export const executeTask = action({
     modelCalls?: number;
     toolCalls?: number;
   }> => {
+    await getCallerOrThrow(ctx);
     requireBaselineBed('baselineActions.executeTask');
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, args);
     if (!item) throw new Error('workItem not found');
