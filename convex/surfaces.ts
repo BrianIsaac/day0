@@ -1,3 +1,8 @@
+import {
+  decisionButtonsFor,
+  socketBridgeConfigured,
+  type DecisionButtons,
+} from '../src/surfaces/slack-socket';
 import { ConvexError, v } from 'convex/values';
 import {
   action,
@@ -277,6 +282,12 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    * renewing it brings nothing back until IT connects the system again (the pre-tag second pass).
    */
   readonly connectionRevoked?: true;
+  /**
+   * On a chat card that carries the manager's decision requests: whether they carry Approve and
+   * Reject buttons, and why not (wave 12, 12-M; RM3 (a)). Read against this deployment's Socket
+   * Mode bridge, which only the server knows of.
+   */
+  readonly decisionButtons?: DecisionButtons;
 }
 
 /**
@@ -437,6 +448,7 @@ export const listForAgent = query({
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    const bridgeConfigured = socketBridgeConfigured();
     return orderSurfaceWaterfall(surfaces, documented).map((surface): ListedSurface => {
       const listed = withBrowserComponentState(surface, refusal);
       const drift = listed.intakeScope ? restatedScope(listed.intakeScope, pages).drift : [];
@@ -474,10 +486,21 @@ export const listForAgent = query({
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
+        ...(carriesDecisions(surface)
+          ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
+          : {}),
       };
     });
   },
 });
+
+/** A chat card the manager's decision requests go through, or will once it connects. */
+function carriesDecisions(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    (surface.managerDmChannelId !== undefined || surface.provisioning?.installedAt !== undefined)
+  );
+}
 
 /**
  * Seed one declared row per work system named in the approved charter.
