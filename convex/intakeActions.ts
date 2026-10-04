@@ -1934,10 +1934,12 @@ export async function runIntakeSweep(
     // Gone at the read, gone since, or handed over since: the rows read above carry the old
     // owner's connection, so nothing is polled with them; the next sweep reads the new owner's.
     if (!agent || startedUnder === undefined || (agent.userId ?? null) !== startedUnder) continue;
-    // A paused employee takes no intake (12-P): each card says so, and nothing is read or
-    // decrypted, so every checkpoint stays where it was for the first sweep after the resume.
+    // A paused employee takes no intake (12-P): nothing is read or decrypted, so every checkpoint
+    // stays where it was for the first sweep after the resume. Only a card intake would have read
+    // says so; one it would not read anyway keeps its own reason.
     if (isPaused(agent)) {
       for (const surface of agentSurfaces.filter(inScope)) {
+        if (surface.verdict !== 'connected' || accessEnded(surface, now())) continue;
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition: surface.waterfallPosition ?? 0,

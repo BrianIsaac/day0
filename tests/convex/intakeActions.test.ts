@@ -1390,6 +1390,31 @@ describe('real surface intake', (): void => {
     ]);
   });
 
+  it('leaves a paused employee’s card that intake would not read anyway with its own reason (12-P)', async (): Promise<void> => {
+    const jira = surfaceRow('jira', 'Jira', 'kanban', {
+      verdict: 'declared',
+      credentialLanded: false,
+      intakeSkipReason: 'surface is declared; awaiting connection',
+    });
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      credentialId: id<'credentials'>('credential-linear'),
+      toolAllowlist: ['list_issues'],
+      waterfallPosition: 2,
+    });
+    const harness = runtimeHarness(
+      [jira, linear],
+      [],
+      new Map([['credential-linear', 'linear-value']]),
+      [{ ...agentRow(), pausedAt: 5, pausedBy: 'owner' }],
+    );
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000 });
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 2, skipReason: PAUSED_INTAKE_REASON },
+    ]);
+  });
+
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
       readSweep: vi.fn(async (): Promise<SweepRead> => ({ surfaces: [], owners: [] })),
