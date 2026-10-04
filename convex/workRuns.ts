@@ -53,7 +53,13 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedNoteRows, landedWork, stopDetail } from '../src/work/stop';
+import {
+  isStoppable,
+  landedNoteRows,
+  landedWork,
+  managerStopReason,
+  stopDetail,
+} from '../src/work/stop';
 import { landedNoteText } from '../src/work/manager-notes';
 import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
@@ -850,5 +856,64 @@ export const recordApplyOutcome = internalMutation({
       }),
     });
     return true;
+  },
+});
+
+/**
+ * Cancel the step the loop last queued for a row (`stepJobId`), when it has not started.
+ *
+ * A step already running is not cancelled here: it is held off by the fences the stop clears
+ * (`executionRunId`, `applyAttemptId`), and an apply in flight learns at its next report.
+ *
+ * @param ctx - The stop's mutation context.
+ * @param row - The row being stopped.
+ * @returns Whether a queued step was cancelled.
+ */
+async function cancelQueuedStep(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
+  if (row.stepJobId === undefined) return false;
+  const job = await ctx.db.system.get(row.stepJobId);
+  await ctx.db.patch(row._id, { stepJobId: undefined });
+  if (job?.state.kind !== 'pending') return false;
+  await ctx.scheduler.cancel(job._id);
+  return true;
+}
+
+/**
+ * Public, owner-guarded (`assertOwnsWorkItem`): the manager stops an item the employee is working
+ * (`claimed`, `plan-approved`, `executing`; wave 6 B D3, built in wave 12).
+ *
+ * The queued step is cancelled, and the run ends through the stop every run's end shares
+ * (`stopRunsInTransaction`, the handover's and the withdraw's): its run id and apply claim are
+ * cleared, so every later write of the run is refused at its fence; an apply in flight keeps
+ * every row it reported and records the rest as outcome unknown, never as not sent. The item is
+ * `failed` under the stopped prefix with the manager's reason, and Retry stands. Writes a
+ * `work.stopped` event naming the manager. Refuses, as a `ConvexError` the card says, an item no
+ * longer under way.
+ */
+export const stopRun = mutation({
+  args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (!isStoppable(row.state)) {
+      throw new ConvexError('Only work under way can be stopped; this item has moved on.');
+    }
+    const identity = await getCallerOrThrow(ctx);
+    const note = managerText(args.reason);
+    const applyInFlight = row.applyAttemptId !== undefined && row.pendingRunId !== undefined;
+    await cancelQueuedStep(ctx, row);
+    await stopRunsInTransaction(ctx, [row], managerStopReason(note));
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.stopped',
+      payload: {
+        workItemId: row._id,
+        fromState: row.state,
+        actor: identity.ownerKey,
+        ...(note !== '' ? { reason: note } : {}),
+        applyInFlight,
+      },
+      createdAt: Date.now(),
+    });
+    return { ok: true };
   },
 });

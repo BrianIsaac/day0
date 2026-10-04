@@ -1350,6 +1350,18 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
 /** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
 export type WorkDismissedPayload = WorkItemNamed;
 
+/** The payload of `work.stopped`: the manager stopped an item the employee was working (wave 12). */
+export interface WorkStoppedPayload extends WorkItemNamed {
+  /** The state the item was in: `claimed`, `plan-approved` or `executing`. */
+  readonly fromState: Doc<'workItems'>['state'];
+  /** The owner key of the manager who stopped it. */
+  readonly actor: string;
+  /** The manager's reason, when they gave one. */
+  readonly reason?: string;
+  /** Whether an apply was sending the run's writes, so some may have landed. */
+  readonly applyInFlight: boolean;
+}
+
 /** The payload of `work.cancelled`. */
 export interface WorkCancelledPayload extends WorkItemNamed {
   readonly reason: string;
@@ -1643,6 +1655,7 @@ export interface EventPayloads {
   'work.provider-reconciled': WorkProviderReconciledPayload;
   'work.cancelled': WorkCancelledPayload;
   'work.dismissed': WorkDismissedPayload;
+  'work.stopped': WorkStoppedPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1819,6 +1832,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.provider-reconciled',
   'work.cancelled',
   'work.dismissed',
+  'work.stopped',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

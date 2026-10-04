@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
+import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { AppliedAction } from '../../src/surfaces/types';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -198,5 +199,156 @@ describe('the apply persisted per action (P4-2)', (): void => {
       }),
     ).resolves.toBe(false);
     expect(await readItem(harness, workItemId)).not.toHaveProperty('output.applyProgress');
+  });
+});
+
+/** The state of a scheduled function, by id. */
+async function jobState(harness: Harness, id: Id<'_scheduled_functions'>): Promise<string> {
+  const job = await harness.run(async (ctx) => await ctx.db.system.get(id));
+  if (!job) throw new Error('scheduled function missing');
+  return job.state.kind;
+}
+
+describe('Stop on a working item', (): void => {
+  it('moves an executing run to failed with the stopped prefix and cancels its scheduled step', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+    // Autonomous actions apply the run's rows on their own: the apply is queued, not yet claimed.
+    await expect(
+      harness.mutation(internal.workRuns.setActionsPending, {
+        workItemId,
+        runId,
+        output: heldOutput,
+      }),
+    ).resolves.toEqual({ pending: true, phase: 'auto' });
+    const queued = (await readItem(harness, workItemId)).stepJobId;
+    if (!queued) throw new Error('the queued apply was not recorded');
+    expect(await jobState(harness, queued)).toBe('pending');
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.stopRun, { workItemId, reason: 'Wrong ticket, leave it.' });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe(`${STOPPED_PREFIX}stopped by the manager: Wrong ticket, leave it.`);
+    expect(row.executionRunId).toBeUndefined();
+    expect(row.stepJobId).toBeUndefined();
+    expect(await jobState(harness, queued)).toBe('canceled');
+    const stopped = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.stopped'))
+          .collect(),
+    );
+    expect(stopped.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        fromState: 'executing',
+        actor: 'owner',
+        reason: 'Wrong ticket, leave it.',
+        applyInFlight: false,
+      },
+    ]);
+  });
+
+  it('cancels the queued execution of an approved plan and runs nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-approved');
+    // The sweep queues the approved plan's execution, as every route to `plan-approved` does.
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    const queued = (await readItem(harness, workItemId)).stepJobId;
+    if (!queued) throw new Error('the queued execution was not recorded');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+
+    expect(await jobState(harness, queued)).toBe('canceled');
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'failed',
+      skipReason: `${STOPPED_PREFIX}stopped by the manager`,
+    });
+  });
+
+  it('refuses every later write of the stopped run at its fence', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+
+    await expect(
+      harness.mutation(internal.workRuns.setActionsPending, {
+        workItemId,
+        runId,
+        output: heldOutput,
+      }),
+    ).resolves.toEqual({ pending: false });
+    await expect(
+      harness.mutation(internal.workRuns.setCompleted, {
+        workItemId,
+        runId,
+        output: { ...heldOutput, applied: [landedComment, landedComment] },
+      }),
+    ).rejects.toThrow('execution run changed before completion');
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'failed' });
+  });
+
+  it('accounts for an apply in flight: the reported row stays landed, the rest is unknown, never lost', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, applyAttemptId } = await applyInFlight(harness);
+    await harness.mutation(internal.workRuns.recordApplyOutcome, {
+      workItemId,
+      applyAttemptId,
+      index: 0,
+      row: landedComment,
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    const applied = (row.output as { applied: AppliedAction[] }).applied;
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe(`${STOPPED_PREFIX}stopped by the manager`);
+    expect(applied[0]).toMatchObject({ ok: true, providerId: 'comment-1' });
+    expect(applied[1]).toMatchObject({ ok: false, reason: OUTCOME_UNKNOWN_REASON });
+    expect(row.applyAttemptId).toBeUndefined();
+    // The apply's next report is refused, so it sends nothing more.
+    await expect(
+      harness.mutation(internal.workRuns.recordApplyOutcome, {
+        workItemId,
+        applyAttemptId,
+        index: 1,
+        row: { ...landedComment, idempotencyKey: 'key-1' },
+      }),
+    ).resolves.toBe(false);
+    const stopped = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.stopped'))
+          .first(),
+    );
+    expect(stopped?.payload).toMatchObject({ applyInFlight: true });
+  });
+
+  it('refuses an item that is not under way, and another manager’s item', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId }),
+    ).rejects.toThrow('Only work under way can be stopped');
+    const working = await seed(harness, 'executing');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('someone-else@example.com'))
+        .mutation(api.workRuns.stopRun, { workItemId: working.workItemId }),
+    ).rejects.toThrow();
+    expect(await readItem(harness, working.workItemId)).toMatchObject({ state: 'executing' });
   });
 });

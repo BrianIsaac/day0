@@ -36,6 +36,33 @@ import {
 
 export const STOPPED_PREFIX = 'stopped: ';
 
+/** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
+export const MANAGER_STOP = 'stopped by the manager';
+
+/** The states of a work item the manager can stop: the employee is working it and nothing waits on them. */
+export const STOPPABLE_STATES = ['claimed', 'plan-approved', 'executing'] as const;
+
+/** A state `STOPPABLE_STATES` holds. */
+export type StoppableState = (typeof STOPPABLE_STATES)[number];
+
+/**
+ * Whether the manager can stop an item in this state.
+ *
+ * @param state - The item's state.
+ */
+export function isStoppable(state: string): state is StoppableState {
+  return (STOPPABLE_STATES as readonly string[]).includes(state);
+}
+
+/**
+ * The recorded reason of a stop the manager made, with their words when they gave any.
+ *
+ * @param note - The manager's reason, already trimmed and capped; empty when they gave none.
+ */
+export function managerStopReason(note: string): string {
+  return stoppedReason(note === '' ? MANAGER_STOP : `${MANAGER_STOP}: ${note}`);
+}
+
 /** The ledger reason on a closing action the run never put to the manager. */
 export const WITHHELD_ON_STOP =
   'withheld: the run stopped with nothing landed and nothing for the manager to decide';

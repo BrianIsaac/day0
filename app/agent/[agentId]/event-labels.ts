@@ -623,6 +623,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.cancelled': (payload) =>
     `cancelled${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.dismissed': 'dismissed by the manager',
+  'work.stopped': (payload) => `stopped by the manager${because(payload.reason)}`,
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',

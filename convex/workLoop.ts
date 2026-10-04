@@ -414,6 +414,39 @@ async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>)
   await ctx.scheduler.runAfter(0, internal.workActions.evaluateWorkItemInternal, { workItemId });
 }
 
+/** A step of a row's run that the loop queues and Stop can cancel. */
+export type QueuedStep = 'draft' | 'execute' | 'apply';
+
+/**
+ * Queue one step of a row's run and record it on the row (`stepJobId`, wave 12; V12-3), so a Stop
+ * can cancel it before it starts. One id is kept, the latest: an earlier step still pending is held
+ * off by the fences Stop clears.
+ *
+ * @param ctx - The transition's mutation context.
+ * @param workItemId - The row.
+ * @param step - The draft, the execution or the apply.
+ * @param delayMs - How long the step waits before it runs.
+ */
+export async function queueStep(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  step: QueuedStep,
+  delayMs = 0,
+): Promise<void> {
+  const args = { workItemId };
+  const stepJobId =
+    step === 'draft'
+      ? await ctx.scheduler.runAfter(delayMs, internal.workActions.draftPlanInternal, args)
+      : step === 'execute'
+        ? await ctx.scheduler.runAfter(
+            delayMs,
+            internal.workActions.executeApprovedPlanInternal,
+            args,
+          )
+        : await ctx.scheduler.runAfter(delayMs, internal.workActions.applyApprovedActions, args);
+  await ctx.db.patch(workItemId, { stepJobId });
+}
+
 /** The deferral reason of a row parked because the employee's charter awaits approval. */
 export const AWAITING_CHARTER = 'awaiting-charter';
 
@@ -533,17 +566,11 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'claimed':
-      if (row.plan === undefined) {
-        await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
-          workItemId: row._id,
-        });
-      }
+      if (row.plan === undefined) await queueStep(ctx, row._id, 'draft');
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'plan-approved':
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
+      await queueStep(ctx, row._id, 'execute');
       return;
     case 'plan-pending':
     case 'executing':
@@ -609,7 +636,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
       createdAt: now,
     });
   }
-  await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, { workItemId: row._id });
+  await queueStep(ctx, row._id, 'draft');
   return true;
 }
 
@@ -673,9 +700,7 @@ export async function resumeStalledStepsInTransaction(
       if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
     for (const row of await resumable('plan-approved', () => true)) {
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
+      await queueStep(ctx, row._id, 'execute');
       rescheduled += 1;
     }
     for (const row of await resumable(

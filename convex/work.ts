@@ -35,6 +35,7 @@ import {
   isManagerChannel,
   OPEN_WORK_STATES,
   openSlotCount,
+  queueStep,
   resumeStalledStepsInTransaction,
   scheduleNextStep,
   STEP_LEASE_MS,
@@ -5026,11 +5027,7 @@ export const resumeExecution = internalMutation({
       payload: { workItemId: row._id, runId: args.runId, attempt, reason: args.reason },
       createdAt: now,
     });
-    await ctx.scheduler.runAfter(
-      EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1),
-      internal.workActions.executeApprovedPlanInternal,
-      { workItemId: row._id },
-    );
+    await queueStep(ctx, row._id, 'execute', EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1));
     // The run is out of flight until it claims again, which a finishing handover refuses.
     await settleHandoverAfterRun(ctx, row.agentId);
     return { outcome: 'resumed' };
@@ -5599,7 +5596,7 @@ export async function scheduleApply(
   pendingRunId: Id<'events'>,
   phase: 'auto' | 'approved',
 ): Promise<void> {
-  await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, { workItemId });
+  await queueStep(ctx, workItemId, 'apply');
   await armApplySwitch(ctx, workItemId, pendingRunId, phase);
 }
 
