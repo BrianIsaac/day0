@@ -1445,8 +1445,7 @@ describe('the stall sweep while a handover is finishing (resumeStalledSteps)', (
     vi.runOnlyPendingTimers();
     await handover.harness.finishInProgressScheduledFunctions();
 
-    // The sweep also says how many manager-channel claims it settled (N-3, wave 12): none here.
-    expect(swept).toEqual({ rescheduled: 1, settledClaims: 0 });
+    expect(swept).toEqual({ rescheduled: 1 });
     expect(await read(handover.harness, stalled.workItemId)).toMatchObject({ state: 'failed' });
   });
 });

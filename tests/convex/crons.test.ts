@@ -616,7 +616,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(10);
+    expect(jobs).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -662,7 +662,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(10);
+    expect(lines).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',

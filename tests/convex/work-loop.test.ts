@@ -1498,7 +1498,7 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     const lapsed = await claims(harness, Date.now() - LAPSED);
     const live = await claims(harness, Date.now() - FRESH);
 
-    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
 
     const read = async (ids: typeof lapsed) =>
       await harness.run(async (ctx) => ({
@@ -1531,6 +1531,22 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     expect(untouched.replaced?.editFailure).toBeUndefined();
   });
 
+  it('runs as a job of its own, apart from the stalled-step sweep', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(lapsed.notice)))?.failure,
+    ).toBeUndefined();
+    await expect(
+      harness.action(internal.crons.runScheduledJob, { job: 'workLoop:settleLapsedClaims' }),
+    ).resolves.toEqual({ settled: 5 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(lapsed.notice)))?.failure).toBe(
+      MANAGER_CLAIM_LAPSED_REASON,
+    );
+  });
+
   it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1541,8 +1557,8 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
         decision: { ...row!.decision!, closedAt: Date.now() - LAPSED + 1_000 },
       });
     });
-    await harness.mutation(internal.work.resumeStalledSteps, {});
-    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
     const row = await harness.run(async (ctx) => await ctx.db.get(lapsed.workItemId));
     expect(row?.decision?.closeFailure).toBeUndefined();
     const failed = await harness.run(

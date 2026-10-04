@@ -38,7 +38,6 @@ import {
   queueStep,
   resumeStalledStepsInTransaction,
   scheduleNextStep,
-  settleLapsedManagerClaimsInTransaction,
   STEP_LEASE_MS,
   type StepClaim,
 } from './workLoop';
@@ -4776,16 +4775,12 @@ export const claimLoopStep = internalMutation({
 
 /**
  * The stalled-step sweep, run with the five-minute intake poll; see
- * `resumeStalledStepsInTransaction` (real mode only). With it, in either mode, the lease on the
- * manager channel's claims (`settleLapsedManagerClaimsInTransaction`, N-3).
+ * `resumeStalledStepsInTransaction`. Real mode only.
  */
 export const resumeStalledSteps = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ rescheduled: number; settledClaims: number }> => {
-    const now = Date.now();
-    const { rescheduled } = await resumeStalledStepsInTransaction(ctx, now);
-    return { rescheduled, settledClaims: await settleLapsedManagerClaimsInTransaction(ctx, now) };
-  },
+  handler: async (ctx): Promise<{ rescheduled: number }> =>
+    await resumeStalledStepsInTransaction(ctx, Date.now()),
 });
 
 /** Atomically claim one discovered comparison task for the ordinary-agent arm. */

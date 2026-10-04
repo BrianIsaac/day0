@@ -1,7 +1,13 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { internalQuery, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { assertOwnsAgent } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
@@ -909,22 +915,22 @@ async function settleLapsedManagerClaims(
 
 /**
  * Settle the manager-channel claims every employee's actions died holding (N-3); see
- * `settleLapsedManagerClaims`. Run by the five-minute sweep in either mode.
+ * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
+ * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back.
  *
- * @param ctx - The sweep's mutation context.
- * @param now - The instant the lease is judged against.
  * @returns How many claims were settled.
  */
-export async function settleLapsedManagerClaimsInTransaction(
-  ctx: MutationCtx,
-  now: number,
-): Promise<number> {
-  let settled = 0;
-  for (const agent of await ctx.db.query('agents').collect()) {
-    settled += await settleLapsedManagerClaims(ctx, agent._id, now);
-  }
-  return settled;
-}
+export const settleLapsedClaims = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ settled: number }> => {
+    const now = Date.now();
+    let settled = 0;
+    for (const agent of await ctx.db.query('agents').collect()) {
+      settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+    }
+    return { settled };
+  },
+});
 
 /** How often one employee's work surfaces may be polled on demand. */
 export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;
