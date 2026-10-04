@@ -32,6 +32,7 @@ const OFFER: Adoption = {
   versionId: 'version-1' as Id<'skillVersions'>,
   version: 2,
   authorName: 'Priya',
+  authorRetired: false,
   verifiedAt: Date.UTC(2026, 8, 18, 9),
   connection: 'Linear',
   missingScopes: ['linear:write'],

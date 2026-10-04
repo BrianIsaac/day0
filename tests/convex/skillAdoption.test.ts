@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { releaseAuthor } from '../../convex/skillVersions';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { versionBodyHash } from '../../src/work/skill-library';
 import { allConvexModules } from './all-modules';
@@ -462,6 +463,31 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
       state: 'offered',
       versionId: offered,
       refusal: 'the approved tools of Linear do not include save_comment',
+    });
+  });
+
+  it("says the offered version's author was retired once its retire released it (the wave 11 review's m19)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await linear(harness, mateo);
+    const offered = await version(harness, priya);
+    await propose(harness, mateo);
+    const before = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(before[0]).toMatchObject({ versionId: offered, authorRetired: false });
+
+    await harness.run(async (ctx) => {
+      await releaseAuthor(ctx, priya);
+    });
+    const after = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(after[0]).toMatchObject({
+      versionId: offered,
+      authorName: 'Priya',
+      authorRetired: true,
     });
   });
 

@@ -88,6 +88,7 @@ export function AdoptionCard({
     state,
     adopterName,
     authorName: adoption.authorName,
+    authorRetired: adoption.authorRetired,
     skillName: adoption.name,
     verifiedOn: verifiedOnDay(adoption.verifiedAt, zone),
     ...(adoption.connection !== undefined ? { connection: adoption.connection } : {}),

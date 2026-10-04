@@ -19,6 +19,7 @@ import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
+import { HANDED_OVER_AUTHOR_NAME } from '../src/work/skill-library';
 import {
   OFFER_WITHDRAWN_REFUSAL,
   adoptionCardState,
@@ -527,6 +528,8 @@ export interface AdoptionView {
   readonly versionId: Id<'skillVersions'>;
   readonly version: number;
   readonly authorName: string;
+  /** Whether the version's author has been retired since it wrote it (`releaseAuthor`). */
+  readonly authorRetired: boolean;
   readonly verifiedAt: number;
   /** The employee's connection the sandbox runs under, by name; absent in mock mode. */
   readonly connection?: string;
@@ -614,6 +617,9 @@ async function adoptionView(
     versionId: version._id,
     version: version.version,
     authorName: version.authorName,
+    // A retire releases the versions its employee wrote; a handed-over copy never named one.
+    authorRetired:
+      version.authorAgentId === undefined && version.authorName !== HANDED_OVER_AUTHOR_NAME,
     verifiedAt: version.verifiedAt,
     ...(offer.kind === 'ready' && offer.connection !== undefined
       ? { connection: offer.connection }

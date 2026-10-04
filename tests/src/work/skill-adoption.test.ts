@@ -451,6 +451,16 @@ describe('adoptionWords', (): void => {
     expect(Object.values(words).join(' ')).not.toContain(HANDED_OVER_AUTHOR_NAME);
   });
 
+  it("says a retired author was retired, never as a colleague who still works (the wave 11 review's m19)", (): void => {
+    const words = adoptionWords({ ...base, authorRetired: true, state: 'offered' });
+    expect(words.lead).toBe(
+      'The skill kanban-comment-and-close, verified on 18 September 2026, does this; Priya, who wrote it, has been retired.',
+    );
+    expect(adoptionWords({ ...base, authorRetired: true, state: 'verifying' }).lead).toBe(
+      'Adopting the skill kanban-comment-and-close for Mateo.',
+    );
+  });
+
   it('says the sandbox alone in mock mode, where there is no connection to name', (): void => {
     const { body } = adoptionWords({ ...base, connection: undefined, state: 'offered' });
     expect(body).toBe(
