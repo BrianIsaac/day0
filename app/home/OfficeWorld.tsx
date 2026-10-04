@@ -401,7 +401,7 @@ function idleOffice(layout: OfficeLayout): Record<string, OfficePlace> {
 
 /**
  * Split the roster into the employees at their desks and the ones standing: an employee in its
- * one-to-one or with work open sits at the desk its place on the roster gives it.
+ * one-to-one or with work open, and not paused, sits at the desk its place on the roster gives it.
  *
  * @param agents - The roster, in order.
  */
@@ -411,7 +411,7 @@ function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
   const phoneSeated: OfficePoint[] = [];
   const idle: IdleFigure[] = [];
   agents.forEach((agent, index) => {
-    if (agentIsWorking(agent.state, agent.openCount)) {
+    if (agentIsWorking(agent)) {
       const seat = OFFICE_DESKS[deskFor(index)];
       working.add(agent.agentId);
       seated.push({ x: seat.seatX, y: seat.seatY });
@@ -462,13 +462,14 @@ function OfficeAgent({
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
-      title={`${agent.name}, ${working ? 'working at a desk' : 'roaming the office'}`}
+      title={`${agent.name}, ${working ? 'working at a desk' : agent.paused ? 'paused' : 'roaming the office'}`}
     >
       <div className={working ? 'day0-office-agent-working' : 'day0-office-agent-roaming'}>
         <AgentPixelAvatar
           avatar={avatarById(agent.avatarId)}
           state={agent.state}
           phase={agent.phase}
+          paused={agent.paused}
           label={agent.name}
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center max-sm:max-w-none">
@@ -502,6 +503,12 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-function agentIsWorking(state: Doc<'agents'>['state'], openWorkCount = 0) {
-  return state === 'day-one-in-progress' || openWorkCount > 0;
+/**
+ * Whether the employee sits at its desk: in its one-to-one, or with work open. A paused employee
+ * starts no step, so it is drawn away from its desk with its open work, as the roster's chip says
+ * Paused (12-P).
+ */
+function agentIsWorking(agent: Pick<RosterRow, 'state' | 'openCount' | 'paused'>): boolean {
+  if (agent.paused) return false;
+  return agent.state === 'day-one-in-progress' || agent.openCount > 0;
 }

@@ -94,6 +94,15 @@ describe('OfficeWorld', (): void => {
     expect(html).not.toMatch(/title="[^"]* - /);
   });
 
+  it('draws a paused employee with open work away from its desk, its face marked paused as the roster is (12-P)', (): void => {
+    const paused = { ...mira, paused: true } as RosterRow;
+    const html = renderToStaticMarkup(<OfficeWorld agents={[paused]} settled />);
+    expect(html).toContain('title="Mira, paused"');
+    expect(html).not.toContain('working at a desk');
+    expect(html).not.toContain('day0-office-agent-seated');
+    expect(html).toMatch(/<div [^>]*title="Mira, paused"[^>]*aria-hidden="true"/);
+  });
+
   it('sets the name plate, the reads pill, the plate and the count at the 12 px floor', (): void => {
     const empty = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     const staffed = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
