@@ -2670,6 +2670,12 @@ export function mockActionContractIssues(
       }
     }
   }
+  // A run that answers partial or not-done closes nothing, whatever else its set does: a second
+  // change to its ticket or a cross-linked ticket set to done (the second pass), unless the trail's
+  // own transition issue above already says so.
+  if (!issues.some((issue) => issue.includes('transition does not match'))) {
+    issues.push(...closingAgainstFactIssues(output));
+  }
   const statusesByTicket = new Map<string, Set<string>>();
   for (const action of output.actions) {
     if (action.tool !== 'ticket.update' || !action.args.slug || !action.args.status) continue;

@@ -37,6 +37,7 @@ import {
 } from '../../../src/work/types';
 import {
   FINISHED_WORDS,
+  PIP_DRAFT,
   RECORDED_UNFINISHED,
   ROOK_COMMENT,
   UNFINISHED_WORDS,
@@ -862,6 +863,30 @@ describe('executor output contract', (): void => {
         ),
         label,
       ).toEqual([]);
+    }
+  });
+
+  it('refuses any close from a run answering partial or not-done, beside the status its trail asks for (the second pass)', (): void => {
+    const partly = answeredRun('partial', PIP_DRAFT, 'in-progress');
+    // A second change to the same ticket, and a cross-linked ticket set to done.
+    for (const extra of [
+      { tool: 'ticket.update' as const, args: { slug: 'REVOPS-204', status: 'done' as const } },
+      {
+        tool: 'ticket.update' as const,
+        args: { slug: 'REVOPS-202', status: 'done' as const, comment: 'Cross-link.' },
+      },
+    ]) {
+      expect(
+        mockActionContractIssues(
+          { ...partly, actions: [...partly.actions, extra] },
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        extra.args.slug,
+      ).toContain(
+        `sets the ticket to done while workDone is "partial" ("${PIP_DRAFT}"): a run that did not do all of the work leaves the ticket open, so leave the state change out and say in the comment what is left`,
+      );
     }
   });
 
