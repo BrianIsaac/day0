@@ -12,7 +12,8 @@ import { slackAuthorizeUrl } from './slack-endpoint';
  * its description, its bot user and its bot scopes. Everything else is Day0's:
  * the manifest sent with the administrator's token is rebuilt from an
  * allowlist, so a page edit cannot add an event subscription, an interactivity
- * or slash-command address, user-token scopes or a second redirect.
+ * or slash-command address, user-token scopes or a second redirect. Interactivity
+ * itself, the switch alone, is kept with Socket Mode on (wave 12, 12-M).
  */
 
 /** The placeholder the policy page uses for the employee's name. */
@@ -47,8 +48,17 @@ export interface SlackManifest {
   };
   features?: { bot_user?: { display_name?: string; always_online?: boolean } };
   oauth_config: { redirect_urls: string[]; scopes: { bot: string[] } };
-  settings?: Partial<Record<(typeof SETTING_KEYS)[number], boolean>>;
+  settings?: SlackManifestSettings;
 }
+
+/**
+ * The settings a dedicated app may carry: the documented switches, and interactivity with Socket
+ * Mode on (wave 12, 12-M), which takes no request URL, so a press reaches Day0 over the socket and
+ * the manifest names no address.
+ */
+export type SlackManifestSettings = Partial<Record<(typeof SETTING_KEYS)[number], boolean>> & {
+  interactivity?: { is_enabled: boolean };
+};
 
 export interface BuiltSlackManifest {
   appName: string;
@@ -304,12 +314,20 @@ function features(
   };
 }
 
-/** The documented switches, when the template set them, and no addresses. */
+/**
+ * The documented switches, when the template set them, and no addresses. Interactivity is kept
+ * only as its switch and only with Socket Mode on: Slack refuses interactivity with neither a
+ * request URL nor Socket Mode, and a request URL is an inbound address Day0 never declares (Q13).
+ */
 function settings(written: Record<string, unknown>): Pick<SlackManifest, 'settings'> {
-  const out: NonNullable<SlackManifest['settings']> = {};
+  const out: SlackManifestSettings = {};
   for (const key of SETTING_KEYS) {
     const value = written[key];
     if (typeof value === 'boolean') out[key] = value;
+  }
+  const interactive = record(written.interactivity).is_enabled;
+  if (out.socket_mode_enabled === true && typeof interactive === 'boolean') {
+    out.interactivity = { is_enabled: interactive };
   }
   return Object.keys(out).length > 0 ? { settings: out } : {};
 }

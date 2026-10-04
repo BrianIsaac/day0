@@ -56,10 +56,14 @@ const TEMPLATE: SlackManifest = {
     redirect_urls: [`${PUBLIC_URL_PLACEHOLDER}${SLACK_REDIRECT_PATH}`],
     scopes: { bot: [...SLACK_KIT_BOT_SCOPES] },
   },
+  // Socket Mode and interactivity with no request URL (wave 12, 12-M; RM7): Approve and Reject
+  // presses reach Day0 over the bridge's outbound socket once a person has generated the app's
+  // app-level token, and nothing inbound is declared (Q13).
   settings: {
     org_deploy_enabled: false,
-    socket_mode_enabled: false,
+    socket_mode_enabled: true,
     token_rotation_enabled: false,
+    interactivity: { is_enabled: true },
   },
 };
 
