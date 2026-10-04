@@ -389,6 +389,15 @@ describe('the dedicated-app procedure on the card', (): void => {
       text: 'delivered by the install of ops worker (Day0) (masked)',
     });
   });
+
+  it("says a token no app install delivered came by an authorisation, as an MCP server's does (the wave 11 review's m23)", (): void => {
+    expect(
+      presentSurfaceCredential({
+        credentialId: 'cred1',
+        summary: { _id: 'cred1', label: 'Acme docs access', source: 'oauth' },
+      }).text,
+    ).toBe('delivered by an OAuth authorisation (masked)');
+  });
 });
 
 describe('channels the app has not been invited to', (): void => {
