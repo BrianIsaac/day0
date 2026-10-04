@@ -1371,7 +1371,7 @@ async function heldEmployees(
 }
 
 /**
- * Public, any caller; reads only the caller's own: the supervision figures of
+ * Public, any signed-in caller; reads only the caller's own: the supervision figures of
  * the caller's company, each employee's own figures and the company row, each
  * employee counted within the spans the caller held it (D12 (a)). Writes
  * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).

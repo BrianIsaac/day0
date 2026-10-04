@@ -73,6 +73,11 @@ export const deployBaseline = action({
   },
 });
 
+/**
+ * Run one baseline-arm work item with the ordinary agent. Public, guarded by `getCallerOrThrow`
+ * first and then the item's employee's owner, on an evaluation bed in mock mode only. Writes the
+ * item's claim and its outcome.
+ */
 export const executeTask = action({
   args: { workItemId: v.id('workItems') },
   handler: async (

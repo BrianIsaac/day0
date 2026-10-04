@@ -366,7 +366,11 @@ export const forPlan = internalQuery({
   },
 });
 
-/** Stop feeding a correction back into later work. Idempotent. */
+/**
+ * Stop feeding a correction back into later work. Idempotent. Public, guarded by
+ * `getCallerOrThrow` first and then the correction's employee's owner. Writes `retiredAt` and the
+ * record's event.
+ */
 export const retire = mutation({
   args: { correctionId: v.id('corrections') },
   handler: async (ctx, args): Promise<{ ok: true }> => {

@@ -30,6 +30,11 @@ const originatingTicketFields = {
   priority: v.string(),
 } as const;
 
+/**
+ * Seed the harness's evaluation tasks onto an employee's queue. Public, guarded by
+ * `getCallerOrThrow` first and then the employee's owner, on an evaluation bed in mock mode only.
+ * Writes the work items.
+ */
 export const seedTasks = mutation({
   args: {
     agentId: v.id('agents'),
@@ -80,6 +85,10 @@ export const seedTasks = mutation({
   },
 });
 
+/**
+ * Time an evaluation task out. Public, guarded by `getCallerOrThrow` first and then the item's
+ * employee's owner, on an evaluation bed in mock mode only. Writes the item and its event.
+ */
 export const timeoutTask = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
@@ -113,6 +122,11 @@ export const timeoutTask = mutation({
   },
 });
 
+/**
+ * Fail an evaluation task's skill authoring. Public, guarded by `getCallerOrThrow` first and then
+ * the item's employee's owner, on an evaluation bed in mock mode only. Writes the item and its
+ * event.
+ */
 export const failSkillAuthoringAttempts = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ failed: boolean }> => {
@@ -146,6 +160,10 @@ export const failSkillAuthoringAttempts = mutation({
   },
 });
 
+/**
+ * The rows an evaluation run reads back for an employee. Public, guarded by `getCallerOrThrow`
+ * first and then the employee's owner, on an evaluation bed in mock mode only. Writes nothing.
+ */
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {

@@ -341,7 +341,8 @@ export const managerStanding = query({
 const reportingElsewhereValidator = v.object({ agentId: v.id('agents'), name: v.string() });
 
 /**
- * Public, any signed-in caller (`getCallerOrThrow`, 12-G): the caller's company employees that report to an
+ * Public, any signed-in caller (`getCallerOrThrow`, 12-G): the caller's company employees that
+ * report to an
  * address that is not the caller's verified one, newest first as the roster
  * reads them, for the home's one line while any does, each linked to its
  * People tab (the transfer plan section 11.2). Evaluation employees are left

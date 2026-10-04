@@ -214,7 +214,10 @@ export const openForAgent = query({
   },
 });
 
-/** Answer one question from the dashboard; the answer amends the charter. */
+/**
+ * Answer one question from the dashboard; the answer amends the charter. Public, guarded by
+ * `getCallerOrThrow` first and then the question's employee's owner.
+ */
 export const answer = mutation({
   args: { questionId: v.id('managerQuestions'), text: v.string() },
   handler: async (ctx, args): Promise<{ amendedCharterId: Id<'charters'> | null }> => {

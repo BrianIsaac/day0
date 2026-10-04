@@ -1204,10 +1204,10 @@ async function deletionHoldings(
 }
 
 /**
- * Public, any caller; reads only the caller's own: whether each kind of row a deletion of their
- * data would remove is held ({@link deletionHoldings}), so the deletion's control is live
- * whenever the deletion has something to take, an employee or not (the v0.13.0 walk). Writes
- * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
+ * Public, any signed-in caller; reads only the caller's own: whether each kind of row a
+ * deletion of their data would remove is held ({@link deletionHoldings}), so the deletion's
+ * control is live whenever the deletion has something to take, an employee or not (the v0.13.0
+ * walk). Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const holdings = query({
   args: {},
