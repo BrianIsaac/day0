@@ -613,6 +613,26 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
     expect(socket.detail).toContain('wss://');
   });
 
+  it('names an app whose card holds another app’s token', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({
+          socket: {
+            state: 'running',
+            synced: true,
+            apps: [{ appId: 'A0PRIYA', connected: false, mismatch: true }],
+          },
+        }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain("A0PRIYA's card holds the app-level token of another app");
+  });
+
   it('names the secret when the service cannot read the backend’s list', async (): Promise<void> => {
     const socket = only(
       await accessChecks(

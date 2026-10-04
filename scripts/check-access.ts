@@ -124,7 +124,12 @@ export type SocketBridgeReading =
       readonly state: 'running';
       /** Whether its last read of the backend's app list succeeded. */
       readonly synced: boolean;
-      readonly apps: ReadonlyArray<{ readonly appId: string; readonly connected: boolean }>;
+      readonly apps: ReadonlyArray<{
+        readonly appId: string;
+        readonly connected: boolean;
+        /** The app's connection answered for another app: its card holds another app's token. */
+        readonly mismatch?: boolean;
+      }>;
     }
   | { readonly state: 'absent'; readonly detail: string };
 
@@ -784,6 +789,16 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
         'the service.',
     );
   }
+  const mismatched = reading.apps.filter((app) => app.mismatch === true).map((app) => app.appId);
+  if (mismatched.length > 0) {
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      `${mismatched.map((appId) => `${appId}'s card`).join(' and ')} holds the app-level token of ` +
+        "another app: generate the token in that employee's own app and land it on its card again.",
+    );
+  }
   const unconnected = reading.apps.filter((app) => !app.connected).map((app) => app.appId);
   if (unconnected.length > 0) {
     return check(
@@ -1036,7 +1051,13 @@ function socketReadingOf(stdout: string): SocketBridgeReading {
     apps: apps.flatMap((app: unknown) => {
       const row = app !== null && typeof app === 'object' ? (app as Record<string, unknown>) : {};
       return typeof row.appId === 'string'
-        ? [{ appId: row.appId, connected: row.connected === true }]
+        ? [
+            {
+              appId: row.appId,
+              connected: row.connected === true,
+              ...(row.mismatch === true ? { mismatch: true } : {}),
+            },
+          ]
         : [];
     }),
   };
