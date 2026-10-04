@@ -29,6 +29,7 @@ import {
   markCorrectionsAppliedInTransaction,
 } from './corrections';
 import {
+  APPLY_RECOVERY_MS,
   AWAITING_CHARTER,
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
@@ -37,8 +38,10 @@ import {
   openSlotCount,
   queueStep,
   resumeStalledStepsInTransaction,
+  scheduleApply,
   scheduleNextStep,
   STEP_LEASE_MS,
+  stepMayRun,
   type StepClaim,
 } from './workLoop';
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
@@ -129,12 +132,6 @@ import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
 
-/**
- * How long an apply may go unfinished before the recovery timer acts on it: an
- * approved set whose apply never claimed is rescheduled, and one whose apply
- * claimed has this phase's outcomes recorded unknown and is never replayed.
- */
-export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
  * How long a closing phase's authoring may hold its claim before its switch
  * fails the row. The backend kills a Node action after ten minutes; this is
@@ -5130,6 +5127,9 @@ export const claimLoopStep = internalMutation({
     const now = Date.now();
     if (args.step === 'evaluation') {
       const row = await ctx.db.get(args.workItemId);
+      // A paused employee writes no verdict either, the held-elsewhere skip included (12-P).
+      const permission = row ? await stepMayRun(ctx.db, row.agentId) : { mayRun: true as const };
+      if (!permission.mayRun) return { claimed: false, reason: permission.reason };
       const held =
         row?.state === 'discovered' ? await externalClaimHeldElsewhere(ctx, row, now) : undefined;
       if (row && held) {
@@ -5976,51 +5976,6 @@ export function actionsOf(output: unknown): unknown[] {
 
 function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
   return ((output ?? {}) as { applied?: Array<AppliedAction | undefined> }).applied ?? [];
-}
-
-/**
- * Schedule the apply for the row's current approved set, with its recovery timer.
- *
- * This timer reschedules an apply that never started. An apply that started
- * is covered by the timer its claim arms (`armApplySwitch`), so a start that
- * comes late is measured from the claim, not from here.
- *
- * Args:
- *   ctx: Mutation context.
- *   workItemId: The work item.
- *   pendingRunId: The run the approval belongs to.
- */
-export async function scheduleApply(
-  ctx: MutationCtx,
-  workItemId: Id<'workItems'>,
-  pendingRunId: Id<'events'>,
-  phase: 'auto' | 'approved',
-): Promise<void> {
-  await queueStep(ctx, workItemId, 'apply');
-  await armApplySwitch(ctx, workItemId, pendingRunId, phase);
-}
-
-/**
- * Arm the apply's dead-man switch: `recoverInterruptedApply` after `APPLY_RECOVERY_MS`.
- *
- * Args:
- *   ctx: Mutation context.
- *   workItemId: The work item.
- *   pendingRunId: The run the approval belongs to.
- *   phase: Which apply phase the switch guards.
- */
-export async function armApplySwitch(
-  ctx: MutationCtx,
-  workItemId: Id<'workItems'>,
-  pendingRunId: Id<'events'>,
-  phase: 'auto' | 'approved',
-): Promise<void> {
-  await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
-    workItemId,
-    pendingRunId,
-    phase,
-    fromTimer: true,
-  });
 }
 
 /**
@@ -6884,7 +6839,8 @@ export function interruptedApplyLedger(
  * Recover an apply action that disappeared across a backend interruption.
  *
  * An unclaimed approved set - the manager's, or the gate's auto rows - is
- * safe to reschedule. Once an apply claim exists, the provider may already
+ * safe to reschedule, unless the employee or the deployment is paused, when it
+ * is held and the timer's chain ends there (12-P). Once an apply claim exists, the provider may already
  * have accepted a request, so recovery records every outcome of this phase
  * as unknown, keeps what an earlier phase already recorded, and refuses
  * automatic replay. A timer that fires on a claim younger than
@@ -6902,7 +6858,7 @@ export const recoverInterruptedApply = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
+  ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'held' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row || row.pendingRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
       return { recovered: 'ignored' };
@@ -6910,8 +6866,11 @@ export const recoverInterruptedApply = internalMutation({
     const unclaimedAuto =
       row.state === 'executing' && row.applyPhase === 'auto' && row.applyAttemptId === undefined;
     if ((row.state === 'actions-pending' && row.approvedIndexes !== undefined) || unclaimedAuto) {
-      await scheduleApply(ctx, args.workItemId, args.pendingRunId, args.phase);
-      return { recovered: 'rescheduled' };
+      // A pause schedules nothing, this timer's next round included: the resume's pass, or the
+      // sweep's, schedules the held set (12-P).
+      return (await scheduleApply(ctx, args.workItemId, args.pendingRunId, args.phase))
+        ? { recovered: 'rescheduled' }
+        : { recovered: 'held' };
     }
     if (row.state !== 'executing' || !row.applyAttemptId || !row.applyClaimedAt) {
       return { recovered: 'ignored' };

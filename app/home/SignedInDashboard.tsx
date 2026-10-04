@@ -67,6 +67,14 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
 
   const staffed = roster !== undefined && roster.length > 0;
   const held = useMemo(() => roster?.map((employee) => employee.agentId), [roster]);
+  // A paused employee's decisions stay answerable; the inbox says so above them (12-P).
+  const paused = useMemo(
+    () =>
+      (roster ?? [])
+        .filter((employee) => employee.paused)
+        .map(({ agentId, name }) => ({ agentId: String(agentId), name })),
+    [roster],
+  );
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
   // and one who handed over their only employee still reads where it went (7.4): for them the
@@ -117,7 +125,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           data-cards={arriving ? '' : undefined}
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
-          {!staffed && showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
+          {!staffed && showInbox ? (
+            <NeedsYouList inbox={inboxRead} now={now} paused={paused} />
+          ) : null}
           {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
             <DeployForm
@@ -137,7 +147,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               focusOnMount={staffed}
             />
           ) : null}
-          {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
+          {staffed ? <NeedsYouList inbox={inboxRead} now={now} paused={paused} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
           {staffed ? <HandedOver held={held} /> : null}
           <OfficeWorld

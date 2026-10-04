@@ -419,6 +419,20 @@ describe('the company home', (): void => {
     );
   });
 
+  it('says a paused employee’s decisions still wait above the list, and counts it as paused (12-P)', (): void => {
+    const text = readAs(
+      render(
+        roster.map((row) =>
+          row.agentId === 'synthetic-finance-agent' ? { ...row, paused: true } : row,
+        ),
+      ),
+    );
+    expect(text).toContain('Finance colleague is paused; 2 decisions still wait on you.');
+    expect(text.indexOf('is paused;')).toBeLessThan(text.indexOf('a plan to approve'));
+    expect(text).toContain('Finance colleague Paused');
+    expect(text).toContain('1 active · 1 paused · 1 waiting for your one-to-one');
+  });
+
   it('shows every employee’s link, role and autonomy on the roster', (): void => {
     const page = render(roster);
     const list = page.slice(page.indexOf('>Roster<'), page.indexOf('Mini office world'));

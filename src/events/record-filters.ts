@@ -32,6 +32,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'agent.notifications-changed': DECISIONS,
   'agent.zone-changed': DECISIONS,
   'agent.autonomy-changed': DECISIONS,
+  'agent.paused': DECISIONS,
+  'agent.resumed': DECISIONS,
   'agent.retired': DECISIONS,
   'permission.granted': DECISIONS,
   'permission.revoked': DECISIONS,

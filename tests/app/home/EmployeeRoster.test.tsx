@@ -131,6 +131,14 @@ describe('EmployeeRoster', (): void => {
     );
   });
 
+  it('says Paused on a paused employee’s chip and face, in the warn hue (12-P)', (): void => {
+    const paused = [{ ...roster[0], paused: true }] as unknown as RosterRow[];
+    const markup = renderToStaticMarkup(<EmployeeRoster employees={paused} waiting={waiting} />);
+    expect(readAs(markup)).toContain('Mira Paused');
+    expect(markup).toMatch(/<span class="[^"]*text-\[var\(--color-warn\)\][^"]*">Paused<\/span>/);
+    expect(markup).toContain('title="Mira, paused"');
+  });
+
   it("explains parked and stopped work on hover, in the Work tab glossary's words", (): void => {
     expect(html).toContain(
       'title="Waiting on a skill: waiting on a skill you approve. The ones only you can release are in Needs you."',

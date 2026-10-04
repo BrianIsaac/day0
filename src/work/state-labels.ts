@@ -42,20 +42,27 @@ export function shownEmployeeState(state: EmployeeState, charter: CharterApprova
   return charter.approved ? 'active' : 'charter-pending';
 }
 
+/** The words of a paused employee (12-P): waiting on the manager's resume, so drawn in warn. */
+const PAUSED_WORDS: StateLabel = { text: 'Paused', tone: 'warn' };
+
 /**
  * An employee's state in the manager's words, the one set every surface prints: the roster's
  * chip, the face's hover title and the pill beside the name. An employee in its one-to-one whose
  * transcript is being drafted into a charter (after the last answer, or a draft sent back with a
  * note) says so where the surface knows it: the conversation is over and nothing waits on the
- * manager.
+ * manager. A paused employee reads "Paused" whatever its state (12-P): the pause is the manager's
+ * to lift, and outranks what the row says.
  *
  * @param state - The state the page shows (`shownEmployeeState`).
  * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the surface has read it.
+ * @param paused - Whether the manager has paused the employee (`isPaused`).
  */
 export function employeeStateWords(
   state: EmployeeState,
   phase?: OneToOnePhase['kind'],
+  paused = false,
 ): StateLabel {
+  if (paused) return PAUSED_WORDS;
   switch (state) {
     case 'deployed':
       return { text: 'Waiting for your one-to-one', tone: 'warn' };
@@ -88,26 +95,31 @@ const TALLY_RANK: Readonly<Record<EmployeeState, number>> = {
   'charter-pending': 3,
 };
 
+/** Where the paused read in the company line: just after the active, before the first week. */
+const PAUSED_RANK = 0.5;
+
 /**
  * How many employees stand at each state, by the words their roster chips print
  * (`employeeStateWords`), so a line that counts the company and the roster it heads never
  * disagree (the production walk's 6d: "0 active" over an employee drawn in its one-to-one). A
  * state nobody is at is left out; a count over one takes the chip's plural where it has one.
  *
- * @param employees - The roster's rows: the state each shows, and where its one-to-one stands.
+ * @param employees - The roster's rows: the state each shows, where its one-to-one stands, and
+ *   whether it is paused.
  */
 export function employeeStateTally(
   employees: ReadonlyArray<{
     readonly state: EmployeeState;
     readonly phase?: OneToOnePhase['kind'];
+    readonly paused?: boolean;
   }>,
 ): StateCount[] {
   const tallies = new Map<string, { words: StateLabel; rank: number; count: number }>();
-  for (const { state, phase } of employees) {
-    const words = employeeStateWords(state, phase);
+  for (const { state, phase, paused = false } of employees) {
+    const words = employeeStateWords(state, phase, paused);
     const earlier = tallies.get(words.text);
     // A one-to-one being drafted reads after one being held: the same state, a phase on.
-    const rank = TALLY_RANK[state] + (phase === 'drafting' ? 0.5 : 0);
+    const rank = paused ? PAUSED_RANK : TALLY_RANK[state] + (phase === 'drafting' ? 0.5 : 0);
     tallies.set(words.text, { words, rank, count: (earlier?.count ?? 0) + 1 });
   }
   return [...tallies.values()]
@@ -121,19 +133,21 @@ export function employeeStateTally(
 /**
  * An employee's state for the pill beside its name: its words (`employeeStateWords`), and for an
  * active employee whether it is supervised or autonomous, which the roster gives a column of its
- * own.
+ * own. A paused employee's pill reads "Paused" alone: what it does once resumed is on Manage.
  *
  * @param state - The state the page shows (`shownEmployeeState`).
  * @param autonomous - Whether autonomous actions are on; an active employee says which it is.
  * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the page has read it.
+ * @param paused - Whether the manager has paused the employee (`isPaused`).
  */
 export function employeeStateLabel(
   state: EmployeeState,
   autonomous: boolean,
   phase?: OneToOnePhase['kind'],
+  paused = false,
 ): StateLabel {
-  const words = employeeStateWords(state, phase);
-  return state === 'active'
+  const words = employeeStateWords(state, phase, paused);
+  return state === 'active' && !paused
     ? { ...words, text: `${words.text} · ${autonomyLabel(autonomous)}` }
     : words;
 }

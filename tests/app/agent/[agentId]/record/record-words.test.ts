@@ -473,6 +473,16 @@ describe('recordWords', (): void => {
     ).toBe('The plan was approved under autonomous actions.');
   });
 
+  it('says who paused the employee and why, and who resumed it (12-P)', (): void => {
+    expect(
+      recordWords({ type: 'agent.paused', payload: { reason: 'Quarter close.' } }, subject),
+    ).toBe('You paused Mira: Quarter close.');
+    expect(recordWords({ type: 'agent.paused', payload: {} }, subject)).toBe('You paused Mira.');
+    expect(recordWords({ type: 'agent.resumed', payload: { pausedAt: 1 } }, subject)).toBe(
+      'You resumed Mira.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',
@@ -1009,6 +1019,15 @@ describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8
         ),
       ).toBe('Run notes went back to one per run when Mira was handed over.');
     }
+  });
+
+  it('names the manager then who paused or resumed the employee', (): void => {
+    expect(recordWords({ type: 'agent.paused', payload: {} }, earlier)).toBe(
+      "Mira's manager then, sam@company.com, paused Mira.",
+    );
+    expect(recordWords({ type: 'agent.resumed', payload: {} }, earlier)).toBe(
+      "Mira's manager then, sam@company.com, resumed Mira.",
+    );
   });
 
   it('says a withheld handover note to the manager it was addressed to as addressed to them', (): void => {

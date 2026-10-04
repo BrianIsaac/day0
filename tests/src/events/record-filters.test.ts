@@ -27,6 +27,11 @@ describe('the Record tab filters', (): void => {
     expect(RECORD_FILTER_OF['skill.given-up']).toEqual(['decisions', 'refused']);
   });
 
+  it('lists a pause and a resume as the manager’s decisions (12-P)', (): void => {
+    expect(RECORD_FILTER_OF['agent.paused']).toEqual(['decisions']);
+    expect(RECORD_FILTER_OF['agent.resumed']).toEqual(['decisions']);
+  });
+
   it('lists a handover asked or cancelled as the manager’s decision, a decline as a decision and a refusal, and an expiry as set aside', (): void => {
     expect(RECORD_FILTER_OF['manager.transfer-asked']).toEqual(['decisions']);
     expect(RECORD_FILTER_OF['manager.transfer-cancelled']).toEqual(['decisions']);

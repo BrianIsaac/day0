@@ -12,6 +12,12 @@
  *
  * `pnpm sync:env` never touches it: it is state the setup's `pause`,
  * `unpause` and `upgrade` verbs own, not configuration `.env.local` carries.
+ *
+ * The work loop reads it too (wave 12, 12-P): no evaluation, draft, execution
+ * or apply claims while it is set, so a step queued before the pause holds at
+ * its claim rather than running to its end, and the stalled-step sweep queues
+ * it again once the jobs run. A bed walked with the switch set therefore
+ * moves no work: unpause before driving a run.
  */
 export const CRONS_PAUSED_FLAG = 'DAY0_CRONS_PAUSED';
 

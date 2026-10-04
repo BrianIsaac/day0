@@ -194,6 +194,16 @@ export interface AgentAutonomyChangedPayload {
   readonly reason: string;
 }
 
+/** The payload of `agent.paused`: the manager's reason, when they gave one (12-P). */
+export interface AgentPausedPayload {
+  readonly reason?: string;
+}
+
+/** The payload of `agent.resumed`: when the pause it ends began (12-P). */
+export interface AgentResumedPayload {
+  readonly pausedAt: number;
+}
+
 /** The payload of `agent.retired`: the retire's record is the named `retirements` row, under its owner. */
 export interface AgentRetiredPayload {
   readonly retirementId: Id<'retirements'>;
@@ -1575,6 +1585,8 @@ export interface EventPayloads {
   'agent.notifications-changed': AgentNotificationsChangedPayload;
   'agent.zone-changed': AgentZoneChangedPayload;
   'agent.autonomy-changed': AgentAutonomyChangedPayload;
+  'agent.paused': AgentPausedPayload;
+  'agent.resumed': AgentResumedPayload;
   'agent.retired': AgentRetiredPayload;
   'permission.granted': PermissionGrantedPayload;
   'permission.revoked': PermissionRevokedPayload;
@@ -1757,6 +1769,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'agent.notifications-changed',
   'agent.zone-changed',
   'agent.autonomy-changed',
+  'agent.paused',
+  'agent.resumed',
   'agent.retired',
   'permission.granted',
   'permission.revoked',

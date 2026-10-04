@@ -561,6 +561,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.reason === HANDOVER_SETTINGS_REASON
       ? `Autonomous actions were turned off when ${subject.name} was handed over`
       : `${decider(subject)} turned autonomous actions ${p.to === true ? 'on' : 'off'}`,
+  'agent.paused': (p, subject) => `${decider(subject)} paused ${subject.name}${because(p.reason)}`,
+  'agent.resumed': (_, subject) => `${decider(subject)} resumed ${subject.name}`,
   'agent.retired': (_, { name }) => `${name} was retired`,
   'permission.granted': (p, subject) =>
     `${subject.name} was granted ${text(p.scope) ?? 'a permission'}${

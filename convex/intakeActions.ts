@@ -49,6 +49,7 @@ import {
   type WaterfallPage,
 } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
+import { isPaused, PAUSED_INTAKE_REASON } from '../src/work/pause';
 import {
   appIdentityOf,
   DO_NOT_AUTOMATE_LABEL,
@@ -1888,7 +1889,9 @@ async function admitWithinBound(
  * the checkpoint so the rest is read again once the queue drains. An item that
  * already has a row is always re-listed: it adds nothing to the queue.
  * The manager's decision poll (`runDecisionSweep`) runs under the manager
- * channel's own scope and is not stopped by it (N2).
+ * channel's own scope and is not stopped by it (N2). A paused employee is
+ * read not at all (12-P), though its decision poll goes on, so a decision it
+ * asked before the pause stays answerable.
  *
  * Args:
  *   runtime: Persistence and credential boundary.
@@ -1931,6 +1934,21 @@ export async function runIntakeSweep(
     // Gone at the read, gone since, or handed over since: the rows read above carry the old
     // owner's connection, so nothing is polled with them; the next sweep reads the new owner's.
     if (!agent || startedUnder === undefined || (agent.userId ?? null) !== startedUnder) continue;
+    // A paused employee takes no intake (12-P): nothing is read or decrypted, so every checkpoint
+    // stays where it was for the first sweep after the resume. Only a card intake would have read
+    // says so; one it would not read anyway keeps its own reason.
+    if (isPaused(agent)) {
+      for (const surface of agentSurfaces.filter(inScope)) {
+        if (surface.verdict !== 'connected' || accessEnded(surface, now())) continue;
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition: surface.waterfallPosition ?? 0,
+          skipReason: PAUSED_INTAKE_REASON,
+        });
+        skipped += 1;
+      }
+      continue;
+    }
     let documentation: IntakeDocumentation;
     let scopes: string[];
     let queue: { waiting: number; limit: number };
