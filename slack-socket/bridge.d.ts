@@ -17,6 +17,8 @@ export interface BridgeOptions {
   readonly syncIntervalMs?: number;
   readonly reconnectFirstMs?: number;
   readonly pressRetryFirstMs?: number;
+  readonly helloTimeoutMs?: number;
+  readonly maxConnectionMs?: number;
 }
 
 /** What the health check reports. */

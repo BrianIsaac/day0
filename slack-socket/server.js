@@ -39,7 +39,8 @@ const health = createServer((request, response) => {
   response.end(JSON.stringify(status));
 });
 
-health.listen(healthPort, '0.0.0.0');
+// Loopback only: the compose healthcheck and `docker compose exec` ask from inside the container.
+health.listen(healthPort, '127.0.0.1');
 await bridge.start();
 log({ level: 'info', message: 'started', backendUrl });
 

@@ -106,7 +106,14 @@ afterEach(async (): Promise<void> => {
   fake.stop();
 });
 
-function start(overrides: { readonly syncIntervalMs?: number } = {}): Bridge {
+function start(
+  overrides: {
+    readonly syncIntervalMs?: number;
+    readonly helloTimeoutMs?: number;
+    readonly maxConnectionMs?: number;
+    readonly WebSocket?: typeof WebSocket;
+  } = {},
+): Bridge {
   bridge = createBridge({
     backendUrl: backend.url,
     secret: SECRET,
@@ -114,6 +121,11 @@ function start(overrides: { readonly syncIntervalMs?: number } = {}): Bridge {
     syncIntervalMs: overrides.syncIntervalMs ?? 60_000,
     reconnectFirstMs: 50,
     pressRetryFirstMs: 20,
+    ...(overrides.helloTimeoutMs === undefined ? {} : { helloTimeoutMs: overrides.helloTimeoutMs }),
+    ...(overrides.maxConnectionMs === undefined
+      ? {}
+      : { maxConnectionMs: overrides.maxConnectionMs }),
+    ...(overrides.WebSocket === undefined ? {} : { WebSocket: overrides.WebSocket }),
   });
   return bridge;
 }
@@ -245,5 +257,104 @@ describe('the Socket Mode bridge (wave 12, 12-M; RM7)', (): void => {
     await running.start();
     await until(() => running.status().apps.some((app) => app.connected), 'the hello');
     expect(JSON.stringify(logged)).not.toMatch(/ticket=|ws:\/\//);
+  });
+});
+
+describe('the Socket Mode bridge under failure (12-M second pass)', (): void => {
+  it('closes a connection whose hello names another app, and reports the app not connected', async (): Promise<void> => {
+    // A second app in the fake, whose token the backend hands out for the first app's card.
+    const configuration = ['xoxe', 'day0', 'fake', 'configuration', 'token'].join('-');
+    const manifest = JSON.stringify({
+      display_information: { name: 'x' },
+      oauth_config: {
+        redirect_urls: ['https://day0.example/api/oauth/slack'],
+        scopes: { bot: ['chat:write'] },
+      },
+    });
+    for (let index = 0; index < 2; index += 1) {
+      await fetch(`${fake.base}/api/apps.manifest.create`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${configuration}`,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ manifest }).toString(),
+      });
+    }
+    const other = (await (
+      await fetch(`${fake.base}/proof/app-level-token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ appId: 'A_DAY0_FAKE_2' }),
+      })
+    ).json()) as { token: string };
+    await backend.stop();
+    backend = await startBackend(fake, other.token);
+    const running = start();
+    await running.start();
+    await until(
+      () => logged.some((line) => line.message === 'the connection is for another app'),
+      'the mismatch',
+    );
+    expect(running.status().apps).toEqual([
+      expect.objectContaining({ appId: 'A_DAY0_FAKE', connected: false }),
+    ]);
+    await until(
+      async () => ((await proof()).socketConnections.A_DAY0_FAKE_2 ?? 0) === 0,
+      'the wrong connection closed',
+    );
+  });
+
+  it('gives up a connection that never says hello, and opens another', async (): Promise<void> => {
+    const sockets: Array<{ closed: boolean }> = [];
+    class SilentSocket extends EventTarget {
+      closed = false;
+      constructor() {
+        super();
+        sockets.push(this);
+      }
+      send(): void {}
+      close(): void {
+        this.closed = true;
+        this.dispatchEvent(new Event('close'));
+      }
+    }
+    const running = start({
+      helloTimeoutMs: 50,
+      WebSocket: SilentSocket as unknown as typeof WebSocket,
+    });
+    await running.start();
+    await until(() => sockets.length >= 2, 'a second connection');
+    expect(sockets[0]!.closed).toBe(true);
+    expect(running.status().apps[0]?.connected).toBe(false);
+  });
+
+  it('opens nothing for an open still in flight when it is stopped', async (): Promise<void> => {
+    const running = start();
+    const starting = running.start();
+    running.stop();
+    await starting;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await proof()).socketConnections.A_DAY0_FAKE ?? 0).toBe(0);
+  });
+
+  it('offers a press again for longer than a backend restart takes', async (): Promise<void> => {
+    backend.failPresses = 6;
+    const running = start();
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    expect(await postAndPress('approve')).toMatchObject({ delivered: true, acknowledged: true });
+    await until(() => backend.presses.length === 1, 'the press on the seventh offer');
+  });
+
+  it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {
+    const running = start({ maxConnectionMs: 200 });
+    await running.start();
+    await until(() => backend.opened >= 3, 'two refreshes');
+    await until(
+      async () => (await proof()).socketConnections.A_DAY0_FAKE === 1,
+      'one connection kept',
+    );
+    expect(running.status().apps[0]?.connected).toBe(true);
   });
 });
