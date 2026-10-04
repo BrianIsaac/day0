@@ -194,7 +194,7 @@ export function NotSentLedger({ rows }: { rows: readonly PhasedLedgerRow[] }) {
     <ul className="grid gap-2">
       {rows.map((row, index) => (
         <LedgerLine key={index} kind="withheld" meta={rowMeta(row)}>
-          {clipLedgerRow(row.effect) ?? row.tool}
+          {row.summary ?? clipLedgerRow(row.effect) ?? row.tool}
           <span className="text-[var(--color-muted)]">, {notSentWords(row.reason)}</span>
           <RepairNote repair={row.repair} />
           <SessionRestoreNote restore={row.sessionRestore} />

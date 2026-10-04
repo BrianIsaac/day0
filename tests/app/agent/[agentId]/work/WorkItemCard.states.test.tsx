@@ -568,6 +568,36 @@ describe('stopped with a write that may have landed', (): void => {
   });
 });
 
+describe('the rows a stopped apply never sent (W12-R11, second pass)', (): void => {
+  it('names each by what it would have done and says once that it was not sent', (): void => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: stopped by the manager',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY, THREAD_REPLY],
+        applied: [
+          { tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' },
+          {
+            tool: 'http.request',
+            ok: true,
+            held: true,
+            reason: 'not sent: the run was stopped before this write went out',
+            effect: 'http.request slack · POST /chat.postMessage · body "{...}"',
+            idempotencyKey: 'w:1',
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('1 action held · never sent');
+    expect(view.text()).toContain('Reply in #revops-asks thread');
+    expect(view.text()).toContain('not sent: the run stopped before it went out');
+    expect(view.text()).not.toContain('POST /chat.postMessage');
+  });
+});
+
 describe('Close without retry (E-8)', (): void => {
   const stoppedByYou = {
     ...DRAWN.rejected,

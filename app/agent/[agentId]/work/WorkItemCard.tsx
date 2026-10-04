@@ -232,7 +232,22 @@ export function WorkItemCard({
   const landedBefore = usePreviousValue(places.join(','), LANDING_MS);
   const fresh = justLanded(landedBefore, places);
   // A row the auto phase deferred is in the gate box, not in the ledger's held list.
-  const held = ledger.filter((row) => row.held && !row.awaitingApproval);
+  // A row that never sent, or whose outcome is unknown, is named by what its action does, as the
+  // reconciliation names it, never by the ledger's technical description (the bed's second pass).
+  const ledgerActions = output?.initial
+    ? [...(output.initial.actions ?? []), ...(output.actions ?? [])]
+    : (output?.actions ?? []);
+  const named = (rows: readonly PhasedLedgerRow[]): PhasedLedgerRow[] =>
+    rows.map((row) => {
+      const action = ledgerActions[ledger.indexOf(row)];
+      return action
+        ? {
+            ...row,
+            summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
+          }
+        : row;
+    });
+  const held = named(ledger.filter((row) => row.held && !row.awaitingApproval));
   // A row Day0's own gate refused was never sent: it is listed apart from a
   // row the provider failed, whose outcome someone may have to check.
   const unlanded = ledger.filter((row) => !row.ok && !row.held);
@@ -244,19 +259,7 @@ export function WorkItemCard({
       !refused.includes(row) && (row.outcomeUnknown === true || isOutcomeUnknownReason(row.reason)),
   );
   const failed = unlanded.filter((row) => !refused.includes(row) && !unknown.includes(row));
-  // A write whose outcome is unknown is named by what it does, as the reconciliation names it.
-  const ledgerActions = output?.initial
-    ? [...(output.initial.actions ?? []), ...(output.actions ?? [])]
-    : (output?.actions ?? []);
-  const namedUnknown = unknown.map((row): PhasedLedgerRow => {
-    const action = ledgerActions[ledger.indexOf(row)];
-    return action
-      ? {
-          ...row,
-          summary: summariseAction(action, surfaces, { replyTarget: replyTargetFor(item) }),
-        }
-      : row;
-  });
+  const namedUnknown = named(unknown);
   const landedAutonomously = landed.filter((row) => row.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
