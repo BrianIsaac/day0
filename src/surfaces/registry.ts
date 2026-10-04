@@ -151,8 +151,26 @@ export interface ApplyOptions {
   resumedRunIds?: readonly string[];
   /** Original authority of reads taken again on a resumed closing run. */
   authorityByIndex?: ReadonlyMap<number, ActionAuthority>;
+  /**
+   * Told of each row this invocation decides, in order, before the next action is considered: the
+   * apply persists it at once under its claim (P4-2). Rows carried from `priorLedger` are not
+   * reported. Answering false says the apply no longer holds its claim (the run was stopped or
+   * moved on): nothing more is sent and the call rejects with {@link ApplyClaimLostError}.
+   */
+  onOutcome?: (index: number, row: AppliedAction) => Promise<boolean>;
   /** Clock for the connection verdict. */
   now?: number;
+}
+
+/**
+ * Why an apply stopped part way: its claim on the run was taken away (a Stop, or the run moved
+ * on), so nothing after the row it last reported was sent.
+ */
+export class ApplyClaimLostError extends Error {
+  constructor() {
+    super('the apply no longer holds its claim on the run; nothing more was sent');
+    this.name = 'ApplyClaimLostError';
+  }
 }
 
 /**
@@ -515,6 +533,14 @@ export async function applySurfaceActions(
   // Browser-driven surfaces whose page this invocation has open, and those
   // whose session could not be re-established, with the reason.
   const browserSessions = new Map<string, { failure?: string }>();
+  // Each row is reported the moment it is decided, so a throw or a Stop later in the list leaves
+  // what already happened on the record (P4-2); a refused report means the claim is gone.
+  const settle = async (index: number, row: AppliedAction): Promise<void> => {
+    applied.push(row);
+    if (options.onOutcome && !(await options.onOutcome(index, row))) {
+      throw new ApplyClaimLostError();
+    }
+  };
   try {
     for (const [index, action] of actions.entries()) {
       const durableIndex = index + (options.idempotencyIndexOffset ?? 0);
@@ -539,10 +565,10 @@ export async function applySurfaceActions(
             ? await claimHoldFor(action, surfaces, options.claimHold)
             : undefined;
         if (claimed) {
-          applied.push(heldRow(action, claimed, idempotencyKey));
+          await settle(index, heldRow(action, claimed, idempotencyKey));
           continue;
         }
-        applied.push({
+        await settle(index, {
           tool: action.tool,
           ok: true,
           held: true,
@@ -561,7 +587,7 @@ export async function applySurfaceActions(
           mode === 'real' && (MOCK_ACTION_TOOLS as readonly string[]).includes(action.tool)
             ? mockVerbRefusal(action.tool)
             : UNKNOWN_TOOL;
-        applied.push(refused(action.tool, reason, idempotencyKey));
+        await settle(index, refused(action.tool, reason, idempotencyKey));
         continue;
       }
       if (!isSurfaceTool(action.tool)) {
@@ -574,7 +600,8 @@ export async function applySurfaceActions(
         );
         // A mock office write that landed is stamped as a surface write is: the authority it
         // landed under and the moment it landed (the hosted demo runs these).
-        applied.push(
+        await settle(
+          index,
           outcome.ok && !outcome.held
             ? { ...outcome, ...(authority ? { authority } : {}), landedAt: Date.now() }
             : outcome,
@@ -583,34 +610,34 @@ export async function applySurfaceActions(
       }
       const parsed = parseSurfaceAction(action);
       if (!parsed.ok) {
-        applied.push(refused(action.tool, parsed.reason, idempotencyKey));
+        await settle(index, refused(action.tool, parsed.reason, idempotencyKey));
         continue;
       }
       parsedByIndex[index] = parsed.action;
       const surface = surfaces.find((row) => row.slug === parsed.action.surface);
       const refusal = surfaceRefusal(surface, now);
       if (!surface || refusal) {
-        applied.push(refused(action.tool, refusal ?? UNKNOWN_SURFACE, idempotencyKey));
+        await settle(index, refused(action.tool, refusal ?? UNKNOWN_SURFACE, idempotencyKey));
         continue;
       }
       const pathMismatch = pathRefusal(parsed.action, surface);
       if (pathMismatch) {
-        applied.push(refused(action.tool, pathMismatch, idempotencyKey));
+        await settle(index, refused(action.tool, pathMismatch, idempotencyKey));
         continue;
       }
       const unlisted = toolRefusal(parsed.action, surface);
       if (unlisted) {
-        applied.push(refused(action.tool, unlisted, idempotencyKey));
+        await settle(index, refused(action.tool, unlisted, idempotencyKey));
         continue;
       }
       const editRefused = messageEditRefusal(parsed.action, surface, options.requestEdit);
       if (editRefused) {
-        applied.push(refused(action.tool, editRefused, idempotencyKey));
+        await settle(index, refused(action.tool, editRefused, idempotencyKey));
         continue;
       }
       const replyMismatch = replyTargetRefusal(parsed.action, surface, options.replyTarget);
       if (replyMismatch) {
-        applied.push(refused(action.tool, replyMismatch, idempotencyKey));
+        await settle(index, refused(action.tool, replyMismatch, idempotencyKey));
         continue;
       }
       // A read and the manager DM always need their standing grant. A write
@@ -626,12 +653,12 @@ export async function applySurfaceActions(
           autonomousActions,
         );
         if (ungranted) {
-          applied.push(refused(action.tool, ungranted, idempotencyKey));
+          await settle(index, refused(action.tool, ungranted, idempotencyKey));
           continue;
         }
       }
       if (autoPhase && !isAutomatic(parsed.action, surface, autonomousActions)) {
-        applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
+        await settle(index, refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
         continue;
       }
       // Before the comment-before-status rule: a status change whose comment
@@ -640,7 +667,7 @@ export async function applySurfaceActions(
         ? await claimHoldFor(action, surfaces, options.claimHold)
         : undefined;
       if (claimed) {
-        applied.push(heldRow(action, claimed, idempotencyKey));
+        await settle(index, heldRow(action, claimed, idempotencyKey));
         continue;
       }
       if (
@@ -651,7 +678,7 @@ export async function applySurfaceActions(
           [...(prerequisites?.applied ?? []), ...applied],
         )
       ) {
-        applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
+        await settle(index, refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
         continue;
       }
       const credentialKind = surface.credentialKind ?? 'value';
@@ -665,7 +692,7 @@ export async function applySurfaceActions(
           [...(prerequisites?.applied ?? []), ...applied],
         )
       ) {
-        applied.push(refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));
+        await settle(index, refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));
         continue;
       }
       const provenance = applyProvenance(
@@ -679,7 +706,7 @@ export async function applySurfaceActions(
         credentialKind,
       );
       if (!provenance.ok) {
-        applied.push(refused(action.tool, provenance.reason, idempotencyKey));
+        await settle(index, refused(action.tool, provenance.reason, idempotencyKey));
         continue;
       }
       // A message was written beside the writes before them, before any
@@ -690,7 +717,7 @@ export async function applySurfaceActions(
         writeDidNotLand(applied, parsedByIndex, actions) &&
         !independentMessage(parsed.action, actions, applied, parsedByIndex)
       ) {
-        applied.push({
+        await settle(index, {
           tool: action.tool,
           ok: true,
           held: true,
@@ -707,7 +734,7 @@ export async function applySurfaceActions(
       if (browserDriven) {
         const session = browserSessions.get(surface.slug);
         if (session?.failure) {
-          applied.push(refused(action.tool, session.failure, idempotencyKey));
+          await settle(index, refused(action.tool, session.failure, idempotencyKey));
           continue;
         }
         // A browser page carries state between calls, so once a write on it
@@ -716,7 +743,7 @@ export async function applySurfaceActions(
           actionIntent(parsed.action) === 'write' &&
           browserWriteDidNotLand(surface.slug, applied, parsedByIndex)
         ) {
-          applied.push(heldRow(action, WITHHELD_AFTER_FAILED_BROWSER_WRITE, idempotencyKey));
+          await settle(index, heldRow(action, WITHHELD_AFTER_FAILED_BROWSER_WRITE, idempotencyKey));
           continue;
         }
         if (!session) {
@@ -759,7 +786,7 @@ export async function applySurfaceActions(
             );
             if (restored && !restored.ok) {
               browserSessions.set(surface.slug, { failure: restored.reason });
-              applied.push({
+              await settle(index, {
                 ...refused(action.tool, restored.reason, idempotencyKey),
                 sessionRestore: { steps: restored.steps },
               });
@@ -785,7 +812,10 @@ export async function applySurfaceActions(
             landedAt: Date.now(),
           }
         : outcome;
-      applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
+      await settle(
+        index,
+        restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped,
+      );
       // The page is open once a replay or a call has landed on it; until then
       // the next call on the surface is checked for a replay again.
       if (browserDriven && (restored?.ok === true || outcome.ok)) {

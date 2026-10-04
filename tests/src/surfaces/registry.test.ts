@@ -18,6 +18,7 @@ import {
   WITHHELD_AFTER_FAILED_BROWSER_WRITE,
 } from '../../../src/surfaces/policy';
 import {
+  ApplyClaimLostError,
   applySurfaceActions,
   resolveAdapters,
   type RealAdapterDeps,
@@ -606,6 +607,68 @@ describe('applying surface actions', (): void => {
       authority: 'manager',
     });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
+  });
+
+  it('reports each row the moment it is decided, before the next action is sent (P4-2)', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const reported: Array<{ index: number; ok: boolean; held: boolean; sentSoFar: number }> = [];
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [comment, publicPost, status],
+      {
+        deps: deps(recorded),
+        grants,
+        approvedIndexes: new Set([0, 2]),
+        onOutcome: async (index, row): Promise<boolean> => {
+          reported.push({
+            index,
+            ok: row.ok,
+            held: row.held ?? false,
+            sentSoFar: recorded.mcp.length,
+          });
+          return true;
+        },
+        now,
+      },
+    );
+    expect(reported).toEqual([
+      { index: 0, ok: true, held: false, sentSoFar: 1 },
+      { index: 1, ok: true, held: true, sentSoFar: 1 },
+      { index: 2, ok: true, held: false, sentSoFar: 2 },
+    ]);
+    expect(applied.map((row) => row.ok)).toEqual([true, true, true]);
+  });
+
+  it('sends nothing more once the apply no longer holds its claim (Stop, P4-2)', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    await expect(
+      applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+        deps: deps(recorded),
+        grants,
+        onOutcome: async (): Promise<boolean> => false,
+        now,
+      }),
+    ).rejects.toBeInstanceOf(ApplyClaimLostError);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('reports no row an earlier phase already decided', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const reported: number[] = [];
+    await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps(recorded),
+      grants,
+      priorLedger: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'wi_1:run_1:0' }],
+      onOutcome: async (index): Promise<boolean> => {
+        reported.push(index);
+        return true;
+      },
+      now,
+    });
+    expect(reported).toEqual([1]);
   });
 
   it('records unapproved indexes as held and applies the approved ones', async (): Promise<void> => {

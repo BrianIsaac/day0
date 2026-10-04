@@ -98,6 +98,7 @@ import {
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { readSurfaceBearer } from './mcpOauthActions';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
+import { reportedRow } from '../src/work/apply-progress';
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
@@ -3411,10 +3412,19 @@ export const applyApprovedActions = internalAction({
         knownValues,
       );
       const grants = new Set(grantRows.map((grant) => grant.scope));
+      // Each row is kept the moment it is decided, scrubbed as the finished ledger is (P4-2).
+      const report = async (index: number, row: AppliedAction): Promise<boolean> =>
+        await ctx.runMutation(internal.workRuns.recordApplyOutcome, {
+          workItemId: args.workItemId,
+          applyAttemptId: claim.applyAttemptId,
+          index,
+          row: reportedRow(scrubKnownValues(row, knownValues)),
+        });
       const applied = withArgumentRepairs(
         await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
           deps,
           grants,
+          onOutcome: report,
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
@@ -3497,6 +3507,7 @@ export const applyApprovedActions = internalAction({
                 autoPhase: true,
                 autonomousActions: claim.autonomousActions,
                 replyTarget: claim.replyTarget,
+                onOutcome: async (_, row): Promise<boolean> => await report(index, row),
               });
               actionsSoFar[index] = action;
               appliedSoFar[index] = row!;

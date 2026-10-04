@@ -56,6 +56,7 @@ import {
 import { landedNoteRows, landedWork, stopDetail } from '../src/work/stop';
 import { landedNoteText } from '../src/work/manager-notes';
 import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
 
 /**
  * A work item's runs (F8, E4: the claim, execute, apply, retry, reconcile, dismiss and stop
@@ -788,5 +789,66 @@ export const claimApprovedActions = internalMutation({
       replyTarget: replyTargetFor(row),
       output: row.output,
     };
+  },
+});
+
+/** One ledger row an apply in flight reports (`ReportedRow`, `src/work/apply-progress.ts`). */
+const reportedRowValidator = v.object({
+  tool: v.string(),
+  idempotencyKey: v.string(),
+  ok: v.boolean(),
+  held: v.optional(v.boolean()),
+  outcomeUnknown: v.optional(v.boolean()),
+  awaitingApproval: v.optional(v.boolean()),
+  effect: v.optional(v.string()),
+  reason: v.optional(v.string()),
+  providerId: v.optional(v.string()),
+  landedAt: v.optional(v.number()),
+  authority: v.optional(
+    v.union(v.literal('manager'), v.literal('autonomous'), v.literal('standing')),
+  ),
+  actionClass: v.optional(
+    v.union(
+      v.literal('read'),
+      v.literal('manager-dm'),
+      v.literal('public-post'),
+      v.literal('mutation'),
+      v.literal('write'),
+    ),
+  ),
+  redaction: v.optional(v.literal('structural-only')),
+});
+
+/**
+ * Keep one row of an apply in flight the moment it is decided (P4-2), so a throw, a dead action or
+ * a Stop later in the list leaves it on the record: the recovery
+ * (`work.recoverInterruptedApply`, the stop) keeps a reported row as it reported and marks unknown
+ * only the rows that never did.
+ *
+ * Internal; the apply action's (`workActions.applyApprovedActions`), once per row. Fenced on the
+ * apply's claim: the row must still be `executing` under `applyAttemptId`. Writes the row into
+ * `output.applyProgress` and nothing else.
+ *
+ * @returns Whether the apply still holds its claim; false tells it to send nothing more.
+ */
+export const recordApplyOutcome = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    applyAttemptId: v.id('events'),
+    index: v.number(),
+    row: reportedRowValidator,
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const item = await ctx.db.get(args.workItemId);
+    if (!item || item.state !== 'executing' || item.applyAttemptId !== args.applyAttemptId) {
+      return false;
+    }
+    await ctx.db.patch(item._id, {
+      output: withReportedOutcome(item.output, args.applyAttemptId, {
+        index: args.index,
+        ...reportedRow(args.row),
+      }),
+    });
+    return true;
   },
 });

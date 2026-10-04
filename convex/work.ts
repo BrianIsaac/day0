@@ -84,6 +84,7 @@ import {
   type WriteClaimHolder,
 } from '../src/work/claim-key';
 import { landedWritesOf } from '../src/work/landed-writes';
+import { reportedRows, withoutApplyProgress } from '../src/work/apply-progress';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   askedFor,
@@ -6372,9 +6373,10 @@ export interface InterruptedApplyLedger {
 }
 
 /**
- * The ledger of an apply that was claimed and did not finish: every row this phase approved is
- * recorded with its outcome unknown, a row an earlier phase recorded keeps its entry, and every
- * other row keeps why it was not applied, as the apply's dead-man switch records it.
+ * The ledger of an apply that was claimed and did not finish: a row this phase approved keeps the
+ * outcome the apply reported for it before it stopped (P4-2) and is recorded with its outcome
+ * unknown when it reported none, a row an earlier phase recorded keeps its entry, and every other
+ * row keeps why it was not applied, as the apply's dead-man switch records it.
  *
  * @param row - The work item, `executing` with an apply claimed.
  * @param pendingRunId - The run the approval belongs to.
@@ -6407,9 +6409,15 @@ export function interruptedApplyLedger(
     if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
     return HELD_NOT_APPROVED;
   };
+  // A row the apply reported before it stopped is kept as it reported (P4-2).
+  const reported = row.applyAttemptId
+    ? reportedRows(row.output, row.applyAttemptId)
+    : new Map<number, AppliedAction>();
   const applied = (output.actions ?? []).map((action, index): AppliedAction => {
     const earlier = prior[index];
     if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
+    const kept = approved.has(index) ? reported.get(index) : undefined;
+    if (kept) return kept;
     return {
       tool: typeof action.tool === 'string' ? action.tool : 'unknown',
       ok: !approved.has(index),
@@ -6423,7 +6431,7 @@ export function interruptedApplyLedger(
       }),
     };
   });
-  return { output, applied };
+  return { output: withoutApplyProgress(output), applied };
 }
 
 /**
