@@ -71,6 +71,15 @@ describe('header state pill', (): void => {
     expect(markup).not.toContain('posture');
   });
 
+  it('says Paused in the pill of a paused employee, in the warn hue, and the face says it too (12-P)', (): void => {
+    const markup = renderToStaticMarkup(
+      <EmployeeHeader agent={{ ...agent, pausedAt: 5 }} charter={charter} />,
+    );
+    expect(markup).toMatch(/text-\[var\(--color-warn\)\][^>]*>Paused</);
+    expect(markup).toContain('title="Day0, paused"');
+    expect(markup).not.toContain('Active · Supervised');
+  });
+
   it("makes the employee's name the page's one heading, and the manager a line beneath it", (): void => {
     const markup = renderToStaticMarkup(
       <EmployeeHeader agent={{ ...agent, name: 'Mira' }} charter={charter} />,

@@ -9,6 +9,8 @@ export interface AgentPixelAvatarProps {
   readonly state: EmployeeState;
   /** Where the one-to-one stands (`oneToOnePhase`), when the surface has read it. */
   readonly phase?: OneToOnePhase['kind'];
+  /** Whether the manager has paused the employee (12-P), when the surface has read it. */
+  readonly paused?: boolean;
   /** The employee's name. */
   readonly label: string;
   readonly size?: 'sm' | 'md' | 'lg';
@@ -30,12 +32,13 @@ export function AgentPixelAvatar({
   avatar,
   state,
   phase,
+  paused = false,
   label,
   size = 'md',
   compact = false,
 }: AgentPixelAvatarProps) {
   const sizeClass = { sm: 'h-7 w-7', md: 'h-14 w-14', lg: 'h-24 w-24' }[size];
-  const words = employeeStateWords(state, phase);
+  const words = employeeStateWords(state, phase, paused);
   const tone = toneClasses(words.tone);
 
   return (

@@ -160,7 +160,7 @@ interface RosterRowViewProps {
 }
 
 function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
-  const words = employeeStateWords(employee.state, employee.phase);
+  const words = employeeStateWords(employee.state, employee.phase, employee.paused);
   const tone = toneClasses(words.tone);
   const waitingOnManager = waiting ?? 0;
   // Parked and stopped work hold no slot, so each is named under the open count and only when there is some.
@@ -197,6 +197,7 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
             avatar={avatarById(employee.avatarId)}
             state={employee.state}
             phase={employee.phase}
+            paused={employee.paused}
             label={employee.name}
             size="sm"
           />

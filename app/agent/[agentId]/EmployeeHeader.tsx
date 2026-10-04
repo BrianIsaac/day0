@@ -9,6 +9,7 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { autonomousActionsOn } from '@/work/autonomy';
 import { employeeStateLabel, shownEmployeeState } from '@/work/state-labels';
+import { isPaused } from '@/work/pause';
 import { avatarById } from '@/agent/avatar-pets';
 import type { OneToOnePhase } from '@/agent/one-to-one-phase';
 import type { ManagerStanding } from '@/agent/manager-standing';
@@ -303,7 +304,8 @@ export function EmployeeHeader({
   const standing = useQuery(api.agents.managerStanding, { agentId: agent._id });
   const setZone = useMutation(api.agents.setZone);
   const shown = shownEmployeeState(agent.state, charter);
-  const status = employeeStateLabel(shown, autonomousActionsOn(agent), phase);
+  const paused = isPaused(agent);
+  const status = employeeStateLabel(shown, autonomousActionsOn(agent), phase, paused);
   return (
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex min-w-0 items-start gap-3.5">
@@ -311,6 +313,7 @@ export function EmployeeHeader({
           avatar={avatarById(agent.avatarId)}
           state={shown}
           phase={phase}
+          paused={paused}
           label={agent.name}
         />
         <div className="min-w-0">

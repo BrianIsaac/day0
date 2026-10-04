@@ -56,3 +56,20 @@ describe('NeedsYouList with a handover waiting (the transfer plan, 14.1 item 10)
     expect(view.container.textContent).toContain('Maya · an employee to take on');
   });
 });
+
+describe('NeedsYouList with a paused employee’s line (12-P)', () => {
+  afterEach(() => unmountAll());
+
+  it('passes axe with the line above the entries, and keeps every control at 44 px', async () => {
+    const waiting = {
+      ...inbox,
+      waitingByEmployee: [{ agentId: 'agent-mira', waiting: 1 }],
+    } as unknown as NeedsYouInbox;
+    const view = mount(
+      <NeedsYouList inbox={waiting} now={NOW} paused={[{ agentId: 'agent-mira', name: 'Mira' }]} />,
+    );
+    expect(await axeViolations(view.container)).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    expect(view.container.textContent).toContain('Mira is paused; 1 decision still waits on you.');
+  });
+});

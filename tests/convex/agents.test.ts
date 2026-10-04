@@ -1263,6 +1263,7 @@ describe('the employee roster', (): void => {
         // No one-to-one has opened: the room is waiting to talk.
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine: 'charter pending',
         openCount: 0,
         parkedCount: 0,
@@ -1282,6 +1283,7 @@ describe('the employee roster', (): void => {
         state: 'active',
         phase: 'talking',
         autonomous: true,
+        paused: false,
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
         parkedCount: 0,
@@ -1299,6 +1301,7 @@ describe('the employee roster', (): void => {
         state: 'active',
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
@@ -1323,6 +1326,7 @@ describe('the employee roster', (): void => {
         state: 'deployed',
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine: 'charter pending',
         openCount: 1,
         parkedCount: 0,
@@ -1418,6 +1422,21 @@ describe('the employee roster', (): void => {
       Tomas: 'active',
       Mira: 'day-one-in-progress',
     });
+  });
+
+  it('says on each row whether the manager has paused the employee (12-P)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const paused = await deployEmployee(harness, 'owner', 'Nia');
+    await deployEmployee(harness, 'owner', 'Tomas');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(paused, { pausedAt: 5, pausedBy: 'owner' });
+    });
+    const rows = Object.fromEntries(
+      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
+        (row): [string, boolean] => [row.name, row.paused],
+      ),
+    );
+    expect(rows).toEqual({ Nia: true, Tomas: false });
   });
 
   it("carries the one-to-one's phase on each row, read off the newest session as the employee's page reads it (C2)", async (): Promise<void> => {

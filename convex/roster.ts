@@ -20,6 +20,7 @@ import {
 import { agentZone, dayKey, dayStart } from '../src/lib/zone';
 import { socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { autonomousActionsOn } from '../src/work/autonomy';
+import { isPaused } from '../src/work/pause';
 import { decisionChannelOf, decisionsReachOf } from '../src/work/decision-channel';
 import { accessEnded } from '../src/work/surface-access';
 import {
@@ -155,6 +156,8 @@ export const rosterRowValidator = v.object({
   /** Where the one-to-one stands, so the roster says "Drafting the charter" when the pill does. */
   phase: oneToOnePhaseKindValidator,
   autonomous: v.boolean(),
+  /** Whether the manager has paused the employee (12-P), so the chip reads "Paused". */
+  paused: v.boolean(),
   roleLine: v.string(),
   openCount: v.number(),
   parkedCount: v.number(),
@@ -343,8 +346,8 @@ async function workCounts(
  * outranks the row) and where their one-to-one stands (`oneToOnePhase`, off
  * the newest session, as the page reads it), the role the manager approved,
  * the open, parked and stopped work, what waits on the manager, whether they
- * act on their own, how much documentation they read, and what they landed
- * this month. Evaluation agents and the baseline arm are left out.
+ * act on their own, whether they are paused, how much documentation they
+ * read, and what they landed this month. Evaluation agents and the baseline arm are left out.
  *
  * @param ctx - The query's context.
  * @param ownerKey - The owner whose employees are listed.
@@ -386,6 +389,7 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         state: shownEmployeeState(agent.state, charter.newest),
         phase: oneToOnePhase(session).kind,
         autonomous: autonomousActionsOn(agent),
+        paused: isPaused(agent),
         roleLine: charter.roleLine,
         ...counts,
         // A drafted charter is the one thing the manager must approve before any work.

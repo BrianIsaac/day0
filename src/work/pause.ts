@@ -74,3 +74,16 @@ export function stepHoldReason(
   if (cronsReason !== undefined) return cronsPausedStepReason(cronsReason);
   return undefined;
 }
+
+/**
+ * The home's Needs you line over a paused employee's waiting decisions (12-P): said once, above
+ * the entries, and not an entry of its own, since the decisions are each listed already.
+ *
+ * @param name - The employee's name.
+ * @param waiting - How many of its decisions wait on the manager.
+ */
+export function pausedNeedsYouLine(name: string, waiting: number): string {
+  return waiting === 1
+    ? `${name} is paused; 1 decision still waits on you.`
+    : `${name} is paused; ${waiting} decisions still wait on you.`;
+}

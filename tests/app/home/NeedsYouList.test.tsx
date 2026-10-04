@@ -168,3 +168,42 @@ describe('NeedsYouList', (): void => {
     );
   });
 });
+
+describe('NeedsYouList with a paused employee (12-P)', (): void => {
+  const waiting = {
+    ...inbox,
+    waitingByEmployee: [
+      { agentId: 'synthetic-mira', waiting: 7 },
+      { agentId: 'synthetic-aiko', waiting: 1 },
+    ],
+  } as unknown as NeedsYouInbox;
+  const paused = [
+    { agentId: 'synthetic-mira', name: 'Mira' },
+    { agentId: 'synthetic-aiko', name: 'Aiko' },
+    { agentId: 'synthetic-tomas', name: 'Tomas' },
+  ];
+  const html = renderToStaticMarkup(<NeedsYouList inbox={waiting} now={NOW} paused={paused} />);
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+  it('names each paused employee with decisions waiting, with how many, above every entry', (): void => {
+    expect(text).toContain('Mira is paused; 7 decisions still wait on you.');
+    expect(text).toContain('Aiko is paused; 1 decision still waits on you.');
+    expect(text.indexOf('Aiko is paused')).toBeLessThan(text.indexOf('a write is held for you'));
+  });
+
+  it('says nothing of a paused employee with nothing waiting, and adds no entry of its own', (): void => {
+    expect(text).not.toContain('Tomas');
+    expect(html.match(/<li/g)?.length).toBe(
+      renderToStaticMarkup(<NeedsYouList inbox={waiting} now={NOW} />).match(/<li/g)!.length + 2,
+    );
+  });
+
+  it('draws no line before the inbox has loaded or when nobody is paused', (): void => {
+    expect(
+      renderToStaticMarkup(<NeedsYouList inbox={undefined} now={NOW} paused={paused} />),
+    ).not.toContain('is paused');
+    expect(
+      renderToStaticMarkup(<NeedsYouList inbox={waiting} now={NOW} paused={[]} />),
+    ).not.toContain('is paused');
+  });
+});
