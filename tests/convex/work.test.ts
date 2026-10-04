@@ -1347,15 +1347,73 @@ describe('manager channel request claims', (): void => {
     });
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    // Re-pinned for M10 (12-M): the decided request's thread is read for the notice's hour too.
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
       requests: [],
       batches: [],
       noticeOwed: true,
+      threads: ['1787770700.000100'],
     });
     vi.setSystemTime(Date.UTC(2026, 8, 28, 10, 1));
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
       noticeOwed: false,
     });
+    expect(
+      (await harness.query(internal.work.openDecisions, { surfaceId })).threads,
+    ).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('lists the threads of Day0’s other messages in the DM within the notice window: a replaced request and a note (M10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const channel = await harness.run(
+      async (ctx) => (await ctx.db.get(surfaceId))!.managerDmChannelId!,
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      const base = {
+        agentId,
+        workItemId,
+        kind: 'plan' as const,
+        surfaceSlug: 'slack',
+        channel,
+        requestText: 'the request',
+      };
+      await ctx.db.insert('replacedDecisionRequests', {
+        ...base,
+        decisionId: 'ab3xyz',
+        ts: '1787770600.000100',
+        replacedAt: Date.UTC(2026, 8, 28, 8, 30),
+        editClaimedAt: Date.UTC(2026, 8, 28, 8, 30),
+        editedAt: Date.UTC(2026, 8, 28, 8, 30),
+      });
+      // Replaced, and its message edited, over an hour ago: its thread is no longer read.
+      await ctx.db.insert('replacedDecisionRequests', {
+        ...base,
+        decisionId: 'cd4wvu',
+        ts: '1787770500.000100',
+        replacedAt: Date.UTC(2026, 8, 28, 7, 0),
+        editClaimedAt: Date.UTC(2026, 8, 28, 7, 0),
+        editedAt: Date.UTC(2026, 8, 28, 7, 0),
+      });
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Done.',
+        createdAt: Date.UTC(2026, 8, 28, 8, 45),
+        claimedAt: Date.UTC(2026, 8, 28, 8, 45),
+        providerTs: '1787770650.000100',
+      });
+    });
+    const open = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(open.threads).toEqual(['1787770650.000100', '1787770600.000100']);
     vi.useRealTimers();
   });
 

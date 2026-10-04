@@ -136,6 +136,7 @@ import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/co
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { decisionChannelOf } from '../src/work/decision-channel';
+import { compareProviderTs } from '../src/work/provider-ts';
 
 /**
  * How long an apply may go unfinished before the recovery timer acts on it: an
@@ -4040,6 +4041,7 @@ export const openDecisions = internalQuery({
         .filter((id) => openIds.has(id));
       return decisionIds.length > 0 ? [{ batchId: batch.id, decisionIds }] : [];
     });
+    const since = Date.now() - DECISION_NOTICE_WINDOW_MS;
     const decidedLately = await ctx.db
       .query('workItems')
       .withIndex('by_agent_decision_channel_decided', (q) =>
@@ -4047,12 +4049,72 @@ export const openDecisions = internalQuery({
           .eq('agentId', surface.agentId)
           .eq('decision.surfaceSlug', surface.slug)
           .eq('decision.channel', channel)
-          .gte('decision.decidedAt', Date.now() - DECISION_NOTICE_WINDOW_MS),
+          .gte('decision.decidedAt', since),
       )
-      .first();
-    return { requests, batches, noticeOwed: decidedLately !== null };
+      .order('desc')
+      .take(RECENT_THREADS_READ);
+    const threads = await recentThreadsOn(ctx, surface, channel, since, {
+      decided: decidedLately.flatMap((row) => (row.decision?.ts ? [row.decision.ts] : [])),
+      open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
+    });
+    return {
+      requests,
+      batches,
+      noticeOwed: decidedLately.length > 0,
+      ...(threads.length > 0 ? { threads } : {}),
+    };
   },
 });
+
+/** The most of Day0's other recent messages in a DM whose threads one poll reads (M10). */
+const RECENT_THREADS_READ = 10;
+
+/**
+ * The provider timestamps of Day0's other messages in a manager DM within the notice window,
+ * newest first, at most {@link RECENT_THREADS_READ} (M10): the requests decided in it, the
+ * replaced requests whose message was edited in it, and the notes sent in it. An open request's
+ * own thread is read already and is left out.
+ *
+ * @param since - The start of the notice window.
+ * @param known - The decided requests' timestamps, and the open requests' to leave out.
+ */
+async function recentThreadsOn(
+  ctx: QueryCtx,
+  surface: Doc<'surfaces'>,
+  channel: string,
+  since: number,
+  known: { readonly decided: readonly string[]; readonly open: readonly string[] },
+): Promise<string[]> {
+  const [replaced, notes] = await Promise.all([
+    ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_edit_open', (q) =>
+        q.eq('agentId', surface.agentId).gte('editedAt', since),
+      )
+      .take(RECENT_THREADS_READ),
+    ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent', (q) => q.eq('agentId', surface.agentId))
+      .order('desc')
+      .take(RECENT_THREADS_READ),
+  ]);
+  const open = new Set(known.open);
+  const stamps = [
+    ...known.decided,
+    ...replaced.flatMap((row) =>
+      row.ts !== undefined && row.surfaceSlug === surface.slug && row.channel === channel
+        ? [row.ts]
+        : [],
+    ),
+    ...notes.flatMap((note) =>
+      note.providerTs !== undefined && note.createdAt >= since ? [note.providerTs] : [],
+    ),
+  ];
+  return [...new Set(stamps)]
+    .filter((ts) => !open.has(ts))
+    .sort((left, right) => compareProviderTs(right, left))
+    .slice(0, RECENT_THREADS_READ);
+}
 
 /**
  * Record the outcome of one manager-reply poll.

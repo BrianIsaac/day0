@@ -103,6 +103,12 @@ export interface OpenDecisions {
    * mistyped code, should still be answered (`DECISION_NOTICE_WINDOW_MS`).
    */
   readonly noticeOwed: boolean;
+  /**
+   * The provider timestamps of Day0's other messages in the DM within the notice window (a decided
+   * or replaced request, a note), whose threads are read as an open request's is (M10): a reply
+   * left under any of them is the manager's all the same. Absent when there are none.
+   */
+  readonly threads?: readonly string[];
 }
 
 /** Nothing open and no notice owed: the decision poll leaves the DM unread. */
@@ -118,10 +124,16 @@ export const DECISION_NOTICE_WINDOW_MS = 60 * 60 * 1000;
  * Whether the decision poll reads the manager DM.
  *
  * @param open - What the channel has open.
- * @returns True when a request or a batch is open or a notice may be owed.
+ * @returns True when a request or a batch is open, a notice may be owed, or a recent message's
+ *   thread is to be read.
  */
 export function readsManagerDm(open: OpenDecisions): boolean {
-  return open.requests.length > 0 || open.batches.length > 0 || open.noticeOwed;
+  return (
+    open.requests.length > 0 ||
+    open.batches.length > 0 ||
+    open.noticeOwed ||
+    (open.threads?.length ?? 0) > 0
+  );
 }
 
 /**

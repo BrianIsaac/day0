@@ -11,6 +11,7 @@ import {
   managerMessageAction,
   managerMessageUpdateAction,
   parseDecisionReply,
+  readsManagerDm,
 } from '../../../src/work/manager-channel';
 import { decisionRequestBlocks, settledRequestBlocks } from '../../../src/work/decision-blocks';
 import type { MockAction } from '../../../src/work/types';
@@ -439,6 +440,15 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('readsManagerDm (M10)', (): void => {
+  it('reads the DM for the threads of Day0’s other recent messages too', (): void => {
+    expect(readsManagerDm({ requests: [], batches: [], noticeOwed: false })).toBe(false);
+    expect(
+      readsManagerDm({ requests: [], batches: [], noticeOwed: false, threads: ['1.000100'] }),
+    ).toBe(true);
   });
 });
 

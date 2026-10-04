@@ -978,6 +978,70 @@ describe('real surface intake', (): void => {
     expect(JSON.stringify(harness.records)).not.toContain('slack-test-value');
   });
 
+  it('reads a reply the manager left in the thread of a decided or replaced request, not only an open one (M10)', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-27T02:00:00.000Z');
+    const pollAt = Date.parse('2026-08-27T02:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history', 'conversations.replies'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+          managerDmChannelId: 'DMANAGER',
+          managerUserId: 'UMANAGER',
+          lastPolledAt: checkpoint,
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const replacedTs = '1787770600.000100';
+    harness.openDecisions.set('surface-slack', {
+      requests: [],
+      batches: [],
+      noticeOwed: true,
+      threads: [replacedTs],
+    });
+    const replyCalls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.replies')) {
+        replyCalls.push(url);
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: replacedTs, user: 'UBOT', text: 'Replaced (ab3xyz)', reply_count: 1 },
+            {
+              ts: '1787770802.000100',
+              thread_ts: replacedTs,
+              user: 'UMANAGER',
+              text: 'approve ab3xyz',
+            },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+    };
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+    ).resolves.toMatchObject({ polled: 1 });
+    expect(replyCalls.map((url) => url.searchParams.get('ts'))).toEqual([replacedTs]);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1787770802.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+    ]);
+  });
+
   it('leaves threads alone when nothing is open or the surface cannot read them', async (): Promise<void> => {
     const slackCredential = id<'credentials'>('credential-slack');
     const surface = surfaceRow('slack', 'Slack', 'chat', {
