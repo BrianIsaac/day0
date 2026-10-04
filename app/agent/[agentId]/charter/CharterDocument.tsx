@@ -29,7 +29,7 @@ function Struck({ text, note }: { text: string; note: string }) {
 }
 
 /** The link style of running text on the page. */
-const INLINE_LINK =
+export const INLINE_LINK =
   'text-[var(--color-fg)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]';
 
 /**

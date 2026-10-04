@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import {
   type CharterConstraint,
   type StruckClause,
@@ -18,7 +19,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { clockTime, useAgentZone } from '../../../components/time';
 import { AmendCharterPanel } from './AmendCharterPanel';
-import { CharterDocument } from './CharterDocument';
+import { CharterDocument, INLINE_LINK } from './CharterDocument';
 import { CHANGES_REQUEST_ID } from './ChangesRequest';
 import { ConstraintList } from './RuleRow';
 import { documentStrikes } from './charter-document';
@@ -55,6 +56,8 @@ export interface CharterCardBody {
  * @param name - The employee's name.
  * @param autonomous - Whether the employee's writes go ahead without asking.
  * @param approvedBy - Who approved it: "you", or the earlier manager a handover took it from.
+ * @param pageDrivesWork - The Work tab drives each step, as in the hosted demo (mock mode): once
+ *   approved, the card says to open it (decision D-5 (a), a product call).
  * @param actors - Who struck, answered and added what the record shows; the reader, by default.
  */
 export function CharterCard({
@@ -63,6 +66,7 @@ export function CharterCard({
   name = 'Your employee',
   autonomous = false,
   approvedBy = 'you',
+  pageDrivesWork = false,
   actors = READER_ACTED,
 }: {
   charter: Doc<'charters'>;
@@ -71,6 +75,7 @@ export function CharterCard({
   name?: string;
   autonomous?: boolean;
   approvedBy?: string;
+  pageDrivesWork?: boolean;
   actors?: CharterActors;
 }) {
   const approve = useMutation(api.charters.approve);
@@ -170,6 +175,14 @@ export function CharterCard({
           />
           <SynthesisNotes notes={synthesisNotes(body)} />
         </div>
+        {charter.approved && pageDrivesWork ? (
+          <p className="text-sm text-[var(--color-fg-2)]">
+            <Link href={employeeTabHref(charter.agentId, 'work')} className={INLINE_LINK}>
+              Open Work
+            </Link>{' '}
+            to start {name} on its queue.
+          </p>
+        ) : null}
         {charter.approved ? (
           <div className="border-t border-[var(--color-border)] pt-2">
             <AmendCharterPanel
