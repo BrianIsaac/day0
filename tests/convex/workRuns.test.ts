@@ -11,6 +11,8 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { INTERRUPTED_APPLY_REASON, OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { AppliedAction } from '../../src/surfaces/types';
+import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
+import { eventTypesIn } from '../../src/events/record-filters';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -568,5 +570,71 @@ describe('waitingSince (H D11, D12)', (): void => {
     const { workItemId } = await seed(harness);
     await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
     expect((await readItem(harness, workItemId)).waitingSince).toBe(Date.UTC(2026, 9, 4, 10));
+  });
+});
+
+describe('a completion that withheld writes (the wave 6 review’s D4)', (): void => {
+  it('records the withheld rows as their own event, which the record files under refused and withheld', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...heldOutput,
+        applied: [
+          landedComment,
+          {
+            tool: 'mcp.call',
+            ok: true,
+            held: true,
+            reason: HELD_NOT_APPROVED,
+            effect: 'set REVOPS-1 to Done',
+            idempotencyKey: 'key-1',
+          },
+        ],
+      },
+    });
+    const withheld = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.actions-withheld'))
+          .collect(),
+    );
+    expect(withheld.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        runId,
+        withheld: [
+          { index: 1, tool: 'mcp.call', reason: HELD_NOT_APPROVED, effect: 'set REVOPS-1 to Done' },
+        ],
+      },
+    ]);
+    expect(eventTypesIn('refused')).toContain('work.actions-withheld');
+  });
+
+  it('writes no such event for a completion that withheld nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...heldOutput,
+        applied: [landedComment, { ...landedComment, idempotencyKey: 'k1' }],
+      },
+    });
+    const types = (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect(),
+      )
+    ).map((event) => event.type);
+    expect(types).not.toContain('work.actions-withheld');
   });
 });

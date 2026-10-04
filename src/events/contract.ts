@@ -1366,6 +1366,26 @@ export interface WorkClosedWithoutRetryPayload extends WorkItemNamed {
   readonly actor: string;
 }
 
+/** One row a finished run held and never sent. */
+export interface WithheldRow {
+  /** The row's index in the run's actions. */
+  readonly index: number;
+  readonly tool: string;
+  /** Why it was held: the manager left it out, the gate refused it, or a write before it failed. */
+  readonly reason?: string;
+  /** What it would have done, in the ledger's words. */
+  readonly effect?: string;
+}
+
+/**
+ * The payload of `work.actions-withheld`: a run that finished held some of its rows and never sent
+ * them (the wave 6 review's D4 (b)), so the record lists them under "Refused and withheld".
+ */
+export interface WorkActionsWithheldPayload extends WorkItemNamed {
+  readonly runId?: RunId;
+  readonly withheld: readonly WithheldRow[];
+}
+
 /** The payload of `work.stopped`: the manager stopped an item the employee was working (wave 12). */
 export interface WorkStoppedPayload extends WorkItemNamed {
   /** The state the item was in: `claimed`, `plan-approved` or `executing`. */
@@ -1674,6 +1694,7 @@ export interface EventPayloads {
   'work.dismissed': WorkDismissedPayload;
   'work.stopped': WorkStoppedPayload;
   'work.closed-without-retry': WorkClosedWithoutRetryPayload;
+  'work.actions-withheld': WorkActionsWithheldPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1853,6 +1874,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.dismissed',
   'work.stopped',
   'work.closed-without-retry',
+  'work.actions-withheld',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

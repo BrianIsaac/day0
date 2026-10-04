@@ -625,6 +625,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `cancelled${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.dismissed': 'dismissed by the manager',
   'work.closed-without-retry': 'closed by the manager without a retry',
+  'work.actions-withheld': (payload) =>
+    `${counted(payload.withheld?.length, 'action') ?? 'actions'} held and never sent`,
   'work.stopped': (payload) => `stopped by the manager${because(payload.reason)}`,
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
@@ -739,6 +741,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.decision-ignored': 'refused',
   'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
+  'work.actions-withheld': 'withheld',
   'work.skipped': 'withheld',
   'work.withdrawn': 'withheld',
   'work.cancelled': 'withheld',

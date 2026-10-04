@@ -171,6 +171,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.dismissed': DECISIONS,
   'work.stopped': DECISIONS,
   'work.closed-without-retry': DECISIONS,
+  'work.actions-withheld': ['writes', 'refused'],
   'work.execution-claimed': NONE,
   'work.dependent-authoring': NONE,
   'work.dependent-authoring-claimed': NONE,

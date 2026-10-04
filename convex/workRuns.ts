@@ -429,6 +429,29 @@ export const claimForExecution = internalMutation({
 });
 
 /**
+ * The rows a finished run held and never sent, by index, with why: what `work.actions-withheld`
+ * lists.
+ *
+ * @param applied - The run's ledger as `setCompleted` received it.
+ */
+function withheldRows(
+  applied: ReadonlyArray<{ tool: string; held?: boolean; reason?: string; effect?: string }>,
+): Array<{ index: number; tool: string; reason?: string; effect?: string }> {
+  return applied.flatMap((row, index) =>
+    row.held === true
+      ? [
+          {
+            index,
+            tool: row.tool,
+            ...(row.reason !== undefined ? { reason: row.reason } : {}),
+            ...(row.effect !== undefined ? { effect: row.effect } : {}),
+          },
+        ]
+      : [],
+  );
+}
+
+/**
  * Mark a run done, and refuse to when nothing is behind it.
  *
  * The rule - every action the run emitted changed the work environment - was
@@ -454,7 +477,15 @@ export const setCompleted = internalMutation({
       throw new Error('execution run changed before completion');
     }
     const applied = (
-      (args.output ?? {}) as { applied?: Array<{ tool: string; ok: boolean; held?: boolean }> }
+      (args.output ?? {}) as {
+        applied?: Array<{
+          tool: string;
+          ok: boolean;
+          held?: boolean;
+          reason?: string;
+          effect?: string;
+        }>;
+      }
     ).applied;
     if (!applied || applied.length === 0) {
       throw new Error(
@@ -494,6 +525,20 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
+    // What the run held and never sent is a line of its own under "Refused and withheld" (D4).
+    const withheld = withheldRows(applied);
+    if (withheld.length > 0) {
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.actions-withheld',
+        payload: {
+          workItemId: args.workItemId,
+          ...(args.runId !== undefined ? { runId: args.runId } : {}),
+          withheld,
+        },
+        createdAt: Date.now(),
+      });
+    }
     await scheduleNextStep(ctx, { ...row, state: 'completed' });
     await settleHandoverAfterRun(ctx, row.agentId);
     const surfaces = (
