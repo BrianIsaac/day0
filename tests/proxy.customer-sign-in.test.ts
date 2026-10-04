@@ -85,6 +85,23 @@ describe('the customer-local proxy gate', (): void => {
     );
   });
 
+  it("answers a signed-out prefetch or client-side navigation with no page, as Clerk mode does (the round review's m23)", async (): Promise<void> => {
+    const proxy = await loadProxy();
+    const prefetch = new NextRequest('http://127.0.0.1:3550/agent/abc', {
+      headers: { 'next-url': '/home' },
+    });
+    const response = (await proxy(prefetch)) as Response;
+    expect(response.status).toBe(204);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('location')).toBeNull();
+    // A server action carries `next-url` too, and is refused as any signed-out write is.
+    const action = new NextRequest('http://127.0.0.1:3550/agent/abc', {
+      method: 'POST',
+      headers: { 'next-url': '/home', 'next-action': 'a1' },
+    });
+    expect(((await proxy(action)) as Response).status).toBe(401);
+  });
+
   it('refuses a signed-out API call with 401, never a redirect', async (): Promise<void> => {
     const proxy = await loadProxy();
     const response = (await proxy(request('/api/seed', undefined, 'POST'))) as Response;
