@@ -601,6 +601,8 @@ describe('the compose file is pinned to digests', (): void => {
       'redactor',
       'redactor-volumes',
       'sandbox',
+      // 12-M's Socket Mode bridge, on the pinned node image the doubles use.
+      'slack-socket',
     ]);
     for (const image of images) {
       expect(image.reference, `${image.service} is not pinned`).toMatch(/@sha256:[0-9a-f]{64}$/);

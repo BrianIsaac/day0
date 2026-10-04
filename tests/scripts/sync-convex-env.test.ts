@@ -293,6 +293,19 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.calls).toContain('convex env remove DAY0_NANGO_SECRET_KEY');
   });
 
+  it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {
+    const configured = runSync(
+      [],
+      'DAY0_SURFACE_MODE=mock\nDAY0_SOCKET_BRIDGE_SECRET=bridge-secret-for-tests\n',
+    );
+    expect(configured.status).toBe(0);
+    expect(configured.calls).toContain(
+      'convex env set DAY0_SOCKET_BRIDGE_SECRET -- bridge-secret-for-tests',
+    );
+    const dropped = runSync(['DAY0_SOCKET_BRIDGE_SECRET=old'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_SOCKET_BRIDGE_SECRET');
+  });
+
   it('never pushes a credential name and clears the key when .env.local drops it', (): void => {
     const { status, calls } = runSync(
       ['DAY0_CREDENTIAL_KEY=old', 'DAY0_NOTION_MCP_AUTH_TOKEN=old'],
