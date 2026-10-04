@@ -1,5 +1,6 @@
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import {
+  AWAITING_APPROVAL,
   HELD_MUTATION,
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
@@ -114,6 +115,15 @@ const DM_LANDED = {
   providerId: '1790000000.000299',
   authority: 'standing',
 };
+
+/** A held write the auto phase parked for the manager: its placeholder, never sent. */
+function awaiting(tool: string): Record<string, unknown> {
+  return { tool, ok: true, held: true, awaitingApproval: true, reason: AWAITING_APPROVAL };
+}
+
+const AWAITING_REPLY = awaiting('http.request');
+
+const AWAITING_COMMENT = awaiting('mcp.call');
 
 const REPLY_LANDED = {
   tool: 'http.request',
@@ -239,7 +249,14 @@ export const DRAWN = {
     state: 'actions-pending',
     plan: PLAN,
     pendingRunId: 'run-held' as Id<'events'>,
-    output: { draft: DRAFT, notes: '', actions: ACTIONS, applied: [DM_LANDED] },
+    // The ledger as the auto phase writes it, one row per action: the held writes parked with
+    // the placeholder, the DM landed on its own (12-H reads the placeholders as still waiting).
+    output: {
+      draft: DRAFT,
+      notes: '',
+      actions: ACTIONS,
+      applied: [AWAITING_REPLY, DM_LANDED, AWAITING_COMMENT],
+    },
     actionVerdicts: VERDICTS,
     decision: {
       id: 'ab3xyz',
