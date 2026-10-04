@@ -44,4 +44,27 @@ describe('the seeded mock office', (): void => {
     const dashed = strings(seeded).filter(([, text]) => /[\u2013\u2014]/.test(text));
     expect(dashed.map(([path, text]) => `${path}: ${text.slice(0, 80)}`)).toEqual([]);
   });
+
+  it('tells a ticket run to set done only when it answers that the work was done (12-D)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'manager@day0.local',
+          name: 'Lark',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const docs = await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect());
+    const guide = (slug: string): string => docs.find((doc) => doc.slug === slug)?.body ?? '';
+    for (const slug of ['how-to-update-spreadsheet', 'how-to-update-ticket']) {
+      expect(guide(slug), slug).toContain(
+        'Set `status: "done"` only when your `workDone` is `done`; when it is `partial` or `not-done`, set `"in-progress"` and say in the comment what is left.',
+      );
+    }
+    expect(guide('how-to-update-spreadsheet')).not.toContain('if you fully closed the work');
+  });
 });
