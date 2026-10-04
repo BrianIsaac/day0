@@ -225,6 +225,7 @@ export const requestDecision = internalAction({
       ...(prepared.draftedWithout ? { draftedWithout: prepared.draftedWithout } : {}),
       actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
       heldIndexes: prepared.heldIndexes,
+      ...(prepared.leftForCard ? { leftForCard: prepared.leftForCard } : {}),
       refused: prepared.refused,
       item: prepared.item,
       surfaces: prepared.surfaces,
@@ -237,6 +238,7 @@ export const requestDecision = internalAction({
     // code that decides them all, each named with its own.
     if (
       args.kind === 'actions' &&
+      prepared.heldIndexes.length > 0 &&
       prepared.openActionDecisions.length > 0 &&
       prepared.pendingRunId
     ) {
@@ -247,6 +249,7 @@ export const requestDecision = internalAction({
           decisionId: prepared.decisionId,
           pendingRunId: prepared.pendingRunId,
           title: prepared.title,
+          ...(prepared.leftForCard ? { leavesCloseForCard: true } : {}),
         },
         ...prepared.openActionDecisions,
       ];

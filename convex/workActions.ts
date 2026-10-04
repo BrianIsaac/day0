@@ -3340,7 +3340,10 @@ async function ticketReread(
     runId: Id<'events'>;
     output: LedgerOutput | DependentPendingOutput;
     phase: 'auto' | 'approved';
-    /** The rows this auto phase parks for the manager: asked about, never sent here. */
+    /**
+     * The rows this apply parks for the manager: asked about, never sent here. Every held row in
+     * the auto phase; in the approved phase, a close an approval left for its card (12-H).
+     */
     deferredIndexes: readonly number[];
     surfaces: readonly SurfaceRecord[];
     knownValues: readonly string[];
@@ -3355,12 +3358,10 @@ async function ticketReread(
   // The registry asks about a parked row too; parking sends nothing, so it
   // is not the first write. Rows are matched by their parsed payload.
   const parked = new Set(
-    args.phase === 'auto'
-      ? args.deferredIndexes.flatMap((index) => {
-          const parsed = parseSurfaceAction(args.output.actions?.[index] ?? { tool: '', args: {} });
-          return parsed.ok ? [JSON.stringify(parsed.action)] : [];
-        })
-      : [],
+    args.deferredIndexes.flatMap((index) => {
+      const parsed = parseSurfaceAction(args.output.actions?.[index] ?? { tool: '', args: {} });
+      return parsed.ok ? [JSON.stringify(parsed.action)] : [];
+    }),
   );
   let found: Promise<string | undefined> | undefined;
   let refusal: string | undefined;
@@ -3512,7 +3513,7 @@ export const applyApprovedActions = internalAction({
         runId: claim.runId,
         output,
         phase: claim.phase,
-        deferredIndexes: claim.heldIndexes,
+        deferredIndexes: claim.deferredIndexes,
         surfaces,
         knownValues,
       });
@@ -3546,7 +3547,7 @@ export const applyApprovedActions = internalAction({
           onOutcome: report,
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
-          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          deferredIndexes: new Set(claim.deferredIndexes),
           priorLedger,
           ...(priorPhasesLedger(output) ? { prerequisiteLedger: priorPhasesLedger(output) } : {}),
           ...(isDependentPendingOutput(output) && output.initial.resumedClosing
@@ -4293,6 +4294,10 @@ interface FinishClaim {
 /** Why a deferred row stays unapplied when the auto phase fails. */
 export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic action failed';
 
+/** Why a close left for its card stays unapplied when the approved writes beside it fail (12-H). */
+export const NOT_APPLIED_AFTER_APPROVED_FAILURE =
+  'not sent: a write you approved beside it failed and the run stopped, so the close never reached its card';
+
 /**
  * Record the outcome of an applied phase.
  *
@@ -4303,6 +4308,9 @@ export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic actio
  * when only the claim about it landed. After the auto phase a run that still
  * has rows awaiting the manager is parked rather than completed; a failure in
  * the auto phase fails the run and the deferred rows never reach the manager.
+ * An approval from Slack or the Needs you batch that left a close the tripwire
+ * held for its card parks the run the same way once its approved rows land
+ * (12-H), and a failure among them fails the run with the close unsent.
  *
  * Args:
  *   ctx: Convex action context.
@@ -4353,12 +4361,19 @@ async function finishRun(
   const settled = reason
     ? applied.map((entry) =>
         entry.awaitingApproval
-          ? { ...entry, awaitingApproval: undefined, reason: NOT_APPLIED_AFTER_FAILURE }
+          ? {
+              ...entry,
+              awaitingApproval: undefined,
+              reason:
+                claim.phase === 'auto'
+                  ? NOT_APPLIED_AFTER_FAILURE
+                  : NOT_APPLIED_AFTER_APPROVED_FAILURE,
+            }
           : entry,
       )
     : applied;
   if (isDependentPendingOutput(output)) {
-    if (!reason && claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    if (!reason && applied.some((entry) => entry.awaitingApproval)) {
       const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
         workItemId,
         runId: claim.runId,
@@ -4452,7 +4467,7 @@ async function finishRun(
     return { ok: true };
   }
   if (output.needsDependentPhase === true) {
-    if (!reason && claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    if (!reason && applied.some((entry) => entry.awaitingApproval)) {
       const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
         workItemId,
         runId: claim.runId,
@@ -4513,7 +4528,7 @@ async function finishRun(
     });
     return { ok: false, reason: ended };
   }
-  if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+  if (applied.some((entry) => entry.awaitingApproval)) {
     const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
       workItemId,
       runId: claim.runId,

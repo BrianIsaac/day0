@@ -79,6 +79,7 @@ import { landedNoteText } from '../src/work/manager-notes';
 import type { WithheldRow, WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
 import { closeAgainstWordsOf } from '../src/work/work-done';
+import { leftForCardOf, withoutLeftForCard } from '../src/work/held-close';
 
 /**
  * A work item's runs (F8, E4: the claim, execute, apply, retry, reconcile, dismiss and stop
@@ -906,6 +907,12 @@ export const claimApprovedActions = internalMutation({
         phase: 'auto' | 'approved';
         approvedIndexes: number[];
         heldIndexes: number[];
+        /**
+         * The held rows this apply parks for the manager rather than records as left out: every
+         * held row in the auto phase; in the approved phase, the closes an approval from Slack or
+         * the Needs you batch left for their card (12-H).
+         */
+        deferredIndexes: number[];
         heldReasons: Array<[number, string]>;
         autonomousActions: boolean;
         replyTarget?: ReplyTarget;
@@ -956,6 +963,13 @@ export const claimApprovedActions = internalMutation({
       },
       createdAt: Date.now(),
     });
+    // The closes an approval left for their card: the apply parks them, and every output it writes
+    // goes without the mark, so a later approval of the parked set decides them on their own (12-H).
+    const leftForCard = autoPhase ? [] : leftForCardOf(row.output);
+    const output =
+      leftForCard.length > 0
+        ? withoutLeftForCard(row.output as Record<string, unknown>)
+        : row.output;
     await ctx.db.patch(args.workItemId, {
       state: 'executing',
       applyAttemptId,
@@ -974,10 +988,13 @@ export const claimApprovedActions = internalMutation({
       phase: autoPhase ? 'auto' : 'approved',
       approvedIndexes: row.approvedIndexes,
       heldIndexes: indexesWith(verdictList(row.actionVerdicts, count), 'held'),
+      deferredIndexes: autoPhase
+        ? indexesWith(verdictList(row.actionVerdicts, count), 'held')
+        : leftForCard,
       heldReasons: refusedReasonEntries(row.actionVerdicts, count),
       autonomousActions: agent ? autonomousActionsOn(agent) : false,
       replyTarget: replyTargetFor(row),
-      output: row.output,
+      output,
     };
   },
 });

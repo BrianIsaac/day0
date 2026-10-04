@@ -66,6 +66,7 @@ import {
   waitingLine,
 } from './work-item';
 import { closeAgainstWordsOf } from '@/work/work-done';
+import { awaitingIndexes } from '@/work/held-close';
 
 /** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
 export const LANDING_MS = 570;
@@ -225,6 +226,13 @@ export function WorkItemCard({
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
   const output = item.output as RunOutput | undefined;
+  // A held row an earlier approval of this set decided is listed with what landed and never offered
+  // again: an approval in Slack or the Needs you batch sent it and left a close here (12-H).
+  const heldVerdicts = pendingVerdicts(item.actionVerdicts, output?.actions?.length ?? 0);
+  const stillWaiting = awaitingIndexes(heldVerdicts, output?.applied ?? []);
+  const decidedEarlier = heldVerdicts.flatMap((row, index) =>
+    row.disposition === 'held' && !stillWaiting.includes(index) ? [index] : [],
+  );
   const ledger = phasedLedger(output);
   const places = landedPlaces(ledger);
   const landed = places.map((place) => ({ ...ledger[place]!, place }));
@@ -526,7 +534,8 @@ export function WorkItemCard({
           <PendingActions
             key={`${item._id}:${item.pendingRunId ?? ''}`}
             actions={output.actions ?? []}
-            verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
+            verdicts={heldVerdicts}
+            decidedEarlier={decidedEarlier}
             landed={landed.length}
             surfaces={surfaces}
             replyTarget={replyTargetFor(item)}
@@ -541,7 +550,9 @@ export function WorkItemCard({
               decide(
                 () => onApproveActions(approvedIndexes),
                 approvedIndexes.length === 0
-                  ? `Approved with nothing selected: ${item.title} lands nothing.`
+                  ? decidedEarlier.length > 0
+                    ? `Finished without the ticket close: nothing more is sent on ${item.title}, and the close stays withheld.`
+                    : `Approved with nothing selected: ${item.title} lands nothing.`
                   : approvedIndexes.length === 1
                     ? 'Approved 1 action: it applies now.'
                     : `Approved ${approvedIndexes.length} actions: they apply now.`,

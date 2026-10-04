@@ -472,11 +472,17 @@ export function pendingVerdicts(
  *
  * @param verdicts - The run's verdicts.
  * @param landed - How many rows the run already landed.
+ * @param decidedEarlier - How many held rows an earlier approval of this set decided (12-H): they
+ *   no longer await the manager.
  * @returns `2 applied automatically · 1 awaiting your approval`, or a no-auto form.
  */
-export function pendingHeadline(verdicts: readonly ActionVerdict[], landed = 0): string {
+export function pendingHeadline(
+  verdicts: readonly ActionVerdict[],
+  landed = 0,
+  decidedEarlier = 0,
+): string {
   const auto = verdicts.filter((verdict) => verdict.disposition === 'auto').length;
-  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length;
+  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length - decidedEarlier;
   const refused = verdicts.filter((verdict) => verdict.disposition === 'refused').length;
   const awaiting = `${held} ${held === 1 ? 'action' : 'actions'} awaiting your approval`;
   const refusedNote = refused > 0 ? ` · ${refused} refused by the gate` : '';

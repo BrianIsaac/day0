@@ -1485,6 +1485,11 @@ export interface WorkActionsAutoApplyingPayload extends ActionSetSplit {
 export interface WorkActionsPendingPayload extends ActionSetSplit {
   readonly autonomousActions?: boolean;
   readonly autoApplied?: true;
+  /**
+   * Parked again after an approval from Slack or the Needs you batch landed the rest of the set:
+   * what waits (`heldIndexes`) is a close the tripwire held, left for its card (wave 12, 12-H).
+   */
+  readonly leftForCard?: true;
 }
 
 /** The payload of `work.actions-approved`. */
@@ -1493,6 +1498,11 @@ export interface WorkActionsApprovedPayload extends WorkItemRun {
   readonly rejectedIndexes: number[];
   readonly refusedIndexes: number[];
   readonly autoIndexes: number[];
+  /**
+   * The closes the tripwire held that this approval left for their card (wave 12, 12-H): an
+   * approval from Slack or the Needs you batch decides every other held write, never these.
+   */
+  readonly leftForCard?: number[];
   readonly decidedVia: DecidedVia;
 }
 

@@ -1228,3 +1228,30 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
     );
   });
 });
+
+describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)', (): void => {
+  it('says who approved what, and that the close was decided apart', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.actions-approved',
+          payload: { approvedIndexes: [0, 3], leftForCard: [1], decidedVia: 'channel' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You approved 2 held actions on “Draft response for new tier-two RevOps ask” from your DMs. The ticket close Day0 held was left out and waits on its card.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'work.actions-pending',
+          payload: { heldIndexes: [1], workItemId: 'w1', leftForCard: true },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira holds the ticket close on “Draft response for new tier-two RevOps ask” for you: the earlier approval has been applied, and the close waits on its card.',
+    );
+  });
+});

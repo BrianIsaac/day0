@@ -1,11 +1,8 @@
 'use client';
 
 import type { MockAction, ArgumentRepairAttempt } from '@/work/types';
-import {
-  type ActionVerdict,
-  HELD_CLOSE_AGAINST_WORDS,
-  HELD_WITHHELD_TRANSITION,
-} from '@/surfaces/policy';
+import { type ActionVerdict, HELD_WITHHELD_TRANSITION } from '@/surfaces/policy';
+import { isCloseHeldAgainstWords, quotedSentence } from '@/work/held-close';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type ReplyTarget, summariseAction } from '@/surfaces/summary';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -36,15 +33,15 @@ export function heldSentence(reason: string): string {
 
 /**
  * Why a close waits for the manager after the tripwire (12-D): the run answered that the work was
- * done, twice, while its own words said otherwise. The sentence is quoted, its full stop moved
- * outside the quotation marks and a question or exclamation mark kept inside them.
+ * done, twice, while its own words said otherwise. The sentence is quoted as the Slack request
+ * quotes it ({@link quotedSentence}), whole: its full stop moved outside the quotation marks, and a
+ * question mark, an exclamation mark or an ellipsis kept inside them.
  *
  * @param employeeName - Who wrote the words.
  * @param clause - The sentence the tripwire read.
  */
 export function closeAgainstWordsNote(employeeName: string, clause: string): string {
-  const sentence = clause.trim();
-  const quoted = /[?!]$/.test(sentence) ? `“${sentence}”` : `“${sentence.replace(/\.+$/, '')}”.`;
+  const quoted = quotedSentence(clause, Number.POSITIVE_INFINITY);
   return `${employeeName} answered that the work is done, but wrote ${quoted} Approve the close only if the work was done; otherwise withhold it.`;
 }
 
@@ -57,11 +54,6 @@ function toggleLabel(on: boolean, leftOutByDay0: boolean): string {
   return leftOutByDay0 ? 'Include it' : 'Include it again';
 }
 
-/** Whether a row's verdict is a close the tripwire held for the manager (12-D). */
-function closeHeldAgainstWords(verdict: ActionVerdict | undefined): boolean {
-  return verdict?.disposition === 'held' && verdict.reason === HELD_CLOSE_AGAINST_WORDS;
-}
-
 /**
  * The consequence line under the held writes' controls: what each control sends, and for a run
  * in two phases, that approving starts its closing phase.
@@ -70,18 +62,41 @@ function closeHeldAgainstWords(verdict: ActionVerdict | undefined): boolean {
  * @param closing - Whether this is a first phase whose approval starts the closing phase.
  * @param autonomous - Whether autonomous actions are on, for what the closing phase applies.
  * @param gate - The deployment's gate.
+ * @param held - What the box holds of a close Day0 held (12-H): whether one is among the held
+ *   writes (Approve all then names it beside the control, so all is never pressed without it in
+ *   view), and whether an earlier approval already sent the rest, so the first control finishes
+ *   the item without the close.
  */
 export function heldActionsWhy(
   employeeName: string,
   closing: boolean,
   autonomous = false,
   gate: WorkGate = 'real',
+  held: HeldCloseState = {},
 ): string {
-  const send = `Approve selected sends the ticked writes as ${employeeName} wrote them; Approve all sends every held write.`;
+  const all = held.closeHeld
+    ? 'Approve all sends every held write, the ticket close Day0 held among them.'
+    : 'Approve all sends every held write.';
+  const send = held.finishing
+    ? 'Finish without the close ends this item with the ticket close withheld; Approve all sends the close, so use it only if the work was done.'
+    : `Approve selected sends the ticked writes as ${employeeName} wrote them; ${all}`;
   const next = closing
     ? ` Approving starts the closing phase; when it finishes, ${writesWhenRunFinishes(autonomous, gate)}.`
     : '';
-  return `${send}${next} Rejecting ends this run with nothing held sent and keeps your reason on the item.`;
+  const reject = held.sentEarlier
+    ? 'Rejecting ends this run and sends nothing more, the ticket close included; what you approved earlier was already sent, and your reason stays on the item.'
+    : 'Rejecting ends this run with nothing held sent and keeps your reason on the item.';
+  return `${send}${next} ${reject}`;
+}
+
+/** What the held box holds of a close Day0 held over the run's own words (12-H). */
+export interface HeldCloseState {
+  /** A close the tripwire held is among the writes still waiting. */
+  readonly closeHeld?: boolean;
+  /** An earlier approval of this set already sent the rest. */
+  readonly sentEarlier?: boolean;
+  /** Nothing is ticked after that approval, so the first control finishes without the close. */
+  readonly finishing?: boolean;
 }
 
 /**
@@ -106,6 +121,7 @@ export function PendingActions({
   closing = false,
   gate = 'real',
   closeAgainstWords,
+  decidedEarlier,
   onApprove,
   onReject,
   children,
@@ -130,6 +146,12 @@ export function PendingActions({
   gate?: WorkGate;
   /** The sentence the tripwire read when the run answered done over it twice (12-D). */
   closeAgainstWords?: string;
+  /**
+   * Held rows an earlier approval of this set already decided (12-H): an approval in Slack or the
+   * Needs you batch sent the rest and left a close the tripwire held here. They are listed with
+   * what landed, never offered again.
+   */
+  decidedEarlier?: readonly number[];
   /** Approve the rows; the card says what it came to in its live region. */
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
@@ -152,24 +174,30 @@ export function PendingActions({
     [verdicts],
   );
   const heldIndexes = useMemo(
-    () => verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : [])),
-    [verdicts],
+    () =>
+      verdicts.flatMap((verdict, index) =>
+        verdict.disposition === 'held' && !decidedEarlier?.includes(index) ? [index] : [],
+      ),
+    [verdicts, decidedEarlier],
   );
   const shown = useMemo(
     () =>
       actions
         .map((action, index) => ({ action, index }))
-        .filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
-    [actions, verdicts],
+        .filter(
+          ({ index }) =>
+            verdicts[index]?.disposition !== 'auto' && !decidedEarlier?.includes(index),
+        ),
+    [actions, verdicts, decidedEarlier],
   );
   // A close the tripwire held starts unticked: the card asks the manager to approve it only if the
   // work was done, so Approve selected never sends it without that choice.
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(heldIndexes.filter((index) => !closeHeldAgainstWords(verdicts[index]))),
+    () => new Set(heldIndexes.filter((index) => !isCloseHeldAgainstWords(verdicts[index]))),
   );
   // Such a close is Day0's to leave out until the manager touches it, and is not counted as theirs.
   const [untouched, setUntouched] = useState<Set<number>>(
-    () => new Set(heldIndexes.filter((index) => closeHeldAgainstWords(verdicts[index]))),
+    () => new Set(heldIndexes.filter((index) => isCloseHeldAgainstWords(verdicts[index]))),
   );
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
@@ -200,6 +228,15 @@ export function PendingActions({
   }
 
   const anyRefused = refusedIndexes.size > 0;
+  const closeHeld = heldIndexes.some((index) => isCloseHeldAgainstWords(verdicts[index]));
+  // Once an earlier approval sent the rest, finishing with nothing ticked is a choice of its own:
+  // nothing more is sent and the item ends with the close withheld (12-H).
+  const sentEarlier = (decidedEarlier?.length ?? 0) > 0;
+  const finishWithoutRest = selected.size === 0 && sentEarlier;
+  const describesAll = [
+    ...(anyRefused ? [`${id}-all`] : []),
+    ...(closeAgainstWords !== undefined && closeHeld ? [`${id}-close`] : []),
+  ];
   const withheld = heldIndexes.filter(
     (index) => !selected.has(index) && !untouched.has(index),
   ).length;
@@ -207,7 +244,7 @@ export function PendingActions({
     <>
       <ItemSection tone="warn">
         <p className="text-[15px] font-semibold text-[var(--color-warn)]">
-          {pendingHeadline(verdicts, landed)}
+          {pendingHeadline(verdicts, landed, decidedEarlier?.length ?? 0)}
           {withheld > 0 ? ` · ${withheld} withheld by you` : ''}
         </p>
         {heldIndexes.length > 0 ? (
@@ -222,11 +259,15 @@ export function PendingActions({
                 : HELD_WHILE_SUPERVISED_NOTE}
           </p>
         ) : null}
-        {closeAgainstWords !== undefined &&
-        heldIndexes.some((index) => closeHeldAgainstWords(verdicts[index])) ? (
-          <p className="text-[15px] text-[var(--color-fg)]">
+        {closeAgainstWords !== undefined && closeHeld ? (
+          <p id={`${id}-close`} className="text-[15px] text-[var(--color-fg)]">
             <span className="font-semibold">Close held:</span>{' '}
             {closeAgainstWordsNote(employeeName, closeAgainstWords)}
+          </p>
+        ) : null}
+        {sentEarlier ? (
+          <p className="text-[13px] text-[var(--color-fg-2)]">
+            Your earlier approval has been applied; only the close is left.
           </p>
         ) : null}
         {actions.length === 0 ? (
@@ -307,20 +348,32 @@ export function PendingActions({
         )}
       </ItemSection>
       {children}
-      <ItemFoot why={heldActionsWhy(employeeName, closing, autonomousActions, gate)}>
+      <ItemFoot
+        why={heldActionsWhy(employeeName, closing, autonomousActions, gate, {
+          closeHeld,
+          sentEarlier,
+          finishing: finishWithoutRest,
+        })}
+      >
         <Button
-          variant="approve"
+          // Finishing withholds the close: it is not an approval, so it does not look like one.
+          variant={finishWithoutRest ? 'secondary' : 'approve'}
           size="large"
-          // With every write withheld there is nothing to approve: Reject is how nothing is sent.
-          disabled={busy || selected.size === 0}
+          // With every write withheld there is nothing to approve: Reject is how nothing is sent,
+          // unless an earlier approval already sent the rest of this set.
+          disabled={busy || (selected.size === 0 && !finishWithoutRest)}
           onClick={() => onApprove([...selected].sort((a, b) => a - b))}
         >
-          Approve selected ({selected.size})
+          {finishWithoutRest
+            ? heldIndexes.length === 1
+              ? 'Finish without the close'
+              : 'Finish without the closes'
+            : `Approve selected (${selected.size})`}
         </Button>
         <Button
           disabled={busy || anyRefused || heldIndexes.length === 0}
           title={anyRefused ? APPROVE_ALL_REFUSED : undefined}
-          aria-describedby={anyRefused ? `${id}-all` : undefined}
+          aria-describedby={describesAll.length > 0 ? describesAll.join(' ') : undefined}
           onClick={() => {
             // Every held write goes, so every one is shown ticked again.
             setSelected(new Set(heldIndexes));

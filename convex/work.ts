@@ -59,7 +59,15 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { closingChanges } from '../src/work/work-done';
+import { closeAgainstWordsOf, closingChanges } from '../src/work/work-done';
+import {
+  awaitingIndexes,
+  isCloseHeldAgainstWords,
+  LEFT_FOR_CARD_KEY,
+  leftForCardOf,
+  wholeSetApproval,
+  withoutLeftForCard,
+} from '../src/work/held-close';
 import {
   accessRequestReason,
   organisationSystemOf,
@@ -98,6 +106,8 @@ import {
   askedFor,
   batchDecisionNoticeText,
   canEditManagerMessage,
+  CLOSE_ONLY_ON_CARD_REASON,
+  closeOnCardNoticeText,
   decisionNoticeText,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
@@ -3420,7 +3430,22 @@ export const prepareDecisionRequest = internalMutation({
       .collect();
     const actions = actionsOf(row.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
-    const heldIndexes = args.kind === 'actions' ? indexesWith(verdicts, 'held') : [];
+    // An approval in Slack decides every held write still waiting but a close the tripwire held,
+    // which the request names apart and leaves for its card (12-H, R-12D-1).
+    const approval =
+      args.kind === 'actions'
+        ? wholeSetApproval(verdicts, ledgerOf(row.output))
+        : { approve: [], leftForCard: [] };
+    const heldIndexes = [...approval.approve];
+    const leftForCard =
+      approval.leftForCard.length > 0
+        ? {
+            indexes: [...approval.leftForCard],
+            ...(closeAgainstWordsOf(row.output) !== undefined
+              ? { clause: closeAgainstWordsOf(row.output) }
+              : {}),
+          }
+        : undefined;
     const refused =
       args.kind === 'actions'
         ? refusedReasonEntries(row.actionVerdicts, actions.length).map(([index, reason]) => ({
@@ -3428,7 +3453,7 @@ export const prepareDecisionRequest = internalMutation({
             reason,
           }))
         : [];
-    if (args.kind === 'actions' && heldIndexes.length === 0) {
+    if (args.kind === 'actions' && heldIndexes.length === 0 && leftForCard === undefined) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
     }
     // The other held action sets already asked on this channel, so the
@@ -3457,12 +3482,19 @@ export const prepareDecisionRequest = internalMutation({
             ) {
               return [];
             }
+            // A set whose only waiting write is a close Day0 held has nothing a code decides.
+            const otherApproval = wholeSetApproval(
+              verdictList(other.actionVerdicts, actionsOf(other.output).length),
+              ledgerOf(other.output),
+            );
+            if (otherApproval.approve.length === 0) return [];
             return [
               {
                 workItemId: other._id,
                 decisionId: decision.id,
                 pendingRunId: other.pendingRunId,
                 title: other.title,
+                ...(otherApproval.leftForCard.length > 0 ? { leavesCloseForCard: true } : {}),
               },
             ];
           })
@@ -3525,6 +3557,7 @@ export const prepareDecisionRequest = internalMutation({
         : {}),
       output: row.output,
       heldIndexes,
+      ...(leftForCard !== undefined ? { leftForCard } : {}),
       refused,
       decisionId: args.decisionId,
       requestRunId,
@@ -3533,8 +3566,11 @@ export const prepareDecisionRequest = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       pendingRunId: row.pendingRunId,
       openActionDecisions,
-      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)).
-      withButtons: decisionButtonsFor(chat, socketBridgeConfigured()).available,
+      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      withButtons:
+        (args.kind === 'plan' || heldIndexes.length > 0) &&
+        decisionButtonsFor(chat, socketBridgeConfigured()).available,
     };
   },
 });
@@ -4752,6 +4788,7 @@ async function resolveChannelBatch(
   }
   const decided: string[] = [];
   const skipped: Array<{ decisionId: string; reason: string }> = [];
+  const leftForCard: string[] = [];
   for (const member of batch.members) {
     const item = await ctx.db.get(member.workItemId);
     const decision = item?.decision;
@@ -4775,14 +4812,25 @@ async function resolveChannelBatch(
       continue;
     }
     if (args.reply.verb === 'approve') {
-      const actionCount = actionsOf(item.output).length;
-      const heldIndexes = indexesWith(verdictList(item.actionVerdicts, actionCount), 'held');
+      // As a single approval in Slack: a close the tripwire held is left for its card (12-H).
+      const approval = wholeSetApproval(
+        verdictList(item.actionVerdicts, actionsOf(item.output).length),
+        ledgerOf(item.output),
+      );
+      if (approval.approve.length === 0 && approval.leftForCard.length > 0) {
+        skipped.push({ decisionId: member.decisionId, reason: CLOSE_ONLY_ON_CARD_REASON });
+        continue;
+      }
+      if (approval.leftForCard.length > 0) leftForCard.push(member.decisionId);
       await approveActionsInTransaction(
         ctx,
         item,
-        { workItemId: item._id, pendingRunId: member.pendingRunId, approvedIndexes: heldIndexes },
-        'channel',
-        args.messageTs,
+        {
+          workItemId: item._id,
+          pendingRunId: member.pendingRunId,
+          approvedIndexes: [...approval.approve],
+        },
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
       );
     } else {
       await rejectActionsInTransaction(
@@ -4820,7 +4868,7 @@ async function resolveChannelBatch(
         decided,
         skipped,
         ...(args.reply.verb === 'approve'
-          ? { hold: await stepHoldOf(ctx.db, surface.agentId) }
+          ? { hold: await stepHoldOf(ctx.db, surface.agentId), leftForCard }
           : {}),
       }),
     });
@@ -6051,6 +6099,13 @@ function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
  * awaiting approval; the manager's approval replaces the placeholders. Fenced
  * on the run and on the apply attempt, so a late caller cannot park a run
  * that has moved on.
+ *
+ * Called too after an approved phase whose approval, from Slack or the Needs
+ * you batch, left a close the tripwire held for its card (12-H, R-12D-1): the
+ * approved rows have landed and the close waits alone, asked about again on
+ * its own. The decided request leaves the row as in the auto phase, so the
+ * close reads as not yet asked (review M5): the stall sweep and the card's
+ * ask control see it, and the card's head stamps no decision over it.
  */
 export const setAwaitingApproval = internalMutation({
   args: {
@@ -6066,10 +6121,11 @@ export const setAwaitingApproval = internalMutation({
       row.state !== 'executing' ||
       row.executionRunId !== args.runId ||
       row.applyAttemptId !== args.applyAttemptId ||
-      row.applyPhase !== 'auto'
+      row.applyPhase === undefined
     ) {
       return { parked: false };
     }
+    const afterApproval = row.applyPhase === 'approved';
     const actions = actionsOf(args.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
     const refusals = refusedReasonEntries(verdicts, actions.length).map(([index, reason]) => ({
@@ -6095,10 +6151,12 @@ export const setAwaitingApproval = internalMutation({
         runId: args.runId,
         actionCount: actions.length,
         autoIndexes: indexesWith(verdicts, 'auto'),
-        heldIndexes: indexesWith(verdicts, 'held'),
+        heldIndexes: afterApproval
+          ? awaitingIndexes(verdicts, ledgerOf(args.output))
+          : indexesWith(verdicts, 'held'),
         refusedIndexes: indexesWith(verdicts, 'refused'),
         ...(refusals.length > 0 ? { refusals } : {}),
-        autoApplied: true,
+        ...(afterApproval ? { leftForCard: true as const } : { autoApplied: true as const }),
       },
       createdAt: Date.now(),
     });
@@ -6127,7 +6185,7 @@ export const approveActions = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    return await approveActionsInTransaction(ctx, row, args, 'dashboard');
+    return await approveActionsInTransaction(ctx, row, args, { via: 'dashboard' });
   },
 });
 
@@ -6165,7 +6223,11 @@ export const approveActionsBatch = mutation({
       if (seen.has(member.workItemId)) throw new Error('an item appears twice in the batch');
       seen.add(member.workItemId);
       const row = await assertOwnsWorkItem(ctx, member.workItemId);
-      const result = await approveActionsInTransaction(ctx, row, member, 'dashboard');
+      // The batch shows no tripped close's sentence: such a close is left for its card (12-H).
+      const result = await approveActionsInTransaction(ctx, row, member, {
+        via: 'dashboard',
+        scope: 'whole-set',
+      });
       approved.push({ workItemId: member.workItemId, approvedIndexes: result.approvedIndexes });
     }
     return { ok: true, approved };
@@ -6224,6 +6286,40 @@ export const prepareDecisionBatch = internalMutation({
   },
 });
 
+/**
+ * How much of a held set an approval decides (wave 12, 12-H; R-12D-1): `card` is the card's own
+ * choice, row by row, beside the sentence a tripped close carries; `whole-set` is an approval made
+ * without that sentence (a Slack approval by the typed code, a button or the batch code, and the
+ * Needs you batch), which never sends a close the tripwire held and leaves it for its card.
+ */
+type ApprovalScope = 'card' | 'whole-set';
+
+/** How an approval of held actions was made: where, by which reply or press, and how much of the set. */
+interface ApprovalMade {
+  readonly via: DecisionVia;
+  /** The channel reply or press that decided, when one did. */
+  readonly messageTs?: string;
+  /** Absent: the card's own choice, row by row. */
+  readonly scope?: ApprovalScope;
+}
+
+/** Why a whole-set approval refuses a close the tripwire held: it is decided on its card. */
+export const CLOSE_DECIDED_ON_CARD = 'is a ticket close Day0 held, so it is decided on its card';
+
+/**
+ * Approve held actions of one parked set and schedule their apply, inside the caller's transaction.
+ *
+ * Only a held row still waiting can be approved: one an earlier approval of this set already sent
+ * or withheld is decided. A whole-set approval ({@link ApprovalScope}) leaves every waiting close the
+ * tripwire held for its card: recorded on the output (`leftForCard`) for the apply to park it again,
+ * and on the approval's event, never among the rows the manager left out.
+ *
+ * @param ctx - The decision's transaction.
+ * @param row - The parked item.
+ * @param args - The run the approval was shown and the rows it approves.
+ * @param decision - Where the decision was made, the channel reply or press that made it, and how
+ *   much of the set it decides.
+ */
 async function approveActionsInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
@@ -6232,9 +6328,9 @@ async function approveActionsInTransaction(
     pendingRunId: Id<'events'>;
     approvedIndexes: number[];
   },
-  via: DecisionVia,
-  messageTs?: string,
+  decision: ApprovalMade,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
+  const { via, messageTs, scope = 'card' } = decision;
   if (row.state !== 'actions-pending') {
     throw new Error(`workItem state is ${row.state}; expected actions-pending`);
   }
@@ -6247,6 +6343,7 @@ async function approveActionsInTransaction(
   }
   const actions = actionsOf(row.output);
   const verdicts = verdictList(row.actionVerdicts, actions.length);
+  const awaiting = awaitingIndexes(verdicts, ledgerOf(row.output));
   const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
   for (const index of approvedIndexes) {
     if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
@@ -6261,12 +6358,36 @@ async function approveActionsInTransaction(
     if (verdict.disposition === 'auto') {
       throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
     }
+    if (!awaiting.includes(index)) {
+      throw new Error(`action ${index + 1} was already decided by an earlier approval`);
+    }
+    if (scope === 'whole-set' && isCloseHeldAgainstWords(verdict)) {
+      throw new Error(`action ${index + 1} ${CLOSE_DECIDED_ON_CARD}`);
+    }
   }
-  const heldIndexes = indexesWith(verdicts, 'held');
-  const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
+  const leftForCard =
+    scope === 'whole-set' ? wholeSetApproval(verdicts, ledgerOf(row.output)).leftForCard : [];
+  if (approvedIndexes.length === 0 && leftForCard.length > 0) {
+    throw new Error('only a ticket close Day0 held is waiting, and it is decided on its card');
+  }
+  const rejectedIndexes = awaiting.filter(
+    (index) => !approvedIndexes.includes(index) && !leftForCard.includes(index),
+  );
   await ctx.db.patch(args.workItemId, {
     approvedIndexes,
     applyPhase: 'approved',
+    // The mark is this approval's alone: an earlier one's, on a set a handover returned to held,
+    // never decides what this apply parks.
+    ...(leftForCard.length > 0
+      ? {
+          output: {
+            ...withoutLeftForCard(row.output as Record<string, unknown>),
+            [LEFT_FOR_CARD_KEY]: [...leftForCard],
+          },
+        }
+      : leftForCardOf(row.output).length > 0
+        ? { output: withoutLeftForCard(row.output as Record<string, unknown>) }
+        : {}),
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
   const approved = await ctx.db.get(args.workItemId);
@@ -6282,6 +6403,7 @@ async function approveActionsInTransaction(
       rejectedIndexes,
       refusedIndexes: indexesWith(verdicts, 'refused'),
       autoIndexes: indexesWith(verdicts, 'auto'),
+      ...(leftForCard.length > 0 ? { leftForCard: [...leftForCard] } : {}),
       decidedVia: via,
     },
     createdAt: Date.now(),
@@ -6578,6 +6700,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     return { status: 'already-decided' as const, notified: false };
   }
 
+  let closesHeld = 0;
   if (row.decision.kind === 'plan') {
     if (args.reply.verb === 'approve') {
       await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
@@ -6586,19 +6709,34 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     }
   } else {
     if (!row.pendingRunId) return await ignored('actions decision has no pending run');
+    // A Slack approval never shows the sentence a tripped close carries, so it decides every
+    // other held write and leaves that close for its card; a rejection takes it too (12-H).
+    const approval = wholeSetApproval(
+      verdictList(row.actionVerdicts, actionsOf(row.output).length),
+      ledgerOf(row.output),
+    );
+    closesHeld = approval.leftForCard.length;
     if (args.reply.verb === 'approve') {
-      const actionCount = actionsOf(row.output).length;
-      const heldIndexes = indexesWith(verdictList(row.actionVerdicts, actionCount), 'held');
+      if (approval.approve.length === 0 && approval.leftForCard.length > 0) {
+        const notified = await queueManagerReplyNotice(ctx, {
+          surfaceId: surface._id,
+          workItemId: row._id,
+          decisionId: row.decision.id,
+          messageTs: args.messageTs,
+          kind: 'received',
+          text: closeOnCardNoticeText(row.decision.id),
+        });
+        return { ...(await ignored(CLOSE_ONLY_ON_CARD_REASON)), notified };
+      }
       await approveActionsInTransaction(
         ctx,
         row,
         {
           workItemId: row._id,
           pendingRunId: row.pendingRunId,
-          approvedIndexes: heldIndexes,
+          approvedIndexes: [...approval.approve],
         },
-        'channel',
-        args.messageTs,
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
       );
     } else {
       await rejectActionsInTransaction(
@@ -6622,6 +6760,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     verb: args.reply.verb,
     kind: row.decision.kind,
     hold: args.reply.verb === 'approve' ? await stepHoldOf(ctx.db, row.agentId) : undefined,
+    closesHeld,
   });
   await queueManagerReplyNotice(ctx, {
     surfaceId: surface._id,
@@ -6870,12 +7009,16 @@ export function interruptedApplyLedger(
       ? output.actionIndexOffset
       : 0;
   // In the auto phase a held row was never offered to the manager, so it
-  // keeps the reason the gate held it for; in the approved phase an
-  // unapproved held row is one the manager left out.
+  // keeps the reason the gate held it for; so does a close an approval left
+  // for its card (12-H), which the manager has not decided. In the approved
+  // phase any other unapproved held row is one the manager left out.
+  const leftForCard = new Set(leftForCardOf(row.output));
   const heldReasonFor = (index: number): string => {
     const verdict = verdicts[index];
     if (verdict.disposition === 'refused') return verdict.reason;
-    if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
+    if (verdict.disposition === 'held' && (row.applyPhase === 'auto' || leftForCard.has(index))) {
+      return verdict.reason;
+    }
     return HELD_NOT_APPROVED;
   };
   // A row the apply reported before it stopped is kept as it reported (P4-2).
@@ -6900,7 +7043,7 @@ export function interruptedApplyLedger(
       }),
     };
   });
-  return { output: withoutApplyProgress(output), applied };
+  return { output: withoutLeftForCard(withoutApplyProgress(output)), applied };
 }
 
 /**
