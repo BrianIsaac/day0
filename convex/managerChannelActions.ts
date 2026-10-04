@@ -278,33 +278,48 @@ export const requestDecision = internalAction({
   },
 });
 
+/** Why a claimed edit was not made: the card no longer allows `chat.update` on the manager DM. */
+const CANNOT_EDIT_REASON = 'the chat card no longer allows the edit (chat.update)';
+
 /**
  * Mark a decided request so in its own message in the manager DM, once, by
  * editing it to end with how it was decided (M finding 3). Internal; the
  * decide paths schedule it. A card that does not allow `chat.update` leaves
  * the request as it was sent; a failed edit is logged and not tried again,
- * since the decision itself already stands.
+ * since the decision itself already stands. The edit's result is recorded on
+ * the decision (`closedAt` or `closeFailure`) under the claim it was made
+ * with, so the lease sweep (12-W) reads only a claim that died unrecorded.
  */
 export const closeDecisionRequest = internalAction({
   args: { workItemId: v.id('workItems'), decisionId: v.string() },
   handler: async (ctx, args): Promise<{ closed: boolean }> => {
     const prepared = await ctx.runMutation(internal.work.prepareRequestClose, args);
     if (!prepared.prepared) return { closed: false };
+    const claim = { ...args, claimedAt: prepared.claimedAt };
     const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
-    if (!action) return { closed: false };
+    if (!action) {
+      await ctx.runMutation(internal.work.recordRequestClose, {
+        ...claim,
+        failure: CANNOT_EDIT_REASON,
+      });
+      return { closed: false };
+    }
     try {
       await applyManagerAction(ctx, args.workItemId, prepared, action, {
         requestEdit: { channel: prepared.channel, ts: prepared.ts },
       });
-      return { closed: true };
     } catch (error) {
+      const reason = safeFailureMessage(error, '', 'the edit did not land');
       log.warn('the decided request could not be marked in the manager DM; the decision stands', {
         workItemId: args.workItemId,
         decisionId: args.decisionId,
-        reason: safeFailureMessage(error, '', 'the edit did not land'),
+        reason,
       });
+      await ctx.runMutation(internal.work.recordRequestClose, { ...claim, failure: reason });
       return { closed: false };
     }
+    await ctx.runMutation(internal.work.recordRequestClose, { ...claim, closedAt: Date.now() });
+    return { closed: true };
   },
 });
 

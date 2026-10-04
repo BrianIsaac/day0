@@ -4076,10 +4076,12 @@ export const prepareRequestClose = internalMutation({
       payload: { workItemId: row._id, decisionId: decision.id },
       createdAt: Date.now(),
     });
-    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: Date.now() } });
+    const claimedAt = Date.now();
+    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: claimedAt } });
     const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
     return {
       prepared: true as const,
+      claimedAt,
       agentId: row.agentId,
       agentName: agent.name,
       requestRunId,
@@ -4090,6 +4092,52 @@ export const prepareRequestClose = internalMutation({
       ts: decision.ts,
       text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
     };
+  },
+});
+
+/** The most of a close edit's failure a decision keeps. */
+const CLOSE_FAILURE_KEPT = 240;
+
+/**
+ * Record the result of the one edit that marks a decided request: when it landed, or why it did
+ * not (wave 12, 12-M; N-3). Internal; the close action's, once, after its provider call. Fenced
+ * on the request's code, on the claim the edit was made under and on no result yet: the
+ * five-minute sweep (12-W) settles a claim that lapsed with no result by writing
+ * `closeFailure` under the same fence, so a result that arrives after it, or after a newer
+ * request took the row's `decision`, writes nothing.
+ *
+ * @returns Whether the result was written.
+ */
+export const recordRequestClose = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    claimedAt: v.number(),
+    closedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if ((args.closedAt === undefined) === (args.failure === undefined)) {
+      throw new Error('a close records exactly one of closedAt and failure');
+    }
+    const decision = (await ctx.db.get(args.workItemId))?.decision;
+    if (
+      decision?.id !== args.decisionId ||
+      decision.closeClaimedAt !== args.claimedAt ||
+      decision.closedAt !== undefined ||
+      decision.closeFailure !== undefined
+    ) {
+      return false;
+    }
+    await ctx.db.patch(args.workItemId, {
+      decision: {
+        ...decision,
+        ...(args.closedAt !== undefined
+          ? { closedAt: args.closedAt }
+          : { closeFailure: redactTokenShapes(args.failure ?? '').slice(0, CLOSE_FAILURE_KEPT) }),
+      },
+    });
+    return true;
   },
 });
 

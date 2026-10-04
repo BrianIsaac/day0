@@ -573,6 +573,94 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
     expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
   });
 
+  it('records when the edit landed, so the lease sweep never reads the claim as open', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    await harness.action(internal.managerChannelActions.closeDecisionRequest, {
+      workItemId,
+      decisionId,
+    });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closeClaimedAt).toEqual(expect.any(Number));
+    expect(decision?.closedAt).toEqual(expect.any(Number));
+    expect(decision?.closeFailure).toBeUndefined();
+  });
+
+  it('records why the edit failed, once, and does not try it again', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        const refused = input.href.endsWith('/chat.update');
+        return new Response(
+          JSON.stringify(
+            refused ? { ok: false, error: 'cant_update_message' } : { ok: true, ts: 'provider-1' },
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: false });
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closedAt).toBeUndefined();
+    expect(decision?.closeFailure).toContain('cant_update_message');
+    expect(decision?.closeFailure?.length).toBeLessThanOrEqual(240);
+  });
+
+  it('writes no result for a claim the lease sweep already settled', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    const claim = await harness.mutation(internal.work.prepareRequestClose, {
+      workItemId,
+      decisionId,
+    });
+    expect(claim.prepared).toBe(true);
+    const claimedAt = claim.prepared ? claim.claimedAt : 0;
+    await harness.run(async (ctx): Promise<void> => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        decision: { ...row!.decision!, closeFailure: "the edit's claim lapsed with no result" },
+      });
+    });
+    await expect(
+      harness.mutation(internal.work.recordRequestClose, {
+        workItemId,
+        decisionId,
+        claimedAt,
+        closedAt: Date.now(),
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.work.recordRequestClose, {
+        workItemId,
+        decisionId,
+        claimedAt: claimedAt - 1,
+        failure: 'late',
+      }),
+    ).resolves.toBe(false);
+    const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
+    expect(decision?.closedAt).toBeUndefined();
+    expect(decision?.closeFailure).toBe("the edit's claim lapsed with no result");
+  });
+
   it('leaves the request as sent when the card does not allow chat.update', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
