@@ -5,6 +5,7 @@ import { httpAction, internalMutation, internalQuery, type MutationCtx } from '.
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { resolveManagerReply } from './work';
+import { isManagerChannel } from './workLoop';
 import {
   bridgeSecretMatches,
   decisionButtonsFor,
@@ -87,7 +88,10 @@ const pressValidator = v.object({
   action: v.object({ action_id: v.string(), value: v.optional(v.string()) }),
 });
 
-/** Whether a press was made on the message a code's request (or its replaced one) is in. */
+/**
+ * Whether a press was made on the message of the request its code names, live or replaced: a
+ * button decides only the request whose message carries it.
+ */
 async function pressedOnRequest(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
@@ -103,16 +107,18 @@ async function pressedOnRequest(
     .query('replacedDecisionRequests')
     .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', code))
     .first();
-  // A code no request carries is answered as an unknown code, as a typed one is.
-  return replaced === null || replaced.ts === messageTs;
+  // Day0's buttons carry one request's code on that request's own message: a batch code or a
+  // code no request carries came from a message Day0 did not post with buttons, and decides nothing.
+  return replaced !== null && replaced.ts === messageTs;
 }
 
 /**
  * Internal: decide one press exactly as a typed reply is decided (wave 12, 12-M): through
  * {@link resolveManagerReply}, the same checks and the same record, keyed by the press's own
  * timestamp so a redelivered envelope is the same press. First it holds the press to the card it
- * came through: the app that carried it, the workspace, the manager's DM and the request's own
- * message. Writes the decision, its events and its acknowledgement as a reply does, or a
+ * came through: a card the decision poll would read now (connected, its access running, the
+ * manager's ids known), the app that carried it, the workspace, the manager's DM and the request's
+ * own message. Writes the decision, its events and its acknowledgement as a reply does, or a
  * `work.decision-ignored` event saying why nothing was decided.
  */
 export const resolvePress = internalMutation({
@@ -136,6 +142,10 @@ export const resolvePress = internalMutation({
       });
       return { status: 'ignored' as const, reason };
     };
+    // The decision poll reads only a card that can be asked through now; a press is held to it too.
+    if (!isManagerChannel(surface) || accessEnded(surface, Date.now())) {
+      return await ignored('the card takes no decisions now');
+    }
     if (surface.provisioning?.appId !== args.press.appId) {
       return await ignored('pressed in another app');
     }

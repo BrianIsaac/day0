@@ -327,6 +327,71 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
     );
   });
 
+  it('decides nothing on a press outside the manager DM or from another workspace', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness);
+    const elsewhere = blockActions(seeded) as {
+      container: Record<string, string>;
+      team: Record<string, string>;
+    };
+    await expect(
+      (
+        await press(harness, seeded, {
+          ...elsewhere,
+          container: { ...elsewhere.container, channel_id: 'C0PUBLIC' },
+        })
+      ).json(),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'pressed outside the manager DM' });
+    await expect(
+      (await press(harness, seeded, { ...elsewhere, team: { id: 'T0OTHER' } })).json(),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'pressed in another workspace' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId)))?.state).toBe(
+      'plan-pending',
+    );
+  });
+
+  it('decides nothing on a press of a batch code, which no Day0 button carries', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('decisionBatches', {
+        agentId: seeded.agentId,
+        id: 'bt7xyz',
+        surfaceSlug: 'team-chat',
+        channel: 'D0MANAGER',
+        members: [],
+        requestedAt: 1,
+      });
+    });
+    // A message another writer put in the DM, with a button naming the batch's code.
+    const forged = await press(
+      harness,
+      seeded,
+      blockActions(seeded, { code: 'bt7xyz', messageTs: '1787768888.000100' }),
+    );
+    expect(await forged.json()).toMatchObject({
+      status: 'ignored',
+      reason: 'pressed on another message',
+    });
+    const batch = await harness.run(async (ctx) => await ctx.db.query('decisionBatches').first());
+    expect(batch?.decidedAt).toBeUndefined();
+  });
+
+  it('decides nothing on a press through a card that can no longer take decisions, as the poll would not read it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(seeded.surfaceId, { expiresAt: Date.now() - 1_000 });
+    });
+    expect(await (await press(harness, seeded, blockActions(seeded))).json()).toMatchObject({
+      status: 'ignored',
+      reason: 'the card takes no decisions now',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId)))?.state).toBe(
+      'plan-pending',
+    );
+  });
+
   it('answers a press on a decided request with its decision, and decides nothing twice', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness);
