@@ -17,6 +17,12 @@ import {
 } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
+import {
+  isPaused,
+  isPauseReasonWithinBound,
+  PAUSE_REASON_TOO_LONG,
+  pauseReasonOf,
+} from '../src/work/pause';
 import { wakeQueuedWork } from './workLoop';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
@@ -774,5 +780,83 @@ export const setAutonomousActions = mutation({
     // On raises the cap without moving a row; the work queued at the old cap gets the new slots.
     if (args.on) await wakeQueuedWork(ctx, args.agentId);
     return { ok: true, autonomousActions: args.on, changed: true };
+  },
+});
+
+/** What a pause or a resume answers: whether the employee is paused now, and whether this call changed it. */
+interface PauseOutcome {
+  readonly ok: true;
+  readonly paused: boolean;
+  readonly changed: boolean;
+}
+
+/**
+ * Pause one employee (wave 12, 12-P; G1 / A15): it takes no intake and starts no step until the
+ * manager resumes it. Every decision it already asked stays answerable, from the dashboard, the
+ * typed code, a Slack button and the batch code; the step an approval queues waits for the resume.
+ * A step already under way runs to its next gate, where the pause holds it (`stepMayRun`).
+ *
+ * Public: the anonymous-caller guard first, then real mode only (the hosted office's steps are
+ * driven by the page, not the server), then the owner's guard. Writes `pausedAt`, `pausedBy` (the
+ * caller's owner key) and `pauseReason` (trimmed, absent when blank) and an `agent.paused` event;
+ * pausing a paused employee keeps the first pause and records nothing.
+ *
+ * @throws ConvexError with {@link PAUSE_REASON_TOO_LONG} past the reason's bound.
+ */
+export const pause = mutation({
+  args: { agentId: v.id('agents'), reason: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<PauseOutcome> => {
+    const caller = await getCallerOrThrow(ctx);
+    assertRealMode('Pause');
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const reason = pauseReasonOf(args.reason);
+    if (reason !== undefined && !isPauseReasonWithinBound(reason)) {
+      throw new ConvexError(PAUSE_REASON_TOO_LONG);
+    }
+    if (isPaused(agent)) return { ok: true, paused: true, changed: false };
+    const now = Date.now();
+    await ctx.db.patch(args.agentId, {
+      pausedAt: now,
+      pausedBy: caller.ownerKey,
+      pauseReason: reason,
+    });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agent.paused',
+      payload: reason === undefined ? {} : { reason },
+      createdAt: now,
+    });
+    return { ok: true, paused: true, changed: true };
+  },
+});
+
+/**
+ * Resume a paused employee (12-P): the pause's three fields cleared, an `agent.resumed` event,
+ * and in the same transaction one pass of the stalled-step sweep for this employee, so every step
+ * the pause held is queued again at once (`resumeAgentStepsInTransaction`).
+ *
+ * Public: the anonymous-caller guard first, then real mode only, then the owner's guard. Resuming
+ * an employee that is not paused records nothing.
+ */
+export const resume = mutation({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<PauseOutcome> => {
+    await getCallerOrThrow(ctx);
+    assertRealMode('Pause');
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    if (agent.pausedAt === undefined) return { ok: true, paused: false, changed: false };
+    const now = Date.now();
+    await ctx.db.patch(args.agentId, {
+      pausedAt: undefined,
+      pausedBy: undefined,
+      pauseReason: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agent.resumed',
+      payload: { pausedAt: agent.pausedAt },
+      createdAt: now,
+    });
+    return { ok: true, paused: false, changed: true };
   },
 });

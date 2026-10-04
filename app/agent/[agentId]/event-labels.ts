@@ -286,6 +286,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'agent.autonomy-changed': (payload) =>
     payload.to === true ? 'autonomous actions turned on' : 'autonomous actions turned off',
+  'agent.paused': (payload) => {
+    const reason = text(payload.reason);
+    return `paused by the manager${reason ? `: ${reason.replace(/[.!?]+$/, '')}` : ''}`;
+  },
+  'agent.resumed': 'resumed by the manager',
   'agent.retired': 'employee retired',
   'permission.granted': (payload) =>
     `${text(payload.scope) ?? 'a permission'} granted${text(payload.source) ? ` (${payload.source})` : ''}`,

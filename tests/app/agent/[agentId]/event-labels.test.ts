@@ -95,6 +95,18 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a pause and a resume, with the reason the manager gave (12-P)', (): void => {
+    expect([
+      eventLabel({ type: 'agent.paused', payload: { reason: 'Quarter close.' } }),
+      eventLabel({ type: 'agent.paused', payload: {} }),
+      eventLabel({ type: 'agent.resumed', payload: { pausedAt: 1 } }),
+    ]).toEqual([
+      'paused by the manager: Quarter close',
+      'paused by the manager',
+      'resumed by the manager',
+    ]);
+  });
+
   it('labels the eleven wave 3 types the review found printed raw (m37)', (): void => {
     const labels = [
       eventLabel({

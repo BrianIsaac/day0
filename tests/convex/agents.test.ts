@@ -11,6 +11,7 @@ import { autonomousActionsOn } from '../../src/work/autonomy';
 import { evaluateCandidate, type EvalContext } from '../../src/work/evaluate';
 import { INTERRUPTED_APPLY_REASON } from '../../src/work/reconciliation';
 import { STOPPED_PREFIX } from '../../src/work/stop';
+import { PAUSE_REASON_MAX_CHARS, PAUSE_REASON_TOO_LONG } from '../../src/work/pause';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
@@ -2640,5 +2641,126 @@ describe('the anonymous-caller guard before the mode (12-G)', (): void => {
     await expect(
       harness.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
     ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe('the per-employee pause (12-P)', (): void => {
+  /** An active employee of the fixture's owner, with nothing paused. */
+  async function seedActive(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  async function agentEvents(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<Array<[string, unknown]>> {
+    return (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect(),
+      )
+    ).map((event) => [event.type, event.payload]);
+  }
+
+  it('lets the owner pause with a reason and resume, with an event for each change and none for a repeat', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.pause, { agentId, reason: '  Quarter close.  ' }),
+    ).resolves.toEqual({ ok: true, paused: true, changed: true });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toMatchObject({
+      pausedAt: 1_000_000,
+      pausedBy: 'owner',
+      pauseReason: 'Quarter close.',
+    });
+    // A second press keeps the first pause, its time and its reason.
+    vi.setSystemTime(2_000_000);
+    await expect(owner.mutation(api.agents.pause, { agentId, reason: 'Other' })).resolves.toEqual({
+      ok: true,
+      paused: true,
+      changed: false,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.pausedAt).toBe(1_000_000);
+
+    await expect(owner.mutation(api.agents.resume, { agentId })).resolves.toEqual({
+      ok: true,
+      paused: false,
+      changed: true,
+    });
+    const resumed = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(resumed).not.toHaveProperty('pausedAt');
+    expect(resumed).not.toHaveProperty('pausedBy');
+    expect(resumed).not.toHaveProperty('pauseReason');
+    await expect(owner.mutation(api.agents.resume, { agentId })).resolves.toEqual({
+      ok: true,
+      paused: false,
+      changed: false,
+    });
+
+    expect(await agentEvents(harness, agentId)).toEqual([
+      ['agent.paused', { reason: 'Quarter close.' }],
+      ['agent.resumed', { pausedAt: 1_000_000 }],
+    ]);
+  });
+
+  it('stores no reason for a blank one, and refuses one past the bound', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.pause, { agentId, reason: 'x'.repeat(PAUSE_REASON_MAX_CHARS + 1) }),
+    ).rejects.toThrow(PAUSE_REASON_TOO_LONG);
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).not.toHaveProperty(
+      'pausedAt',
+    );
+    await owner.mutation(api.agents.pause, { agentId, reason: '   ' });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).not.toHaveProperty(
+      'pauseReason',
+    );
+    expect(await agentEvents(harness, agentId)).toEqual([['agent.paused', {}]]);
+  });
+
+  it('refuses a stranger and an anonymous caller, and the mock deployment after the guard', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    for (const call of [api.agents.pause, api.agents.resume]) {
+      await expect(
+        harness.withIdentity(managerIdentity('intruder')).mutation(call, { agentId }),
+      ).rejects.toThrow('This employee is not yours.');
+      await expect(harness.mutation(call, { agentId })).rejects.toMatchObject(await guardRefusal());
+    }
+    useSurfaceMode('mock');
+    const hosted = convexTest(schema, allConvexModules());
+    const hostedAgent = await seedActive(hosted);
+    for (const call of [api.agents.pause, api.agents.resume]) {
+      await expect(hosted.mutation(call, { agentId: hostedAgent })).rejects.toMatchObject(
+        await guardRefusal(),
+      );
+      await expect(
+        hosted.withIdentity(managerIdentity()).mutation(call, { agentId: hostedAgent }),
+      ).rejects.toThrow('Pause is a local real-mode feature; this deployment runs in mock mode.');
+    }
+    expect(await agentEvents(harness, agentId)).toEqual([]);
+    expect(await agentEvents(hosted, hostedAgent)).toEqual([]);
   });
 });
