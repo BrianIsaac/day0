@@ -122,7 +122,8 @@ services:
     # `nango` is the token store's private network (see `nango-server`): the
     # backend is the one service that asks Nango for a token. It is created
     # whether or not that component runs, and carries nothing until it does.
-    networks: ['default', 'nango']
+    # `slack-socket` is the Socket Mode bridge's (see `slack-socket`), the same way.
+    networks: ['default', 'nango', 'slack-socket']
     ports:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_PORT:-3210}:3210'
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
@@ -450,6 +451,8 @@ services:
     profiles: ['test']
     image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
     command: ['node', '/app/server.js']
+    # The bridge dials the fake's Socket Mode URLs as it dials Slack's: on its way out.
+    networks: ['default', 'slack-socket-egress']
     environment:
       - FAKE_SLACK_PORT=8090
       # Addresses that are people of their own besides the one manager (RM2).
@@ -469,6 +472,47 @@ services:
       interval: 10s
       timeout: 5s
       start_period: 10s
+
+  # The Slack socket bridge (slack-socket/, wave 12 12-M, decision RM7): Approve
+  # and Reject buttons on a decision request reach Day0 over Slack's Socket
+  # Mode, a WebSocket this service dials out, so nothing inbound is opened to
+  # the internet (Q13). It holds one connection per employee app that has an
+  # app-level token, acknowledges each press at once and hands it to the
+  # backend's internal route (`/slack-socket/press` on the site port),
+  # presenting DAY0_SOCKET_BRIDGE_SECRET, which setup mints into .env.local and
+  # pushes to the deployment. The app-level tokens never reach it: the backend
+  # opens each connection and answers only the short-lived URL.
+  #
+  # It reaches the backend on `slack-socket` (internal, no route out) and Slack
+  # on `slack-socket-egress`, which nothing else joins but fake Slack on a
+  # review bed. It publishes nothing; its health check says whether it read the
+  # app list. Real-mode setup starts it; without it requests carry the typed
+  # code alone, which always decides.
+  slack-socket:
+    profiles: ['slack-socket']
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+    command: ['node', '/app/server.js']
+    networks: ['slack-socket', 'slack-socket-egress']
+    user: node
+    read_only: true
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+    stop_grace_period: 5s
+    # No depends_on the backend: the backend is `real`'s and a command naming this profile alone
+    # would refuse the file. The bridge reads the app list again every 30 s until it answers.
+    environment:
+      - DAY0_SOCKET_BRIDGE_SECRET=${DAY0_SOCKET_BRIDGE_SECRET:-}
+      - DAY0_SOCKET_BACKEND_URL=http://backend:3211
+    volumes:
+      - ./slack-socket:/app:ro
+    healthcheck:
+      test: ['CMD', 'node', '/app/healthcheck.js']
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
 
   # The test OpenID Connect issuer (fake-oidc/, decision S3): discovery, keys,
   # PKCE codes and rotating refresh tokens for a fixed set of test people, so a
@@ -712,3 +756,8 @@ networks:
     internal: true
   # Nango's own way out, to the providers' token endpoints; nothing else joins it.
   nango-egress:
+  # The Slack socket bridge's private network to the backend (no route out), and
+  # its own way out to Slack's Socket Mode hosts (see `slack-socket`).
+  slack-socket:
+    internal: true
+  slack-socket-egress:
