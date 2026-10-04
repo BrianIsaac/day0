@@ -5459,7 +5459,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
         workItemId,
         plan: { summary: 'Reconcile it.', steps: ['reconcile'] },
       }),
-    ).resolves.toEqual({ stored: false });
+    ).resolves.toEqual({ stored: false, movedOn: 'cancelled' });
     expect((await onlyRow(harness)).plan).toBeUndefined();
   });
 
