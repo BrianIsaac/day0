@@ -94,13 +94,16 @@ describe('OfficeWorld', (): void => {
     expect(html).not.toMatch(/title="[^"]* - /);
   });
 
-  it('draws a paused employee with open work away from its desk, its face marked paused as the roster is (12-P)', (): void => {
+  it('holds a paused employee still at its desk, its face and its name saying paused as the roster does (12-P)', (): void => {
     const paused = { ...mira, paused: true } as RosterRow;
-    const html = renderToStaticMarkup(<OfficeWorld agents={[paused]} settled />);
-    expect(html).toContain('title="Mira, paused"');
+    const pausedIdle = { ...idle, paused: true } as RosterRow;
+    const html = renderToStaticMarkup(<OfficeWorld agents={[paused, pausedIdle]} settled />);
+    expect(html).toContain('title="Mira, paused at a desk"');
+    expect(html).toContain('title="Aiko, paused at a desk"');
     expect(html).not.toContain('working at a desk');
-    expect(html).not.toContain('day0-office-agent-seated');
+    expect(html).not.toContain('day0-office-agent-roaming');
     expect(html).toMatch(/<div [^>]*title="Mira, paused"[^>]*aria-hidden="true"/);
+    expect(html).toMatch(/Mira<span class="sr-only">, paused<\/span>/);
   });
 
   it('sets the name plate, the reads pill, the plate and the count at the 12 px floor', (): void => {
