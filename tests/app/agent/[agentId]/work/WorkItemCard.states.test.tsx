@@ -690,6 +690,18 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
       ),
     ).text();
     expect(pip).toContain('Partly done, in Mira’s own words');
+    // The one line of why is a sentence, not a list of one.
+    const pipCard = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    );
+    const why = [...pipCard.container.querySelectorAll('q')].find((quote) =>
+      quote.textContent?.includes('two need the CRM export'),
+    );
+    expect(why?.closest('li')).toBeNull();
     expect(pip).toContain('One of the three deals is reconciled; two need the CRM export.');
     expect(pip).not.toContain('Not done, in');
     const nell = card(
@@ -711,7 +723,10 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
   it('sets the list of what was not done in a block, never a list inside a paragraph (a hydration error on the bed)', (): void => {
     const view = card({
       ...DRAWN.landed,
-      output: { ...(DRAWN.landed.output as object), draft: QUILL_COMMENT },
+      output: {
+        ...(DRAWN.landed.output as object),
+        draft: `${QUILL_COMMENT} Nothing was reconciled.`,
+      },
     } as unknown as Doc<'workItems'>);
     expect(view.container.querySelector('p ul, p li')).toBeNull();
     expect(

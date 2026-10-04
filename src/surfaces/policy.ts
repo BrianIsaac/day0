@@ -49,7 +49,7 @@ export const HELD_WITHHELD_TRANSITION =
  * its own words said otherwise and it answered done again when asked (the tripwire, 12-D).
  */
 export const HELD_CLOSE_AGAINST_WORDS =
-  'ticket close the run answered done while its own words say otherwise; held for the manager';
+  'ticket close held for the manager: the run answered that the work is done, but its own words say otherwise';
 /** Why a write with no more specific class waits for the manager while the switch is off. */
 export const HELD_WRITE = 'write held for the manager';
 /** The outcome of a held action the manager did not approve. */

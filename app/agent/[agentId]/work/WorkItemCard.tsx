@@ -362,13 +362,19 @@ export function WorkItemCard({
             {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}, in {employeeName}’s own
             words:
           </Lead>
-          <ul className="mt-1.5 grid list-disc gap-1 pl-5 text-[15px]">
-            {notDone.statements.map((statement) => (
-              <li key={statement}>
-                <Quote>{statement}</Quote>
-              </li>
-            ))}
-          </ul>
+          {notDone.statements.length === 1 ? (
+            <p className="mt-1.5 text-[15px]">
+              <Quote>{notDone.statements[0]}</Quote>
+            </p>
+          ) : (
+            <ul className="mt-1.5 grid list-disc gap-1 pl-5 text-[15px]">
+              {notDone.statements.map((statement) => (
+                <li key={statement}>
+                  <Quote>{statement}</Quote>
+                </li>
+              ))}
+            </ul>
+          )}
         </Note>
       </ItemSection>
     ) : null;

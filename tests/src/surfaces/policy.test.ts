@@ -1862,6 +1862,12 @@ describe('a ticket close the tripwire sent to the manager (12-D)', (): void => {
     },
   };
 
+  it('says why in a sentence the card can lead with', (): void => {
+    expect(HELD_CLOSE_AGAINST_WORDS).toBe(
+      'ticket close held for the manager: the run answered that the work is done, but its own words say otherwise',
+    );
+  });
+
   it('is held for the manager under the switch, with its own reason, while the comment still applies on its own', (): void => {
     expect(
       reviewActions([comment('Audit note.', 'REVOPS-5'), done], [linear, slack], grants, now, {
