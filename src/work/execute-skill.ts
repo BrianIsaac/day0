@@ -63,6 +63,7 @@ import {
   withheldWithClaimedWrite,
   type HeldExternalItem,
 } from './claim-key';
+import { notDoneStatements, runOwnWords } from './not-done';
 import { escapeRegExp } from '../lib/regex';
 
 export { replyTargetLine };
@@ -439,7 +440,7 @@ function ticketClosureFromContract(
 function mockActionContract(contract: ProcedureContract): string {
   const closure = ticketClosureFromContract(contract);
   const ticketRule = closure
-    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}, or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open).`
+    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}, or when the approved plan keeps the ticket open (it says not to close it, or to leave or keep it open). Never use \`${closure.full}\` when your own draft, comment or message says any of the work was not done or could not be done: use \`${closure.partial}\` and say in the comment what is left.`
     : '  - For ticket-queue work, follow the candidate and loaded ticket procedure. Do not invent an originating-ticket status or audit requirement when both are silent.';
   return [
     '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
@@ -2459,6 +2460,7 @@ export function mockActionContractIssues(
   const explicitStatus = candidate.contentSummary.match(
     /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
   )?.[1];
+  const unfinished = notDoneStatements(runOwnWords(output));
   for (const trail of contract.trails) {
     if (!procedureTrailApplies(trail, candidate)) continue;
     const matchingDestination = matchingProcedureActions(trail, output, candidate).map(
@@ -2486,11 +2488,16 @@ export function mockActionContractIssues(
       continue;
     }
     if (trail.effect.statusTransition) {
+      const { full, partial } = trail.effect.statusTransition;
+      // The run's own words are the last word on whether the work was done: a run that says it
+      // could not do the work never closes the ticket, whatever the ask and the plan expected
+      // (the 4 October live demo; wave 12, 12-W).
       const expectedStatus =
-        explicitStatus ??
-        (approvedWorkIsPartial(candidate, plan)
-          ? trail.effect.statusTransition.partial
-          : trail.effect.statusTransition.full);
+        unfinished.length > 0
+          ? explicitStatus !== undefined && explicitStatus !== full
+            ? explicitStatus
+            : partial
+          : (explicitStatus ?? (approvedWorkIsPartial(candidate, plan) ? partial : full));
       if (
         !matchingDestination.some(
           (action) =>
@@ -2499,9 +2506,13 @@ export function mockActionContractIssues(
         )
       ) {
         // The status is named, so the one repair round knows what the approved work calls for.
+        const work =
+          unfinished.length > 0
+            ? `work its own words say was not done ("${unfinished[0]}")`
+            : `${approvedWorkIsPartial(candidate, plan) ? 'partial' : 'completed'} work`;
         issues.push(
           trail.effect.destination.kind === 'originating-reference'
-            ? `prescribed originating-reference transition does not match the ${approvedWorkIsPartial(candidate, plan) ? 'partial' : 'completed'} work: set ${trail.effect.statusTransition.argument} "${expectedStatus}"`
+            ? `prescribed originating-reference transition does not match the ${work}: set ${trail.effect.statusTransition.argument} "${expectedStatus}"`
             : 'prescribed trailing transition does not match the approved work',
         );
       }

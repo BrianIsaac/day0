@@ -99,6 +99,7 @@ import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../sr
 import { readSurfaceBearer } from './mcpOauthActions';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { reportedRow } from '../src/work/apply-progress';
+import { isClosingState, notDoneStatements, runOwnWords } from '../src/work/not-done';
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
@@ -170,6 +171,7 @@ import {
   isGateRefusal,
   isManagerDm,
   isStatusChange,
+  statusChangeTarget,
   needsStandingGrant,
   NOT_AUTOMATIC,
   mcpEndpointRefusal,
@@ -1984,6 +1986,8 @@ export function dependentTransitionRefusal(args: {
   actions: readonly ExecutionOutput['actions'][number][];
   planStepOutcomes: readonly PlanStepOutcome[];
   initialFailure?: string;
+  /** The closing set's draft, read with its messages as the run's own words. */
+  draft?: string;
 }): string | undefined {
   const statusChange = args.actions.some((action): boolean => {
     const parsed = parseSurfaceAction(action);
@@ -1992,6 +1996,19 @@ export function dependentTransitionRefusal(args: {
   if (args.initialFailure) {
     return statusChange
       ? 'dependent phase cannot change ticket state after a prerequisite failure'
+      : undefined;
+  }
+  // A set whose own words say the work was not done never closes the ticket, and leaving the
+  // state alone is its account of why (the 4 October live demo; wave 12, 12-W).
+  const unfinished = notDoneStatements(runOwnWords({ draft: args.draft, actions: args.actions }));
+  if (unfinished.length > 0) {
+    const closing = args.actions.flatMap((action): string[] => {
+      const parsed = parseSurfaceAction(action);
+      const state = parsed.ok ? statusChangeTarget(parsed.action) : undefined;
+      return state !== undefined && isClosingState(state) ? [state] : [];
+    });
+    return closing.length > 0
+      ? `dependent phase sets the ticket to ${closing[0]} while its own words say the work was not done ("${unfinished[0]}"): leave the ticket's state as it is and record the step as blocked`
       : undefined;
   }
   if (
@@ -2585,6 +2602,7 @@ export const authorDependentActions = internalAction({
           actions: candidateOutput.actions,
           planStepOutcomes: candidateOutput.planStepOutcomes,
           initialFailure,
+          draft: candidateOutput.draft,
         });
         if (transitionRefusal) issues.push(transitionRefusal);
         return issues;
@@ -2743,6 +2761,7 @@ export const authorDependentActions = internalAction({
         actions: held.actions,
         planStepOutcomes: held.planStepOutcomes,
         initialFailure,
+        draft: held.draft,
       });
       if (repairedTransitionRefusal)
         throw new ClosingGateRefusal([repairedTransitionRefusal], held);

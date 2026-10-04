@@ -1321,6 +1321,58 @@ describe('work action completion evidence', (): void => {
     expect(blockedPlanReason(outcomes)).toBeUndefined();
   });
 
+  it('never closes a ticket the closing set’s own words say was not done, and lets it leave the state alone (the 4 October demo)', (): void => {
+    const plan = {
+      summary: 'Reconcile the three deals, then close.',
+      steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+      obligations: obligations(
+        [
+          { kind: 'read', reads: ['linear'] },
+          { kind: 'write', writes: ['linear'] },
+        ],
+        'promised',
+        2,
+      ),
+    };
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-204',
+          body: "I can't find the three October deals named anywhere in the tracker.",
+        }),
+      },
+    };
+    const done = skillOutput.actions[1];
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment, done], planStepOutcomes: satisfied }),
+    ).toBe(
+      'dependent phase sets the ticket to Done while its own words say the work was not done ("I can\'t find the three October deals named anywhere in the tracker."): leave the ticket\'s state as it is and record the step as blocked',
+    );
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
+    ).toBeUndefined();
+    // A draft that says so counts as the run's own words too.
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [skillOutput.actions[0], done],
+        planStepOutcomes: satisfied,
+        draft: 'Nothing was reconciled: the deal list is not in the tracker.',
+      }),
+    ).toContain('its own words say the work was not done');
+  });
+
   it('reads the transition from the declared fields, never from the wording of a step', (): void => {
     const comment = skillOutput.actions[0];
     const satisfied = [
@@ -7292,6 +7344,17 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
     tool: REFUSED_CREATE_RUN.actions[7].tool,
     args: { ...REFUSED_CREATE_RUN.actions[7].args },
   } as ExecutionOutput['actions'][number];
+  /** The recorded thread reply, saying what a set that files and closes the ticket lands. */
+  const landedThreadReply = {
+    tool: threadReply.tool,
+    args: {
+      ...threadReply.args,
+      body: JSON.stringify({
+        ...JSON.parse(String(threadReply.args.body)),
+        text: "Pipeline tile refreshed to the standup figure: the tile now shows 74%, audit line 'Last updated by revops at 2026-09-18 21:44:11 UTC'. The Linear audit ticket for this ask is filed, commented and closed.",
+      }),
+    },
+  } as ExecutionOutput['actions'][number];
 
   async function seedAsk(harness: Harness): Promise<Seeded> {
     const seeded = await seed(
@@ -7396,7 +7459,10 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
             }),
           },
         },
-        threadReply,
+        // The recorded reply said the closure was pending (its create had failed); this set files
+        // and closes the ticket, so its reply says what it lands, or Day0 refuses the Done its own
+        // words contradict (wave 12, 12-W).
+        landedThreadReply,
         {
           tool: 'mcp.call',
           args: {
