@@ -3151,8 +3151,8 @@ export const reorient = action({
 // ---------- The handover's cut (transfer plan 6.3; D5 (a), A25) ----------
 
 /**
- * The credentials surfaces bind: each connection credential and each Slack app's client secret,
- * and, through each bound row, the refresh token paired with it and the client secret of the app
+ * The credentials surfaces bind: each connection credential, each Slack app's client secret and
+ * app-level token, and, through each bound row, the refresh token paired with it and the client secret of the app
  * it was issued to (11-AK item 1), so a retire or a handover that ends a token ends its pair and
  * its app's secret with it. A pointer whose row is gone is still named, as the card's own are.
  *
@@ -3173,6 +3173,8 @@ export async function credentialsBoundBy(
   for (const surface of surfaces) {
     add(surface.credentialId);
     add(surface.provisioning?.clientSecretCredentialId);
+    // The app-level token a person landed for the app's Socket Mode connection (12-M) ends with it.
+    add(surface.provisioning?.appLevelTokenCredentialId);
   }
   for (let id = unread.pop(); id !== undefined; id = unread.pop()) {
     const row = await db.get(id);
