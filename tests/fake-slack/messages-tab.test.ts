@@ -108,8 +108,11 @@ describe('fake Slack: the messages tab', (): void => {
 
   it('delivers the manager’s message to an app whose manifest opens the tab, read by the DM’s history', async (): Promise<void> => {
     const { appId, bot } = await installedApp(WRITABLE);
+    const before = Date.now() / 1000;
     const sent = await proof('/proof/manager-message', { appId, text: 'approve uacgcm' });
     expect(sent).toMatchObject({ ok: true, channel: 'D_DAY0_MANAGER' });
+    // Stamped now, as Slack stamps a message: Day0 ignores a reply older than its employee.
+    expect(Number(sent.ts)).toBeGreaterThanOrEqual(Math.floor(before));
     const history = await api('conversations.history', bot, { channel: 'D_DAY0_MANAGER' });
     expect(history.messages).toEqual([
       { type: 'message', user: 'U_DAY0_MANAGER', text: 'approve uacgcm', ts: sent.ts },

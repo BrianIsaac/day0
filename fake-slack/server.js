@@ -306,7 +306,8 @@ const server = createServer(async (request, response) => {
     if (typeof text !== 'string' || text.trim() === '') {
       return json(response, 400, { ok: false, error: 'no_text' });
     }
-    const ts = `1787817700.${String(managerMessages.length + 1).padStart(6, '0')}`;
+    // Stamped now, as Slack stamps it: Day0 reads no reply older than its employee.
+    const ts = `${Math.floor(Date.now() / 1000)}.${String(managerMessages.length + 1).padStart(6, '0')}`;
     managerMessages.push({
       appId: app.appId,
       channel: 'D_DAY0_MANAGER',
