@@ -248,7 +248,7 @@ describe("the charter drafter's copy rules (the v0.15.0 walk's finding 4)", (): 
   it('asks for plain punctuation in every field and carries no em dash to copy', (): void => {
     expect(CHARTER_SYSTEM_PROMPT).not.toContain('\u2014');
     expect(CHARTER_SYSTEM_PROMPT).toContain(
-      'Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses. The rule holds in every text field you return.',
+      'Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.',
     );
   });
 

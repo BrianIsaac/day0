@@ -11,9 +11,9 @@ describe('the house copy rules a drafting prompt states', (): void => {
     );
   });
 
-  it('holds a structured draft to the rule in every text field it returns', (): void => {
+  it('holds a structured draft to plain, complete punctuation and British spelling in every field (the 12-FX bed: commas dropped, "Prioritize")', (): void => {
     expect(PLAIN_PUNCTUATION_IN_EVERY_FIELD).toBe(
-      `${PLAIN_PUNCTUATION_RULE} The rule holds in every text field you return.`,
+      'Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.',
     );
   });
 

@@ -276,7 +276,7 @@ describe("the planner's copy rules (the v0.15.0 walk's finding 4)", (): void => 
     ]) {
       expect(prompt).not.toContain('\u2014');
       expect(prompt).toContain(
-        '  - Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses. The rule holds in every text field you return.',
+        '  - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.',
       );
     }
   });
@@ -285,8 +285,8 @@ describe("the planner's copy rules (the v0.15.0 walk's finding 4)", (): void => 
 describe('frozen planner text', (): void => {
   // The hosted demo plans in mock mode from the charter and the candidate
   // alone; both halves of that prompt are byte-for-byte what the recorded
-  // beds saw, but for the punctuation rule the v0.15.0 walk's finding 4
-  // added to the system prompt on 4 October.
+  // beds saw, but for the copy rules the v0.15.0 walk's finding 4 added to
+  // the system prompt on 4 October.
   it('keeps the mock planner system prompt byte-identical', (): void => {
     expect(planSystemPrompt(false, 'mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
@@ -298,7 +298,7 @@ describe('frozen planner text', (): void => {
         - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.
         - Describe review and approval according to the live action mode; never assume the supervised mode.
         - 2-5 short concrete steps.
-        - Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses. The rule holds in every text field you return.
+        - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
 
       Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it (\"waits for your approval\"), never by the name of a mode."
