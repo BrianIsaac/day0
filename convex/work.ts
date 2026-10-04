@@ -135,6 +135,7 @@ import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { decisionChannelOf } from '../src/work/decision-channel';
 
 /**
  * How long an apply may go unfinished before the recovery timer acts on it: an
@@ -3342,14 +3343,7 @@ export const prepareDecisionRequest = internalMutation({
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
       .collect();
-    const chat = surfaceRows
-      .filter(askableChannel)
-      .sort(
-        (left, right) =>
-          (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
-            (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) ||
-          left.createdAt - right.createdAt,
-      )[0];
+    const chat = decisionChannelOf(surfaceRows.filter(askableChannel));
     if (!chat?.managerDmChannelId) {
       return { prepared: false as const, reason: 'no connected manager chat channel' };
     }

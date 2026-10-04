@@ -4,7 +4,12 @@ import type { QueryCtx } from './_generated/server';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
 import { isEvaluationAgent } from './metrics';
-import { holdsLiveStepClaim, OPEN_WORK_STATES, PARKED_WORK_STATES } from './workLoop';
+import {
+  holdsLiveStepClaim,
+  isManagerChannel,
+  OPEN_WORK_STATES,
+  PARKED_WORK_STATES,
+} from './workLoop';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEventOf } from '../src/events/contract';
 import {
@@ -13,7 +18,10 @@ import {
   type OneToOnePhase,
 } from '../src/agent/one-to-one-phase';
 import { agentZone, dayKey, dayStart } from '../src/lib/zone';
+import { socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { autonomousActionsOn } from '../src/work/autonomy';
+import { decisionChannelOf, decisionsReachOf } from '../src/work/decision-channel';
+import { accessEnded } from '../src/work/surface-access';
 import {
   NEEDS_MANAGER_STATES,
   parkedRowNeedsManager,
@@ -47,6 +55,9 @@ const ROSTER_LIMIT = 20;
  * skipped inside this window rather than taking one of the twenty places.
  */
 export const ROSTER_SCAN_LIMIT = 100;
+
+/** The most surfaces of one employee the roster reads for its decision channel. */
+const SURFACE_READ_LIMIT = 100;
 
 /**
  * Bound on each open-state read. Open rows are held to the work-in-progress
@@ -154,6 +165,11 @@ export const rosterRowValidator = v.object({
   needsYou: v.number(),
   docSourceCount: v.number(),
   landedThisMonth: landedThisMonthValidator,
+  /** Where the employee's decisions reach the manager (12-M; H D6): a DM, buttons or not, or here. */
+  decisionsReach: v.union(
+    v.object({ kind: v.literal('dashboard') }),
+    v.object({ kind: v.literal('dm'), channel: v.string(), buttons: v.boolean() }),
+  ),
 });
 
 /** One employee as the landing page lists it. */
@@ -351,13 +367,18 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
     .withIndex('by_user', (q) => q.eq('userId', ownerKey))
     .take(DOC_SOURCE_READ_LIMIT);
   const now = Date.now();
+  const bridgeConfigured = socketBridgeConfigured();
   return await Promise.all(
     agents.map(async (agent): Promise<RosterRow> => {
-      const [charter, counts, landed, session] = await Promise.all([
+      const [charter, counts, landed, session, surfaces] = await Promise.all([
         charterStanding(ctx, agent._id),
         workCounts(ctx, agent._id),
         landedThisMonth(ctx, agent, now),
         newestSession(ctx, agent._id),
+        ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+          .take(SURFACE_READ_LIMIT),
       ]);
       return {
         agentId: agent._id,
@@ -373,6 +394,12 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
         docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
         landedThisMonth: landed,
+        decisionsReach: decisionsReachOf(
+          decisionChannelOf(
+            surfaces.filter((surface) => isManagerChannel(surface) && !accessEnded(surface, now)),
+          ),
+          bridgeConfigured,
+        ),
       };
     }),
   );
