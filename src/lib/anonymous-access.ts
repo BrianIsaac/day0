@@ -11,7 +11,7 @@
  *
  * The rule for a route under `app/api/`: a request with no session reaches a handler only where
  * {@link NO_SESSION_ROUTES} names it, and the handler then answers nothing but a refusal, or the
- * work the secret it carries authorises.
+ * work the secret it carries authorises; every other handler refuses such a request itself too.
  *
  * `tests/convex/anonymous-caller.test.ts` holds every function the generated `api` names to the
  * first rule and `tests/app/api/anonymous-routes.test.ts` holds every route file to the second,
@@ -109,26 +109,46 @@ export type NoSessionAdmission =
   /** The handler refuses a request with no session itself; the proxy lets it reach it. */
   | 'handler-refuses';
 
+/**
+ * How a deployment signs people in, as the proxy reads it: Clerk (the hosted demo), the local
+ * key (`pnpm dev`), the company sign-in (customer-local), or none configured at all (Clerk mode
+ * with no publishable key, where the proxy lets every request through and each handler is the
+ * only lock).
+ */
+export type SignInMode = 'clerk' | 'local-key' | 'company' | 'no-sign-in';
+
+/** The modes the proxy is a lock in: every one but a deployment with no sign-in configured. */
+export const GATED_SIGN_IN_MODES = [
+  'clerk',
+  'local-key',
+  'company',
+] as const satisfies readonly SignInMode[];
+
 /** A route whose handler a request with no session reaches in at least one sign-in mode. */
 export interface NoSessionRoute {
   /** The route's path under the app, as its directory names it: `/api/oauth/slack`. */
   readonly path: string;
   readonly verb: RouteVerb;
   readonly admission: NoSessionAdmission;
+  /** The gated modes whose proxy lets a request with no session reach it; none for a route only
+   * a deployment with no sign-in configured lets through. */
+  readonly reachableIn: readonly (typeof GATED_SIGN_IN_MODES)[number][];
   /** Why it is reachable with no session, and what such a request gets. */
   readonly reason: string;
 }
 
 /**
- * The routes a request with no session reaches, in any of the three sign-in modes (Clerk, the
- * local key, the company sign-in). Every other route is refused by the proxy before its handler
- * runs.
+ * The routes a request with no session reaches, and in which modes. Every other route is refused
+ * by the proxy before its handler runs in each gated mode; on a deployment with no sign-in
+ * configured the proxy lets every request through, and every handler not named here refuses a
+ * request with no session itself.
  */
 export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
   {
     path: '/api/oauth/slack',
     verb: 'GET',
     admission: 'signed-secret',
+    reachableIn: ['clerk', 'local-key', 'company'],
     reason:
       "Slack's install redirect, in every mode: a redirect to this deployment's own landing, " +
       'with the outcome the signed state allowed.',
@@ -137,6 +157,7 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/oauth/linear',
     verb: 'GET',
     admission: 'signed-secret',
+    reachableIn: ['clerk', 'local-key', 'company'],
     reason:
       "Linear's install redirect, in every mode: a redirect to this deployment's own landing, " +
       'with the outcome the signed state allowed.',
@@ -145,6 +166,7 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/oauth/mcp',
     verb: 'GET',
     admission: 'signed-secret',
+    reachableIn: [],
     reason:
       "An MCP server's authorisation redirect: reached with no session only where no sign-in is " +
       'configured (Clerk mode with no publishable key), where the deployment refuses it in words.',
@@ -153,6 +175,7 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/voice/elevenlabs/webhook',
     verb: 'POST',
     admission: 'signed-secret',
+    reachableIn: ['clerk', 'local-key', 'company'],
     reason:
       "ElevenLabs's post-call webhook, in every mode: refused with 401 unless ElevenLabs's " +
       'signature over the body verifies.',
@@ -161,6 +184,7 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/seed',
     verb: 'POST',
     admission: 'handler-refuses',
+    reachableIn: ['clerk'],
     reason:
       'Public at the Clerk proxy so its handler can answer in JSON: refused with 401 before ' +
       'the body is read when no Clerk session exists.',
@@ -169,6 +193,7 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/onboarding/synthesise',
     verb: 'POST',
     admission: 'handler-refuses',
+    reachableIn: ['clerk'],
     reason:
       'Public at the Clerk proxy so its handler can answer in JSON: refused with 401 before ' +
       'the body is read when no Clerk session exists.',
@@ -177,12 +202,14 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/auth/oidc/login',
     verb: 'GET',
     admission: 'the-sign-in',
+    reachableIn: ['company'],
     reason: "The company sign-in's start: a redirect to the customer's issuer.",
   },
   {
     path: '/api/auth/oidc/callback',
     verb: 'GET',
     admission: 'the-sign-in',
+    reachableIn: ['company'],
     reason:
       "The company sign-in's return from the issuer: refused without the sign-in's own sealed " +
       'transaction cookie.',
@@ -191,18 +218,21 @@ export const NO_SESSION_ROUTES: readonly NoSessionRoute[] = [
     path: '/api/auth/oidc/token',
     verb: 'POST',
     admission: 'the-sign-in',
+    reachableIn: ['company'],
     reason: 'The session token for a page: answers a request with no session `signedOut` only.',
   },
   {
     path: '/api/auth/oidc/logout',
     verb: 'POST',
     admission: 'the-sign-in',
+    reachableIn: ['company'],
     reason: 'Signing out: clears the cookies and redirects, with or without a session.',
   },
   {
     path: '/api/auth/oidc/logout',
     verb: 'GET',
     admission: 'the-sign-in',
+    reachableIn: ['company'],
     reason: 'The signed-out page: words only.',
   },
 ];

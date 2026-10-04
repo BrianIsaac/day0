@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { CALLERLESS_FUNCTIONS, NO_SESSION_ROUTES } from '../../../src/lib/anonymous-access';
+import {
+  CALLERLESS_FUNCTIONS,
+  GATED_SIGN_IN_MODES,
+  NO_SESSION_ROUTES,
+} from '../../../src/lib/anonymous-access';
 
 describe('the functions and routes that answer with no caller', (): void => {
   it('names each function once, by its generated api path, with its reason', (): void => {
@@ -22,6 +26,13 @@ describe('the functions and routes that answer with no caller', (): void => {
     for (const route of NO_SESSION_ROUTES) {
       expect(route.path).toMatch(/^\/api(\/[a-z0-9-]+)+$/);
       expect(route.reason.length, route.path).toBeGreaterThan(20);
+    }
+  });
+
+  it('names each mode a route is reachable in once, from the gated modes only', (): void => {
+    for (const route of NO_SESSION_ROUTES) {
+      expect(new Set(route.reachableIn).size, route.path).toBe(route.reachableIn.length);
+      for (const mode of route.reachableIn) expect(GATED_SIGN_IN_MODES).toContain(mode);
     }
   });
 });
