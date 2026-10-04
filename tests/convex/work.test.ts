@@ -29,6 +29,7 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
@@ -6860,7 +6861,7 @@ describe('work.needsYou', (): void => {
     ]);
   });
 
-  it('shows the owner only their own employees and an anonymous caller nothing', async (): Promise<void> => {
+  it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mine = await employee(harness, 'Mira');
     const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
@@ -6874,11 +6875,7 @@ describe('work.needsYou', (): void => {
 
     expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
     expect(stranger.entries.map((entry) => entry.subject)).toEqual(['Theirs']);
-    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({
-      entries: [],
-      total: 0,
-      waitingByEmployee: [],
-    });
+    await expect(harness.query(api.work.needsYou, {})).rejects.toMatchObject(await guardRefusal());
   });
 
   it('leaves evaluation agents out, as the roster does', async (): Promise<void> => {

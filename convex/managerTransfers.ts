@@ -18,7 +18,6 @@ import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
   assertOwnsAgent,
-  getCaller,
   getCallerOrThrow,
   signedInAsTheOneLocalManager,
   verifiedAddressOf,
@@ -743,15 +742,14 @@ export async function incomingTransfersOf(
 /**
  * Public, by verified address: the asked requests naming the caller, oldest
  * first, for the inbox and the acceptance dialog; what the employee brings is
- * `transferAcceptance.transferPreview`'s. An anonymous caller, or one without a
- * verified address, is named by none. Writes nothing.
+ * `transferAcceptance.transferPreview`'s. A caller without a verified address is
+ * named by none; a caller with no identity is refused (12-G). Writes nothing.
  */
 export const incoming = query({
   args: {},
   returns: v.array(incomingTransferValidator),
   handler: async (ctx): Promise<IncomingTransfer[]> => {
-    const caller = await getCaller(ctx);
-    if (!caller) return [];
+    const caller = await getCallerOrThrow(ctx);
     return await incomingTransfersOf(ctx, caller, Date.now());
   },
 });
@@ -760,16 +758,16 @@ export const incoming = query({
  * Public, by verified address and owner key: the requests the caller accepted that still wait
  * for the employee's runs (`accepting`), each with the runs the move waits for, so the home says
  * an employee is on its way until it arrives, across reloads (the transfer plan, section 4.2:
- * `accepting` "is shown to both managers as accepted, handing over"). An anonymous caller, or
- * one without a verified address, has none. Writes nothing.
+ * `accepting` "is shown to both managers as accepted, handing over"). A caller without a verified
+ * address has none; a caller with no identity is refused (12-G). Writes nothing.
  */
 export const arriving = query({
   args: {},
   returns: v.array(arrivingTransferValidator),
   handler: async (ctx): Promise<Infer<typeof arrivingTransferValidator>[]> => {
-    const caller = await getCaller(ctx);
-    const address = caller ? verifiedAddressOf(caller) : undefined;
-    if (!caller || address === undefined) return [];
+    const caller = await getCallerOrThrow(ctx);
+    const address = verifiedAddressOf(caller);
+    if (address === undefined) return [];
     // An accepting request is open, so the per-address bound bounds this read too.
     const accepting = await ctx.db
       .query('managerTransfers')
@@ -805,17 +803,17 @@ const endedHandoverValidator = v.object({
  * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
  * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`): `handover-ended`, or
  * none on a row an older release ended ({@link endedWithoutMove}); one whose employee
- * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
- * anonymous caller, or one without a verified address, has none. Reads at most
+ * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). A caller
+ * without a verified address has none, and one with no identity is refused (12-G). Reads at most
  * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
  */
 export const endedForMe = query({
   args: {},
   returns: v.array(endedHandoverValidator),
   handler: async (ctx): Promise<Infer<typeof endedHandoverValidator>[]> => {
-    const caller = await getCaller(ctx);
-    const address = caller ? verifiedAddressOf(caller) : undefined;
-    if (!caller || address === undefined) return [];
+    const caller = await getCallerOrThrow(ctx);
+    const address = verifiedAddressOf(caller);
+    if (address === undefined) return [];
     const since = Date.now() - TRANSFER_DEPARTURES_WINDOW_MS;
     const cancelled = await requestsInState(ctx, { toAddress: address }, 'cancelled');
     const ended = cancelled.filter(
@@ -888,15 +886,14 @@ export const earlierManagers = query({
  * last answer (section 7.1). An asked request past its expiry reads as
  * expired at its expiry; an accepted one says what became of the employee
  * since, so the notice never says it reports to someone it left or was
- * retired by (the v0.12.0 walk), or that it came back to the caller since. An
- * anonymous caller has none. Writes nothing.
+ * retired by (the v0.12.0 walk), or that it came back to the caller since. A
+ * caller with no identity is refused (12-G). Writes nothing.
  */
 export const departures = query({
   args: {},
   returns: v.array(departureValidator),
   handler: async (ctx): Promise<Infer<typeof departureValidator>[]> => {
-    const caller = await getCaller(ctx);
-    if (!caller) return [];
+    const caller = await getCallerOrThrow(ctx);
     const now = Date.now();
     const since = now - TRANSFER_DEPARTURES_WINDOW_MS;
     // A request is answered at most its expiry after it was asked.

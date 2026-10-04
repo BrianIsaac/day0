@@ -12,7 +12,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
@@ -7900,7 +7900,7 @@ function transferEntryOf(transfer: IncomingTransfer): NeedsYouEntry {
  * first, for the needs-you inbox on the signed-in home (N7). Evaluation agents
  * and the baseline arm are left out, as on the roster. A handover is counted
  * in `total` and on no employee in `waitingByEmployee`, since its employee is
- * not the caller's yet. An anonymous caller gets an empty inbox. Writes
+ * not the caller's yet. A caller with no identity is refused (12-G). Writes
  * nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
@@ -7910,8 +7910,9 @@ export const needsYou = query({
   args: {},
   returns: needsYouValidator,
   handler: async (ctx): Promise<Infer<typeof needsYouValidator>> => {
-    const caller = await getCaller(ctx);
-    if (!caller?.ownerKey) return { entries: [], total: 0, waitingByEmployee: [] };
+    const caller = await getCallerOrThrow(ctx);
+    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
+    if (caller.ownerKey === '') return { entries: [], total: 0, waitingByEmployee: [] };
     const employees = (
       await ctx.db
         .query('agents')

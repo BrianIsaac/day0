@@ -8,7 +8,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgent, assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
@@ -3117,11 +3117,15 @@ export const approveTools = mutation({
  * belongs to the deployment that would call the provider rather than to the
  * browser or the Next process. It is a boolean by design: the address itself
  * says where this machine is reachable and is nobody's business but the
- * operator's until an install link carries it.
+ * operator's until an install link carries it. Public, guarded by `getCallerOrThrow` (12-G);
+ * writes nothing.
  */
 export const installRedirectConfigured = query({
   args: {},
-  handler: async (): Promise<boolean> => publicUrlConfigured(),
+  handler: async (ctx): Promise<boolean> => {
+    await getCallerOrThrow(ctx);
+    return publicUrlConfigured();
+  },
 });
 
 /** Whether this deployment has a public address for a dedicated app's install to return to. */

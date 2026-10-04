@@ -14,6 +14,7 @@ import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -3973,5 +3974,22 @@ describe('the re-check triggers on a surface (10-C, A13)', (): void => {
       recheckDueAt: undefined,
       recheckReason: undefined,
     });
+  });
+});
+
+describe('surfaces.installRedirectConfigured', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('tells a signed-in caller whether the deployment has a public address, and refuses an anonymous one (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('DAY0_PUBLIC_URL', 'https://day0.example.test');
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.surfaces.installRedirectConfigured, {}),
+    ).resolves.toBe(true);
+    await expect(harness.query(api.surfaces.installRedirectConfigured, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 });

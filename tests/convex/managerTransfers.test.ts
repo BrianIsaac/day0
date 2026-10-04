@@ -38,6 +38,7 @@ import {
   managerIdentity,
   OWNER_SUBJECT,
 } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type Harness = TestConvex<typeof schema>;
@@ -1050,7 +1051,7 @@ describe('managerTransfers.incoming', (): void => {
     ]);
   });
 
-  it('names nobody else, nobody unverified, nobody anonymous, and nothing past its expiry or already answered', async (): Promise<void> => {
+  it('names nobody else and nobody unverified, refuses an anonymous caller, and names nothing past its expiry or already answered', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const maya = await employee(harness);
     await insertRequest(harness, { agentId: maya, requestedAt: Date.now() - TRANSFER_EXPIRY_MS });
@@ -1069,7 +1070,17 @@ describe('managerTransfers.incoming', (): void => {
         .withIdentity(managerIdentity('priya', { emailVerified: false }))
         .query(api.managerTransfers.incoming, {}),
     ).toEqual([]);
-    expect(await harness.query(api.managerTransfers.incoming, {})).toEqual([]);
+    await expect(harness.query(api.managerTransfers.incoming, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+
+  it('refuses a caller with no identity on every list of the caller’s handovers (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    await expect(harness.query(api.managerTransfers.arriving, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.managerTransfers.endedForMe, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.managerTransfers.departures, {})).rejects.toMatchObject(refusal);
   });
 
   it('leaves out a request whose employee is gone', async (): Promise<void> => {
@@ -1121,7 +1132,9 @@ describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is tol
     await expect(
       harness.withIdentity(OWNER).query(api.managerTransfers.endedForMe, {}),
     ).resolves.toEqual([]);
-    await expect(harness.query(api.managerTransfers.endedForMe, {})).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.endedForMe, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 
   it('lists an ended handover stored with its own cancel reason as it lists one stored with none', async (): Promise<void> => {
@@ -1234,7 +1247,9 @@ describe('managerTransfers.arriving', (): void => {
     await expect(
       harness.withIdentity(OWNER).query(api.managerTransfers.arriving, {}),
     ).resolves.toEqual([]);
-    await expect(harness.query(api.managerTransfers.arriving, {})).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.arriving, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
     await expect(
       harness
         .withIdentity(managerIdentity('priya', { emailVerified: false }))
@@ -1360,7 +1375,9 @@ describe('managerTransfers.departures', (): void => {
         declineReason: 'On leave.',
       },
     ]);
-    expect(await harness.query(api.managerTransfers.departures, {})).toEqual([]);
+    await expect(harness.query(api.managerTransfers.departures, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 
   it('says what became of an employee another manager took on: retired, moved on, or with them still (the v0.12.0 walk)', async (): Promise<void> => {
