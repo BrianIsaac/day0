@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { autonomousActionsOn, autonomyLabel } from '@/work/autonomy';
+import { isPaused } from '@/work/pause';
 import { managerNotificationMode } from '@/work/manager-notes';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useAnnounceRetired } from '../../../RetiredNotice';
@@ -18,6 +19,7 @@ import { connectedManagerChannel } from '../manager-channel';
 import { useNow } from '../../../components/time';
 import { AutonomyControl } from './AutonomyControl';
 import { NotificationModeControl } from './NotificationModeControl';
+import { PauseControl } from './PauseControl';
 import { RetireDialog } from './RetireDialog';
 
 /** The body copy of a Manage card. */
@@ -28,9 +30,10 @@ const COPY = 'text-sm text-[var(--color-fg-2)]';
  * employee works for the manager, and the one that ends its employment. In real mode, once its
  * charter is approved, the autonomous-actions switch with its confirmation, and, above the rail
  * (whose last card says where decisions reach the manager) once a chat surface has found the
- * manager's DM, how the manager hears that work landed or a run stopped. Pause is said to be absent, because the employee has no paused state; Retire opens
- * the retire dialog and, once the employee is gone, takes the manager to the company home, which
- * says once that it is retired.
+ * manager's DM, how the manager hears that work landed or a run stopped. In real mode, once its
+ * charter is approved, the employee's pause (12-P): Pause and Resume by name, the card marked
+ * Paused while it is; the hosted office says it has none. Retire opens the retire dialog and, once
+ * the employee is gone, takes the manager to the company home, which says once that it is retired.
  * Appearance is not drawn: the stylesheet carries no light theme.
  */
 export function ManageView() {
@@ -39,11 +42,14 @@ export function ManageView() {
   const announceRetired = useAnnounceRetired();
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
+  const pause = useMutation(api.agents.pause);
+  const resume = useMutation(api.agents.resume);
   const now = useNow();
   const [retiring, setRetiring] = useState(false);
   const active = shownEmployeeState(agent.state, charter) === 'active';
   const real = surfaceMode === 'real';
   const autonomous = autonomousActionsOn(agent);
+  const paused = isPaused(agent);
   const channel = connectedManagerChannel(surfaces, now) !== undefined;
 
   const decisions = real ? (
@@ -96,17 +102,25 @@ export function ManageView() {
           </p>
         )}
       </Card>
-      <Card title="Pause">
+      <Card title="Pause" meta={real && paused ? <Pill tone="warn">Paused</Pill> : undefined}>
         {surfaceMode === undefined ? (
           <p className="text-sm text-[var(--color-muted)]">Loading</p>
+        ) : real && (active || paused) ? (
+          <PauseControl
+            name={agent.name}
+            pausedAt={agent.pausedAt}
+            reason={agent.pauseReason}
+            onPause={() => pause({ agentId: agent._id })}
+            onResume={() => resume({ agentId: agent._id })}
+          />
         ) : (
           <p className={COPY}>
-            {!active
-              ? // Reached from day zero too (walk M3): no charter yet means no work yet.
-                `There is no pause for one employee: ${agent.name} takes on work only once its charter is approved, and every write waits for your decision until you say otherwise.`
-              : real
-                ? `There is no pause for one employee: while ${agent.name} is employed it keeps reading its queue and working. To hold every write for your approval, leave autonomous actions off.`
-                : `There is no pause for one employee: ${agent.name} keeps working through the hosted office's queue, and every write waits for your decision.`}
+            {real
+              ? // Reached from day zero too (walk M3): no charter yet means no work to hold.
+                `Pause is here once ${agent.name}'s charter is approved; until then it takes on no work.`
+              : !active
+                ? `The hosted office has no pause: ${agent.name} takes on work only once its charter is approved, and every write waits for your decision.`
+                : `The hosted office has no pause: ${agent.name} works through the hosted office's queue, and every write waits for your decision.`}
           </p>
         )}
       </Card>
