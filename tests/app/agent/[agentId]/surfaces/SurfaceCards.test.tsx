@@ -30,6 +30,8 @@ vi.mock('convex/react', () => ({
     if (name === 'surfaces:installRedirectConfigured') return false;
     if (name === 'charters:latest') return state.charter;
     if (name === 'docSources:byIds') return state.sources;
+    // A card that makes no access request is answered null, as the backend answers it.
+    if (name === 'accessRequests:forCard') return null;
     if (name === 'surfaces:listForAgent') {
       if (state.surfaceResult === 'loading') return undefined;
       if (state.surfaceResult === 'empty') return [];
@@ -428,5 +430,57 @@ describe('SurfaceCards and the approved tools', (): void => {
     } finally {
       state.surfaces = undefined;
     }
+  });
+});
+
+describe('SurfaceCards: where decisions reach the manager on a Slack card (wave 12, 12-M)', (): void => {
+  const agentId = 'agent-1' as Id<'agents'>;
+  const slackCard = (decisionButtons: unknown): object => ({
+    _id: 'surface-slack',
+    agentId: 'agent-1',
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    whereFound: [],
+    credentialLanded: true,
+    managerDmChannelId: 'D0MANAGER',
+    managerApprovedAt: 1,
+    provisioning: {
+      appId: 'A0MATEO',
+      appName: 'Mateo (Day0)',
+      clientId: '1.2',
+      clientSecretCredentialId: 'credential-1',
+      installUrl: 'https://slack.com/oauth/v2/authorize',
+      redirectUrl: 'https://day0.example/api/oauth/slack',
+      scopes: [],
+      createdAt: 1,
+      installedAt: 2,
+    },
+    decisionButtons,
+  });
+
+  it('says the requests carry the typed code until the app’s socket token lands, and asks for it', (): void => {
+    state.surfaces = [slackCard({ available: false, why: 'no-app-level-token' })];
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Mateo" />);
+    expect(markup).toContain('Buttons: needs this app&#x27;s socket token');
+    expect(markup).toContain('Mateo (Day0)');
+    expect(markup).toContain('id="app-level-token-slack"');
+  });
+
+  it('says the requests carry buttons once it has', (): void => {
+    state.surfaces = [slackCard({ available: true })];
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Mateo" />);
+    expect(markup).toContain('Decisions in Slack: buttons and typed codes');
+    expect(markup).toContain('Replace the app-level token');
+  });
+
+  it('shows no such row on a card that carries no decisions', (): void => {
+    state.surfaces = [{ ...slackCard(undefined), decisionButtons: undefined }];
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Mateo" />);
+    expect(markup).not.toContain('App-level token');
+    expect(markup).not.toContain('Decisions in Slack');
   });
 });

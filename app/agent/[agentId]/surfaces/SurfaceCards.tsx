@@ -110,6 +110,7 @@ export function SurfaceCards({
   const probe = useAction(api.surfaceActions.probe);
   const landCredential = useAction(api.surfaceActions.landCredential);
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
+  const landAppLevelToken = useAction(api.slackSocketActions.landAppLevelToken);
   const connectLinear = useAction(api.linearIdentityActions.connect);
   const authoriseMcp = useAction(api.mcpOauthActions.startAuthorisation);
   const disconnect = useMutation(api.surfaces.disconnect);
@@ -273,6 +274,16 @@ export function SurfaceCards({
           {
             done: `The app for ${surface.displayName} is registered; install it from the link on the card.`,
             refused: 'The app was not registered.',
+          },
+        ),
+      landSocketToken: (token) =>
+        operate(
+          'socket-token',
+          surface,
+          () => landAppLevelToken({ surfaceId: surface._id, token }),
+          {
+            done: `The app-level token is stored: requests to you through ${surface.displayName} carry Approve and Reject buttons.`,
+            refused: 'The app-level token was not stored.',
           },
         ),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),

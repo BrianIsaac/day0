@@ -6,6 +6,7 @@ import {
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
+  decisionButtonsWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -392,5 +393,39 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
     expect(rejoinWords(AFTER, 'Leo', 30)).toBeUndefined();
     expect(rejoinWords(undefined, 'Leo', 10)).toBeUndefined();
     expect(rejoinWords({ joined: [], needsPerson: [], at: 20 }, 'Leo', 10)).toBeUndefined();
+  });
+});
+
+describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
+  it('says buttons are on, with the typed code beside them', (): void => {
+    const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
+    expect(words.title).toBe('Decisions in Slack: buttons and typed codes');
+    expect(words.note).toContain('Approve and Reject buttons');
+    expect(words.note).toContain('the typed code beside them always decides too');
+    expect(words.asksForToken).toBe(false);
+    expect(words.offersReplacement).toBe(true);
+  });
+
+  it('names the socket token an app without one needs, and asks for it', (): void => {
+    const words = decisionButtonsWords(
+      { available: false, why: 'no-app-level-token' },
+      'Mateo (Day0)',
+    );
+    expect(words.title).toBe("Buttons: needs this app's socket token");
+    expect(words.note).toContain('Requests carry the typed code only.');
+    expect(words.note).toContain('Mateo (Day0)');
+    expect(words.note).toContain('connections:write');
+    expect(words.asksForToken).toBe(true);
+  });
+
+  it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
+    for (const why of ['no-bridge', 'no-own-app', 'not-slack-api'] as const) {
+      const words = decisionButtonsWords({ available: false, why }, 'Mateo (Day0)');
+      expect(words.note, why).toContain('typed code');
+      expect(words.asksForToken, why).toBe(false);
+    }
+    expect(decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)').title).toBe(
+      'Buttons: needs the Slack socket service',
+    );
   });
 });

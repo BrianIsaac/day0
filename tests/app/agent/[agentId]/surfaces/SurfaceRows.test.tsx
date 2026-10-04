@@ -2,14 +2,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   ApprovalRow,
+  DecisionButtonsRow,
   DiscoveryProvenance,
   EvidenceQuote,
   IntakeScopeRow,
   ONE_APPROVER,
   ProvisioningRow,
   SurfaceLadder,
+  type DecisionButtonsRowProps,
   type ProvisioningRowProps,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceRows';
+import { decisionButtonsWords } from '../../../../../app/agent/[agentId]/surfaces/card-words';
 import {
   presentProvisioning,
   type ProvisioningPresentation,
@@ -438,5 +441,49 @@ describe('IntakeScopeRow: what each employee reads', (): void => {
       />,
     );
     expect(markup).toContain(`<p class="mt-2 text-[var(--color-warn)]">${changed}</p>`);
+  });
+});
+
+describe('DecisionButtonsRow (wave 12, 12-M; RM3)', (): void => {
+  const render = (overrides: Partial<DecisionButtonsRowProps> = {}): string =>
+    renderToStaticMarkup(
+      <DecisionButtonsRow
+        words={decisionButtonsWords(
+          { available: false, why: 'no-app-level-token' },
+          'Mateo (Day0)',
+        )}
+        landing={false}
+        onLand={(): void => undefined}
+        surfaceSlug="slack"
+        {...overrides}
+      />,
+    );
+
+  it('says why there are no buttons and asks for the app-level token in a password field', (): void => {
+    const markup = render();
+    expect(markup).toContain('Buttons: needs this app&#x27;s socket token');
+    expect(markup).toContain('<label for="app-level-token-slack"');
+    expect(markup).toContain('App-level token');
+    expect(markup).toMatch(/<input[^>]*id="app-level-token-slack"[^>]*type="password"/);
+    expect(markup).toContain('Turn on buttons');
+  });
+
+  it('offers to replace a landed token behind a disclosure, and shows the refusal', (): void => {
+    const markup = render({
+      words: decisionButtonsWords({ available: true }, 'Mateo (Day0)'),
+      error: 'Slack did not accept this app-level token (invalid_auth).',
+    });
+    expect(markup).toContain('Decisions in Slack: buttons and typed codes');
+    expect(markup).toContain('<summary');
+    expect(markup).toContain('Replace the app-level token');
+    expect(markup).toContain('role="alert"');
+  });
+
+  it('asks for nothing where the token is not the reason', (): void => {
+    const markup = render({
+      words: decisionButtonsWords({ available: false, why: 'no-bridge' }, 'Mateo (Day0)'),
+    });
+    expect(markup).not.toContain('<input');
+    expect(markup).toContain('Buttons: needs the Slack socket service');
   });
 });

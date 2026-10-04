@@ -6,6 +6,7 @@ import type {
 } from '@/surfaces/access-identity';
 import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
+import type { DecisionButtons } from '@/surfaces/slack-socket';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
 
@@ -507,4 +508,71 @@ export function unservedConnectionWords(system: string): string {
  */
 export function noWayOnWords(system: string, employee: string): string {
   return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
+}
+
+/** What a Slack card says about where the manager's decisions reach them, and what it asks for. */
+export interface DecisionButtonsWords {
+  readonly title: string;
+  readonly note: string;
+  /** The card asks for the app's app-level token. */
+  readonly asksForToken: boolean;
+  /** The card offers to replace a token already landed. */
+  readonly offersReplacement: boolean;
+}
+
+/**
+ * Where a manager channel's decision requests reach the manager (wave 12, 12-M; RM3 (a)): with
+ * Approve and Reject buttons beside the typed code, or the typed code alone and why. Asks for the
+ * app's app-level token only where its absence is the reason.
+ *
+ * @param buttons - Whether the card's requests carry buttons, as `listForAgent` read it.
+ * @param appName - The employee's own app, where the card has one.
+ */
+export function decisionButtonsWords(
+  buttons: DecisionButtons,
+  appName: string | undefined,
+): DecisionButtonsWords {
+  const app = appName ?? "the employee's app";
+  if (buttons.available) {
+    return {
+      title: 'Decisions in Slack: buttons and typed codes',
+      note: `Requests to you carry Approve and Reject buttons, which reach Day0 over ${app}'s Socket Mode connection; the typed code beside them always decides too.`,
+      asksForToken: false,
+      offersReplacement: true,
+    };
+  }
+  const typedOnly = (title: string, note: string): DecisionButtonsWords => ({
+    title,
+    note,
+    asksForToken: false,
+    offersReplacement: false,
+  });
+  switch (buttons.why) {
+    case 'no-app-level-token':
+      return {
+        title: "Buttons: needs this app's socket token",
+        note: `Requests carry the typed code only. Someone who manages ${app} turns on Socket Mode in its settings, generates an app-level token under Basic Information with the connections:write scope, and pastes it here; requests then carry Approve and Reject buttons too.`,
+        asksForToken: true,
+        offersReplacement: false,
+      };
+    case 'no-bridge':
+      return typedOnly(
+        'Buttons: needs the Slack socket service',
+        `${app}'s app-level token is stored, but this deployment does not run the Slack socket service that carries a press, so requests carry the typed code only. IT runs ./setup.sh again, which starts it.`,
+      );
+    case 'no-own-app':
+      return typedOnly(
+        'Decisions in Slack: typed codes',
+        'Requests carry the typed code only: buttons need a Slack app Day0 created for this employee, and this card connects through another token.',
+      );
+    case 'not-slack-api':
+      return typedOnly(
+        'Decisions in Slack: typed codes',
+        "Requests carry the typed code only: this chat connection sends text, and buttons need Slack's own API.",
+      );
+    default: {
+      const unknown: never = buttons.why;
+      throw new Error(`unhandled reason ${String(unknown)}`);
+    }
+  }
 }
