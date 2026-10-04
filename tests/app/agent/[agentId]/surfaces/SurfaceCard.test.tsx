@@ -415,6 +415,34 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
   });
 
+  it('says what a covered Slack card is missing when its documentation describes no install of the app (W12V-1)', (): void => {
+    // The walk's Vela: the company bed's page says "The shared bot token is landed on your Slack
+    // card by the messaging administrator", so the card had no way on and said nothing of why.
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'ungranted',
+        reason: 'Skipped: credential not in the docs; location not documented',
+        managerApprovedAt: NOW - DAY,
+        request: {
+          credential: {
+            found: 'none',
+            method: 'value',
+            label: 'shared bot token',
+          },
+        },
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).toContain(
+      'Day0 cannot create Maya’s own Slack app from this card: the linked documentation describes no install procedure for it.',
+    );
+    expect(markup).toContain(
+      'A Slack page saying Maya’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
+  });
+
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {
     const markup = render(
       listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
