@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { agentJson, makeAgent } from '../lib/mastra';
+import { agentJson, makeAgent, MODEL_CALL_TIMEOUT_MS } from '../lib/mastra';
 import { log } from '../lib/logger';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
@@ -65,6 +65,14 @@ export const WORK_ITEM_PURPOSES = ['read-and-answer', 'action', 'out-of-scope'] 
 
 /** How many drafts the generator asks for before it leaves out an out-of-scope item that reads as the role's work. */
 export const GENERATION_ATTEMPTS = 3;
+
+/**
+ * The most one seeding's generation may take, every draft together (12-J item 6, option A): under
+ * the ten minutes Convex gives an action, with room for the seeding's own reads and writes, so a
+ * slow model ends in the seeding's record and its next attempt rather than in a kill that records
+ * nothing. Three drafts at a call's own limit would take a quarter of an hour.
+ */
+export const GENERATION_BUDGET_MS = 480_000;
 
 export const workGenSchema = z.object({
   items: z
@@ -239,17 +247,21 @@ export async function generateWorkItemsFromCharter(
     '',
     'Generate the 3 day-one work items now.',
   ].join('\n');
+  const deadline = Date.now() + GENERATION_BUDGET_MS;
   const ask = async (user: string): Promise<z.infer<typeof workGenSchema>> =>
     await agentJson<z.infer<typeof workGenSchema>>({
       agent: workGeneratorAgent,
       user,
       schema: workGenSchema,
+      timeoutMs: Math.min(MODEL_CALL_TIMEOUT_MS, deadline - Date.now()),
     });
   let draft = await ask(brief);
   for (let attempt = 1; attempt < GENERATION_ATTEMPTS; attempt += 1) {
     const reading = readDraft(draft.items, charter);
     if (readsAsIntended(reading)) return draft.items.map(withoutPurpose);
-    draft = await ask(`${brief}\n\n${askAgain(reading)}`);
+    const again = await askedAgain(() => ask(`${brief}\n\n${askAgain(reading)}`), attempt);
+    if (again === undefined) break;
+    draft = again;
   }
   // The last draft is taken as it reads, but for an out-of-scope item that still reads as the
   // role's work, which is left out rather than queued as the role's work with a skill to approve.
@@ -271,6 +283,22 @@ export async function generateWorkItemsFromCharter(
     .filter((item) => !leftOut.has(item))
     .map(onTheTicketQueue)
     .map(withoutPurpose);
+}
+
+/**
+ * A draft asked for again, or undefined when the budget ran out first: the draft in hand is then
+ * taken as the last draft is. Any other failure is the seeding's.
+ */
+async function askedAgain<T>(ask: () => Promise<T>, attempt: number): Promise<T | undefined> {
+  try {
+    return await ask();
+  } catch (err: unknown) {
+    if (!(err instanceof Error) || err.name !== 'TimeoutError') throw err;
+    log.warn('mock work generator kept the draft in hand when the budget ran out', {
+      attempt: attempt + 1,
+    });
+    return undefined;
+  }
 }
 
 /**
