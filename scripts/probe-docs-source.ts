@@ -3,7 +3,7 @@ import { errorMessage } from '../src/lib/errors';
 import { convexEnvironment, convexRun, redactSecrets } from './lib/convex-run';
 
 interface SyncReport {
-  status: 'linking' | 'synced' | 'error' | 'credential-not-landed';
+  status: 'linking' | 'synced' | 'error' | 'credential-not-landed' | 'held';
   pageCount: number;
   redactionCount: number;
   running: boolean;

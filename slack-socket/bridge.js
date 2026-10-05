@@ -32,6 +32,26 @@ export const PRESS_RETRY_FIRST_MS = 500;
 export const PRESS_RETRY_CAP_MS = 10_000;
 /** How long one backend call may take. */
 export const BACKEND_TIMEOUT_MS = 15_000;
+/**
+ * What the person who pressed is told, through the press's own `response_url`, when the bridge
+ * acknowledged a press and could not hand it to Day0 in time (W12-R22): only them, and the request
+ * stays, so a press a minute later may get through.
+ */
+export const PRESS_NOT_RECEIVED =
+  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.';
+/**
+ * What the person who pressed is told when Day0 answered the press with a refusal, which another
+ * press would meet again (W12-R22).
+ */
+export const PRESS_REFUSED =
+  'Day0 could not take this press, so nothing was decided. Decide in day0.';
+/** How long telling the person may take. */
+export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
+/**
+ * How long the last report, every app down, may take as the bridge stops: inside the compose
+ * service's five-second grace, so a clean stop reaches the card at once (D-6 (b)).
+ */
+export const FAREWELL_TIMEOUT_MS = 3_000;
 
 /**
  * @typedef {object} BridgeOptions
@@ -45,6 +65,8 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * @property {number} [pressRetryFirstMs]
  * @property {number} [helloTimeoutMs]
  * @property {number} [maxConnectionMs]
+ * @property {number} [stableAfterMs]
+ * @property {number} [pressRetryWindowMs]
  */
 
 /**
@@ -60,6 +82,10 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * @property {boolean} requesting A connection URL is being asked for.
  * @property {number} failures Consecutive failed opens, for the backoff.
  * @property {number} liveSince When the live socket was greeted.
+ * @property {string | undefined} slackHost The host the app's last connection URL named, which a
+ *   press's `response_url` may also name (the fake Slack of a bed).
+ * @property {string | undefined} failure Why the last open failed, until a connection is greeted;
+ *   reported to the backend with the app (D-6 (b)).
  * @property {ReturnType<typeof setTimeout> | undefined} retry
  * @property {ReturnType<typeof setTimeout> | undefined} refresh
  * @property {boolean} mismatch The last connection answered for another app.
@@ -80,14 +106,25 @@ export function createBridge(options) {
   const pressRetryFirstMs = options.pressRetryFirstMs ?? PRESS_RETRY_FIRST_MS;
   const helloTimeoutMs = options.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
   const maxConnectionMs = options.maxConnectionMs ?? MAX_CONNECTION_MS;
+  const stableAfterMs = options.stableAfterMs ?? STABLE_AFTER_MS;
+  const pressRetryWindowMs = options.pressRetryWindowMs ?? PRESS_RETRY_WINDOW_MS;
   /** @type {Map<string, AppState>} */
   const apps = new Map();
   let timer;
   let stopped = false;
   let lastSync = { ok: false, at: 0 };
+  /** A report is on the wire, and whether another was asked for meanwhile. */
+  let reporting = false;
+  let reportAgain = false;
+  /** The report loop on the wire, which a farewell waits for so it is the last row written. */
+  let reportLoop = Promise.resolve();
+  /** Whether the last report named any app, so a bridge holding none reports nothing again. */
+  let reportedApps = false;
+  /** Whether the last report failed, so a backend that takes none is said once, not every sync. */
+  let reportFailing = false;
 
   /** POST one of the backend's bridge routes with the secret; the parsed answer and status. */
-  async function backend(path, body) {
+  async function backend(path, body, timeoutMs = BACKEND_TIMEOUT_MS) {
     const response = await fetchImpl(new URL(path, options.backendUrl), {
       method: 'POST',
       headers: {
@@ -95,10 +132,74 @@ export function createBridge(options) {
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const parsed = await response.json().catch(() => ({}));
     return { status: response.status, body: parsed ?? {} };
+  }
+
+  /** Each app the bridge holds, by its card and app, with whether it has a greeted connection. */
+  function heartbeat(live = true) {
+    return {
+      apps: [...apps.values()].map((state) => {
+        const connected = live && state.live !== undefined;
+        return {
+          surfaceId: state.surfaceId,
+          appId: state.appId,
+          live: connected,
+          ...(connected ? { liveSince: state.liveSince } : {}),
+          ...(!connected && state.failure !== undefined ? { failure: state.failure } : {}),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Tell the backend which apps hold a live connection (wave 13, 13-FS; D-6 (b)), so the card's
+   * buttons row and each request read a bridge that runs rather than one that is configured. A
+   * failure is logged when it starts and when it ends: a backend from before 0.17.0 has no route.
+   */
+  async function report(body, timeoutMs = BACKEND_TIMEOUT_MS) {
+    try {
+      const answer = await backend('/slack-socket/heartbeat', body, timeoutMs);
+      if (answer.status !== 200) throw new Error(`the backend answered ${answer.status}`);
+      if (reportFailing) log({ level: 'info', message: 'the heartbeat is reported again' });
+      reportFailing = false;
+    } catch (error) {
+      if (!reportFailing) {
+        log({
+          level: 'warn',
+          message: 'the heartbeat could not be reported',
+          reason: reasonOf(error),
+        });
+      }
+      reportFailing = true;
+    }
+  }
+
+  /** Report now, or once more after the report on the wire, so one change is never lost. */
+  function reportSoon() {
+    if (reporting) {
+      reportAgain = true;
+      return reportLoop;
+    }
+    reporting = true;
+    reportLoop = (async () => {
+      try {
+        do {
+          reportAgain = false;
+          if (stopped) return;
+          const body = heartbeat();
+          // Nothing held and nothing reported last: no row could change.
+          if (body.apps.length === 0 && !reportedApps) continue;
+          reportedApps = body.apps.length > 0;
+          await report(body);
+        } while (reportAgain);
+      } finally {
+        reporting = false;
+      }
+    })();
+    return reportLoop;
   }
 
   async function sync() {
@@ -142,11 +243,14 @@ export function createBridge(options) {
           refresh: undefined,
           mismatch: false,
           removed: false,
+          slackHost: undefined,
+          failure: undefined,
         };
         apps.set(surfaceId, state);
         void open(state); // open records its own failure and schedules the retry
       }
       lastSync = { ok: true, at: Date.now() };
+      void reportSoon(); // report logs its own failure
     } catch (error) {
       lastSync = { ok: false, at: Date.now() };
       log({ level: 'warn', message: 'the app list could not be read', reason: reasonOf(error) });
@@ -187,6 +291,7 @@ export function createBridge(options) {
     if (stopped || state.removed || state.retry !== undefined) return;
     const wait = Math.min(reconnectFirstMs * 2 ** state.failures, RECONNECT_CAP_MS);
     state.failures += 1;
+    log({ level: 'info', message: 'dialling again', appId: state.appId, inMs: wait });
     state.retry = setTimeout(() => {
       state.retry = undefined;
       void open(state); // open records its own failure and schedules the retry
@@ -197,11 +302,22 @@ export function createBridge(options) {
   function forget(state, socket, why) {
     state.sockets.delete(socket);
     if (state.pending === socket) state.pending = undefined;
-    if (state.live === socket) state.live = undefined;
+    const wasLive = state.live === socket;
+    if (wasLive) state.live = undefined;
+    // A connection that lived long enough ends a flap: its drop dials again at the first wait, not
+    // after the back-off its earlier failures had reached (W12-R21).
+    if (wasLive && Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
     if (state.sockets.size === 0 && !state.removed && !stopped) {
       log({ level: 'warn', message: why, appId: state.appId });
       scheduleRetry(state);
     }
+    // Only a connection that was carrying presses changes what the card may say.
+    if (wasLive && state.live === undefined && !stopped) void reportSoon(); // report logs its own failure
+  }
+
+  /** Why the app's last open failed, kept for the report until a connection is greeted. */
+  function failed(state, message, error) {
+    state.failure = error === undefined ? message : `${message}: ${reasonOf(error)}`;
   }
 
   /**
@@ -233,6 +349,7 @@ export function createBridge(options) {
         appId: state.appId,
         reason: reasonOf(error),
       });
+      failed(state, 'no connection URL', error);
       scheduleRetry(state);
       return;
     }
@@ -249,14 +366,17 @@ export function createBridge(options) {
         appId: state.appId,
         reason: reasonOf(error),
       });
+      failed(state, 'the connection URL was refused', error);
       scheduleRetry(state);
       return;
     }
     state.sockets.add(socket);
     state.pending = socket;
+    state.slackHost = new URL(url).host;
     const hello = setTimeout(() => {
       if (state.pending === socket) {
         log({ level: 'warn', message: 'no hello in time', appId: state.appId });
+        failed(state, 'no hello in time');
         socket.close();
       }
     }, helloTimeoutMs);
@@ -283,6 +403,7 @@ export function createBridge(options) {
         appId: state.appId,
         connectedAppId: appId,
       });
+      failed(state, `the connection is for another app (${appId})`);
       state.pending = undefined;
       socket.close();
       return;
@@ -292,13 +413,16 @@ export function createBridge(options) {
     state.live = socket;
     state.pending = undefined;
     state.liveSince = Date.now();
+    state.failure = undefined;
     log({ level: 'info', message: 'connected', appId: state.appId });
+    // A refresh's greeting changes nothing the card says; a first one does.
+    if (previous === undefined) void reportSoon(); // report logs its own failure
     // The connection this one replaced, after a refresh, goes once this one is greeted.
     if (previous !== undefined && previous !== socket) previous.close();
     clearTimeout(state.refresh);
     state.refresh = setTimeout(() => {
       state.refresh = undefined;
-      if (Date.now() - state.liveSince >= STABLE_AFTER_MS) state.failures = 0;
+      if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       void open(state); // open records its own failure and schedules the retry
     }, maxConnectionMs);
   }
@@ -318,7 +442,7 @@ export function createBridge(options) {
     }
     if (message.type === 'disconnect') {
       log({ level: 'info', message: 'refresh asked', appId: state.appId, reason: message.reason });
-      if (Date.now() - state.liveSince >= STABLE_AFTER_MS) state.failures = 0;
+      if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       // A refresh opens the next at once; a link Slack disabled is reopened only after the backoff.
       if (message.reason === 'link_disabled') {
         socket.close();
@@ -340,16 +464,16 @@ export function createBridge(options) {
    * offering it again never decides twice.
    */
   async function forward(state, payload) {
-    const until = Date.now() + PRESS_RETRY_WINDOW_MS;
+    const until = Date.now() + pressRetryWindowMs;
     for (let attempt = 1; ; attempt += 1) {
       try {
         const answer = await backend('/slack-socket/press', {
           surfaceId: state.surfaceId,
           payload,
         });
-        if (answer.status === 200 || (answer.status >= 400 && answer.status < 500)) {
+        if (answer.status === 200) {
           log({
-            level: answer.status === 200 ? 'info' : 'warn',
+            level: 'info',
             message: 'press handed over',
             appId: state.appId,
             status: answer.status,
@@ -357,20 +481,77 @@ export function createBridge(options) {
           });
           return;
         }
+        // The backend refused it outright: offering it again gets the same answer. A 408 or a 429
+        // is the backend busy, which a later offer may get past.
+        if (
+          answer.status >= 400 &&
+          answer.status < 500 &&
+          answer.status !== 408 &&
+          answer.status !== 429
+        ) {
+          await giveUp(state, payload, attempt, `the backend refused it (${answer.status})`, {
+            refused: true,
+          });
+          return;
+        }
         throw new Error(`the backend answered ${answer.status}`);
       } catch (error) {
         const wait = Math.min(pressRetryFirstMs * 2 ** (attempt - 1), PRESS_RETRY_CAP_MS);
-        const giveUp = stopped || Date.now() + wait > until;
+        if (stopped || Date.now() + wait > until) {
+          await giveUp(state, payload, attempt, reasonOf(error), { refused: false });
+          return;
+        }
         log({
-          level: giveUp ? 'error' : 'warn',
-          message: giveUp ? 'press given up' : 'press not handed over',
+          level: 'warn',
+          message: 'press not handed over',
           appId: state.appId,
           attempt,
           reason: reasonOf(error),
         });
-        if (giveUp) return;
         await new Promise((resolve) => setTimeout(resolve, wait));
       }
+    }
+  }
+
+  /**
+   * A press Slack was told arrived and Day0 never took (W12-R22): logged, and the person who pressed
+   * told through the press's own `response_url`, since Slack shows them nothing went wrong.
+   */
+  async function giveUp(state, payload, attempt, reason, { refused }) {
+    const told = await tellPresser(state, payload, refused ? PRESS_REFUSED : PRESS_NOT_RECEIVED);
+    log({ level: 'error', message: 'press given up', appId: state.appId, attempt, reason, told });
+  }
+
+  /**
+   * Post a notice to the press's `response_url`, only where it is Slack's (`hooks.slack.com` over
+   * https), or the host the app's connection came from (a bed's fake Slack); never a redirect.
+   *
+   * @returns Whether Slack took the message.
+   */
+  async function tellPresser(state, payload, text) {
+    const target = responseUrlOf(payload, state.slackHost);
+    if (target === undefined) return false;
+    try {
+      const response = await fetchImpl(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          response_type: 'ephemeral',
+          replace_original: false,
+          text,
+        }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(PRESS_NOTICE_TIMEOUT_MS),
+      });
+      return response.ok;
+    } catch (error) {
+      log({
+        level: 'warn',
+        message: 'the person who pressed could not be told',
+        appId: state.appId,
+        reason: reasonOf(error),
+      });
+      return false;
     }
   }
 
@@ -383,14 +564,23 @@ export function createBridge(options) {
         void sync(); // sync logs its own failure
       }, syncIntervalMs);
     },
-    stop() {
+    /**
+     * Close everything, then report every app down, so the card stops offering buttons at once
+     * rather than when the last report ages (D-6 (b)); the report is given up after
+     * {@link FAREWELL_TIMEOUT_MS}.
+     */
+    async stop() {
       stopped = true;
       clearInterval(timer);
+      const farewell = heartbeat(false);
       for (const state of apps.values()) {
         state.removed = true;
         close(state);
       }
       apps.clear();
+      // A live report still on the wire would land after the farewell and read the apps live again.
+      await reportLoop;
+      if (farewell.apps.length > 0) await report(farewell, FAREWELL_TIMEOUT_MS);
     },
     /** What the health check reports: the last list read and each app's connection. */
     status() {
@@ -407,6 +597,27 @@ export function createBridge(options) {
       };
     },
   };
+}
+
+/**
+ * A press's `response_url`, when it is one the bridge may post to: Slack's own hook host over
+ * https on its default port, or the host the app's own connection came from; undefined otherwise.
+ *
+ * @param {Record<string, unknown>} payload The press, as Slack sent it.
+ * @param {string | undefined} slackHost The host of the app's connection URL.
+ * @returns {URL | undefined}
+ */
+export function responseUrlOf(payload, slackHost) {
+  if (typeof payload?.response_url !== 'string') return undefined;
+  let url;
+  try {
+    url = new URL(payload.response_url);
+  } catch {
+    // Not a URL: nothing to post to.
+    return undefined;
+  }
+  const slack = url.protocol === 'https:' && url.hostname === 'hooks.slack.com' && url.port === '';
+  return slack || (slackHost !== undefined && url.host === slackHost) ? url : undefined;
 }
 
 /** A failure's message, never a URL (a Socket Mode URL carries its ticket). */

@@ -185,6 +185,15 @@ describe('the Slack recipe and the card it describes', (): void => {
     expect(text).toContain(`The card then says "${title}"`);
   });
 
+  it('quotes the title the card shows while the socket service reports no live connection (D-6 (b))', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    const { title } = decisionButtonsWords(
+      { available: false, why: 'bridge-down' },
+      'Mateo (Day0)',
+    );
+    expect(text).toContain(`the card says "${title}"`);
+  });
+
   it('gives the App Home toggle only for the cases a live card is in (W12X-4)', (): void => {
     const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
     // A revoke ends every card on the connection and Day0 never installs such an app again, so

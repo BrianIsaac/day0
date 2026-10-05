@@ -136,12 +136,13 @@ import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
 import type { TicketHolderView } from '../src/work/item-display';
@@ -3484,10 +3485,11 @@ export const prepareDecisionRequest = internalMutation({
       pendingRunId: row.pendingRunId,
       openActionDecisions,
       // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
-      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons;
+      // nor does one sent while the bridge reports no live connection for the app (D-6 (b)).
       withButtons:
         (args.kind === 'plan' || heldIndexes.length > 0) &&
-        decisionButtonsFor(chat, socketBridgeConfigured()).available,
+        decisionButtonsFor(chat, await socketBridgeStateOf(ctx, chat, Date.now())).available,
       // Read where the request is claimed too: a typed code is offered only to an app that takes
       // messages (W12V-7).
       typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
@@ -3626,7 +3628,8 @@ export async function rememberRetriedRequest(
     )
     .first();
   if (kept !== null) return;
-  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here.
+  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here. The
+  // decision it had rides along, so its code is answered as decided as well as replaced (W12V-16).
   await ctx.db.insert('replacedDecisionRequests', {
     agentId: row.agentId,
     workItemId: row._id,
@@ -3635,6 +3638,9 @@ export async function rememberRetriedRequest(
     surfaceSlug: decision.surfaceSlug,
     channel: decision.channel,
     replacedAt: now,
+    ...(decision.outcome === undefined ? {} : { outcome: decision.outcome }),
+    decidedAt: decision.decidedAt,
+    ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
   });
 }
 
@@ -3642,21 +3648,24 @@ export async function rememberRetriedRequest(
 const REPLACED_NAMED_SCAN = 50;
 
 /**
- * Name a new request on the item's earlier requests of its kind that nothing replaced yet, so a
- * reply to one of those codes is answered with this one.
+ * Name a new request on every earlier request of its kind for the item, so a reply to any of those
+ * codes is answered with the newest in one step, however often the request was replaced (W12-R20).
  */
 async function nameReplacement(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   decision: { readonly id: string; readonly kind: DecisionKind },
 ): Promise<void> {
+  // The newest first: an older one was named when it was among them, and its answer follows that
+  // chain, or the item's own request past the walk.
   const replaced = await ctx.db
     .query('replacedDecisionRequests')
     .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .order('desc')
     .take(REPLACED_NAMED_SCAN);
   for (const earlier of replaced) {
     if (
-      earlier.replacedBy !== undefined ||
+      earlier.replacedBy === decision.id ||
       earlier.kind !== decision.kind ||
       earlier.decisionId === decision.id
     ) {
@@ -3666,13 +3675,17 @@ async function nameReplacement(
   }
 }
 
-/** How many replacements the answer to a replaced code follows to the request that stands. */
+/**
+ * How many replacements the answer to a replaced code follows to the request that stands: every
+ * request named from 0.17.0 points at the newest, so a longer walk is a chain an earlier release
+ * left, answered with the item's standing request instead.
+ */
 const REPLACEMENT_HOPS = 5;
 
 /**
- * What Day0 answers a reply or a press naming a replaced request: the request that replaced it
- * and where that one stands (open, or already decided), following a chain of replacements to the
- * request that stands; or that nothing replaced it yet.
+ * What Day0 answers a reply or a press naming a replaced request: the decision it had, when it had
+ * one (W12V-16), then the request that replaced it and where that one stands (open, or already
+ * decided), following replacements to the request that stands; or that nothing replaced it yet.
  *
  * @param ctx - The decision's transaction.
  * @param replaced - The replaced request the code names.
@@ -3682,7 +3695,20 @@ async function replacedRequestAnswer(
   ctx: MutationCtx,
   replaced: Doc<'replacedDecisionRequests'>,
 ): Promise<{ readonly text: string; readonly replacedBy?: string }> {
-  const opening = `That request (${replaced.decisionId}) was replaced`;
+  const opening =
+    replaced.outcome === undefined
+      ? `That request (${replaced.decisionId}) was replaced`
+      : `That request (${replaced.decisionId}) was ${replaced.outcome}, then replaced`;
+  const answerWith = (
+    code: string,
+    decision: NonNullable<Doc<'workItems'>['decision']>,
+  ): { readonly text: string; readonly replacedBy: string } =>
+    decision.decidedAt === undefined
+      ? { text: `${opening} by ${code}. Decide on ${code} instead.`, replacedBy: code }
+      : {
+          text: `${opening} by ${code}, which was already ${decision.outcome ?? 'decided'}.`,
+          replacedBy: code,
+        };
   let code = replaced.replacedBy;
   for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
     const current = code;
@@ -3692,26 +3718,24 @@ async function replacedRequestAnswer(
         q.eq('agentId', replaced.agentId).eq('decision.id', current),
       )
       .first();
-    const decision = standing?.decision;
-    if (decision !== undefined) {
-      return decision.decidedAt === undefined
-        ? { text: `${opening} by ${current}. Decide on ${current} instead.`, replacedBy: current }
-        : {
-            text: `${opening} by ${current}, which was already ${decision.outcome ?? 'decided'}.`,
-            replacedBy: current,
-          };
-    }
+    if (standing?.decision !== undefined) return answerWith(current, standing.decision);
     const next = await ctx.db
       .query('replacedDecisionRequests')
       .withIndex('by_agent_decision', (q) =>
         q.eq('agentId', replaced.agentId).eq('decisionId', current),
       )
       .first();
-    if (next?.replacedBy === undefined) break;
-    code = next.replacedBy;
+    code = next?.replacedBy;
+  }
+  if (code !== undefined) {
+    // A chain longer than the walk: the item's own request of the kind is the one that stands.
+    const item = await ctx.db.get(replaced.workItemId);
+    if (item?.decision !== undefined && item.decision.kind === replaced.kind) {
+      return answerWith(item.decision.id, item.decision);
+    }
   }
   return {
-    text: `${opening} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+    text: `${opening}${replaced.outcome === undefined ? '' : ','} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
   };
 }
 
@@ -6573,14 +6597,19 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       return await unknown('decision belongs to another manager channel');
     }
     const answer = await replacedRequestAnswer(ctx, replaced);
-    const notified = await queueManagerReplyNotice(ctx, {
-      surfaceId: surface._id,
-      workItemId: replaced.workItemId,
-      decisionId: replaced.decisionId,
-      messageTs: args.messageTs,
-      kind: 'replaced',
-      text: answer.text,
-    });
+    // One "was replaced" notice per replaced request (W12-R19): a further reply or press, or a
+    // button left on its message, is recorded and not answered again.
+    const notified =
+      replaced.answeredAt === undefined &&
+      (await queueManagerReplyNotice(ctx, {
+        surfaceId: surface._id,
+        workItemId: replaced.workItemId,
+        decisionId: replaced.decisionId,
+        messageTs: args.messageTs,
+        kind: 'replaced',
+        text: answer.text,
+      }));
+    if (notified) await ctx.db.patch(replaced._id, { answeredAt: Date.now() });
     await ignored(REPLACED_DECISION_REASON);
     return {
       status: 'replaced' as const,

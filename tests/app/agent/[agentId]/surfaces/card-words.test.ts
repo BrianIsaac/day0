@@ -406,14 +406,14 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
   // Re-pinned for the wave 12 review: the card no longer says the buttons are on whether the
   // bridge runs or not (W12-R16, D-6 (b)), nor that a request asked before they were on has them
-  // (W12-R10).
-  it('says buttons are on while the socket service runs, on each new request, with the typed code beside them', (): void => {
+  // (W12-R10). Re-pinned again for 13-FS: the card reads the bridge's heartbeat, so it says what
+  // it knows (a live connection for the app) rather than a condition it could not read.
+  it('says buttons are on while the socket service holds a live connection for the app, with the typed code beside them', (): void => {
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
-    expect(words.title).toBe(
-      'Decisions in Slack: buttons are on while the Slack socket service runs',
-    );
+    expect(words.title).toBe('Decisions in Slack: buttons are on');
     expect(words.note).toBe(
-      'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
+      // Re-worded for the design pass: the card reads the bridge's last report, not a live one.
+      'The Slack socket service last reported a live connection for Mateo (Day0), so each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -433,6 +433,23 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     );
     expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
+  });
+
+  it('says the buttons are off while the socket service reports no live connection for the app (D-6 (b))', (): void => {
+    const words = decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Mateo (Day0)');
+    expect(words.title).toBe('Buttons: off until the Slack socket service connects');
+    expect(words.note).toBe(
+      // Re-worded on the bed: a bridge that stops cleanly reports the app down at once, so the note
+      // says what the card knows (no live connection reported lately), not a fixed window.
+      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so requests reach you with a typed code only. Buttons come back on new requests once the service reports one again. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
+    );
+    expect(words.asksForToken).toBe(false);
+    expect(words.offersReplacement).toBe(true);
+    expect(
+      decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Iris (Day0)', false).note,
+    ).toContain(
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+    );
   });
 
   it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
@@ -457,7 +474,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
     const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
     expect(on.note).toBe(
-      'Each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+      'The Slack socket service last reported a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
     );
     const noToken = decisionButtonsWords(
       { available: false, why: 'no-app-level-token' },
@@ -504,6 +521,21 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
     expect(typedCodeWords({ state: 'day0-opens', appName: 'Iris (Day0)' })).toEqual({
       title: 'Typed code: off until this app takes messages',
       note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+
+  it('says Slack refused Day0’s opening, that Day0 tries again only when asked, and the toggle (13-FS)', (): void => {
+    expect(
+      typedCodeWords({
+        state: 'refused',
+        appName: 'Iris (Day0)',
+        reason: 'Slack apps.manifest.update failed: invalid_manifest',
+      }),
+    ).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      // Re-worded for the design pass: no doubled brackets, and the two ways out side by side.
+      note: 'Slack would not let Day0 open the messages tab of Iris (Day0), so no typed code reaches it. Slack’s answer: Slack apps.manifest.update failed: invalid_manifest. Press Check the connection for Day0 to try again, or have someone who manages Iris (Day0) in Slack turn on App Home, “Allow users to send Slash commands and messages from the messages tab”, and say so here.',
       confirm: 'It is on in Slack',
     });
   });

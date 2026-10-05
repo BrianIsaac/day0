@@ -1,8 +1,8 @@
 /*
- * A documentation sync the deployment's pause held (12-J; W12V-2). The sync records the hold as
- * the source's last error, since a source's status has no held state of its own (the schema step is
- * not this release's), so the page reads the reason to say "Held" rather than that the source could
- * not be read: nothing was tried.
+ * A documentation sync the deployment's pause held (12-J; W12V-2). From 0.17.0 the hold is the
+ * source's own `held` status and its run's `held` state, with this reason as the source's last
+ * error; a release before recorded it as `error` with the same reason, which the page and the
+ * resume still read as held: nothing was tried, so nothing failed.
  */
 
 /** How every held sync's reason opens, this release's words and the one before alike. */

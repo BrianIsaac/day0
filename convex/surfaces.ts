@@ -1,7 +1,7 @@
 import {
   decisionButtonsFor,
-  socketBridgeConfigured,
   type DecisionButtons,
+  type SocketBridgeState,
 } from '../src/surfaces/slack-socket';
 import { ConvexError, v } from 'convex/values';
 import {
@@ -49,6 +49,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
 import { purgeAppLevelToken } from './credentials';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import type { TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
@@ -68,8 +69,10 @@ import { organisationSystemOf, servedByIssuer } from '../src/surfaces/access-req
 import {
   activeConnectionFor,
   activeSystemsAmong,
+  endedByItsRevoke,
   revokedConnectionsAmong,
 } from './organisationConnectionReads';
+import { keptAppNotReinstalled } from '../src/surfaces/kept-app';
 import {
   listedCardIdentity,
   type CardIdentity,
@@ -466,11 +469,32 @@ export const listForAgent = query({
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    const bridgeConfigured = socketBridgeConfigured();
+    const now = Date.now();
+    // A card whose own app IT's revoke ended carries nothing, so nothing is read for its requests.
+    const keptEnded = (surface: Doc<'surfaces'>): boolean =>
+      keptAppNotReinstalled(
+        surface,
+        surface.provisioning?.organisationConnectionId !== undefined &&
+          revoked.has(surface.provisioning.organisationConnectionId),
+      );
+    const asksThrough = (surface: Doc<'surfaces'>): boolean =>
+      carriesDecisions(surface) && !keptEnded(surface);
+    const bridges = new Map(
+      await Promise.all(
+        surfaces
+          .filter(asksThrough)
+          .map(
+            async (surface): Promise<[Id<'surfaces'>, SocketBridgeState]> => [
+              surface._id,
+              await socketBridgeStateOf(ctx, surface, now),
+            ],
+          ),
+      ),
+    );
     const typedCodes = new Map(
       await Promise.all(
         surfaces
-          .filter(carriesDecisions)
+          .filter(asksThrough)
           .map(
             async (surface): Promise<[Id<'surfaces'>, TypedCodeReach]> => [
               surface._id,
@@ -500,12 +524,9 @@ export const listForAgent = query({
         surface.organisationConnectionId !== undefined &&
         revoked.has(surface.organisationConnectionId) &&
         !activeSystems.has(organisationSystemOf(surface) ?? '');
-      const keptAppNotReinstalled =
-        surface.class === 'chat' &&
-        surface.credentialId === undefined &&
-        surface.provisioning?.organisationConnectionId !== undefined &&
-        revoked.has(surface.provisioning.organisationConnectionId);
+      const notReinstalled = keptEnded(surface);
       const { pendingAuthorisation, ...card } = listed;
+      const bridge = bridges.get(surface._id);
       return {
         ...card,
         ...(pendingAuthorisation === undefined
@@ -521,10 +542,8 @@ export const listForAgent = query({
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
-        ...(keptAppNotReinstalled ? { keptAppNotReinstalled: true as const } : {}),
-        ...(carriesDecisions(surface)
-          ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
-          : {}),
+        ...(notReinstalled ? { keptAppNotReinstalled: true as const } : {}),
+        ...(bridge === undefined ? {} : { decisionButtons: decisionButtonsFor(surface, bridge) }),
         ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };
     });
@@ -1461,8 +1480,16 @@ export const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'listed-dead',
 ];
 
-/** Why `beginProbe` reserved no generation. */
-export type ProbeRefusal = 'not-probeable' | 'access-ended' | 'in-flight';
+/**
+ * Why `beginProbe` reserved no generation: among them a card IT's revoke ended, which a probe could
+ * only fail and so overwrite IT's reason (13-FS, W12X-4).
+ */
+export type ProbeRefusal =
+  | 'not-probeable'
+  | 'access-ended'
+  | 'in-flight'
+  | 'kept-app-ended'
+  | 'connection-revoked';
 
 /** A probe generation `beginProbe` reserved, with the row as it now stands. */
 export interface ProbeReserved {
@@ -1518,6 +1545,8 @@ export const beginProbe = internalMutation({
       if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
       return { reserved: false, refusal: 'access-ended' };
     }
+    const ended = await endedByItsRevoke(ctx, surface);
+    if (ended !== undefined) return { reserved: false, refusal: ended };
     if (
       args.routine === true &&
       surface.probeStartedAt !== undefined &&

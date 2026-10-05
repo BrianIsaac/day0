@@ -302,10 +302,12 @@ export function SurfaceCard({
     : surface.approvalRefusal?.includes(BROWSER_DRIVER_ABSENT)
       ? BROWSER_COMPONENT_CARD_MESSAGE
       : surface.approvalRefusal;
-  const channelsNotJoined = presentChannelsNotJoined(
-    surface.channelsNotJoined,
-    provisioning?.appName,
-  );
+  // The last probe's channels ask for an invite and a fresh probe, which only a card that holds its
+  // credential can act on: an ended card keeps the list on its row and says nothing of it (13-FS).
+  const channelsNotJoined =
+    surface.credentialId === undefined
+      ? undefined
+      : presentChannelsNotJoined(surface.channelsNotJoined, provisioning?.appName);
   // The renewal's re-join, while the card holds the token that renewal installed (11-AC's item 5).
   const rejoined =
     surface.credentialId === undefined
@@ -446,7 +448,9 @@ export function SurfaceCard({
         surface.reason !== skipReason &&
         surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
-            {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
+            {surface.connectionRevoked || surface.keptAppNotReinstalled
+              ? itsReasonWords(surface.reason)
+              : surface.reason}
           </p>
         ) : null}
         {awaitingAccess ? (
@@ -667,7 +671,9 @@ export function SurfaceCard({
             onReject={actions.reject}
           />
         ) : null}
-        {PROBEABLE.has(surface.verdict) ? (
+        {/* A card IT's revoke ended has nothing to check: a probe could only fail and replace IT's
+            reason (13-FS, W12X-4). */}
+        {PROBEABLE.has(surface.verdict) && !notReinstalled && !surface.connectionRevoked ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button size="small" onClick={actions.probe} disabled={pending === 'probe'}>
               {pending === 'probe' ? 'Checking…' : 'Check the connection'}

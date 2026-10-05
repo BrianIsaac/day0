@@ -146,7 +146,11 @@ interface ProbeDependencies {
    * Opens the messages tab of a Slack card's own app Day0 created before this release (W12V-7);
    * the network one unless a test replaces it.
    */
-  openMessagesTab?: (ctx: ActionCtx, surfaceId: Id<'surfaces'>) => Promise<unknown>;
+  openMessagesTab?: (
+    ctx: ActionCtx,
+    surfaceId: Id<'surfaces'>,
+    options: { readonly asked: boolean },
+  ) => Promise<unknown>;
 }
 
 export interface ProbeOutcome {
@@ -1191,6 +1195,11 @@ export interface ProbeRequest {
    * for by a person's action and supersedes one in flight.
    */
   readonly routine?: boolean;
+  /**
+   * The manager's own Check the connection (the public `probe`): the one probe that asks Slack
+   * again to open a messages tab whose opening it refused (13-FS).
+   */
+  readonly asked?: boolean;
 }
 
 /** What a probe `beginProbe` refused says, by the refusal. */
@@ -1198,6 +1207,10 @@ const PROBE_REFUSED: Readonly<Record<ProbeRefusal, string>> = {
   'not-probeable': 'Surface is not ready to probe.',
   'access-ended': "The card's access has ended; only the manager's renewal probes it again.",
   'in-flight': 'A probe of this card is already running; this routine re-probe was not made.',
+  'kept-app-ended':
+    "IT revoked the organisation's connection that created this card's own app, and Day0 does not install that app again, so there is nothing to check. IT's reason stays on the card.",
+  'connection-revoked':
+    "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again. IT's reason stays on the card.",
 };
 
 /**
@@ -1635,7 +1648,7 @@ export async function runSurfaceProbe(
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
       if (surface.path === 'documented-api' && surface.provisioning !== undefined) {
-        await openMessagesTabOf(ctx, surfaceId, dependencies);
+        await openMessagesTabOf(ctx, surfaceId, dependencies, request.asked === true);
       }
       return {
         verdict: 'connected',
@@ -1662,16 +1675,18 @@ export async function runSurfaceProbe(
 
 /**
  * Bring a connected Slack card's own app over to taking messages, when Day0 created it before this
- * release with a connection still active (W12V-7). A refusal is logged and leaves the probe's
- * verdict alone: the card's typed-code row then still says what a person can turn on.
+ * release with a connection still active (W12V-7). A refusal is recorded on the card and logged,
+ * and leaves the probe's verdict alone: the card's typed-code row then says Slack refused and what
+ * a person can do, and only the manager's own Check the connection (`asked`) tries again (13-FS).
  */
 async function openMessagesTabOf(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
   dependencies: ProbeDependencies,
+  asked: boolean,
 ): Promise<void> {
   try {
-    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId);
+    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId, { asked });
   } catch (error: unknown) {
     log.warn('slack app messages tab not opened', {
       surfaceId,
@@ -1691,6 +1706,7 @@ export const probe = action({
     assertRealMode('Surface probing');
     return await ctx.runAction(internal.surfaceActions.probeInternal, {
       surfaceId: args.surfaceId,
+      asked: true,
     });
   },
 });
@@ -1708,10 +1724,15 @@ export const probeInternal = internalAction({
   args: {
     surfaceId: v.id('surfaces'),
     routine: v.optional(v.boolean()),
+    asked: v.optional(v.boolean()),
     renewExpiry: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<ProbeOutcome> =>
-    await runSurfaceProbe(ctx, { surfaceId: args.surfaceId, routine: args.routine }),
+    await runSurfaceProbe(ctx, {
+      surfaceId: args.surfaceId,
+      routine: args.routine,
+      asked: args.asked,
+    }),
 });
 
 /**

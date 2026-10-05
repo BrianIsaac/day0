@@ -46,7 +46,8 @@ log({ level: 'info', message: 'started', backendUrl });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
-    bridge.stop();
-    health.close(() => process.exit(0));
+    // The last report, every app down, goes before the process does (D-6 (b)); its own failure is
+    // logged by the bridge, and it is bounded inside the service's stop grace.
+    void bridge.stop().finally(() => health.close(() => process.exit(0)));
   });
 }

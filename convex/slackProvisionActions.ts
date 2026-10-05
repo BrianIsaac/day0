@@ -131,7 +131,7 @@ class SlackCallError extends Error {
 }
 
 /** Slack's error word a failure carried, or undefined for any other failure. */
-function slackErrorOf(error: unknown): string | undefined {
+export function slackErrorOf(error: unknown): string | undefined {
   return error instanceof SlackCallError ? error.slackError : undefined;
 }
 

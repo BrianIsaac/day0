@@ -62,3 +62,29 @@ describe('fake Slack’s configuration token, as real Slack answered the walk (R
     expect(await call('auth.revoke', String(rotated.token))).toEqual({ ok: true, revoked: true });
   });
 });
+
+describe('fake Slack’s Generate Token for a configuration pair (13-FS)', (): void => {
+  it('mints a fresh pair after a revoke, as IT’s click on Your App Configuration Tokens does, keeping the apps', async (): Promise<void> => {
+    const before = (await (await fetch(`${fake.base}/proof`)).json()) as { apps: string[] };
+    const response = await fetch(`${fake.base}/proof/configuration-token`, { method: 'POST' });
+    expect(response.status).toBe(200);
+    const pair = (await response.json()) as { ok: boolean; token: string; refresh_token: string };
+    expect(pair.ok).toBe(true);
+    expect(pair.token).toMatch(/^xoxe-/);
+    expect(pair.refresh_token).toMatch(/^xoxe-/);
+    expect(pair.token).not.toBe(CONFIGURATION_TOKEN);
+    expect(await call('apps.manifest.validate', pair.token)).not.toMatchObject({
+      error: 'token_revoked',
+    });
+    expect(await call('apps.manifest.validate', pair.token)).not.toMatchObject({
+      error: 'invalid_auth',
+    });
+    expect(
+      await call('tooling.tokens.rotate', undefined, { refresh_token: pair.refresh_token }),
+    ).toMatchObject({
+      ok: true,
+    });
+    const after = (await (await fetch(`${fake.base}/proof`)).json()) as { apps: string[] };
+    expect(after.apps).toEqual(before.apps);
+  });
+});

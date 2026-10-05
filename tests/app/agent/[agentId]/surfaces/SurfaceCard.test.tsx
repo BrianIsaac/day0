@@ -860,6 +860,8 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expiresAt: NOW + 80 * DAY,
       reason: 'The re-walk ends the bed connection.',
       keptAppNotReinstalled: true,
+      // The last probe's channels, which the revoke leaves on the row (the 13-FS bed).
+      channelsNotJoined: ['#revops'],
       // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
       // install), as the bed showed once IT connected Slack again.
       decisionButtons: { available: true },
@@ -912,7 +914,14 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain('Typed code');
       expect(markup).not.toContain('app-level token');
     }
-    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+    // Re-pinned for 13-FS: the reason is IT's whether or not Slack is connected again, and the
+    // card offers no check that could only overwrite it.
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).toContain("IT's reason: The re-walk ends the bed connection.");
+      expect(markup).not.toContain('Check the connection');
+      // Nothing is read through the card, so it asks no one to invite its app or probe again.
+      expect(markup).not.toContain('Not in #revops');
+    }
   });
 
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {

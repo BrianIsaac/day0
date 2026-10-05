@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { FINISHING_CURSOR, finishingCursor } from '../../../src/docs/finishing';
 import { listingCursor } from '../../../src/docs/readers/batch';
+import { SYNC_HELD_REASON } from '../../../src/docs/sync-held';
 import { RESUMABLE_RUN_MS, runToResume, type ResumeCandidate } from '../../../src/docs/sync-resume';
 
 const NOW = 1_790_000_000_000;
@@ -57,6 +58,24 @@ describe('the run a new documentation sync takes over (step 17)', (): void => {
       pageCount: 325,
     });
     expect(runToResume(progressed, first, NOW)).toBe(progressed);
+  });
+
+  it('carries on from the cursor a second sync the pause held stopped at, never from page one (W12-R27)', (): void => {
+    const first = run({ state: 'held' });
+    const again = run({ state: 'held' });
+    expect(runToResume(again, first, NOW)).toBe(again);
+    const triedOnce = run({ state: 'error' });
+    expect(runToResume(triedOnce, first, NOW)).toBe(triedOnce);
+    expect(runToResume(again, run({ state: 'error' }), NOW)).toBe(again);
+  });
+
+  it('reads a run an earlier release held as an error with the held reason as held (W12-R27)', (): void => {
+    const first = run({ state: 'error', reason: SYNC_HELD_REASON });
+    const again = run({
+      state: 'error',
+      reason: `${SYNC_HELD_REASON} A newer sync of the source took over from its cursor after 300 pages.`,
+    });
+    expect(runToResume(again, first, NOW)).toBe(again);
   });
 
   it('starts from page one after a provider cursor or a bare offset, which no listing can check (D D5)', (): void => {

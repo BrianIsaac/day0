@@ -1,7 +1,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
@@ -567,5 +567,152 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
     expect(cards.find((card) => card._id === heldCard)?.keptAppNotReinstalled).toBeUndefined();
     // Another Slack connection active since is no creator of this app: it stays not installed.
     expect(cards.find((card) => card._id === endedCard)?.connectionRevoked).toBeUndefined();
+    // Nothing goes through it, so the server computes no buttons or typed code for it (13-FS).
+    expect(cards.find((card) => card._id === endedCard)?.decisionButtons).toBeUndefined();
+    expect(cards.find((card) => card._id === endedCard)?.typedCode).toBeUndefined();
+    expect(cards.find((card) => card._id === liveCard)?.decisionButtons).toBeDefined();
+  });
+
+  it('keeps IT’s reason on a card IT’s revoke ended when it is checked, before and after IT connects again (13-FS)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 2,
+        statusReason: 'The re-walk ends the bed connection.',
+        createdAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Dara',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Slack',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        verdict: 'approved',
+        reason: 'The re-walk ends the bed connection.',
+        whereFound: [],
+        managerApprovedAt: 1,
+        credentialLanded: false,
+        organisationConnectionId: connectionId,
+        provisioning: {
+          appId: 'A-DARA',
+          appName: 'Dara (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1.2',
+          redirectUrl: 'https://day0.test/api/oauth/slack',
+          scopes: ['chat:write'],
+          organisationConnectionId: connectionId,
+          createdAt: 1,
+          installedAt: 2,
+        },
+        createdAt: 1,
+      });
+      return surfaceId;
+    });
+    const reasonOf = async (): Promise<string | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.reason;
+
+    await expect(
+      harness.action(internal.surfaceActions.probeInternal, { surfaceId, asked: true }),
+    ).resolves.toMatchObject({ verdict: 'skipped' });
+    expect(await reasonOf()).toBe('The re-walk ends the bed connection.');
+
+    // IT connects Slack again: the kept app is still not installed again, so still nothing to check.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 3 },
+        status: 'active',
+        createdAt: 3,
+      });
+    });
+    const checked = await harness.action(internal.surfaceActions.probeInternal, {
+      surfaceId,
+      asked: true,
+    });
+    expect(checked).toEqual({
+      verdict: 'skipped',
+      reason:
+        "IT revoked the organisation's connection that created this card's own app, and Day0 does not install that app again, so there is nothing to check. IT's reason stays on the card.",
+    });
+    expect(await reasonOf()).toBe('The re-walk ends the bed connection.');
+    restoreSurfaceMode();
+  });
+
+  it('checks nothing on a card whose organisation connection IT revoked until IT connects it again (13-FS)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 2,
+        statusReason: 'moving',
+        createdAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'documented-api',
+        endpoint: 'https://api.linear.app/graphql',
+        verdict: 'approved',
+        reason: 'moving',
+        whereFound: [],
+        managerApprovedAt: 1,
+        credentialLanded: false,
+        organisationConnectionId: connectionId,
+        createdAt: 1,
+      });
+    });
+    await expect(
+      harness.action(internal.surfaceActions.probeInternal, { surfaceId, asked: true }),
+    ).resolves.toEqual({
+      verdict: 'skipped',
+      reason:
+        "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again. IT's reason stays on the card.",
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.reason).toBe('moving');
+    restoreSurfaceMode();
   });
 });

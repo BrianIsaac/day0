@@ -2268,7 +2268,7 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
       docSources: sources.map(
         (source): string =>
           `${source.kind} "${source.label}": ${source.status}, ${source.pageCount} pages${
-            source.status === 'error' && source.lastError
+            (source.status === 'error' || source.status === 'held') && source.lastError
               ? ` (${source.lastError.slice(0, 100)})`
               : ''
           }`,

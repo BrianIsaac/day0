@@ -88,6 +88,7 @@ import type * as slackProvision from '../slackProvision.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
 import type * as slackSocket from '../slackSocket.js';
 import type * as slackSocketActions from '../slackSocketActions.js';
+import type * as socketHeartbeats from '../socketHeartbeats.js';
 import type * as sourceRevocation from '../sourceRevocation.js';
 import type * as sourceRevocationActions from '../sourceRevocationActions.js';
 import type * as sourceRevocationSend from '../sourceRevocationSend.js';
@@ -193,6 +194,7 @@ declare const fullApi: ApiFromModules<{
   slackProvisionActions: typeof slackProvisionActions;
   slackSocket: typeof slackSocket;
   slackSocketActions: typeof slackSocketActions;
+  socketHeartbeats: typeof socketHeartbeats;
   sourceRevocation: typeof sourceRevocation;
   sourceRevocationActions: typeof sourceRevocationActions;
   sourceRevocationSend: typeof sourceRevocationSend;

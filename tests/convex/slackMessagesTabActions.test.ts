@@ -163,7 +163,16 @@ async function asCreatedBeforeThisRelease(
       )
       .collect();
     await Promise.all(events.map(async (event) => await ctx.db.delete(event._id)));
+    // Re-pinned for 13-FS: an earlier release's app has no field on its card either.
+    await ctx.db.patch(surfaceId, {
+      provisioning: { ...surface.provisioning!, messagesTab: undefined },
+    });
   });
+}
+
+/** The card's own record of whether its app takes messages. */
+async function messagesTabOf(harness: Harness, surfaceId: Id<'surfaces'>): Promise<unknown> {
+  return (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.provisioning?.messagesTab;
 }
 
 async function reach(harness: Harness, surfaceId: Id<'surfaces'>) {
@@ -211,6 +220,10 @@ describe('an app the kit creates now', (): void => {
       { surfaceId, appId, appName: 'Maya (Day0)', how: 'created' },
     ]);
     expect(await reach(harness, surfaceId)).toEqual({ state: 'open' });
+    expect(await messagesTabOf(harness, surfaceId)).toMatchObject({
+      state: 'open',
+      how: 'created',
+    });
     expect(callsOf(slack, 'apps.manifest.export')).toEqual([]);
     expect(callsOf(slack, 'apps.manifest.update')).toEqual([]);
   });
@@ -248,6 +261,7 @@ describe('an app Day0 created before this release', (): void => {
       { surfaceId, appId, appName: 'Iris (Day0)', how: 'opened' },
     ]);
     expect(await reach(harness, surfaceId)).toEqual({ state: 'open' });
+    expect(await messagesTabOf(harness, surfaceId)).toMatchObject({ state: 'open', how: 'opened' });
     expect((await ledgerMethods(harness)).slice(-2)).toEqual([
       ['apps.manifest.export', 'done'],
       ['apps.manifest.update', 'done'],
@@ -289,7 +303,9 @@ describe('an app Day0 created before this release', (): void => {
     ]);
   });
 
-  it('keeps its probe connected when Slack refuses the read, the refusal on the ledger and nothing recorded', async (): Promise<void> => {
+  // Re-pinned for 13-FS (W12V-7's second pass): the refusal is recorded on the card with its
+  // attempts, so the probe stops trying until a person asks.
+  it('keeps its probe connected when Slack refuses the read, the refusal on the ledger and on the card', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await landSlack(harness);
     const surfaceId = await employee(harness, 'Iris');
@@ -303,10 +319,64 @@ describe('an app Day0 created before this release', (): void => {
     expect(callsOf(slack, 'apps.manifest.update')).toEqual([]);
     expect(await openEvents(harness, surfaceId)).toEqual([]);
     expect((await ledgerMethods(harness)).at(-1)).toEqual(['apps.manifest.export', 'failed']);
+    expect(await messagesTabOf(harness, surfaceId)).toMatchObject({
+      state: 'refused',
+      reason: expect.stringContaining('not_allowed_token_type'),
+      attempts: 1,
+    });
+    expect(await reach(harness, surfaceId)).toMatchObject({
+      state: 'refused',
+      appName: 'Iris (Day0)',
+    });
+  });
+
+  it('records no refusal for a failure Slack may not repeat, so the next check asks again (13-FS second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const surfaceId = await employee(harness, 'Iris');
+    const appId = await connect(harness, surfaceId);
+    await asCreatedBeforeThisRelease(harness, surfaceId, appId);
+    for (const transient of ['ratelimited', 'internal_error', 'service_unavailable']) {
+      slack.refusals.set('apps.manifest.export', transient);
+      await harness.action(internal.surfaceActions.probeInternal, { surfaceId, routine: true });
+      expect(await messagesTabOf(harness, surfaceId), transient).toBeUndefined();
+    }
+    expect(callsOf(slack, 'apps.manifest.export')).toHaveLength(3);
     expect(await reach(harness, surfaceId)).toEqual({
       state: 'day0-opens',
       appName: 'Iris (Day0)',
     });
+  });
+
+  it('asks Slack again after a refusal only when a person presses Check the connection', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const surfaceId = await employee(harness, 'Iris');
+    const appId = await connect(harness, surfaceId);
+    await asCreatedBeforeThisRelease(harness, surfaceId, appId);
+    slack.refusals.set('apps.manifest.export', 'not_allowed_token_type');
+    await harness.action(internal.surfaceActions.probeInternal, { surfaceId });
+    expect(callsOf(slack, 'apps.manifest.export')).toHaveLength(1);
+
+    // The hourly re-probe and every probe nobody asked for leave the refusal alone.
+    await harness.action(internal.surfaceActions.probeInternal, { surfaceId, routine: true });
+    await harness.action(internal.surfaceActions.probeInternal, { surfaceId });
+    expect(callsOf(slack, 'apps.manifest.export')).toHaveLength(1);
+
+    // Check the connection asks again, and counts a second refusal.
+    const manager = harness.withIdentity(managerIdentity());
+    await manager.action(api.surfaceActions.probe, { surfaceId });
+    expect(callsOf(slack, 'apps.manifest.export')).toHaveLength(2);
+    expect(await messagesTabOf(harness, surfaceId)).toMatchObject({
+      state: 'refused',
+      attempts: 2,
+    });
+
+    // Once Slack takes it, the card says the app takes messages.
+    slack.refusals.delete('apps.manifest.export');
+    await manager.action(api.surfaceActions.probe, { surfaceId });
+    expect(await messagesTabOf(harness, surfaceId)).toMatchObject({ state: 'open', how: 'opened' });
+    expect(await reach(harness, surfaceId)).toEqual({ state: 'open' });
   });
 
   it('waits on a person’s toggle once the connection that created it is revoked, and takes the manager’s word for it', async (): Promise<void> => {

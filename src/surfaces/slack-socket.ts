@@ -17,7 +17,13 @@ export type ButtonsUnavailable =
   /** The employee's app has no app-level token yet (a person generates it, K2). */
   | 'no-app-level-token'
   /** The deployment runs no Socket Mode bridge to carry a press. */
-  | 'no-bridge';
+  | 'no-bridge'
+  /**
+   * The deployment holds the bridge's secret, but the bridge has reported no live connection for
+   * the card's app lately (D-6 (b), W12-R16): it is stopped, cannot reach Slack, or predates the
+   * report (0.17.0), so a press would reach nobody.
+   */
+  | 'bridge-down';
 
 /** Whether an employee's decision requests carry Approve and Reject buttons, and why not. */
 export type DecisionButtons =
@@ -38,24 +44,152 @@ export interface ButtonsCard {
 }
 
 /**
+ * What a card knows of the Socket Mode bridge for its own app: `unconfigured` where the deployment
+ * holds no bridge secret, `live` where the bridge reported a live connection for the card's app
+ * within {@link SOCKET_HEARTBEAT_FRESH_MS}, and `down` otherwise (D-6 (b), W12-R16).
+ */
+export type SocketBridgeState = 'unconfigured' | 'down' | 'live';
+
+/**
  * Whether a chat card's decision requests carry buttons (wave 12, 12-M; RM3 (a)): only on Slack's
  * documented Web API, through the employee's own app, on a deployment whose Socket Mode bridge is
- * configured, once the app's app-level token has landed. The bridge is read before the token, so a
- * card on a deployment that runs none asks for no token it could not use (W12-R18). Otherwise the
- * reason the card shows; the typed code still decides where the app takes messages (W12V-7).
+ * configured, once the app's app-level token has landed, and while the bridge reports a live
+ * connection for the app (D-6 (b)). The bridge's secret is read before the token, so a card on a
+ * deployment that runs none asks for no token it could not use (W12-R18); its liveness after the
+ * token, since the bridge dials only an app that has one. Otherwise the reason the card shows; the
+ * typed code still decides where the app takes messages (W12V-7).
  *
  * @param card - The chat card the requests go through.
- * @param bridgeConfigured - Whether the deployment holds the bridge's secret.
+ * @param bridge - What the card knows of the bridge ({@link socketBridgeStateFor}).
  */
-export function decisionButtonsFor(card: ButtonsCard, bridgeConfigured: boolean): DecisionButtons {
+export function decisionButtonsFor(card: ButtonsCard, bridge: SocketBridgeState): DecisionButtons {
   if (card.path !== 'documented-api' || !isSlackApiEndpoint(card.endpoint)) {
     return { available: false, why: 'not-slack-api' };
   }
   if (card.provisioning === undefined) return { available: false, why: 'no-own-app' };
   const tokenStored = card.provisioning.appLevelTokenCredentialId !== undefined;
-  if (!bridgeConfigured) return { available: false, why: 'no-bridge', tokenStored };
+  if (bridge === 'unconfigured') return { available: false, why: 'no-bridge', tokenStored };
   if (!tokenStored) return { available: false, why: 'no-app-level-token' };
+  if (bridge === 'down') return { available: false, why: 'bridge-down' };
   return { available: true };
+}
+
+/**
+ * How old an unchanged report may grow before the backend writes it again: the bridge reports
+ * every 30 seconds, and a row rewritten that often would wake every reader of it for nothing.
+ */
+export const SOCKET_HEARTBEAT_REFRESH_MS = 2 * 60_000;
+
+/**
+ * How recent a live report must be for a card to read the bridge as live: the refresh, the sync
+ * that lands it (30 seconds) and one missed sync (30 seconds). A bridge that stops cleanly reports
+ * every app down as it goes; one that dies unseen reads as down this long after its last report.
+ */
+export const SOCKET_HEARTBEAT_FRESH_MS = 3 * 60_000;
+
+/**
+ * When a live report that was not renewed is written down: just past the window a card reads it
+ * as live in, so a card open on a page re-renders once the bridge died unseen (13-FS).
+ */
+export const SOCKET_HEARTBEAT_EXPIRY_MS = SOCKET_HEARTBEAT_FRESH_MS + 5_000;
+
+/** The longest failure a report stores, so a bridge cannot fill the row. */
+const HEARTBEAT_FAILURE_LIMIT = 300;
+
+/** A card's newest heartbeat as the readers see it (`socketHeartbeats`). */
+export interface SocketHeartbeatReading {
+  readonly appId: string;
+  readonly live: boolean;
+  readonly reportedAt: number;
+}
+
+/**
+ * What a card knows of the bridge for its own app.
+ *
+ * @param configured - Whether the deployment holds the bridge's secret ({@link socketBridgeConfigured}).
+ * @param report - The card's newest heartbeat, if the bridge ever reported on it.
+ * @param appId - The card's own app, if it has one.
+ * @param now - The clock, in epoch milliseconds.
+ */
+export function socketBridgeStateFor(
+  configured: boolean,
+  report: SocketHeartbeatReading | null | undefined,
+  appId: string | undefined,
+  now: number,
+): SocketBridgeState {
+  if (!configured) return 'unconfigured';
+  const live =
+    report !== null &&
+    report !== undefined &&
+    appId !== undefined &&
+    report.appId === appId &&
+    report.live &&
+    now - report.reportedAt <= SOCKET_HEARTBEAT_FRESH_MS;
+  return live ? 'live' : 'down';
+}
+
+/**
+ * Whether one report is written over the card's row: its first, a change of liveness or app, or an
+ * unchanged one once the row is {@link SOCKET_HEARTBEAT_REFRESH_MS} old.
+ *
+ * @param kept - The card's row, if any.
+ * @param report - What the bridge reports now.
+ * @param now - The clock, in epoch milliseconds.
+ */
+export function heartbeatWriteDue(
+  kept: SocketHeartbeatReading | null,
+  report: Pick<SocketHeartbeatReading, 'appId' | 'live'>,
+  now: number,
+): boolean {
+  return (
+    kept === null ||
+    kept.live !== report.live ||
+    kept.appId !== report.appId ||
+    now - kept.reportedAt >= SOCKET_HEARTBEAT_REFRESH_MS
+  );
+}
+
+/** One app in the bridge's report, as it posts it to `/slack-socket/heartbeat`. */
+export interface SocketHeartbeatReport {
+  /** The card the app carries presses for, as the apps list named it. */
+  readonly surfaceId: string;
+  readonly appId: string;
+  /** Whether the bridge holds a greeted connection for the app. */
+  readonly live: boolean;
+  /** When the live connection was greeted. */
+  readonly liveSince?: number;
+  /** Why the bridge could not open the app's connection, the last time it could not. */
+  readonly failure?: string;
+}
+
+/**
+ * Read the bridge's report: the apps it holds, each by its card and app with whether it is live.
+ * An entry missing one of those is dropped; a body with no list of apps is not a report.
+ *
+ * @param body - The request's JSON body.
+ */
+export function parseHeartbeat(body: unknown): SocketHeartbeatReport[] | undefined {
+  const apps = record(body)?.apps;
+  if (!Array.isArray(apps)) return undefined;
+  return apps.flatMap((entry): SocketHeartbeatReport[] => {
+    const app = record(entry);
+    const surfaceId = text(app?.surfaceId);
+    const appId = text(app?.appId);
+    if (surfaceId === undefined || appId === undefined || typeof app?.live !== 'boolean') {
+      return [];
+    }
+    const liveSince = typeof app.liveSince === 'number' ? app.liveSince : undefined;
+    const failure = text(app.failure)?.slice(0, HEARTBEAT_FAILURE_LIMIT);
+    return [
+      {
+        surfaceId,
+        appId,
+        live: app.live,
+        ...(liveSince === undefined ? {} : { liveSince }),
+        ...(failure === undefined ? {} : { failure }),
+      },
+    ];
+  });
 }
 
 /**

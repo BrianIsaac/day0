@@ -597,13 +597,14 @@ export function decisionButtonsWords(
 ): DecisionButtonsWords {
   const app = appName ?? "the employee's app";
   if (buttons.available) {
+    // The card reads the bridge's heartbeat, so it says what it knows (D-6 (b)); a request asked
+    // before the token landed keeps its typed code alone (W12-R10).
+    const live = `The Slack socket service last reported a live connection for ${app}, so each new request to you arrives with Approve and Reject buttons`;
     return {
-      // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
-      // before the token landed keeps its typed code alone (W12-R10).
-      title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
+      title: 'Decisions in Slack: buttons are on',
       note: typedCode
-        ? 'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.'
-        : `Each new request to you arrives with Approve and Reject buttons. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
+        ? `${live} and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.`
+        : `${live}. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
       asksForToken: false,
       offersReplacement: true,
     };
@@ -638,6 +639,14 @@ export function decisionButtonsWords(
           ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
           : `This deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of ${app}.`,
       );
+    case 'bridge-down':
+      return {
+        title: 'Buttons: off until the Slack socket service connects',
+        note: `The app-level token of ${app} is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so ${withoutButtons}. Buttons come back on new requests once the service reports one again. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.`,
+        asksForToken: false,
+        // A token Slack refuses, or one of another app, keeps the connection from opening.
+        offersReplacement: true,
+      };
     case 'no-own-app':
       return typedOnly(
         'Decisions in Slack: typed codes only',
@@ -666,8 +675,8 @@ export interface TypedCodeWords {
 /**
  * Whether the manager's typed code reaches the employee's own Slack app (W12V-7): nothing while it
  * takes messages; otherwise that it does not, who opens its messages tab (Day0 at the card's next
- * check, or only a person in Slack), the one toggle by Slack's own words, and the control with
- * which the manager says it is on.
+ * check, Day0 again only when asked after Slack refused it, or only a person in Slack), the one
+ * toggle by Slack's own words, and the control with which the manager says it is on.
  *
  * @param reach - Whether the typed code reaches the app, as `listForAgent` read it.
  */
@@ -680,6 +689,12 @@ export function typedCodeWords(reach: TypedCodeReach): TypedCodeWords | undefine
       return {
         title: 'Typed code: off until this app takes messages',
         note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
+        confirm: 'It is on in Slack',
+      };
+    case 'refused':
+      return {
+        title: 'Typed code: off until this app takes messages',
+        note: `Slack would not let Day0 open the messages tab of ${reach.appName}, so no typed code reaches it. Slack’s answer: ${reach.reason.replace(/\.$/, '')}. Press Check the connection for Day0 to try again, or have someone who manages ${reach.appName} in Slack turn on App Home, “${MESSAGES_TAB_TOGGLE}”, and say so here.`,
         confirm: 'It is on in Slack',
       };
     case 'needs-toggle':

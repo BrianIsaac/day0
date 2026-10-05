@@ -23,6 +23,7 @@ import {
 import { sendTransferNotice as sendTransferNoticeFunction } from '../../convex/managerChannelActions';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { reportBridgeOn } from './fakes/socket-heartbeat';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
@@ -577,8 +578,9 @@ describe('the outbound manager-channel action', (): void => {
 });
 
 /**
- * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), and the
- * deployment its Socket Mode bridge's secret, so its requests can carry buttons.
+ * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), the deployment
+ * its Socket Mode bridge's secret, and the bridge's live report on the app, so its requests can
+ * carry buttons (re-pinned for D-6 (b): a request reads the bridge's heartbeat, not the secret).
  */
 async function landAppLevelToken(
   harness: TestConvex<typeof schema>,
@@ -624,6 +626,10 @@ async function landAppLevelToken(
         createdAt: 1,
         installedAt: 2,
         appLevelTokenCredentialId: appLevel,
+        // Re-pinned for 13-FS: the reach reads the card's own field, written beside the event.
+        ...(options.takesMessages !== false
+          ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+          : {}),
       },
     });
     // An app this release creates takes messages from the start (W12V-7); one an earlier release
@@ -637,6 +643,14 @@ async function landAppLevelToken(
       });
     }
   });
+  const surfaceId = await harness.run(
+    async (ctx) =>
+      (await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique())!._id,
+  );
+  await reportBridgeOn(harness, surfaceId);
 }
 
 describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)', (): void => {
@@ -916,6 +930,143 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     expect(notice?.text).toBe(
       `That request (${oldCode}) was replaced by ${newCode}, which was already approved.`,
     );
+  });
+
+  it('answers a replaced request once, whatever further replies or presses name it (W12-R19)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    const reply = async (messageTs: string): Promise<unknown> =>
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'approve', id: oldCode },
+      });
+    await expect(reply('1787768409.000100')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: true,
+    });
+    await expect(reply('1787768409.000200')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: false,
+    });
+    const notices = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notices.filter((notice) => notice.kind === 'replaced')).toHaveLength(1);
+    const replaced = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique(),
+    );
+    expect(replaced?.answeredAt).toEqual(expect.any(Number));
+  });
+
+  it('answers the oldest code of a request replaced six times with the newest (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    let current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    for (let replacement = 2; replacement <= 6; replacement += 1) {
+      await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: current });
+      await harness.action(internal.managerChannelActions.requestDecision, {
+        workItemId,
+        kind: 'plan',
+        supersedes: current,
+      });
+      current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    }
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(6);
+    // Every earlier request points at the newest, so its answer takes one step.
+    expect(new Set(rows.map((row) => row.replacedBy))).toEqual(new Set([current]));
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768420.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: current });
+  });
+
+  it('names a new request on the newest of an item’s replaced requests when it holds more than it reads (13-FS second pass)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: `seed${String(index).padStart(2, '0')}`,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: standing });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+      supersedes: standing,
+    });
+    const newest = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const last = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', 'seed54'),
+          )
+          .unique(),
+    );
+    expect(last?.replacedBy).toBe(newest);
+  });
+
+  it('answers the oldest code of a chain an earlier release left longer than its walk with the item’s standing request (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    // Seven links, each pointing at the next, as nameReplacement wrote them before 0.17.0.
+    const codes = ['old0aa', 'old1bb', 'old2cc', 'old3dd', 'old4ee', 'old5ff', 'old6gg'];
+    await harness.run(async (ctx): Promise<void> => {
+      for (const [index, code] of codes.entries()) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: code,
+          replacedBy: codes[index + 1] ?? standing,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768421.000100',
+        reply: { verb: 'approve', id: 'old0aa' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: standing });
   });
 
   it('answers another Slack user’s reply to a replaced code with nothing', async (): Promise<void> => {

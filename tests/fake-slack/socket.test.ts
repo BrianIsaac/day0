@@ -204,6 +204,45 @@ describe('fake Slack: Socket Mode and a press (K1, K2, K3)', (): void => {
     connection.socket.close();
   });
 
+  it('gives a press its response_url, and keeps what is posted to it for the person who pressed (W12-R22)', async (): Promise<void> => {
+    const ts = await postRequest();
+    const opened = await api('apps.connections.open', await generateAppLevelToken());
+    const connection = await connect(String(opened.url));
+    await connection.next();
+    const pressing = proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });
+    const envelope = (await connection.next()) as {
+      envelope_id: string;
+      payload: { response_url: string };
+    };
+    connection.socket.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+    await pressing;
+    const responseUrl = new URL(envelope.payload.response_url);
+    expect(responseUrl.origin).toBe(new URL(fake.base).origin);
+    const posted = await fetch(responseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        response_type: 'ephemeral',
+        replace_original: false,
+        text: 'Not received.',
+      }),
+    });
+    expect(posted.status).toBe(200);
+    const evidence = (await (await fetch(`${fake.base}/proof`)).json()) as {
+      responses: Array<Record<string, unknown>>;
+    };
+    expect(evidence.responses).toEqual([
+      {
+        channel: 'D_DAY0_MANAGER',
+        ts,
+        response_type: 'ephemeral',
+        replace_original: false,
+        text: 'Not received.',
+      },
+    ]);
+    connection.socket.close();
+  });
+
   it('answers a press with no connection open as Slack shows it: not delivered', async (): Promise<void> => {
     const ts = await postRequest();
     const response = await proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });
@@ -279,5 +318,58 @@ describe('fake Slack: a connection that stops answering (K1)', (): void => {
     expect(await (await pressing).json()).toMatchObject({ delivered: true, acknowledged: true });
     dead.destroy();
     live.socket.close();
+  });
+});
+
+/** One masked client text frame, its FIN bit and opcode as given (RFC 6455, section 5.2). */
+function clientFrame(text: string, fin: boolean, opcode: number): Buffer {
+  const payload = Buffer.from(text);
+  const mask = randomBytes(4);
+  const masked = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4]!));
+  return Buffer.concat([
+    Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]),
+    mask,
+    masked,
+  ]);
+}
+
+describe('fake Slack: a fragmented message (13-FS)', (): void => {
+  it('reads an acknowledgement sent as two frames as one message', async (): Promise<void> => {
+    const ts = await postRequest();
+    const opened = await api('apps.connections.open', await generateAppLevelToken());
+    const client = await deadClient(String(opened.url));
+    const frames: string[] = [];
+    client.on('data', (chunk: Buffer) => {
+      // Every frame the fake sends is unmasked and short: two bytes of header, then the text.
+      for (let at = 0; at + 2 <= chunk.length; ) {
+        const length = chunk[at + 1]! & 0x7f;
+        const header = length === 126 ? 4 : 2;
+        const size = length === 126 ? chunk.readUInt16BE(at + 2) : length;
+        frames.push(chunk.subarray(at + header, at + header + size).toString());
+        at += header + size;
+      }
+    });
+    const pressing = proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });
+    let envelopeId = '';
+    for (let attempt = 0; attempt < 100 && envelopeId === ''; attempt += 1) {
+      const envelope = frames
+        .map((frame) => {
+          try {
+            return JSON.parse(frame) as { envelope_id?: string };
+          } catch {
+            // A ping or a partial read: not the envelope.
+            return {};
+          }
+        })
+        .find((message) => typeof message.envelope_id === 'string');
+      envelopeId = envelope?.envelope_id ?? '';
+      if (envelopeId === '') await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const acknowledgement = JSON.stringify({ envelope_id: envelopeId });
+    const half = Math.floor(acknowledgement.length / 2);
+    client.write(clientFrame(acknowledgement.slice(0, half), false, 0x1));
+    client.write(clientFrame(acknowledgement.slice(half), true, 0x0));
+    expect(await (await pressing).json()).toMatchObject({ delivered: true, acknowledged: true });
+    client.destroy();
   });
 });

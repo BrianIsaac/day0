@@ -1806,12 +1806,17 @@ async function recordSuperseded(
   }
 }
 
-/** Mark only the currently active generation as failed. */
+/**
+ * End only the currently active generation short at its cursor: as failed (`error`, or
+ * `credential-not-landed` for a credential the store could not give), or as `held` when the
+ * deployment's pause stopped it before it read anything (W12V-2, W12-R27), the run then `held`
+ * too so a later resume never counts it as one that got nowhere.
+ */
 export const failSync = internalMutation({
   args: {
     sourceId: v.id('docSources'),
     runId: v.id('docSyncRuns'),
-    status: v.union(v.literal('error'), v.literal('credential-not-landed')),
+    status: v.union(v.literal('error'), v.literal('credential-not-landed'), v.literal('held')),
     reason: v.string(),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -1820,7 +1825,7 @@ export const failSync = internalMutation({
     const now = Date.now();
     // The cursor stays, so the next sync resumes the run from it (`beginSync`).
     await ctx.db.patch(run._id, {
-      state: 'error',
+      state: args.status === 'held' ? 'held' : 'error',
       completedAt: now,
       ...endedShortPatch(args.reason, run),
     });
