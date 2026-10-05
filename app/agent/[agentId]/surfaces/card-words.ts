@@ -109,16 +109,21 @@ export interface StateChipWords {
  *
  * @param surface - The card's row.
  * @param now - The instant to judge the access against.
- * @param options - What an approved card with nothing landed waits on, when not a paste.
+ * A Slack card whose own app is never installed again (W12X-4) waits on nothing and says it ended.
+ *
+ * @param options - What an approved card with nothing landed waits on, when not a paste, and
+ *   whether its own app is not installed again.
  */
 export function stateChip(
   surface: WordedSurface,
   now: number,
   zone: string | undefined,
-  options: { readonly waitsOn?: 'it' | 'connect' } = {},
+  options: { readonly waitsOn?: 'it' | 'connect'; readonly notReinstalled?: boolean } = {},
 ): StateChipWords {
   const access = accessStanding(surface, now, zone);
   if (access.kind === 'ended') return { text: 'Access ended', tone: 'warn' };
+  // The card's own app is never installed again, so nothing it waits on brings it back (W12X-4).
+  if (options.notReinstalled === true) return { text: 'Ended', tone: 'warn' };
   if (access.kind === 'ending') {
     return {
       text:
@@ -506,6 +511,19 @@ export function actsAsAfterRevokeWords(names: {
 }): string {
   return `nobody until IT connects ${names.system} again; then ${names.employee}, through IT's connection`;
 }
+
+/**
+ * Whom a Slack card acts as once its employee's own app was created through a connection IT
+ * revoked: nobody, whatever IT connects next, since Day0 never installs that app again (W12X-4;
+ * `KEPT_APP_CONNECTION_REVOKED`). The card's provisioning row says why, once. A draft.
+ */
+export const NOT_REINSTALLED_ACTS_AS = 'nobody';
+
+/**
+ * What such a card says in place of its renewal (W12X-4): nothing goes through it, and renewing
+ * brings nothing back, so none is offered. A draft.
+ */
+export const NOT_REINSTALLED_ACCESS = 'Nothing is read or sent through this card.';
 
 /**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design

@@ -1376,6 +1376,102 @@ describe('every decision on a work item card is said in its live region and give
     view.unmount();
   });
 
+  describe('a write Day0 recorded as landed beside one whose outcome is unknown (W12X-3)', (): void => {
+    // The re-walk's REVOPS-6 on real Slack: phase one's report DM landed with Slack's ts, and the
+    // Stop met the closing set's first post on the wire.
+    const post: MockAction = {
+      tool: 'http.request',
+      args: { ...dmAction.args, body: JSON.stringify({ channel: 'C0REVOPS', text: 'Note 1.' }) },
+    };
+    const stoppedOutput = {
+      draft: 'd',
+      notes: '',
+      initial: {
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: true,
+            providerId: '1791181569.683419',
+            idempotencyKey: 'w-card:run:initial:0',
+          },
+        ],
+      },
+      actions: [post],
+      applied: [
+        {
+          tool: 'http.request',
+          ok: false,
+          outcomeUnknown: true,
+          reason: 'socket closed after the request',
+          idempotencyKey: 'w-card:run:0',
+        },
+      ],
+    };
+    const landedDm = {
+      phase: 'prerequisite',
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'landed',
+      providerId: '1791181569.683419',
+      idempotencyKey: 'w-card:run:initial:0',
+    };
+    const unknownPost = {
+      phase: 'closing',
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'outcome-unknown',
+      reason: 'socket closed after the request',
+      idempotencyKey: 'w-card:run:0',
+    };
+    const occurrences = (text: string, words: string): number => text.split(words).length - 1;
+
+    it('sends the answer for the write asked about and none for the write Day0 recorded as landed', async (): Promise<void> => {
+      const view = card({
+        state: 'failed',
+        plan,
+        skipReason: 'stopped: a write may have landed',
+        output: stoppedOutput,
+      });
+      const landed = [
+        ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+      ].find((radio) => radio.closest('label')?.textContent === 'It landed');
+      act((): void => landed?.click());
+      await press(view.container, 'Confirm reconciliation');
+      expect(view.calls).toEqual([
+        ['reconcile', [{ phase: 'closing', actionIndex: 0, answer: 'landed' }]],
+      ]);
+      view.unmount();
+    });
+
+    it('says once reconciled that Day0 recorded the DM as landed and that you said the post landed', (): void => {
+      const reconciledWith = (dm: Record<string, unknown>) =>
+        card({
+          state: 'failed',
+          plan,
+          skipReason: 'stopped: a write may have landed',
+          output: stoppedOutput,
+          providerReconciliation: {
+            actor: 'owner',
+            confirmedAt: 1,
+            entries: [dm, { ...unknownPost, answer: 'landed' }],
+          },
+        });
+      // As this release records it (no answer on the landed DM), and as a bed before it did.
+      for (const dm of [landedDm, { ...landedDm, answer: 'landed' }]) {
+        const view = reconciledWith(dm);
+        const text = view.container.textContent ?? '';
+        expect(text).toContain('Provider state reconciled');
+        expect(occurrences(text, 'Day0 recorded it as landed.')).toBe(1);
+        expect(occurrences(text, 'You said it landed.')).toBe(1);
+        expect(text.indexOf('Day0 recorded it as landed.')).toBeLessThan(
+          text.indexOf('You said it landed.'),
+        );
+        view.unmount();
+      }
+    });
+  });
+
   it('asks again, entry by entry, a run confirmed as a whole before the per-entry answers (W12-R3)', async (): Promise<void> => {
     const view = card({
       state: 'failed',

@@ -481,4 +481,91 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
       .query(api.surfaces.listForAgent, { agentId });
     expect(after.find((card) => card._id === revokedCard)?.connectionRevoked).toBeUndefined();
   });
+
+  it("says a Slack card's own app is not installed again once its creating connection is revoked, before and after IT connects Slack again (W12X-4)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const slackConnection = (status: 'active' | 'revoked', at: number) =>
+      harness.run(
+        async (ctx) =>
+          await ctx.db.insert('organisationConnections', {
+            system: 'slack',
+            displayName: 'Slack',
+            kind: 'slack-configuration',
+            mode: 'per-employee',
+            scopes: [],
+            registeredBy: { via: 'setup-cli', at },
+            status,
+            createdAt: at,
+            ...(status === 'revoked' ? { revokedAt: at + 1, statusReason: 'ending' } : {}),
+          }),
+      );
+    const revokedCreator = await slackConnection('revoked', 1);
+    const liveCreator = await slackConnection('active', 2);
+    const { agentId, endedCard, liveCard, heldCard } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Dara',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const credential = () =>
+        ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Slack',
+          source: 'oauth',
+          createdAt: 1,
+        });
+      const clientSecretCredentialId = await credential();
+      const card = (
+        slug: string,
+        organisationConnectionId: Id<'organisationConnections'>,
+        credentialId?: Id<'credentials'>,
+      ) =>
+        ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: 'Slack',
+          class: 'chat',
+          path: 'documented-api',
+          endpoint: 'https://slack.com/api/',
+          verdict: 'approved',
+          whereFound: [],
+          managerApprovedAt: 1,
+          credentialLanded: credentialId !== undefined,
+          organisationConnectionId,
+          ...(credentialId === undefined ? {} : { credentialId }),
+          provisioning: {
+            appId: `A-${slug}`,
+            appName: 'Dara (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId,
+            installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1.2',
+            redirectUrl: 'https://day0.test/api/oauth/slack',
+            scopes: ['chat:write'],
+            organisationConnectionId,
+            createdAt: 1,
+            installedAt: 2,
+          },
+          createdAt: 1,
+        });
+      const credentialId = await credential();
+      return {
+        agentId,
+        endedCard: await card('slack', revokedCreator),
+        liveCard: await card('slack-live', liveCreator),
+        heldCard: await card('slack-held', revokedCreator, credentialId),
+      };
+    });
+
+    const cards = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+    expect(cards.find((card) => card._id === endedCard)?.keptAppNotReinstalled).toBe(true);
+    expect(cards.find((card) => card._id === liveCard)?.keptAppNotReinstalled).toBeUndefined();
+    expect(cards.find((card) => card._id === heldCard)?.keptAppNotReinstalled).toBeUndefined();
+    // Another Slack connection active since is no creator of this app: it stays not installed.
+    expect(cards.find((card) => card._id === endedCard)?.connectionRevoked).toBeUndefined();
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  NOT_REINSTALLED_FALLBACK_NOTE,
   OAUTH_FALLBACK_LABEL,
   OAUTH_FALLBACK_NOTE,
   presentChannelsNotJoined,
@@ -337,6 +338,47 @@ describe('the dedicated-app procedure on the card', (): void => {
         credentialHeld: true,
       }).stage,
     ).toBe('installed');
+  });
+
+  it('offers nothing for a kept app whose creating connection IT revoked, which is never installed again (W12X-4)', (): void => {
+    const installed = {
+      appId: 'A1',
+      appName: 'Leo (Day0)',
+      installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+      installedAt: 1_787_800_000_000,
+    };
+    // The server refuses this app whatever the documentation's finding says, so a re-read that
+    // dropped the OAuth finding leaves the stage as it is.
+    for (const [credential, provisioning] of [
+      [oauth, installed],
+      [oauth, { ...installed, stateExpiresAt: 1_787_800_900_000 }],
+      [oauth, { ...installed, installedAt: undefined }],
+      [undefined, installed],
+    ] as const) {
+      const shown = presentProvisioning({
+        credential,
+        hasPublicUrl: true,
+        provisioning,
+        credentialHeld: false,
+        keptAppNotReinstalled: true,
+        employee: 'Leo',
+      });
+      expect(shown).toMatchObject({
+        stage: 'not-reinstalled',
+        offerProvisioning: false,
+        asksForConfigurationToken: false,
+        title: "Leo's own app is not installed again",
+        note: "Leo's own app, Leo (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Leo a new app.",
+      });
+      expect(shown.installUrl).toBeUndefined();
+    }
+  });
+
+  it('points the fallback field at no control on a card whose own app is not installed again (W12X-4)', (): void => {
+    const shown = presentSurfaceCredential({ credential: oauth, keptAppNotReinstalled: true });
+    expect(shown.landingNote).toBe(NOT_REINSTALLED_FALLBACK_NOTE);
+    expect(shown.landingNote).not.toContain('the control above');
+    expect(presentSurfaceCredential({ credential: oauth }).landingNote).toBe(OAUTH_FALLBACK_NOTE);
   });
 
   it("names why a renewal's install did not complete, and offers it again", (): void => {

@@ -44,6 +44,8 @@ import {
   unservedConnectionWords,
   identityChip,
   actsAsAfterRevokeWords,
+  NOT_REINSTALLED_ACCESS,
+  NOT_REINSTALLED_ACTS_AS,
   itsReasonWords,
   reachedWords,
   rejoinWords,
@@ -237,7 +239,7 @@ export function SurfaceCard({
   context,
   operation,
   actions,
-  accessRequest,
+  accessRequest: requestedAccess,
 }: {
   surface: ListedSurface;
   context: SurfaceCardContext;
@@ -275,6 +277,7 @@ export function SurfaceCard({
         : undefined,
     summary,
     reason: surface.reason,
+    keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
   });
   const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
   const pending = operation && !operation.error ? operation.kind : undefined;
@@ -328,7 +331,13 @@ export function SurfaceCard({
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
     employee: context.employeeName,
+    keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
   });
+  // The employee's own app was created through a connection IT revoked, so it is never installed
+  // again, whether or not IT has connected Slack since (W12X-4).
+  const notReinstalled = provisioningPresentation.stage === 'not-reinstalled';
+  // IT connecting Slack again does not bring such a card back, so it asks IT for nothing.
+  const accessRequest = notReinstalled ? undefined : requestedAccess;
   // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
   const identity = surface.identity;
   const identityNames = { employee: context.employeeName, system: surface.displayName };
@@ -419,6 +428,7 @@ export function SurfaceCard({
     surface.verdict === 'ungranted' && surface.credentialId === undefined && waitsOn !== undefined;
   const chip = stateChip(surface, context.now, zone, {
     waitsOn: surface.verdict === 'ungranted' && !awaitingAccess ? undefined : waitsOn,
+    notReinstalled,
   });
   return (
     <Card
@@ -475,10 +485,12 @@ export function SurfaceCard({
           <dl className="grid gap-2.5">
             {showsIdentity ? (
               <Fact label="Acts as">
-                {surface.connectionRevoked
-                  ? actsAsAfterRevokeWords(identityNames)
-                  : actsAsWords(identity, identityNames)}
-                {chipForIdentity !== undefined && !surface.connectionRevoked ? (
+                {notReinstalled
+                  ? NOT_REINSTALLED_ACTS_AS
+                  : surface.connectionRevoked
+                    ? actsAsAfterRevokeWords(identityNames)
+                    : actsAsWords(identity, identityNames)}
+                {chipForIdentity !== undefined && !surface.connectionRevoked && !notReinstalled ? (
                   <>
                     {' '}
                     <Chip tone="warn">{chipForIdentity}</Chip>
@@ -540,12 +552,16 @@ export function SurfaceCard({
           onSetDays={actions.setDays}
           endedNote={
             // The reinstall row says the same rule beside its control (11-AS), so once is enough.
-            slack && identity.kind === 'own-app' && provisioningPresentation.stage !== 'reinstall'
+            slack &&
+            identity.kind === 'own-app' &&
+            provisioningPresentation.stage !== 'reinstall' &&
+            !notReinstalled
               ? slackChannelsGoWords(context.employeeName, 'Renewing')
               : undefined
           }
           move={move}
-          connectionRevoked={surface.connectionRevoked === true}
+          connectionRevoked={surface.connectionRevoked === true || notReinstalled}
+          {...(notReinstalled ? { revokedWords: NOT_REINSTALLED_ACCESS } : {})}
         />
         {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
             approved card, as the action refuses one before. */}
@@ -561,7 +577,8 @@ export function SurfaceCard({
             surfaceSlug={surface.slug}
           />
         ) : null}
-        {surface.decisionButtons !== undefined ? (
+        {/* A card nothing goes through carries no requests, so it says nothing of buttons. */}
+        {surface.decisionButtons !== undefined && !notReinstalled ? (
           <DecisionButtonsRow
             words={decisionButtonsWords(
               surface.decisionButtons,
@@ -575,7 +592,7 @@ export function SurfaceCard({
             surfaceSlug={surface.slug}
           />
         ) : null}
-        {typedCode !== undefined ? (
+        {typedCode !== undefined && !notReinstalled ? (
           <TypedCodeRow
             words={typedCode}
             error={failed('messages-tab')}

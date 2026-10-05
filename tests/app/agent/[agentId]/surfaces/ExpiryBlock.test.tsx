@@ -75,6 +75,23 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     );
   });
 
+  it('says the words it is given on a revoked card that IT connecting again brings nothing back to (W12X-4)', (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext.Provider value="Asia/Singapore">
+        <ExpiryBlock
+          surface={surface({ reason: 'The re-walk ends the bed connection.' })}
+          now={AT - 30 * DAY}
+          onSetDays={vi.fn()}
+          connectionRevoked
+          revokedWords="Nothing is read or sent through this card."
+        />
+      </AgentZoneContext.Provider>,
+    ).replace(/&#x27;/g, "'");
+    expect(markup).not.toMatch(/Renew for/);
+    expect(markup).toContain('Nothing is read or sent through this card.');
+    expect(markup).not.toContain('until IT connects');
+  });
+
   it('warns from the day the week notice is due, and offers the renewal once access has ended', (): void => {
     const ending = renderAccess(surface({ accessSetBy: 'manager' }), AT - 2 * DAY);
     expect(ending).toContain(

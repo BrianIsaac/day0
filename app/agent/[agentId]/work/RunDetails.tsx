@@ -622,11 +622,23 @@ function asked(entry: ReconciliationEntry): boolean {
 }
 
 /**
+ * What a reconciled entry came to, and whose word it is: the manager's answer where they gave one,
+ * and Day0's own record for a write it recorded as landed and never asked about (W12X-3), however
+ * an earlier build stored that entry.
+ */
+function reconciledWords(entry: ReconciliationEntry): string | undefined {
+  if (entry.answer === 'not-sent') return 'You said it was not sent.';
+  if (!asked(entry)) return 'Day0 recorded it as landed.';
+  return entry.answer === 'landed' ? 'You said it landed.' : undefined;
+}
+
+/**
  * The checklist a run shows before a retry when a write landed or may have (U17 D1, answered per
  * entry since wave 12): each entry the provider must be checked for, what the ledger recorded of
  * it, and, for a write whose outcome is unknown, the manager's answer, that it landed or that it
  * was not sent. A write the ledger records as landed, with the provider's own id where it gave one,
- * is shown as landed and asked nothing (W12V-14; the server owes it no answer either). Every
+ * is shown as landed and asked nothing (W12V-14; the server owes it no answer either), and once
+ * reconciled reads as Day0's record, never as the manager's answer (W12X-3). Every
  * unknown entry is answered before the confirmation is recorded, and only then does Retry open; a
  * retry never sends again a write that landed or was answered landed, and sends afresh one
  * answered not sent.
@@ -679,6 +691,7 @@ export function ProviderReconciliationControl({
         <ul className="grid text-sm text-[var(--color-fg)] [&>li+li]:mt-2 [&>li+li]:border-t [&>li+li]:border-[var(--color-warn-line)] [&>li+li]:pt-2">
           {entries.map((entry, index) => {
             const key = entryKey(entry);
+            const verdict = reconciliation ? reconciledWords(entry) : undefined;
             const words = (
               <span className="grid min-w-0 gap-0.5 break-words">
                 {/* Named by what it does (W12-R9); the ledger's place and key stay to hand. */}
@@ -701,12 +714,8 @@ export function ProviderReconciliationControl({
                   </span>
                 ) : null}
 
-                {reconciliation && entry.answer ? (
-                  <span className="text-[13px] text-[var(--color-fg)]">
-                    {entry.answer === 'landed'
-                      ? 'You said it landed.'
-                      : 'You said it was not sent.'}
-                  </span>
+                {verdict ? (
+                  <span className="text-[13px] text-[var(--color-fg)]">{verdict}</span>
                 ) : null}
               </span>
             );
@@ -783,12 +792,15 @@ export function ProviderReconciliationControl({
             aria-describedby={questions.length > 0 ? `${group}-answered` : undefined}
             disabled={!all || busy || entries.length === 0}
             onClick={() =>
+              // Only the writes asked about carry an answer (W12X-3): one Day0 recorded as
+              // landed stays as it recorded it, and the retry never sends it again.
               onConfirm(
-                entries.map((entry) => ({
-                  phase: entry.phase,
-                  actionIndex: entry.actionIndex,
-                  answer: answers.get(entryKey(entry)) ?? 'landed',
-                })),
+                questions.flatMap((entry): GivenAnswer[] => {
+                  const answer = answers.get(entryKey(entry));
+                  return answer === undefined
+                    ? []
+                    : [{ phase: entry.phase, actionIndex: entry.actionIndex, answer }];
+                }),
               )
             }
           >

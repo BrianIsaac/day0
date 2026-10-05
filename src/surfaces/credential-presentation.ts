@@ -66,6 +66,7 @@ export interface ProvisioningPresentation {
     | 'awaiting-install'
     | 'installed'
     | 'reinstall'
+    | 'not-reinstalled'
     | 'failed';
   title: string;
 }
@@ -74,6 +75,15 @@ const DETAIL_LENGTH = 400;
 
 /** Button text for the shared-token fallback on an OAuth surface. */
 export const OAUTH_FALLBACK_LABEL = 'Land a shared bot token (fallback)';
+
+/**
+ * Why the fallback field stays on a card whose own app is not installed again (W12X-4): no
+ * control above makes one, so the note does not point at one.
+ */
+export const NOT_REINSTALLED_FALLBACK_NOTE =
+  'Day0 does not make this employee a new app. Where the administrator would rather hand over ' +
+  'the workspace token, land it here: it is stored encrypted as a shared credential, and writes ' +
+  'through it carry the employee name and run id so they stay attributable.';
 
 /** Why an OAuth surface still offers a landing field beside provisioning. */
 export const OAUTH_FALLBACK_NOTE =
@@ -109,6 +119,16 @@ export function reinstallLabel(employee: string): string {
   return `Install ${employee}'s own app again`;
 }
 
+/**
+ * Title of the row of a kept app whose creating connection IT revoked, which Day0 never installs
+ * again (W12X-4), naming the employee whose own app it is.
+ *
+ * @param employee - The employee's name.
+ */
+export function notReinstalledTitle(employee: string): string {
+  return `${employee}'s own app is not installed again`;
+}
+
 /** What the presentation is built from: the verdict, the finding, the stored credentials and the provisioning. */
 export interface CredentialPresentationInput {
   verdict?: string;
@@ -120,6 +140,8 @@ export interface CredentialPresentationInput {
   summary?: CredentialOwnerSummary;
   /** Why the last probe left the surface where it is, as the row stores it. */
   reason?: string;
+  /** The card's own app is not installed again (`keptAppNotReinstalled`, W12X-4). */
+  keptAppNotReinstalled?: boolean;
 }
 
 /**
@@ -131,7 +153,8 @@ export interface CredentialPresentationInput {
  * organisation's Slack connection creates the app, B9), then click the install
  * link, then invite the new app to the channels it should read. An installed
  * app whose access ended is offered again (A26), with what the renewal restores
- * of its channels (RM4).
+ * of its channels (RM4), unless the connection that created it was revoked:
+ * that app is never installed again, so nothing is offered (W12X-4).
  *
  * Args:
  *   input.credential: The credential finding orientation extracted.
@@ -140,6 +163,7 @@ export interface CredentialPresentationInput {
  *     redirect back to.
  *   input.organisationConnected: Whether the organisation's Slack connection is active.
  *   input.credentialHeld: Whether the card holds its credential now.
+ *   input.keptAppNotReinstalled: Whether the kept app's creating connection was revoked.
  *
  * Returns:
  *   The stage, its copy and the install link when there is one to show.
@@ -157,7 +181,32 @@ export function presentProvisioning(input: {
   credentialHeld?: boolean;
   /** The employee's name, which the reinstall's title says; a caller reading only the stage leaves it out. */
   employee?: string;
+  /**
+   * Whether the kept app was created through an organisation connection IT revoked
+   * (`keptAppNotReinstalled` on the listed card): the server never installs it again
+   * (`KEPT_APP_CONNECTION_REVOKED`), so nothing is offered for it (W12X-4).
+   */
+  keptAppNotReinstalled?: boolean;
 }): ProvisioningPresentation {
+  // Ahead of the documentation's finding: the server refuses this app whatever a re-read says.
+  if (
+    input.provisioning &&
+    input.credentialHeld === false &&
+    input.keptAppNotReinstalled === true
+  ) {
+    const employee = input.employee ?? 'the employee';
+    return {
+      note:
+        `${employee}'s own app, ${input.provisioning.appName}, was created through the ` +
+        "organisation's Slack connection, which IT revoked. Day0 does not install it again and " +
+        "cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not " +
+        `bring it back or give ${employee} a new app.`,
+      offerProvisioning: false,
+      asksForConfigurationToken: false,
+      stage: 'not-reinstalled',
+      title: notReinstalledTitle(employee),
+    };
+  }
   if (input.credential?.method !== 'oauth') {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
@@ -317,7 +366,8 @@ export function presentSurfaceCredential(
       kind: 'oauth',
       label: input.credential.label,
       landingLabel: OAUTH_FALLBACK_LABEL,
-      landingNote: OAUTH_FALLBACK_NOTE,
+      landingNote:
+        input.keptAppNotReinstalled === true ? NOT_REINSTALLED_FALLBACK_NOTE : OAUTH_FALLBACK_NOTE,
       text: summary ?? 'Follow the documented OAuth approval procedure.',
     };
   }

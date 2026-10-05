@@ -14,6 +14,8 @@ import {
   expectedCredential,
   identityChip,
   moveOfferWords,
+  NOT_REINSTALLED_ACCESS,
+  NOT_REINSTALLED_ACTS_AS,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -520,5 +522,26 @@ describe('a covered Slack card with no install described (W12V-1, words only)', 
     expect(slackNoInstallWords('Vela')).toBe(
       'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
     );
+  });
+});
+
+describe('a Slack card whose own app is not installed again (W12X-4)', (): void => {
+  it('acts as nobody, says nothing goes through it and reads as ended, whatever it waited on', (): void => {
+    expect(NOT_REINSTALLED_ACTS_AS).toBe('nobody');
+    expect(NOT_REINSTALLED_ACCESS).toBe('Nothing is read or sent through this card.');
+    const card = {
+      displayName: 'Slack',
+      verdict: 'approved',
+      managerApprovedAt: 1,
+      expiresAt: Date.UTC(2027, 0, 3),
+    } as unknown as WordedSurface;
+    for (const waitsOn of [undefined, 'it', 'connect'] as const) {
+      expect(
+        stateChip(card, Date.UTC(2026, 9, 5), 'UTC', { waitsOn, notReinstalled: true }),
+      ).toEqual({
+        text: 'Ended',
+        tone: 'warn',
+      });
+    }
   });
 });

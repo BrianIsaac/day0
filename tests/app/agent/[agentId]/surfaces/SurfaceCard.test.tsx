@@ -849,6 +849,72 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
   });
 
+  it("offers no reinstall on a Slack card whose own app's creating connection IT revoked, and says what is true before and after IT connects Slack again (W12X-4)", (): void => {
+    // The re-walk on real Slack: Dara's ended card offered "Install Dara's own app again", which
+    // the server refuses (`KEPT_APP_CONNECTION_REVOKED`), and promised "then Dara, through IT's
+    // connection", which the server rules out for that app.
+    const ended = {
+      ...SLACK_CARD,
+      verdict: 'approved',
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 80 * DAY,
+      reason: 'The re-walk ends the bed connection.',
+      keptAppNotReinstalled: true,
+      // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
+      // install), as the bed showed once IT connected Slack again.
+      decisionButtons: { available: true },
+      typedCode: { state: 'day0-opens', appName: 'Maya (Day0)' },
+      provisioning: {
+        appId: 'A1',
+        appName: 'Maya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: 'cred-secret',
+        installUrl: 'https://slack.test/install',
+        redirectUrl: 'https://day0.test/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      } as ListedSurface['provisioning'],
+    } as Partial<ListedSurface>;
+    // While no Slack connection is active the card's access request is drafted (the bed's).
+    const slackRequest: AccessRequestView = {
+      ...REQUEST,
+      system: 'slack',
+      subject: 'Day0 access request: Slack for Maya',
+      text: 'Maya, a Day0 employee, needs access to Slack.',
+    };
+    const revoked = render(
+      listed({ ...ended, connectionRevoked: true }),
+      { installRedirectConfigured: true },
+      { accessRequest: slackRequest },
+    );
+    const reconnected = render(listed(ended), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).not.toContain("Install Maya's own app again");
+      expect(markup).not.toContain("through IT's connection");
+      expect(fact(markup, 'Acts as')).toBe('nobody');
+      expect(markup).toContain("Maya's own app is not installed again");
+      expect(markup).toContain(
+        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Maya a new app.",
+      );
+      expect(markup).toContain('Nothing is read or sent through this card.');
+      expect(markup).not.toMatch(/Renew for/);
+      expect(chip(markup)).toBe('Ended');
+      // IT connecting Slack again does not bring the card back, so it asks IT for nothing.
+      expect(markup).not.toContain('Ask IT to connect Slack');
+      expect(markup).not.toContain('until IT gives it access');
+      expect(markup).not.toContain('the control above');
+      // Nothing goes through the card, so it says nothing of requests, buttons or typed codes.
+      expect(markup).not.toContain('Decisions in Slack');
+      expect(markup).not.toContain('Typed code');
+      expect(markup).not.toContain('app-level token');
+    }
+    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);
