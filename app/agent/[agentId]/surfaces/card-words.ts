@@ -609,7 +609,7 @@ export function decisionButtonsWords(
           typedCode
             ? 'Requests reach you with a typed code only.'
             : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
-        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below: on an app Day0 created from its manifest Socket Mode is on, so under Basic Information, App-Level Tokens, Generate Token and Scopes; on an older app, turning on Enable Socket Mode makes it in the same dialog.`,
+        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.`,
         asksForToken: true,
         offersReplacement: false,
       };
@@ -661,7 +661,7 @@ export function typedCodeWords(reach: TypedCodeReach): TypedCodeWords | undefine
     case 'day0-opens':
       return {
         title: 'Typed code: off until this app takes messages',
-        note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 opens its messages tab at this card’s next check, with the connection that created it; Check the connection does it now. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
+        note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
         confirm: 'It is on in Slack',
       };
     case 'needs-toggle':

@@ -731,7 +731,7 @@ describe('check:access: whether the typed code reaches each employee app (W12V-7
       name: 'messages',
       status: 'warn',
       detail:
-        "Iris (Day0) takes no messages yet, so no typed code reaches it: Day0 opens its messages tab at its card's next check (Check the connection on the card does it now).",
+        "Iris (Day0) takes no messages yet, so no typed code reaches it: Day0 tries to open its messages tab at its card's next check (Check the connection on the card tries now).",
     });
     expect(accessExitCode(checks)).toBe(0);
   });

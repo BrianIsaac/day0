@@ -910,8 +910,8 @@ async function messagesCheck(row: ConnectionRow, probes: VendorProbes): Promise<
       'messages',
       'warn',
       `${listedNames(byDay0)} take${one ? 's' : ''} no messages yet, so no typed code reaches ` +
-        `${one ? 'it' : 'them'}: Day0 opens ${one ? 'its' : 'their'} messages tab at ` +
-        `${one ? 'its' : 'each'} card's next check (Check the connection on the card does it now).`,
+        `${one ? 'it' : 'them'}: Day0 tries to open ${one ? 'its' : 'their'} messages tab at ` +
+        `${one ? 'its' : 'each'} card's next check (Check the connection on the card tries now).`,
     );
   }
   return check(

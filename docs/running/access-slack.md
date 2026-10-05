@@ -64,7 +64,8 @@ place to type. So:
   of the app's card (the hourly re-check, or **Check the connection** on the
   card), while the organisation's configuration connection that created it is
   still active. Both calls (`apps.manifest.export`, then the update) are on
-  that connection's ledger.
+  that connection's ledger; if Slack refuses the update, the card's row stays
+  and the next bullet applies.
 - Where Day0 cannot (the app was created with a configuration token pasted on
   its card, the connection that created it was revoked, or Slack refused the
   update), a collaborator on the app opens it: signed in to
@@ -74,7 +75,7 @@ place to type. So:
   manager presses **It is on in Slack** on the employee's Slack card.
 
 Until an app takes messages, each request to its manager says a typed reply
-cannot reach it and offers its buttons and Day0 instead, and the card and
+cannot reach it and offers its buttons, where it has them, and Day0 instead, and the card and
 `check:access` (the `messages` row) name the app.
 
 ### Decision buttons: each app's app-level token
@@ -87,15 +88,15 @@ that issues an app-level token, so a person generates one per app:
 
 1. Signed in to <https://api.slack.com/apps> as a collaborator on the
    employee's app (`<employee name> (Day0)`), open it.
-2. **An app created before this release** has Socket Mode off: on its
+2. **If Socket Mode is off** (every app Day0 created before v0.16.0): on its
    **Socket Mode** page turn on **Enable Socket Mode**. Slack's own dialog,
    "Generate an app-level token to enable Socket Mode", already carries the
    scope `connections:write`: give it any name (for example `day0-buttons`),
    **Generate**, and **Copy** the token (it starts `xapp-`). Interactivity turns
    on with it, with no request URL asked for. Go to step 4: the dialog made the
    token, so step 3 would make a second one.
-3. **An app Day0 created from the manifest in section 2** has Socket Mode and
-   Interactivity on already: **Basic Information**, **App-Level Tokens**,
+3. **If Socket Mode is on** (apps Day0 created from v0.16.0, from the manifest
+   in section 2, have it and Interactivity on already): **Basic Information**, **App-Level Tokens**,
    **Generate Token and Scopes**, any name, the scope **`connections:write`**,
    **Generate**. Copy the token (it starts `xapp-`).
 

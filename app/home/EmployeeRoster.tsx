@@ -305,7 +305,7 @@ function dmWords(reach: Extract<RosterRow['decisionsReach'], { kind: 'dm' }>): {
       }
     : {
         parts: ['Requests:', `${reach.channel} DM,`, 'decide here'],
-        title: `Each decision request also arrives as a ${reach.channel} DM, but neither a button nor a typed code reaches the app yet: decide here`,
+        title: `Each decision request also arrives as a ${reach.channel} DM, but neither buttons nor a typed reply work there yet: decide it here`,
       };
 }
 

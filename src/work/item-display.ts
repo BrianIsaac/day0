@@ -426,7 +426,7 @@ export function ticketNowSentence(
     ? holder === undefined
       ? 'assigned to someone in the tracker'
       : holder.holderIsEmployee
-        ? `held by the identity ${holder.employeeName} acts as in the tracker`
+        ? `held by the account ${holder.employeeName} works as in the tracker`
         : `assigned to someone other than ${holder.employeeName} in the tracker`
     : tracker.assigned
       ? 'assigned to someone the tracker did not identify'

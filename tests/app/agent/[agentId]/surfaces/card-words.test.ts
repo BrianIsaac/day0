@@ -427,7 +427,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     // the card tells nobody to turn it on; an older app's Enable Socket Mode makes the token itself
     // (the walk's row 15).
     expect(words.note).toBe(
-      'Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below: on an app Day0 created from its manifest Socket Mode is on, so under Basic Information, App-Level Tokens, Generate Token and Scopes; on an older app, turning on Enable Socket Mode makes it in the same dialog.',
+      "Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.",
     );
     expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
@@ -501,7 +501,7 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
   it('says Day0 opens the messages tab at the next check, and the toggle if it stays off', (): void => {
     expect(typedCodeWords({ state: 'day0-opens', appName: 'Iris (Day0)' })).toEqual({
       title: 'Typed code: off until this app takes messages',
-      note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 opens its messages tab at this card’s next check, with the connection that created it; Check the connection does it now. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
       confirm: 'It is on in Slack',
     });
   });

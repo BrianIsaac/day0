@@ -353,7 +353,7 @@ describe('ticketNowSentence', (): void => {
     };
     expect(
       ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: true }),
-    ).toBe('The ticket is in Backlog, held by the identity Iris acts as in the tracker.');
+    ).toBe('The ticket is in Backlog, held by the account Iris works as in the tracker.');
     expect(
       ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: false }),
     ).toBe('The ticket is in Backlog, assigned to someone other than Iris in the tracker.');
