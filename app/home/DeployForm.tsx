@@ -16,9 +16,6 @@ import { log } from '@/lib/logger';
 import { AvatarPicker } from './AvatarPicker';
 import { AgentPixelAvatar } from './PixelAvatar';
 
-/** The name the form opens with, so a manager can deploy in one click. */
-const DEFAULT_NAME = 'worker 1';
-
 /** Where a new employee works, by the deployment's surface mode. */
 const WORKS_IN = {
   mock: 'the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
@@ -90,7 +87,8 @@ export function DeployForm({
   const router = useRouter();
   const deploy = useMutation(api.agents.deploy);
   const managerAddress = useQuery(api.agents.myManagerAddress);
-  const [name, setName] = useState(DEFAULT_NAME);
+  // Empty, as the page asks for a name: a prefilled one read as the field's example (13-FD).
+  const [name, setName] = useState('');
   const [avatarId, setAvatarId] = useState(DEFAULT_AGENT_AVATAR.id);
   const [excludedSourceIds, setExcludedSourceIds] = useState<Id<'docSources'>[]>([]);
   const [submitting, setSubmitting] = useState(false);
