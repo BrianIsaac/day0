@@ -166,4 +166,18 @@ describe('fake Slack: the messages tab', (): void => {
       [['<!here>', '<#C0X|x>'], [], undefined],
     ]);
   });
+
+  it('posts to a public channel named by its name, as Slack takes it', async (): Promise<void> => {
+    const { bot } = await installedApp(WRITABLE);
+    const posted = await api(
+      'chat.postMessage',
+      bot,
+      { channel: '#revops', text: 'Q3 close queue count: 1 open ticket.' },
+      true,
+    );
+    expect(posted).toMatchObject({ ok: true, channel: 'C_REVOPS' });
+    expect(
+      await api('chat.postMessage', bot, { channel: '#no-such-channel', text: 'x' }, true),
+    ).toEqual({ ok: false, error: 'channel_not_found' });
+  });
 });
