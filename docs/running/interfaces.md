@@ -32,6 +32,8 @@ The entry points a reader is most likely to want:
 | `charters:approve`, `charters:amend` | mutation | Approves a drafted charter with the manager's strikes; amends an approved one as a new version |
 | `planApproval:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
 | `workRuns:retryFailed`, `work:cancelPlan`, `workRuns:reconcileFailed`, `workRuns:dismissFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind, dismiss a failed run from the inbox |
+| `workingAgreements:listForAgent` | query | An employee's working agreements, its own and every employee's: proposals, those kept and waiting on their check against the charter, those in force and those refused with the clause |
+| `workingAgreements:keep`, `workingAgreements:edit`, `workingAgreements:retire`, `workingAgreements:dismiss` | mutation | Keep a proposal for one employee or every employee, change an agreement's words (a new version that replaces it once its check passes), retire one, or set a proposal or a refusal aside; `planApproval:approvePlan` with `keepNote` keeps the approval's note as one in the same click |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
 | `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
