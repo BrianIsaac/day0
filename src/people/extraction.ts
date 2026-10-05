@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normaliseManagerAddress } from '../agent/manager-address';
 import { groundedQuote, mentions } from './evidence';
 import { personNameKey } from './vocabulary';
 
@@ -96,6 +97,17 @@ function given(value: string | null): string | undefined {
   return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
+/** Every address a quote holds, whole, in lower case. */
+function quotedAddresses(quote: string): ReadonlySet<string> {
+  const found = quote.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [];
+  return new Set(
+    found.flatMap((address) => {
+      const normalised = normaliseManagerAddress(address);
+      return normalised === undefined ? [] : [normalised.toLowerCase()];
+    }),
+  );
+}
+
 /** The scopes the quote states in its own words: every word of a scope is one of the quote's. */
 function quotedScopes(scopes: readonly string[], quote: string): string[] {
   const words = new Set(personNameKey(quote).split(' '));
@@ -132,7 +144,7 @@ export function groundedPeople(
     // What the quote states is read from the model's whole quote, which the page holds: the kept
     // evidence is cut to the limit, and a long row's address can lie past the cut.
     const whole = person.quote.replace(/\s+/g, ' ').trim();
-    const lowered = whole.toLowerCase();
+    const addresses = quotedAddresses(whole);
     const email = given(person.email);
     const title = given(person.title);
     const team = given(person.team);
@@ -142,7 +154,7 @@ export function groundedPeople(
         ref: page.ref,
         where: page.title,
         quote,
-        ...(email !== undefined && lowered.includes(email.toLowerCase()) ? { email } : {}),
+        ...(email !== undefined && addresses.has(email.toLowerCase()) ? { email } : {}),
         ...(title !== undefined && mentions(whole, title) ? { title } : {}),
         ...(team !== undefined && mentions(whole, team) ? { team } : {}),
         approves: quotedScopes(person.approves, whole),

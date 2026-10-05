@@ -225,4 +225,31 @@ describe('peopleExtractionActions.extractSource', (): void => {
         .map((job) => job.args),
     ).toEqual([[{ personIds: [dana] }]]);
   });
+
+  it('records a generation naming more people than one apply can hold as a failure, and proposes nobody', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness);
+    const names = Array.from({ length: 251 }, (_, index) => `Person Number${index}`);
+    await harness.run(async (ctx) => {
+      const page = await ctx.db.query('docPages').first();
+      if (page !== null)
+        await ctx.db.patch(page._id, { markdown: names.map((name) => `- ${name}`).join('\n') });
+    });
+    model.people = names.map((name) => ({
+      ...DANA,
+      name,
+      quote: `- ${name}`,
+      email: null,
+      title: null,
+      approves: [],
+    }));
+    await expect(
+      harness.action(internal.peopleExtractionActions.extractSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: false });
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.lastPeopleExtractionError).toBe(
+      'The people extraction found more than 250 people.',
+    );
+    expect((await graphRows(harness)).people).toEqual([]);
+  });
 });

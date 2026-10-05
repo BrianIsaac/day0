@@ -38,8 +38,12 @@ const FINGERPRINT_WINDOW = 100;
  */
 const EXTRACT_BUDGET_MS = 4 * 60 * 1000;
 
-/** The most people a continuation carries, well inside a scheduled argument's bounds. */
-const EXTRACTION_PEOPLE_LIMIT = 2_000;
+/**
+ * The most people one generation proposes: they are applied in one transaction, each with a few
+ * index reads and writes, which keeps it far inside a mutation's read and write limits (and a
+ * continuation's arguments inside a scheduled call's).
+ */
+const EXTRACTION_PEOPLE_LIMIT = 250;
 
 /** What an extraction continuation carries: the fingerprint, where it stands and who it found. */
 const progressValidator = v.object({

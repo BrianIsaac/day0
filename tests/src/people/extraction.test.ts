@@ -119,4 +119,30 @@ describe('people extraction', (): void => {
     expect(noor?.title).toBe('Messaging administrator');
     expect(noor?.quote.length).toBeLessThanOrEqual(280);
   });
+
+  it('keeps an address only as a whole address the quote holds, never inside a longer one', (): void => {
+    const page: ExtractionPage = {
+      ref: 'team.md',
+      title: 'Team',
+      markdown: '- Diana Ross (diana@kestrel.test) runs the desk.',
+    };
+    const base = {
+      name: 'Diana Ross',
+      pageRef: 'team.md',
+      quote: '- Diana Ross (diana@kestrel.test) runs the desk.',
+      title: null,
+      team: null,
+      approves: [],
+      escalationFor: [],
+    };
+    expect(
+      groundedPeople([page], { people: [{ ...base, email: 'ana@kestrel.test' }] })[0]?.email,
+    ).toBe(undefined);
+    expect(groundedPeople([page], { people: [{ ...base, email: 'Diana' }] })[0]?.email).toBe(
+      undefined,
+    );
+    expect(
+      groundedPeople([page], { people: [{ ...base, email: 'DIANA@kestrel.test' }] })[0]?.email,
+    ).toBe('DIANA@kestrel.test');
+  });
 });
