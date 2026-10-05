@@ -510,7 +510,8 @@ describe('orientation evidence selection', (): void => {
     expect(northstar.map((item): [string, string] => [item.ref, item.quote])).toEqual([
       [
         'onboarding.md',
-        '| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner |',
+        // The row names its access owner since the bed's pages name people (13-P).
+        '| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner: Femi Adeyemi (femi.adeyemi@kestrel.test) |',
       ],
       ['northstar.md', '# Northstar CRM'],
     ]);

@@ -24,8 +24,10 @@ Business days are counted from the first working day after month end.
 | Bank reconciliation | business day 4 | `Bank reconciliation for <month>` |
 | Flash report | business day 5 | none; the controller writes it from the reconciled books |
 
-Each step's ticket belongs to the people doing that step. Finance close reports the state of the
-steps and never changes their tickets.
+Each step's ticket belongs to the people doing that step. The accounting team does the calendar
+steps: Ines Duarte (ines.duarte@kestrel.test), the close accountant, holds their tickets and
+approves NetLedger journal changes. Finance close reports the state of the steps and never changes
+their tickets.
 
 ## What the team uses
 
