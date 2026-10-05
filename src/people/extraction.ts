@@ -129,7 +129,10 @@ export function groundedPeople(
     if (page === undefined || personNameKey(name) === '') return [];
     const quote = groundedQuote(person.quote, page.markdown, name);
     if (quote === undefined) return [];
-    const lowered = quote.toLowerCase();
+    // What the quote states is read from the model's whole quote, which the page holds: the kept
+    // evidence is cut to the limit, and a long row's address can lie past the cut.
+    const whole = person.quote.replace(/\s+/g, ' ').trim();
+    const lowered = whole.toLowerCase();
     const email = given(person.email);
     const title = given(person.title);
     const team = given(person.team);
@@ -140,10 +143,10 @@ export function groundedPeople(
         where: page.title,
         quote,
         ...(email !== undefined && lowered.includes(email.toLowerCase()) ? { email } : {}),
-        ...(title !== undefined && mentions(quote, title) ? { title } : {}),
-        ...(team !== undefined && mentions(quote, team) ? { team } : {}),
-        approves: quotedScopes(person.approves, quote),
-        escalationFor: quotedScopes(person.escalationFor, quote),
+        ...(title !== undefined && mentions(whole, title) ? { title } : {}),
+        ...(team !== undefined && mentions(whole, team) ? { team } : {}),
+        approves: quotedScopes(person.approves, whole),
+        escalationFor: quotedScopes(person.escalationFor, whole),
       },
     ];
   });

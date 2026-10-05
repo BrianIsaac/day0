@@ -100,4 +100,23 @@ describe('people extraction', (): void => {
       people: [{ email: null, title: null }],
     });
   });
+
+  it("checks an address against the page's whole line, so one past the quote's limit is kept", (): void => {
+    // As the 13-P bed found: the Slack row runs past 280 characters before its owner's address.
+    const row = `| Slack | ${'Requests and team conversation, each team in its own channels. '.repeat(4)}| Messaging administrator: Noor Rahman (noor.rahman@kestrel.test) |`;
+    const page: ExtractionPage = { ref: 'onboarding.md', title: 'Onboarding', markdown: row };
+    const [noor] = groundedPeople(
+      [page],
+      reply({
+        name: 'Noor Rahman',
+        quote: row,
+        email: 'noor.rahman@kestrel.test',
+        title: 'Messaging administrator',
+        approves: [],
+      }),
+    );
+    expect(noor?.email).toBe('noor.rahman@kestrel.test');
+    expect(noor?.title).toBe('Messaging administrator');
+    expect(noor?.quote.length).toBeLessThanOrEqual(280);
+  });
 });
