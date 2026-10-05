@@ -50,8 +50,23 @@ export const KEEP_NOTE_LABEL = 'Keep this note for later work of this kind';
  * @param name - The employee's name.
  */
 export function keepNoteHint(name: string): string {
-  return `It becomes a working agreement for ${name} on the Charter tab once Day0 checks it against the charter.`;
+  return `Your answer above becomes a working agreement for ${name} once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.`;
 }
+
+/** Where a card stands: the Work tab's promotion card, or the Charter tab's Agreements card. */
+export type AgreementPlace = 'work' | 'charter';
+
+/** The promotion card's title. */
+export const PROPOSALS_TITLE = 'Proposed working agreements';
+
+/** The promotion card once its last row is decided, while the outcome is still said. */
+export const PROPOSALS_DONE = 'Nothing else waits on you here.';
+
+/** The Agreements card while its query has not answered. */
+export const AGREEMENTS_LOADING = 'Reading the working agreements.';
+
+/** The kicker of a refused row. */
+export const NOT_KEPT = 'Not kept';
 
 /** Whether the manager kept it on a card and its check against the charter has not answered yet. */
 export function awaitingCheck(row: Pick<AgreementView, 'status' | 'approvedAt'>): boolean {
@@ -95,29 +110,39 @@ export function proposalQuestion(
  * The line of an agreement kept on a card whose check against the charter has not answered.
  *
  * @param statement - The agreement's words.
+ * @param place - The card it is drawn on: the Work tab's says where it goes once it passes.
  */
-export function checkingLine(statement: string): string {
-  return `Kept. Day0 is checking “${statement}” against the charter; it takes effect once the check answers.`;
+export function checkingLine(statement: string, place: AgreementPlace): string {
+  const then =
+    place === 'work'
+      ? 'once it passes it is on the Charter tab'
+      : 'it takes effect once the check passes';
+  return `Kept. Day0 is checking “${statement}” against the charter; ${then}.`;
 }
 
 /**
  * Why a statement was refused, in a sentence: the clause it contradicts, quoted word for word, or
- * what it would have done.
+ * what it would have done; and, where the charter could settle it, the way to: on the Work tab the
+ * question the card's Amend the charter answers, on the Charter tab the amendment above.
  *
  * @param refusal - The refusal.
  * @param name - The employee's name.
+ * @param place - The card it is drawn on.
  */
 export function refusalSentence(
   refusal: NonNullable<AgreementView['refusal']>,
   name: string,
+  place: AgreementPlace,
 ): string {
+  const amend =
+    place === 'work' ? 'Amend the charter instead?' : 'To allow it, amend the charter above.';
   switch (refusal.reason) {
     case 'contradicts-will-not-do':
       return refusal.clause
-        ? `This would go beyond the charter: it contradicts ${quotedSentence(refusal.clause)} Amend the charter instead?`
-        : `This would go beyond the charter: it contradicts what ${name} will not do. Amend the charter instead?`;
+        ? `This would go beyond the charter: it contradicts ${quotedSentence(refusal.clause)} ${amend}`
+        : `This would go beyond the charter: it contradicts what ${name} will not do. ${amend}`;
     case 'widens-scope':
-      return `This would go beyond the charter: it widens the work the charter gives ${name}. Amend the charter instead?`;
+      return `This would go beyond the charter: it widens the work the charter gives ${name}. ${amend}`;
     case 'grants-permission':
       return 'This would grant a permission, which only a connection you approve can give. It was not kept.';
     case 'names-credential':

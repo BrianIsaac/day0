@@ -10,6 +10,8 @@ import {
   awaitingManager,
   bindingWords,
   checkingLine,
+  NOT_KEPT,
+  quotedSentence,
   refusalSentence,
   sourceWords,
   type AgreementView,
@@ -65,6 +67,10 @@ function AgreementEditor({
         value={draft}
         disabled={busy}
         onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && changed && !busy) onSave(draft);
+          if (event.key === 'Escape') onCancel();
+        }}
         className={`${INPUT_CLASS} w-full`}
       />
       <div className="flex flex-wrap gap-2">
@@ -81,6 +87,17 @@ function AgreementEditor({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** The Edit control of one agreement in the card's list, which takes focus back after an edit. */
+function editControlOf(
+  list: HTMLElement | null,
+  id: AgreementView['_id'],
+): HTMLButtonElement | null {
+  return (
+    list?.querySelector<HTMLButtonElement>(`button[data-agreement-edit="${CSS.escape(id)}"]`) ??
+    null
   );
 }
 
@@ -109,18 +126,17 @@ export function AgreementsCard({
   workHref: string;
 } & AgreementCalls) {
   const zone = useAgentZone();
+  const card = useRef<HTMLElement>(null);
   const list = useRef<HTMLUListElement>(null);
-  const change = useChange(list);
+  const change = useChange(card);
   const [editing, setEditing] = useState<AgreementView['_id'] | null>(null);
   // The agreement whose editor was closed without saving: its Edit takes focus back.
-  const cancelled = useRef<string | null>(null);
+  const cancelled = useRef<AgreementView['_id'] | null>(null);
   useEffect(() => {
     if (editing !== null || cancelled.current === null) return;
     const id = cancelled.current;
     cancelled.current = null;
-    list.current
-      ?.querySelector<HTMLButtonElement>(`button[data-agreement-edit="${CSS.escape(id)}"]`)
-      ?.focus();
+    editControlOf(list.current, id)?.focus();
   }, [editing]);
   const inForce = agreements.filter((row) => row.status === 'active');
   const checking = agreements.filter(
@@ -132,7 +148,7 @@ export function AgreementsCard({
   const waiting = agreements.filter(awaitingManager);
   const empty = inForce.length + checking.length + refused.length + waiting.length === 0;
   return (
-    <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META}>
+    <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META} focusRef={card}>
       {empty ? (
         <p className="text-sm text-[var(--color-muted)]">{AGREEMENTS_EMPTY}</p>
       ) : (
@@ -169,6 +185,7 @@ export function AgreementsCard({
                       done: 'Saved. Day0 checks the new words against the charter; until then the old ones stay in effect.',
                       refused: 'The new words were not saved.',
                       after: () => setEditing(null),
+                      focus: () => editControlOf(list.current, row._id),
                     })
                   }
                 />
@@ -201,7 +218,7 @@ export function AgreementsCard({
                     <Button
                       size="small"
                       disabled={change.busy}
-                      aria-label={`Keep “${row.statement}” for every employee`}
+                      aria-label={`Keep for every employee: “${row.statement}”`}
                       onClick={() =>
                         change.run(() => onKeepForEveryEmployee(row._id), {
                           done: `Kept for every employee once Day0 checks it against each charter; until then it stays ${employeeName}'s.`,
@@ -221,20 +238,23 @@ export function AgreementsCard({
               key={row._id}
               className="p-3 rounded-md border border-[var(--color-border)] text-sm text-[var(--color-fg-2)]"
             >
-              {checkingLine(row.statement)}
+              {checkingLine(row.statement, 'charter')}
             </li>
           ))}
           {refused.map((row) => (
             <li
               key={row._id}
-              className="p-3 rounded-md border border-[var(--color-warn)]/50 text-sm"
+              className="p-3 rounded-md border border-[var(--color-warn-line)] text-sm"
             >
-              <p className="text-[var(--color-fg-2)] whitespace-pre-wrap break-words">
+              <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
+                {NOT_KEPT}
+              </p>
+              <p className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words">
                 “{row.statement}”
               </p>
               {row.refusal ? (
-                <p className="mt-1 text-[var(--color-fg)]">
-                  {refusalSentence(row.refusal, employeeName)}
+                <p className="mt-1 text-[var(--color-fg-2)]">
+                  {refusalSentence(row.refusal, employeeName, 'charter')}
                 </p>
               ) : null}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -260,8 +280,12 @@ export function AgreementsCard({
               key={row._id}
               className="p-3 rounded-md border border-dashed border-[var(--color-border)] text-sm text-[var(--color-fg-2)]"
             >
-              Waiting for you on the Work tab: “{row.statement}”{' '}
-              <Link href={workHref} className={INLINE_LINK}>
+              Waiting for you on the Work tab: {quotedSentence(row.statement)}{' '}
+              <Link
+                href={workHref}
+                aria-label={`Open Work to decide “${row.statement}”`}
+                className={INLINE_LINK}
+              >
                 Open Work
               </Link>
             </li>

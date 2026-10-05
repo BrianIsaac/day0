@@ -9,6 +9,7 @@ import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
 import { employeeTabHref } from '../employee-tabs';
 import { AgreementsCard } from './AgreementsCard';
+import { AGREEMENTS_LOADING, AGREEMENTS_META, AGREEMENTS_TITLE } from '@/work/agreement-words';
 import { actorAt, CharterAside } from './CharterAside';
 import { CharterCard } from './CharterCard';
 import { charterActors } from './charter-actors';
@@ -94,6 +95,13 @@ export function CharterView() {
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
         actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />
+      {charter.approved && surfaceMode === 'real' && agreements === undefined ? (
+        <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META}>
+          <p aria-busy="true" className="text-sm text-[var(--color-muted)]">
+            {AGREEMENTS_LOADING}
+          </p>
+        </Card>
+      ) : null}
       {agreements !== undefined ? (
         <AgreementsCard
           agreements={agreements}

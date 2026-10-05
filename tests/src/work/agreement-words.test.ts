@@ -42,17 +42,20 @@ describe('what the cards say of a working agreement', (): void => {
       reason: 'contradicts-will-not-do' as const,
       clause: 'email customers directly',
     };
-    expect(refusalSentence(contradicts, 'Priya')).toBe(
+    expect(refusalSentence(contradicts, 'Priya', 'work')).toBe(
       'This would go beyond the charter: it contradicts “email customers directly”. Amend the charter instead?',
     );
+    expect(refusalSentence(contradicts, 'Priya', 'charter')).toBe(
+      'This would go beyond the charter: it contradicts “email customers directly”. To allow it, amend the charter above.',
+    );
     expect(refusalOffersAmendment(contradicts)).toBe(true);
-    expect(refusalSentence({ reason: 'contradicts-will-not-do' }, 'Priya')).toContain(
+    expect(refusalSentence({ reason: 'contradicts-will-not-do' }, 'Priya', 'work')).toContain(
       'what Priya will not do',
     );
     expect(refusalOffersAmendment({ reason: 'widens-scope' })).toBe(true);
     expect(refusalOffersAmendment({ reason: 'names-credential' })).toBe(false);
     expect(refusalOffersAmendment({ reason: 'grants-permission' })).toBe(false);
-    expect(refusalSentence({ reason: 'names-credential' }, 'Priya')).toBe(
+    expect(refusalSentence({ reason: 'names-credential' }, 'Priya', 'charter')).toBe(
       'This names a credential, which a working agreement never keeps. It was not kept.',
     );
   });
@@ -62,8 +65,11 @@ describe('what the cards say of a working agreement', (): void => {
     expect(awaitingManager({ status: 'proposed', approvedAt: 5 })).toBe(false);
     expect(awaitingManager({ status: 'proposed' })).toBe(true);
     expect(awaitingCheck({ status: 'active', approvedAt: 5 })).toBe(false);
-    expect(checkingLine('Comment, never email.')).toBe(
-      'Kept. Day0 is checking “Comment, never email.” against the charter; it takes effect once the check answers.',
+    expect(checkingLine('Comment, never email.', 'charter')).toBe(
+      'Kept. Day0 is checking “Comment, never email.” against the charter; it takes effect once the check passes.',
+    );
+    expect(checkingLine('Comment, never email.', 'work')).toBe(
+      'Kept. Day0 is checking “Comment, never email.” against the charter; once it passes it is on the Charter tab.',
     );
   });
 
@@ -83,6 +89,8 @@ describe('what the cards say of a working agreement', (): void => {
     expect(bindingWords({}, 'Priya')).toBe('for every employee');
     expect(bindingWords({ agentId: 'a1' as Id<'agents'> }, 'Priya')).toBe('for Priya');
     for (const source of AGREEMENT_SOURCE_TYPES) expect(sourceWords(source)).not.toBe('');
-    expect(keepNoteHint('Priya')).toContain('working agreement for Priya on the Charter tab');
+    expect(keepNoteHint('Priya')).toBe(
+      'Your answer above becomes a working agreement for Priya once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.',
+    );
   });
 });

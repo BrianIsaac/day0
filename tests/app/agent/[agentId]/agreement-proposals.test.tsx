@@ -90,7 +90,11 @@ describe('the promotion card', (): void => {
     await press(view.container, 'Keep for every employee');
     await press(view.container, 'Not now');
     expect(calls).toEqual(['keep wa1 Priya', 'keep wa1 every employee', 'dismiss wa1']);
-    expect(said(view.container).at(-1)).toBe('Set aside: Day0 will not propose it again.');
+    expect(said(view.container).at(-1)).toBe(
+      'Set aside: these corrections are not proposed again.',
+    );
+    // The card stays while the outcome is said, so the outcome and focus have a home.
+    expect(view.container.textContent).toContain('Proposed working agreements');
     view.unmount();
   });
 
@@ -162,15 +166,17 @@ describe('the plan approval tick', (): void => {
     if (!tick || !box) throw new Error('no tick');
     expect(tick.className).toMatch(/(^|\s)min-h-11(\s|$)/);
     expect(view.container.textContent).toContain(
-      'It becomes a working agreement for Priya on the Charter tab once Day0 checks it against the charter.',
+      'Your answer above becomes a working agreement for Priya once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.',
     );
-    // Ticked with no note, nothing is kept.
-    await act(async () => box.click());
+    // With no note written there is nothing to keep, so the tick waits for one.
+    expect(box.disabled).toBe(true);
     await press(view.container, 'Approve plan with answers');
     const field = [...view.container.querySelectorAll('label')].find(
       (label) => label.textContent === 'Your answer to the note, for this run (optional)',
     )?.control as HTMLInputElement;
     typeInto(field, 'Template B for customs holds.');
+    expect(box.disabled).toBe(false);
+    await act(async () => box.click());
     await press(view.container, 'Approve plan with answers');
     expect(decisions).toEqual([
       { answers: [] },

@@ -195,15 +195,15 @@ export function PlanApprovalForm({
               <label className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--color-fg)]">
                 <input
                   type="checkbox"
-                  checked={keepNote}
-                  disabled={busy}
+                  checked={keepNote && note.trim() !== ''}
+                  disabled={busy || note.trim() === ''}
                   onChange={(event) => setKeepNote(event.target.checked)}
                   aria-describedby={`${id}-keep-why`}
                   className="size-4 accent-[var(--color-accent)]"
                 />
                 {KEEP_NOTE_LABEL}
               </label>
-              <p id={`${id}-keep-why`} className="text-[13px] text-[var(--color-muted)]">
+              <p id={`${id}-keep-why`} className="pl-6 text-[13px] text-[var(--color-muted)]">
                 {keepNoteHint(employeeName)}
               </p>
             </div>

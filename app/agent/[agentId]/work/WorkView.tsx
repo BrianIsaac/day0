@@ -66,26 +66,18 @@ export function WorkView() {
       aside={
         <>
           {real ? (
+            <AgreementProposals
+              agreements={agreements ?? []}
+              employeeName={agent.name}
+              charterHref={employeeTabHref(agentId, 'charter')}
+              onKeep={(agreementId, forEveryEmployee) =>
+                keepAgreement({ agreementId, agentId, forEveryEmployee, via: 'promotion-card' })
+              }
+              onDismiss={(agreementId) => dismissAgreement({ agreementId, agentId })}
+            />
+          ) : null}
+          {real ? (
             <Card title={keptCorrectionsTitle(corrections)}>
-              <AgreementProposals
-                agreements={agreements ?? []}
-                employeeName={agent.name}
-                charterHref={employeeTabHref(agentId, 'charter')}
-                onKeep={(agreementId, forEveryEmployee) =>
-                  keepAgreement({
-                    agreementId,
-                    agentId,
-                    forEveryEmployee,
-                    via: 'promotion-card',
-                  })
-                }
-                onDismiss={(agreementId) =>
-                  dismissAgreement({
-                    agreementId,
-                    agentId,
-                  })
-                }
-              />
               <KeptCorrectionsPanel
                 corrections={corrections}
                 titles={itemTitles}

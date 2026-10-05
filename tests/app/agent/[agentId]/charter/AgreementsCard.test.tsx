@@ -122,7 +122,7 @@ describe('the Agreements card', (): void => {
     );
     await press(
       view.container,
-      'Keep “Name the carrier and the new date in every delay notice.” for every employee',
+      'Keep for every employee: “Name the carrier and the new date in every delay notice.”',
     );
     await press(view.container, 'Edit “Name the carrier and the new date in every delay notice.”');
     const field = [...view.container.querySelectorAll('label')].find(
@@ -159,11 +159,14 @@ describe('the Agreements card', (): void => {
     const calls: string[] = [];
     const view = card([checking, refused, waiting], calls);
     const text = view.container.textContent ?? '';
-    expect(text).toContain('Kept. Day0 is checking “Name the carrier first.” against the charter');
     expect(text).toContain(
-      'This would go beyond the charter: it contradicts “email customers directly”. Amend the charter instead?',
+      'Kept. Day0 is checking “Name the carrier first.” against the charter; it takes effect once the check passes.',
     );
-    expect(text).toContain('Waiting for you on the Work tab: “Comment, never email.”');
+    expect(text).toContain('Not kept');
+    expect(text).toContain(
+      'This would go beyond the charter: it contradicts “email customers directly”. To allow it, amend the charter above.',
+    );
+    expect(text).toContain('Waiting for you on the Work tab: “Comment, never email.” Open Work');
     expect(
       [...view.container.querySelectorAll('a')].map((link) => link.getAttribute('href')),
     ).toEqual(['/agent/a1/work']);

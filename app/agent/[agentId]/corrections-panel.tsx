@@ -1,19 +1,22 @@
 'use client';
 
-import Link from 'next/link';
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
 import {
   awaitingCheck,
   awaitingManager,
   checkingLine,
+  NOT_KEPT,
+  PROPOSALS_DONE,
+  PROPOSALS_TITLE,
   proposalQuestion,
   refusalOffersAmendment,
   refusalSentence,
   type AgreementView,
 } from '../../../src/work/agreement-words';
-import { Button, buttonClass } from '../../components/Button';
+import { Button, ButtonLink } from '../../components/Button';
+import { Card } from '../../components/Card';
 import { useChange } from '../../components/use-change';
 import { StatusRegion } from '../../components/StatusRegion';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../components/time';
@@ -218,14 +221,21 @@ function onPromotionCard(row: AgreementView): boolean {
   return awaitingManager(row) || awaitingCheck(row) || row.status === 'refused';
 }
 
+/** The buttons of one row, stacked in the narrow aside so a long name or label never runs out. */
+const ROW_ACTIONS = 'mt-2 grid gap-2';
+
+/** A row button, full width and allowed to wrap. */
+const ROW_BUTTON = 'w-full whitespace-normal';
+
 /**
- * The promotion card (13-W; the wave file's section 7): each working agreement Day0 proposes from
- * the manager's corrections with Keep for the employee, Keep for every employee and Not now; each
- * kept one waiting on its check against the charter; and each refused one with why, the clause it
- * contradicts quoted, Amend the charter where the charter settles it, and Dismiss.
+ * The promotion card (13-W; the wave file's section 7), its own card above the kept corrections:
+ * each working agreement Day0 proposes from the manager's corrections with Keep for the employee,
+ * Keep for every employee and Not now; each kept one waiting on its check against the charter; and
+ * each refused one with why, the clause it contradicts quoted, Amend the charter where the charter
+ * settles it, and Dismiss. It stays drawn while the outcome of its last decision is said.
  *
  * @param props - The employee's agreements, its name, the Charter tab, and the two calls.
- * @returns The card, or nothing when nothing waits.
+ * @returns The card, or nothing when nothing waits and nothing is being said.
  */
 export function AgreementProposals({
   agreements,
@@ -241,10 +251,11 @@ export function AgreementProposals({
   onKeep: (agreementId: AgreementView['_id'], forEveryEmployee: boolean) => Promise<unknown>;
   onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
 }) {
-  const list = useRef<HTMLUListElement>(null);
-  const change = useChange(list);
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
+  const id = useId();
   const shown = agreements.filter(onPromotionCard);
-  if (shown.length === 0) return null;
+  if (shown.length === 0 && change.outcome === null) return null;
   const keep = (row: AgreementView, forEveryEmployee: boolean): void =>
     change.run(() => onKeep(row._id, forEveryEmployee), {
       done: `Kept for ${forEveryEmployee ? 'every employee' : employeeName}. Day0 checks it against the charter before it takes effect.`,
@@ -252,80 +263,112 @@ export function AgreementProposals({
     });
   const dismiss = (row: AgreementView, refused: boolean): void =>
     change.run(() => onDismiss(row._id), {
-      done: refused ? 'Dismissed.' : 'Set aside: Day0 will not propose it again.',
+      done: refused ? 'Dismissed.' : 'Set aside: these corrections are not proposed again.',
       refused: refused ? 'The refusal was not dismissed.' : 'The proposal was not set aside.',
     });
   return (
-    <div className="mb-3">
-      <ul ref={list} tabIndex={-1} aria-label="Proposed working agreements" className="space-y-2">
-        {shown.map((row) => (
-          <li
-            key={row._id}
-            className={`p-3 rounded-md border text-sm ${
-              row.status === 'refused'
-                ? 'border-[var(--color-warn)]/50'
-                : 'border-[var(--color-accent)]/40 bg-[var(--color-accent)]/5'
-            }`}
-          >
-            {row.status === 'refused' && row.refusal ? (
-              <>
-                <p className="text-[var(--color-fg-2)] whitespace-pre-wrap break-words">
-                  “{row.statement}”
-                </p>
-                <p className="mt-1 text-[var(--color-fg)]">
-                  {refusalSentence(row.refusal, employeeName)}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {refusalOffersAmendment(row.refusal) ? (
-                    <Link href={charterHref} className={buttonClass('secondary', 'small')}>
-                      Amend the charter
-                    </Link>
-                  ) : null}
-                  <Button
-                    variant="quiet"
-                    size="small"
-                    disabled={change.busy}
-                    aria-label={`Dismiss the refused agreement “${row.statement}”`}
-                    onClick={() => dismiss(row, true)}
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-              </>
-            ) : awaitingCheck(row) ? (
-              <p className="text-[var(--color-fg-2)]">{checkingLine(row.statement)}</p>
-            ) : (
-              <>
-                <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">
-                  {proposalQuestion(row, employeeName)}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    variant="approve"
-                    size="small"
-                    disabled={change.busy}
-                    onClick={() => keep(row, false)}
-                  >
-                    Keep for {employeeName}
-                  </Button>
-                  <Button size="small" disabled={change.busy} onClick={() => keep(row, true)}>
-                    Keep for every employee
-                  </Button>
-                  <Button
-                    variant="quiet"
-                    size="small"
-                    disabled={change.busy}
-                    onClick={() => dismiss(row, false)}
-                  >
-                    Not now
-                  </Button>
-                </div>
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+    <Card title={PROPOSALS_TITLE} focusRef={card}>
+      {shown.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">{PROPOSALS_DONE}</p>
+      ) : (
+        <ul className="space-y-2">
+          {shown.map((row) => {
+            const about = `${id}-${row._id}`;
+            return (
+              <li
+                key={row._id}
+                className={`p-3 rounded-md border text-sm ${
+                  row.status === 'refused'
+                    ? 'border-[var(--color-warn-line)]'
+                    : 'border-[var(--color-accent-line)] bg-[var(--color-accent)]/5'
+                }`}
+              >
+                {row.status === 'refused' && row.refusal ? (
+                  <>
+                    <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
+                      {NOT_KEPT}
+                    </p>
+                    <p
+                      id={about}
+                      className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words"
+                    >
+                      “{row.statement}”
+                    </p>
+                    <p className="mt-1 text-[var(--color-fg-2)]">
+                      {refusalSentence(row.refusal, employeeName, 'work')}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      {refusalOffersAmendment(row.refusal) ? (
+                        <ButtonLink
+                          href={charterHref}
+                          size="small"
+                          aria-describedby={about}
+                          className={ROW_BUTTON}
+                        >
+                          Amend the charter
+                        </ButtonLink>
+                      ) : null}
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-label={`Dismiss the refused agreement “${row.statement}”`}
+                        className={ROW_BUTTON}
+                        onClick={() => dismiss(row, true)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </>
+                ) : awaitingCheck(row) ? (
+                  <p className="text-[var(--color-fg-2)]">{checkingLine(row.statement, 'work')}</p>
+                ) : (
+                  <>
+                    <p
+                      id={about}
+                      className="text-[var(--color-fg)] whitespace-pre-wrap break-words"
+                    >
+                      {proposalQuestion(row, employeeName)}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      <Button
+                        variant="approve"
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => keep(row, false)}
+                      >
+                        Keep for {employeeName}
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => keep(row, true)}
+                      >
+                        Keep for every employee
+                      </Button>
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => dismiss(row, false)}
+                      >
+                        Not now
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <StatusRegion outcome={change.outcome} />
-    </div>
+    </Card>
   );
 }
