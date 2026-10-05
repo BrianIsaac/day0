@@ -387,12 +387,21 @@ describe('Stop on a working item', (): void => {
     ).resolves.toMatchObject({ claimed: false });
   });
 
-  it('refuses an item that is not under way, and another manager’s item', async (): Promise<void> => {
+  // Re-pinned by 13-FD (the v0.16.0 redeploy's finding 4): a Stop confirmed after the item moved
+  // on was thrown as a `ConvexError`, which the browser's Convex client logs as a server error and
+  // the dialog held open; it is an expected outcome, so it is answered as one and changes nothing.
+  it('answers a Stop on an item no longer under way as an outcome, and changes nothing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'plan-pending');
+    const before = await readItem(harness, workItemId);
     await expect(
       harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId }),
-    ).rejects.toThrow('Only work under way can be stopped');
+    ).resolves.toEqual({ ok: false, refused: 'moved-on' });
+    expect(await readItem(harness, workItemId)).toEqual(before);
+  });
+
+  it('refuses another manager’s item', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
     const working = await seed(harness, 'executing');
     await expect(
       harness

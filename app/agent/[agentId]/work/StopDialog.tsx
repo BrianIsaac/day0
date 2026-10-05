@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { MANAGER_FEEDBACK_MAX_CHARS } from '@/work/manager-channel';
+import { STOP_MOVED_ON, type StopRunAnswer } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -65,15 +66,16 @@ export function stoppedOutcome(title: string, moment: StopMoment = 'working'): s
 /**
  * The Stop dialog of a working card (wave 12, 12-W, over the shared `Dialog`): it asks before a
  * run under way is stopped, says what stopping does and what it cannot undo, and takes an optional
- * reason kept with the item. Keep working holds focus; a refusal is said inside the dialog and
- * leaves it open; once the stop lands the dialog closes and the card says it.
+ * reason kept with the item. Keep working holds focus; an error is said inside the dialog and
+ * leaves it open; once the stop lands the dialog closes and the card says it, and so it does when
+ * the item moved on before the Stop arrived, which stops nothing (13-FD).
  *
  * @param title - The item's title, which the heading names.
  * @param employeeName - Who is working it.
  * @param moment - Where the item is: being worked, applying, or holding an approval not started.
- * @param onStop - Stop the run with the reason as typed (empty when none).
+ * @param onStop - Stop the run with the reason as typed (empty when none); the server's answer.
  * @param onClose - Close the dialog without stopping.
- * @param onDone - The stop landed, with what the card's live region says.
+ * @param onDone - The Stop was answered, with what the card's live region says.
  */
 export function StopDialog({
   title,
@@ -86,7 +88,7 @@ export function StopDialog({
   title: string;
   employeeName: string;
   moment: StopMoment;
-  onStop: (reason: string) => Promise<unknown> | void;
+  onStop: (reason: string) => Promise<StopRunAnswer>;
   onClose: () => void;
   onDone: (words: string) => void;
 }) {
@@ -111,10 +113,12 @@ export function StopDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (change.busy) return;
+          const said = (answer: StopRunAnswer): string =>
+            answer.ok ? stoppedOutcome(title, moment) : STOP_MOVED_ON;
           change.run(() => onStop(reason.trim()), {
-            done: stoppedOutcome(title, moment),
+            done: said,
             refused: 'The run was not stopped.',
-            after: () => onDone(stoppedOutcome(title, moment)),
+            after: (answer) => onDone(said(answer)),
           });
         }}
       >

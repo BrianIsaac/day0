@@ -8,20 +8,22 @@ import {
   stopWhy,
   type StopMoment,
 } from '../../../../../app/agent/[agentId]/work/StopDialog';
+import { STOP_MOVED_ON, type StopRunAnswer } from '../../../../../src/work/stop';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 
 /** The dialog over an empty page, with every call it makes recorded. */
-function opened(options: { moment?: StopMoment; refuse?: boolean } = {}) {
+function opened(options: { moment?: StopMoment; refuse?: boolean; answer?: StopRunAnswer } = {}) {
   const calls: Array<[string, unknown]> = [];
   const view = mount(
     <StopDialog
       title="Close the Q3 audit note"
       employeeName="Mira"
       moment={options.moment ?? 'working'}
-      onStop={async (reason): Promise<void> => {
+      onStop={async (reason): Promise<StopRunAnswer> => {
         calls.push(['stop', reason]);
-        if (options.refuse) throw new Error('Only work under way can be stopped.');
+        if (options.refuse) throw new Error('The connection to the server was lost.');
+        return options.answer ?? { ok: true };
       }}
       onClose={(): void => {
         calls.push(['close', undefined]);
@@ -60,12 +62,23 @@ describe('StopDialog', (): void => {
     view.unmount();
   });
 
-  it('says a refusal inside the dialog and stays open', async (): Promise<void> => {
+  it('says an error inside the dialog and stays open', async (): Promise<void> => {
     const view = opened({ refuse: true });
     await press(document.body, 'Stop the run');
-    expect(said(document.body)).toEqual(['Only work under way can be stopped.']);
+    expect(said(document.body)).toEqual(['The connection to the server was lost.']);
     expect(view.calls.map(([name]) => name)).toEqual(['stop']);
     expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('hands the card what happened when the item moved on before the Stop arrived (13-FD)', async (): Promise<void> => {
+    const view = opened({ answer: { ok: false, refused: 'moved-on' } });
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([
+      ['stop', ''],
+      ['done', STOP_MOVED_ON],
+    ]);
+    expect(said(document.body)).toEqual([STOP_MOVED_ON]);
     view.unmount();
   });
 

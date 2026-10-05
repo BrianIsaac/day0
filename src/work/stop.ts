@@ -39,6 +39,30 @@ export const STOPPED_PREFIX = 'stopped: ';
 /** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
 export const MANAGER_STOP = 'stopped by the manager';
 
+/**
+ * What a Stop the manager confirmed after the item moved on comes to, said on the card (wave 13,
+ * 13-FD; wording draft): the run had already reached a state no Stop applies to.
+ */
+export const STOP_MOVED_ON = 'Only work under way can be stopped; this item has moved on.';
+
+/** A Stop that stopped the run, or took back an approval whose writes had not started. */
+export interface StopRunStopped {
+  readonly ok: true;
+}
+
+/** A Stop that arrived after the item moved on: nothing was stopped and nothing changed. */
+export interface StopRunMovedOn {
+  readonly ok: false;
+  readonly refused: 'moved-on';
+}
+
+/**
+ * What `workRuns.stopRun` answers. A Stop that meets an item no longer under way is an expected
+ * outcome of a manager deciding while the run moves (the v0.16.0 redeploy's finding 4), so it is
+ * answered, never thrown: a thrown refusal reaches the browser's console as a server error.
+ */
+export type StopRunAnswer = StopRunStopped | StopRunMovedOn;
+
 /** The states of a work item the manager can stop: the employee is working it and nothing waits on them. */
 export const STOPPABLE_STATES = ['claimed', 'plan-approved', 'executing'] as const;
 

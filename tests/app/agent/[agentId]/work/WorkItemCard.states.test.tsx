@@ -22,6 +22,7 @@ import {
 } from '../../../../fixtures/work/drawn-states';
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
+import { STOP_MOVED_ON, type StopRunAnswer } from '../../../../../src/work/stop';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -46,7 +47,13 @@ afterEach((): void => {
  */
 function card(
   item: Doc<'workItems'>,
-  options: { questions?: Doc<'managerQuestions'>[]; autonomous?: boolean; loop?: boolean } = {},
+  options: {
+    questions?: Doc<'managerQuestions'>[];
+    autonomous?: boolean;
+    loop?: boolean;
+    /** What the server answers a Stop with; it stops the run unless told otherwise. */
+    stop?: StopRunAnswer;
+  } = {},
 ) {
   const calls: Array<[string, unknown]> = [];
   const record =
@@ -54,6 +61,10 @@ function card(
     async (arg?: unknown): Promise<void> => {
       calls.push([name, arg]);
     };
+  const stop = async (reason: string): Promise<StopRunAnswer> => {
+    calls.push(['stop', reason]);
+    return options.stop ?? { ok: true };
+  };
   const view = mount(
     <AgentZoneContext value={ZONE}>
       <WorkItemCard
@@ -70,7 +81,7 @@ function card(
         onRejectActions={record('rejectActions')}
         onResendDecision={record('resend')}
         onDismiss={record('dismiss')}
-        onStop={record('stop')}
+        onStop={stop}
         onCloseWithoutRetry={record('closeWithoutRetry')}
         servedByLoop={options.loop ?? true}
       />
@@ -236,6 +247,15 @@ describe('Stop on a working card (wave 12)', (): void => {
     expect(said(view.container)).toEqual([
       'Stopped: Draft response for new tier-two RevOps ask. It waits for you with Retry.',
     ]);
+  });
+
+  it('closes and says so, in the card, when the item moved on before the Stop arrived (13-FD)', async (): Promise<void> => {
+    const view = card(DRAWN.working, { stop: { ok: false, refused: 'moved-on' } });
+    await press(view.container, 'Stop');
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([['stop', '']]);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([STOP_MOVED_ON]);
   });
 
   it('closes with nothing stopped when Keep working is pressed', async (): Promise<void> => {
