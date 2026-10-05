@@ -434,7 +434,10 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness);
     // JSON drops an undefined field, so the bridge hands over a payload with no team at all.
-    const teamless = { ...(blockActions(seeded) as Record<string, unknown>), team: undefined };
+    const teamless: Record<string, unknown> = {
+      ...(blockActions(seeded) as Record<string, unknown>),
+      team: undefined,
+    };
     await expect((await press(harness, seeded, teamless)).json()).resolves.toMatchObject({
       status: 'ignored',
       reason: 'the press names no workspace',
