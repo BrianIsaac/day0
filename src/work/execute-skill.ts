@@ -2732,6 +2732,13 @@ export function mockActionContractIssues(
   return issues;
 }
 
+/** A tool that lists records (`list_issues`, `list-projects`), which the list-read rule is for. */
+const LIST_TOOL = /^list[_-]/i;
+
+/** How a real run takes a list read, shown when a connected surface allows one (W12V-12, wave 13 item 3). */
+export const LIST_READ_RULE =
+  '  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done or cancelled, such as Backlog, Todo or In Progress, so read open items with no state filter.';
+
 /**
  * Describe the connected surfaces and the two verbs that reach them.
  *
@@ -2791,6 +2798,12 @@ export function surfaceInstructions(
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
+  // W12V-12: a first read that named a field list, or scoped open items to one state, stopped
+  // the run before any write on the hosted model.
+  const listTool = connected.some((surface) =>
+    (surface.toolAllowlist ?? []).some((tool) => LIST_TOOL.test(tool)),
+  );
+  if (mode === 'real' && listTool) lines.push(LIST_READ_RULE);
   return lines.join('\n');
 }
 
@@ -3629,6 +3642,51 @@ export async function repairToolArguments(
   };
 }
 
+/** A line of a provider's validation refusal that names the argument at fault: "- fields.1: must be ...". */
+const FAULTED_ARGUMENT = /(?:^|\s)-\s+([A-Za-z_][A-Za-z0-9_]*)(?:[.[][^:\s]*)?:\s/g;
+
+/**
+ * The top-level arguments of a call that a validation refusal names, in the client's format
+ * ("- fields.1: must be equal to one of the allowed values"); only arguments the call carries.
+ *
+ * Args:
+ *   reason: The refusal's words.
+ *   action: The call it refused.
+ *
+ * Returns:
+ *   The named arguments, each once; empty when the refusal is not about arguments or names none.
+ */
+function faultedArguments(reason: string | undefined, action: MockAction): string[] {
+  if (!isArgumentFailure(reason) || reason === undefined) return [];
+  const carried = toolArgumentsOf(action);
+  if (!carried) return [];
+  const named = [...reason.split(/\n\s*\n/, 1)[0]!.matchAll(FAULTED_ARGUMENT)].map(
+    (match) => match[1]!,
+  );
+  return [...new Set(named)].filter((name) => Object.hasOwn(carried, name));
+}
+
+/** A call's arguments as an object, or undefined when they do not parse as one. */
+function toolArgumentsOf(action: MockAction): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(action.args.toolArgsJson ?? '');
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    // Not an object: the call has no named arguments to leave out.
+    return undefined;
+  }
+}
+
+/** The call with the named arguments left out. */
+function withoutArguments(action: MockAction, names: readonly string[]): MockAction {
+  const kept = Object.fromEntries(
+    Object.entries(toolArgumentsOf(action) ?? {}).filter(([name]) => !names.includes(name)),
+  );
+  return { ...action, args: { ...action.args, toolArgsJson: JSON.stringify(kept) } };
+}
+
 /** What the failed-read repair takes: the actions, their ledger and the reads to retry. */
 export interface RepairFailedReadsArgs {
   actions: readonly MockAction[];
@@ -3648,7 +3706,9 @@ export interface RepairFailedReadsArgs {
  *
  * Each such row costs one model call and one re-apply, then stands as the
  * second attempt's outcome whatever that was: a second refusal is ledgered
- * failed with the second message, and nothing loops. A row whose repair the
+ * failed with the second message, and nothing loops. The one exception is a
+ * second refusal that names arguments the repaired call carries: the read is
+ * taken once more without them, with no model call (W12V-12). A row whose repair the
  * model could not produce, or whose repair call itself failed, keeps its first
  * outcome. Writes are never touched.
  *
@@ -3678,12 +3738,22 @@ export async function repairFailedReads(
       replacement = undefined;
     }
     if (!replacement) continue;
-    const outcome = await args.apply(replacement, row.index);
-    actions[row.index] = replacement;
+    let action = replacement;
+    let outcome = await args.apply(action, row.index);
+    let reason = row.reason;
+    // The second shape (W12V-12): a repaired read refused again for arguments the provider names
+    // is taken once more without them; a read left wider than asked changes nothing.
+    const faulted = outcome.ok ? [] : faultedArguments(outcome.reason, action);
+    if (faulted.length > 0) {
+      action = withoutArguments(action, faulted);
+      outcome = await args.apply(action, row.index);
+      reason = `${row.reason}; the repaired call was refused too for ${faulted.join(', ')}, so it was taken without them`;
+    }
+    actions[row.index] = action;
     applied[row.index] = {
       ...outcome,
       repair: {
-        reason: row.reason,
+        reason,
         toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
       },
     };
