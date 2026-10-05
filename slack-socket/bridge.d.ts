@@ -7,6 +7,8 @@ export declare const PRESS_ATTEMPTS: number;
 export declare const PRESS_RETRY_FIRST_MS: number;
 export declare const BACKEND_TIMEOUT_MS: number;
 export declare const FAREWELL_TIMEOUT_MS: number;
+export declare const PRESS_NOT_RECEIVED: string;
+export declare const PRESS_NOTICE_TIMEOUT_MS: number;
 
 /** How a bridge is made: where the backend is, its secret, and the seams a test replaces. */
 export interface BridgeOptions {
@@ -21,6 +23,7 @@ export interface BridgeOptions {
   readonly helloTimeoutMs?: number;
   readonly maxConnectionMs?: number;
   readonly stableAfterMs?: number;
+  readonly pressRetryWindowMs?: number;
 }
 
 /** What the health check reports. */
@@ -41,6 +44,12 @@ export interface Bridge {
   stop(): Promise<void>;
   status(): BridgeStatus;
 }
+
+/** A press's `response_url` when the bridge may post to it: Slack's own over https, or the host its connection came from. */
+export declare function responseUrlOf(
+  payload: Readonly<Record<string, unknown>>,
+  slackHost: string | undefined,
+): URL | undefined;
 
 /** Make a bridge. */
 export declare function createBridge(options: BridgeOptions): Bridge;

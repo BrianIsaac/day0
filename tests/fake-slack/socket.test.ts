@@ -204,6 +204,45 @@ describe('fake Slack: Socket Mode and a press (K1, K2, K3)', (): void => {
     connection.socket.close();
   });
 
+  it('gives a press its response_url, and keeps what is posted to it for the person who pressed (W12-R22)', async (): Promise<void> => {
+    const ts = await postRequest();
+    const opened = await api('apps.connections.open', await generateAppLevelToken());
+    const connection = await connect(String(opened.url));
+    await connection.next();
+    const pressing = proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });
+    const envelope = (await connection.next()) as {
+      envelope_id: string;
+      payload: { response_url: string };
+    };
+    connection.socket.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+    await pressing;
+    const responseUrl = new URL(envelope.payload.response_url);
+    expect(responseUrl.origin).toBe(new URL(fake.base).origin);
+    const posted = await fetch(responseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        response_type: 'ephemeral',
+        replace_original: false,
+        text: 'Not received.',
+      }),
+    });
+    expect(posted.status).toBe(200);
+    const evidence = (await (await fetch(`${fake.base}/proof`)).json()) as {
+      responses: Array<Record<string, unknown>>;
+    };
+    expect(evidence.responses).toEqual([
+      {
+        channel: 'D_DAY0_MANAGER',
+        ts,
+        response_type: 'ephemeral',
+        replace_original: false,
+        text: 'Not received.',
+      },
+    ]);
+    connection.socket.close();
+  });
+
   it('answers a press with no connection open as Slack shows it: not delivered', async (): Promise<void> => {
     const ts = await postRequest();
     const response = await proof('press', { channel: 'D_DAY0_MANAGER', ts, button: 'approve' });

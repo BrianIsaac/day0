@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createBridge, type Bridge } from '../../slack-socket/bridge.js';
+import { createBridge, responseUrlOf, type Bridge } from '../../slack-socket/bridge.js';
 import { FAKE_BOT_TOKEN, startFakeSlack, type FakeSlack } from '../fake-slack/spawn';
 
 /*
@@ -23,6 +23,8 @@ interface Backend {
   heartbeatStatus: number;
   /** How many press calls answer 503 before one is taken. */
   failPresses: number;
+  /** What a press call answers instead of taking it (a 4xx), when set. */
+  refusePresses: number | undefined;
   /** How many connection URLs are refused (502) before one is handed out. */
   failConnections: number;
   /** How many connection URLs were handed out. */
@@ -49,6 +51,7 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
       },
     ] as Backend['apps'],
     failPresses: 0,
+    refusePresses: undefined as number | undefined,
     failConnections: 0,
     opened: 0,
     heartbeats: [] as Backend['heartbeats'],
@@ -85,6 +88,7 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
         return reply(200, { written: 1 });
       }
       if (request.url === '/slack-socket/press') {
+        if (state.refusePresses !== undefined) return reply(state.refusePresses, {});
         if (state.failPresses > 0) {
           state.failPresses -= 1;
           return reply(503, {});
@@ -137,6 +141,7 @@ function start(
     readonly helloTimeoutMs?: number;
     readonly maxConnectionMs?: number;
     readonly stableAfterMs?: number;
+    readonly pressRetryWindowMs?: number;
     readonly WebSocket?: typeof WebSocket;
   } = {},
 ): Bridge {
@@ -153,6 +158,9 @@ function start(
       : { maxConnectionMs: overrides.maxConnectionMs }),
     ...(overrides.WebSocket === undefined ? {} : { WebSocket: overrides.WebSocket }),
     ...(overrides.stableAfterMs === undefined ? {} : { stableAfterMs: overrides.stableAfterMs }),
+    ...(overrides.pressRetryWindowMs === undefined
+      ? {}
+      : { pressRetryWindowMs: overrides.pressRetryWindowMs }),
   });
   return bridge;
 }
@@ -168,6 +176,7 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
 async function proof(): Promise<{
   socketConnections: Record<string, number>;
   presses: Array<{ delivered: boolean; acknowledged?: boolean }>;
+  responses: Array<Record<string, unknown>>;
 }> {
   return (await (await fetch(`${fake.base}/proof`)).json()) as never;
 }
@@ -435,6 +444,35 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     });
   });
 
+  it('tells the person who pressed when the backend refused a press it acknowledged (W12-R22)', async (): Promise<void> => {
+    backend.refusePresses = 404;
+    const running = start();
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    expect(await postAndPress('approve')).toMatchObject({ delivered: true, acknowledged: true });
+    await until(async () => (await proof()).responses.length === 1, 'the notice');
+    expect((await proof()).responses[0]).toEqual({
+      channel: 'D_DAY0_MANAGER',
+      ts: expect.any(String),
+      response_type: 'ephemeral',
+      replace_original: false,
+      text: 'Day0 did not receive this press, so nothing was decided. Press it again, or decide in day0.',
+    });
+    expect(logged).toContainEqual(
+      expect.objectContaining({ message: 'press given up', appId: 'A_DAY0_FAKE', told: true }),
+    );
+  });
+
+  it('tells the person who pressed when the backend could not take a press in time (W12-R22)', async (): Promise<void> => {
+    backend.failPresses = 1_000;
+    const running = start({ pressRetryWindowMs: 200 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    expect(await postAndPress('reject')).toMatchObject({ delivered: true, acknowledged: true });
+    await until(async () => (await proof()).responses.length === 1, 'the notice');
+    expect(backend.presses).toEqual([]);
+  });
+
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {
     const running = start({ maxConnectionMs: 200 });
     await running.start();
@@ -513,5 +551,23 @@ describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): v
     expect(
       logged.filter((line) => line.message === 'the heartbeat could not be reported'),
     ).toHaveLength(1);
+  });
+});
+
+describe('responseUrlOf (W12-R22)', (): void => {
+  it('posts only to Slack’s own response_url over https, or to the host the app’s connection came from', (): void => {
+    const at = (response_url: unknown, host?: string): string | undefined =>
+      responseUrlOf({ response_url }, host)?.href;
+    expect(at('https://hooks.slack.com/actions/T0/1/abc')).toBe(
+      'https://hooks.slack.com/actions/T0/1/abc',
+    );
+    expect(at('http://hooks.slack.com/actions/T0/1/abc')).toBeUndefined();
+    expect(at('https://hooks.slack.com.example/actions')).toBeUndefined();
+    expect(at('https://example.com/actions')).toBeUndefined();
+    expect(at('http://fake-slack:8090/actions/1', 'fake-slack:8090')).toBe(
+      'http://fake-slack:8090/actions/1',
+    );
+    expect(at('not a url', 'fake-slack:8090')).toBeUndefined();
+    expect(at(undefined)).toBeUndefined();
   });
 });

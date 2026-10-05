@@ -124,7 +124,10 @@ that issues an app-level token, so a person generates one per app:
    card says "Buttons: off until the Slack socket service connects" and each new
    request goes without buttons, decided by its typed code or in Day0: at once
    when the component stops cleanly, and within three minutes of its last report
-   when it dies unseen.
+   when it dies unseen. A press the component took from Slack and could not hand
+   to Day0 (Day0 refused it, or did not answer for a minute) is answered to the
+   person who pressed, and only to them: "Day0 did not receive this press, so
+   nothing was decided. Press it again, or decide in day0."
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page; presses then

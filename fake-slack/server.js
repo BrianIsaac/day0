@@ -99,6 +99,8 @@ function resetApps() {
   sockets.clear();
   tickets.clear();
   presses.length = 0;
+  responseUrls.clear();
+  responses.length = 0;
 }
 
 // Day0's posted messages, by channel and ts, with the app whose bot posted them: what
@@ -141,6 +143,11 @@ const messageKey = (channel, ts) => `${channel}:${ts}`;
 const tickets = new Map();
 const sockets = new Set();
 const presses = [];
+// Each press's response_url, by its id, and what was posted to one (W12-R22). Slack documents a
+// response_url as taking a JSON message (`response_type`, `replace_original`, `text`) for the
+// person who pressed; the walks posted none, so this follows the documentation.
+const responseUrls = new Map();
+const responses = [];
 // Slack allows an app ten open connections at once (K1).
 const MAX_CONNECTIONS_PER_APP = 10;
 // How long a press waits for its envelope's acknowledgement.
@@ -276,6 +283,7 @@ const server = createServer(async (request, response) => {
           .map((app) => [app.appId, [...sockets].filter((s) => s.appId === app.appId).length]),
       ),
       presses,
+      responses,
       configurationRotations: configuration.rotations,
       configurationRevoked: revokedConfigurationTokens.size,
       // Channel ids each live app's bot is in, by app id.
@@ -366,6 +374,17 @@ const server = createServer(async (request, response) => {
     destination.searchParams.set('state', state);
     response.writeHead(302, { location: destination.toString() });
     return response.end();
+  }
+  if (url.pathname.startsWith('/actions/') && request.method === 'POST') {
+    // A press's response_url: a message for the person who pressed, kept for the proof.
+    const pressed = responseUrls.get(url.pathname.slice('/actions/'.length));
+    if (!pressed) return json(response, 404, { ok: false, error: 'expired_url' });
+    const { response_type, replace_original, text } = jsonArguments(request, await bodyOf(request));
+    if (typeof text !== 'string' || text === '') {
+      return json(response, 400, { ok: false, error: 'no_text' });
+    }
+    responses.push({ ...pressed, response_type, replace_original, text });
+    return json(response, 200, { ok: true });
   }
   if (!url.pathname.startsWith('/api/')) {
     return json(response, 404, { ok: false, error: 'method_not_found' });
@@ -792,7 +811,15 @@ server.on('upgrade', (request, socket) => {
     'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
   );
-  const connection = { socket, appId, buffer: Buffer.alloc(0), waiting: new Map(), alive: true };
+  const connection = {
+    socket,
+    appId,
+    // The address the app dialled, which its presses' response_urls are served at.
+    host: request.headers.host || `fake-slack:${port}`,
+    buffer: Buffer.alloc(0),
+    waiting: new Map(),
+    alive: true,
+  };
   sockets.add(connection);
   socket.on('data', (chunk) => {
     connection.buffer = Buffer.concat([connection.buffer, chunk]);
@@ -855,8 +882,11 @@ async function press({ channel, ts, button, userId }) {
     return { delivered: false, error: 'no_socket_connection' };
   }
   const envelopeId = randomBytes(8).toString('hex');
+  const responseId = randomBytes(8).toString('hex');
+  responseUrls.set(responseId, { channel, ts });
   const payload = {
     type: 'block_actions',
+    response_url: `http://${connection.host}/actions/${responseId}`,
     user: { id: userId || 'U_DAY0_MANAGER' },
     team: { id: 'T_DAY0' },
     api_app_id: message.appId,

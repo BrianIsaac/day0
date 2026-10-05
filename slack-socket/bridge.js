@@ -33,6 +33,14 @@ export const PRESS_RETRY_CAP_MS = 10_000;
 /** How long one backend call may take. */
 export const BACKEND_TIMEOUT_MS = 15_000;
 /**
+ * What the person who pressed is told, through the press's own `response_url`, when the bridge
+ * acknowledged a press and could not hand it to Day0 (W12-R22): only them, and the request stays.
+ */
+export const PRESS_NOT_RECEIVED =
+  'Day0 did not receive this press, so nothing was decided. Press it again, or decide in day0.';
+/** How long telling the person may take. */
+export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
+/**
  * How long the last report, every app down, may take as the bridge stops: inside the compose
  * service's five-second grace, so a clean stop reaches the card at once (D-6 (b)).
  */
@@ -51,6 +59,7 @@ export const FAREWELL_TIMEOUT_MS = 3_000;
  * @property {number} [helloTimeoutMs]
  * @property {number} [maxConnectionMs]
  * @property {number} [stableAfterMs]
+ * @property {number} [pressRetryWindowMs]
  */
 
 /**
@@ -66,6 +75,8 @@ export const FAREWELL_TIMEOUT_MS = 3_000;
  * @property {boolean} requesting A connection URL is being asked for.
  * @property {number} failures Consecutive failed opens, for the backoff.
  * @property {number} liveSince When the live socket was greeted.
+ * @property {string | undefined} slackHost The host the app's last connection URL named, which a
+ *   press's `response_url` may also name (the fake Slack of a bed).
  * @property {string | undefined} failure Why the last open failed, until a connection is greeted;
  *   reported to the backend with the app (D-6 (b)).
  * @property {ReturnType<typeof setTimeout> | undefined} retry
@@ -89,6 +100,7 @@ export function createBridge(options) {
   const helloTimeoutMs = options.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
   const maxConnectionMs = options.maxConnectionMs ?? MAX_CONNECTION_MS;
   const stableAfterMs = options.stableAfterMs ?? STABLE_AFTER_MS;
+  const pressRetryWindowMs = options.pressRetryWindowMs ?? PRESS_RETRY_WINDOW_MS;
   /** @type {Map<string, AppState>} */
   const apps = new Map();
   let timer;
@@ -213,6 +225,7 @@ export function createBridge(options) {
           refresh: undefined,
           mismatch: false,
           removed: false,
+          slackHost: undefined,
           failure: undefined,
         };
         apps.set(surfaceId, state);
@@ -341,6 +354,7 @@ export function createBridge(options) {
     }
     state.sockets.add(socket);
     state.pending = socket;
+    state.slackHost = new URL(url).host;
     const hello = setTimeout(() => {
       if (state.pending === socket) {
         log({ level: 'warn', message: 'no hello in time', appId: state.appId });
@@ -432,16 +446,16 @@ export function createBridge(options) {
    * offering it again never decides twice.
    */
   async function forward(state, payload) {
-    const until = Date.now() + PRESS_RETRY_WINDOW_MS;
+    const until = Date.now() + pressRetryWindowMs;
     for (let attempt = 1; ; attempt += 1) {
       try {
         const answer = await backend('/slack-socket/press', {
           surfaceId: state.surfaceId,
           payload,
         });
-        if (answer.status === 200 || (answer.status >= 400 && answer.status < 500)) {
+        if (answer.status === 200) {
           log({
-            level: answer.status === 200 ? 'info' : 'warn',
+            level: 'info',
             message: 'press handed over',
             appId: state.appId,
             status: answer.status,
@@ -449,20 +463,68 @@ export function createBridge(options) {
           });
           return;
         }
+        // The backend refused it outright: offering it again gets the same answer.
+        if (answer.status >= 400 && answer.status < 500) {
+          await giveUp(state, payload, attempt, `the backend refused it (${answer.status})`);
+          return;
+        }
         throw new Error(`the backend answered ${answer.status}`);
       } catch (error) {
         const wait = Math.min(pressRetryFirstMs * 2 ** (attempt - 1), PRESS_RETRY_CAP_MS);
-        const giveUp = stopped || Date.now() + wait > until;
+        if (stopped || Date.now() + wait > until) {
+          await giveUp(state, payload, attempt, reasonOf(error));
+          return;
+        }
         log({
-          level: giveUp ? 'error' : 'warn',
-          message: giveUp ? 'press given up' : 'press not handed over',
+          level: 'warn',
+          message: 'press not handed over',
           appId: state.appId,
           attempt,
           reason: reasonOf(error),
         });
-        if (giveUp) return;
         await new Promise((resolve) => setTimeout(resolve, wait));
       }
+    }
+  }
+
+  /**
+   * A press Slack was told arrived and Day0 never took (W12-R22): logged, and the person who pressed
+   * told through the press's own `response_url`, since Slack shows them nothing went wrong.
+   */
+  async function giveUp(state, payload, attempt, reason) {
+    const told = await tellPresser(state, payload);
+    log({ level: 'error', message: 'press given up', appId: state.appId, attempt, reason, told });
+  }
+
+  /**
+   * Post {@link PRESS_NOT_RECEIVED} to the press's `response_url`, only where it is Slack's: https
+   * on a host under slack.com, or the host the app's connection came from (a bed's fake Slack).
+   *
+   * @returns Whether Slack took the message.
+   */
+  async function tellPresser(state, payload) {
+    const target = responseUrlOf(payload, state.slackHost);
+    if (target === undefined) return false;
+    try {
+      const response = await fetchImpl(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          response_type: 'ephemeral',
+          replace_original: false,
+          text: PRESS_NOT_RECEIVED,
+        }),
+        signal: AbortSignal.timeout(PRESS_NOTICE_TIMEOUT_MS),
+      });
+      return response.ok;
+    } catch (error) {
+      log({
+        level: 'warn',
+        message: 'the person who pressed could not be told',
+        appId: state.appId,
+        reason: reasonOf(error),
+      });
+      return false;
     }
   }
 
@@ -506,6 +568,27 @@ export function createBridge(options) {
       };
     },
   };
+}
+
+/**
+ * A press's `response_url`, when it is one the bridge may post to: https on a host under
+ * `slack.com`, or the host the app's own connection came from; undefined otherwise.
+ *
+ * @param {Record<string, unknown>} payload The press, as Slack sent it.
+ * @param {string | undefined} slackHost The host of the app's connection URL.
+ * @returns {URL | undefined}
+ */
+export function responseUrlOf(payload, slackHost) {
+  if (typeof payload?.response_url !== 'string') return undefined;
+  let url;
+  try {
+    url = new URL(payload.response_url);
+  } catch {
+    // Not a URL: nothing to post to.
+    return undefined;
+  }
+  const slack = url.protocol === 'https:' && url.hostname.endsWith('.slack.com');
+  return slack || (slackHost !== undefined && url.host === slackHost) ? url : undefined;
 }
 
 /** A failure's message, never a URL (a Socket Mode URL carries its ticket). */
