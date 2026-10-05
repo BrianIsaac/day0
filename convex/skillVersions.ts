@@ -7,7 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, assertOwnsSkill } from './ownership';
+import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
@@ -916,13 +916,15 @@ function libraryEntry(version: Doc<'skillVersions'>): LibraryEntry {
 
 /**
  * Public, guarded by `assertOwnsAgent`: the versions of one shape in the library of the
- * employee's owner, newest first. Reads only; the lookup is the owner's by index.
+ * employee's owner, newest first. Reads only; the lookup is the caller's owner scope by index
+ * (`ownerScope`, 13-K), which the guard has just held to be the employee's owner.
  */
 export const library = query({
   args: { agentId: v.id('agents'), surfaceClass: v.string(), operation: v.string() },
   handler: async (ctx, args): Promise<LibraryEntry[]> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const versions = await ownerVersions(ctx.db, agent.userId!, {
+    const caller = await getCallerOrThrow(ctx);
+    await assertOwnsAgent(ctx, args.agentId);
+    const versions = await ownerVersions(ctx.db, ownerScope(caller), {
       by: 'shape',
       surfaceClass: args.surfaceClass,
       operation: args.operation,
