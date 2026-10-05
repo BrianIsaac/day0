@@ -76,6 +76,15 @@ const DETAIL_LENGTH = 400;
 /** Button text for the shared-token fallback on an OAuth surface. */
 export const OAUTH_FALLBACK_LABEL = 'Land a shared bot token (fallback)';
 
+/**
+ * Why the fallback field stays on a card whose own app is not installed again (W12X-4): no
+ * control above makes one, so the note does not point at one.
+ */
+export const NOT_REINSTALLED_FALLBACK_NOTE =
+  'Day0 does not make this employee a new app. Where the administrator would rather hand over ' +
+  'the workspace token, land it here: it is stored encrypted as a shared credential, and writes ' +
+  'through it carry the employee name and run id so they stay attributable.';
+
 /** Why an OAuth surface still offers a landing field beside provisioning. */
 export const OAUTH_FALLBACK_NOTE =
   'A dedicated app is the documented path, and the control above registers one. Where the ' +
@@ -131,6 +140,8 @@ export interface CredentialPresentationInput {
   summary?: CredentialOwnerSummary;
   /** Why the last probe left the surface where it is, as the row stores it. */
   reason?: string;
+  /** The card's own app is not installed again (`keptAppNotReinstalled`, W12X-4). */
+  keptAppNotReinstalled?: boolean;
 }
 
 /**
@@ -177,6 +188,25 @@ export function presentProvisioning(input: {
    */
   keptAppNotReinstalled?: boolean;
 }): ProvisioningPresentation {
+  // Ahead of the documentation's finding: the server refuses this app whatever a re-read says.
+  if (
+    input.provisioning &&
+    input.credentialHeld === false &&
+    input.keptAppNotReinstalled === true
+  ) {
+    const employee = input.employee ?? 'the employee';
+    return {
+      note:
+        `${employee}'s own app, ${input.provisioning.appName}, was created through the ` +
+        "organisation's Slack connection, which IT revoked. Day0 does not install it again and " +
+        "cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not " +
+        `bring it back or give ${employee} a new app.`,
+      offerProvisioning: false,
+      asksForConfigurationToken: false,
+      stage: 'not-reinstalled',
+      title: notReinstalledTitle(employee),
+    };
+  }
   if (input.credential?.method !== 'oauth') {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
@@ -187,20 +217,6 @@ export function presentProvisioning(input: {
     };
   }
   const provisioning = input.provisioning;
-  if (provisioning && input.credentialHeld === false && input.keptAppNotReinstalled === true) {
-    const employee = input.employee ?? 'the employee';
-    return {
-      note:
-        `IT revoked the organisation's Slack connection ${provisioning.appName} was created with, ` +
-        "so Day0 does not install it again and cannot delete it: IT deletes it in Slack's app " +
-        'settings. Connecting Slack again does not bring it back, and nothing on this card makes ' +
-        `${employee} a new app.`,
-      offerProvisioning: false,
-      asksForConfigurationToken: false,
-      stage: 'not-reinstalled',
-      title: notReinstalledTitle(employee),
-    };
-  }
   if (provisioning?.installedAt && input.credentialHeld === false) {
     return {
       ...(provisioning.stateExpiresAt !== undefined ? { installUrl: provisioning.installUrl } : {}),
@@ -350,7 +366,8 @@ export function presentSurfaceCredential(
       kind: 'oauth',
       label: input.credential.label,
       landingLabel: OAUTH_FALLBACK_LABEL,
-      landingNote: OAUTH_FALLBACK_NOTE,
+      landingNote:
+        input.keptAppNotReinstalled === true ? NOT_REINSTALLED_FALLBACK_NOTE : OAUTH_FALLBACK_NOTE,
       text: summary ?? 'Follow the documented OAuth approval procedure.',
     };
   }

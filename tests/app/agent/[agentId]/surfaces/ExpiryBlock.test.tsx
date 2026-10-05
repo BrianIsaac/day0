@@ -83,14 +83,12 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
           now={AT - 30 * DAY}
           onSetDays={vi.fn()}
           connectionRevoked
-          revokedWords="Nothing is read or sent through this card: Dara's own app is not installed again."
+          revokedWords="Nothing is read or sent through this card."
         />
       </AgentZoneContext.Provider>,
     ).replace(/&#x27;/g, "'");
     expect(markup).not.toMatch(/Renew for/);
-    expect(markup).toContain(
-      "Nothing is read or sent through this card: Dara's own app is not installed again.",
-    );
+    expect(markup).toContain('Nothing is read or sent through this card.');
     expect(markup).not.toContain('until IT connects');
   });
 

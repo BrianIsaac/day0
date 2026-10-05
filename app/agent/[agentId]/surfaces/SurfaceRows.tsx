@@ -376,10 +376,20 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
  * registration again where an install did not complete.
  */
 function provisionLabel(presentation: ProvisioningPresentation): string {
-  // The reinstall's title names the employee whose app it is (11-AC's item 12).
-  if (presentation.stage === 'reinstall') return presentation.title;
-  if (presentation.stage === 'offer') return CONNECT_LABEL;
-  return PROVISION_LABEL;
+  switch (presentation.stage) {
+    case 'reinstall':
+      // The reinstall's title names the employee whose app it is (11-AC's item 12).
+      return presentation.title;
+    case 'offer':
+      return CONNECT_LABEL;
+    case 'failed':
+    case 'not-applicable':
+    case 'unavailable':
+    case 'awaiting-install':
+    case 'installed':
+    case 'not-reinstalled':
+      return PROVISION_LABEL;
+  }
 }
 
 /** The one control that connects a card through the organisation's connection (section 4.3). */

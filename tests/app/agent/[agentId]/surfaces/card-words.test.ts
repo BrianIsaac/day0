@@ -4,7 +4,6 @@ import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   accessStanding,
-  actsAsNotReinstalledWords,
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
@@ -15,7 +14,8 @@ import {
   expectedCredential,
   identityChip,
   moveOfferWords,
-  notReinstalledAccessWords,
+  NOT_REINSTALLED_ACCESS,
+  NOT_REINSTALLED_ACTS_AS,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -526,12 +526,22 @@ describe('a covered Slack card with no install described (W12V-1, words only)', 
 });
 
 describe('a Slack card whose own app is not installed again (W12X-4)', (): void => {
-  it('says it acts as nobody, whatever IT connects next, and that nothing goes through it', (): void => {
-    expect(actsAsNotReinstalledWords({ employee: 'Dara', system: 'Slack' })).toBe(
-      "nobody: Dara's own app is not installed again, even once IT connects Slack again",
-    );
-    expect(notReinstalledAccessWords('Dara')).toBe(
-      "Nothing is read or sent through this card: Dara's own app is not installed again.",
-    );
+  it('acts as nobody, says nothing goes through it and reads as ended, whatever it waited on', (): void => {
+    expect(NOT_REINSTALLED_ACTS_AS).toBe('nobody');
+    expect(NOT_REINSTALLED_ACCESS).toBe('Nothing is read or sent through this card.');
+    const card = {
+      displayName: 'Slack',
+      verdict: 'approved',
+      managerApprovedAt: 1,
+      expiresAt: Date.UTC(2027, 0, 3),
+    } as unknown as WordedSurface;
+    for (const waitsOn of [undefined, 'it', 'connect'] as const) {
+      expect(
+        stateChip(card, Date.UTC(2026, 9, 5), 'UTC', { waitsOn, notReinstalled: true }),
+      ).toEqual({
+        text: 'Ended',
+        tone: 'warn',
+      });
+    }
   });
 });

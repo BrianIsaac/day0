@@ -876,9 +876,18 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         installedAt: 2,
       } as ListedSurface['provisioning'],
     } as Partial<ListedSurface>;
-    const revoked = render(listed({ ...ended, connectionRevoked: true }), {
-      installRedirectConfigured: true,
-    });
+    // While no Slack connection is active the card's access request is drafted (the bed's).
+    const slackRequest: AccessRequestView = {
+      ...REQUEST,
+      system: 'slack',
+      subject: 'Day0 access request: Slack for Maya',
+      text: 'Maya, a Day0 employee, needs access to Slack.',
+    };
+    const revoked = render(
+      listed({ ...ended, connectionRevoked: true }),
+      { installRedirectConfigured: true },
+      { accessRequest: slackRequest },
+    );
     const reconnected = render(listed(ended), {
       organisation: organisation({ system: 'slack' }),
       installRedirectConfigured: true,
@@ -886,18 +895,18 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     for (const markup of [revoked, reconnected]) {
       expect(markup).not.toContain("Install Maya's own app again");
       expect(markup).not.toContain("through IT's connection");
-      expect(fact(markup, 'Acts as')).toBe(
-        "nobody: Maya's own app is not installed again, even once IT connects Slack again",
-      );
+      expect(fact(markup, 'Acts as')).toBe('nobody');
       expect(markup).toContain("Maya's own app is not installed again");
       expect(markup).toContain(
-        "IT revoked the organisation's Slack connection Maya (Day0) was created with, so Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back, and nothing on this card makes Maya a new app.",
+        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Maya a new app.",
       );
-      expect(markup).toContain(
-        "Nothing is read or sent through this card: Maya's own app is not installed again.",
-      );
+      expect(markup).toContain('Nothing is read or sent through this card.');
       expect(markup).not.toMatch(/Renew for/);
-      expect(chip(markup)).not.toBe('Ready to connect');
+      expect(chip(markup)).toBe('Ended');
+      // IT connecting Slack again does not bring the card back, so it asks IT for nothing.
+      expect(markup).not.toContain('Ask IT to connect Slack');
+      expect(markup).not.toContain('until IT gives it access');
+      expect(markup).not.toContain('the control above');
       // Nothing goes through the card, so it says nothing of requests, buttons or typed codes.
       expect(markup).not.toContain('Decisions in Slack');
       expect(markup).not.toContain('Typed code');
