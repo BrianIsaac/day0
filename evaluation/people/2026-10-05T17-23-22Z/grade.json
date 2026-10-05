@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "experiment": "day0-people-extraction",
+  "generatedAt": "2026-10-05T17:23:22.777Z",
+  "commit": "1c626a71a95f60197af90d43874e8311ae7d3670",
+  "labelled": 6,
+  "extracted": 6,
+  "truePositives": 6,
+  "precision": 1,
+  "recall": 1,
+  "f1": 1,
+  "addresses": {
+    "correct": 6,
+    "wrong": 0,
+    "missing": 0
+  },
+  "falsePositives": [],
+  "falseNegatives": []
+}
