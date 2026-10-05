@@ -225,6 +225,30 @@ describe('the isolated Slack provisioning proof', (): void => {
       ).toMatchObject({ ok: true, channel: 'C_REVOPS' });
     });
 
+    it('reads a form post’s thread, and refuses its blocks when they are not JSON (13-FS second pass)', async (): Promise<void> => {
+      expect(
+        await call(
+          'POST',
+          'chat.postMessage',
+          FORM,
+          'channel=C_REVOPS&text=a%20reply&blocks=not-json',
+        ),
+      ).toEqual({ ok: false, error: 'invalid_blocks' });
+      const posted = await call(
+        'POST',
+        'chat.postMessage',
+        FORM,
+        'channel=C_REVOPS&text=a%20reply&thread_ts=1787817600.000001',
+      );
+      expect(posted).toMatchObject({ ok: true, channel: 'C_REVOPS' });
+      const evidence = (await (await fetch(`${BASE}/proof`)).json()) as {
+        messages: Array<{ ts: string; threadTs?: string }>;
+      };
+      expect(evidence.messages.find((message) => message.ts === posted.ts)?.threadTs).toBe(
+        '1787817600.000001',
+      );
+    });
+
     it('still reads a JSON body on the write methods that take one', async (): Promise<void> => {
       expect(
         await call(

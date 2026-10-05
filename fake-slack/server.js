@@ -723,10 +723,19 @@ const server = createServer(async (request, response) => {
       }
     } else if (contentType.startsWith('application/x-www-form-urlencoded')) {
       const form = new URLSearchParams(body);
+      let blocks;
+      if (form.get('blocks')) {
+        try {
+          blocks = JSON.parse(form.get('blocks'));
+        } catch {
+          return json(response, 200, { ok: false, error: 'invalid_blocks' });
+        }
+      }
       payload = {
         channel: form.get('channel') ?? undefined,
         text: form.get('text') ?? undefined,
-        ...(form.get('blocks') ? { blocks: JSON.parse(form.get('blocks')) } : {}),
+        ...(form.get('thread_ts') ? { thread_ts: form.get('thread_ts') } : {}),
+        ...(blocks === undefined ? {} : { blocks }),
       };
     } else {
       return json(response, 200, { ok: false, error: 'invalid_arguments' });
@@ -758,6 +767,7 @@ const server = createServer(async (request, response) => {
       channel: payload.channel,
       ts,
       appId: bot.appId,
+      ...(typeof payload.thread_ts === 'string' ? { threadTs: payload.thread_ts } : {}),
       ...markupOf(payload.text),
       ...shapeOf(payload.blocks),
       edits: 0,
