@@ -13,6 +13,7 @@ import {
   assertEditKeepsBoundaries,
   clauseChanges,
   clauseTexts,
+  withClauseRemoved,
   withoutConstraints,
   wordingPresent,
   type CharterConstraint,
@@ -225,6 +226,7 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
         throw new Error(`no ${change.field} clause at index ${change.index}`);
       }
       const text = change.text.replace(/\s+/g, ' ').trim();
+      const removing = change.index < items.length && !text;
       if (change.index === items.length) {
         items.push(requireText(text, 'a new clause'));
       } else if (text) {
@@ -232,9 +234,16 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       } else {
         items.splice(change.index, 1);
       }
+      // A bound rule keeps its clause through an edit in place; a removal takes the binds to the
+      // clause with it and moves the ones after it up.
+      const constraints =
+        removing && charter.constraints !== undefined
+          ? withClauseRemoved(charter.constraints, change.field, change.index)
+          : charter.constraints;
       const edited: Charter = {
         ...charter,
         proposedBoundaries: { ...charter.proposedBoundaries, [change.field]: items },
+        ...(constraints === undefined ? {} : { constraints }),
       };
       assertEditKeepsBoundaries(charter, edited);
       return { charter: edited, systemsAdded: added, systemsRemoved: removed };
@@ -272,6 +281,9 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
         quote,
         wording: [quote],
         origin: 'manager',
+        binds: [
+          { field: constraint.clause, index: charter.proposedBoundaries[constraint.clause].length },
+        ],
       };
       return {
         charter: {
@@ -287,17 +299,20 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       };
     }
     case 'strike-constraint': {
-      const constraints = [...(charter.constraints ?? [])];
-      const target = constraints[change.index];
+      const target = charter.constraints?.[change.index];
       if (!Number.isInteger(change.index) || !target) {
         throw new Error(`no constraint at index ${change.index}`);
       }
       if (target.struck) throw new Error('that constraint is already struck');
-      constraints[change.index] = { ...target, struck: true };
       const struck = withoutConstraints(charter, [target]);
       const changed = clauseChanges(charter, struck);
       // A rule whose words no clause carries is one the card offers no Strike for (6c).
       if (changed.length === 0) throw new Error(STRIKE_CHANGES_NOTHING);
+      // The strike counted every rule's binds again over the clauses it left.
+      const constraints = (struck.constraints ?? []).map(
+        (constraint: CharterConstraint, index: number): CharterConstraint =>
+          index === change.index ? { ...constraint, struck: true } : constraint,
+      );
       // The record keeps what this strike changed, as approval keeps a draft's.
       const struckClauses = [...(charter.struckClauses ?? []), ...changed];
       return {
