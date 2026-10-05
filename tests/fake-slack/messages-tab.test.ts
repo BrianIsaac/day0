@@ -188,4 +188,18 @@ describe('fake Slack: the messages tab', (): void => {
       await api('chat.postMessage', bot, { channel: '#no-such-channel', text: 'x' }, true),
     ).toEqual({ ok: false, error: 'channel_not_found' });
   });
+
+  it('holds the next call of a method on the wire for as long as it is told, then answers', async (): Promise<void> => {
+    const { bot } = await installedApp(WRITABLE);
+    expect(await proof('/proof/hold', { method: 'chat.postMessage', ms: 400 })).toEqual({
+      ok: true,
+    });
+    const started = Date.now();
+    const posted = await api('chat.postMessage', bot, { channel: '#revops', text: 'held' }, true);
+    expect(posted).toMatchObject({ ok: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    const next = Date.now();
+    await api('chat.postMessage', bot, { channel: '#revops', text: 'not held' }, true);
+    expect(Date.now() - next).toBeLessThan(400);
+  });
 });

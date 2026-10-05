@@ -94,6 +94,7 @@ function resetApps() {
   memberships.clear();
   messages.clear();
   managerMessages.length = 0;
+  holds.clear();
   for (const connection of sockets) connection.socket.destroy();
   sockets.clear();
   tickets.clear();
@@ -110,6 +111,10 @@ const messages = new Map();
 // What the manager typed in a DM with an app (W12V-7): the decision poll reads it back through
 // conversations.history, from the app the message was sent to.
 const managerMessages = [];
+
+// Calls a bed holds on the wire before answering, by method, each for its own time: a Stop lands
+// while a write is being sent (12-W's reconciliation, W12V-14's bed).
+const holds = new Map();
 
 /** What the fake keeps of a message's blocks: their types and their buttons. */
 function shapeOf(blocks) {
@@ -318,6 +323,15 @@ const server = createServer(async (request, response) => {
     });
     return json(response, 200, { ok: true, channel: 'D_DAY0_MANAGER', ts });
   }
+  if (url.pathname === '/proof/hold' && request.method === 'POST') {
+    // Hold the next call of a method for `ms` before it is answered.
+    const { method, ms } = jsonArguments(request, await bodyOf(request));
+    if (typeof method !== 'string' || typeof ms !== 'number' || ms <= 0) {
+      return json(response, 400, { ok: false, error: 'invalid_hold' });
+    }
+    holds.set(method, ms);
+    return json(response, 200, { ok: true });
+  }
   if (url.pathname === '/proof/press' && request.method === 'POST') {
     return json(response, 200, await press(jsonArguments(request, await bodyOf(request))));
   }
@@ -360,6 +374,11 @@ const server = createServer(async (request, response) => {
   const method = url.pathname.slice('/api/'.length);
   count(method);
   const body = await bodyOf(request);
+  const held = holds.get(method);
+  if (held !== undefined) {
+    holds.delete(method);
+    await new Promise((resolve) => setTimeout(resolve, held));
+  }
 
   if (method === 'tooling.tokens.rotate') {
     // S2: exchanges the refresh token for a new configuration token and a new
