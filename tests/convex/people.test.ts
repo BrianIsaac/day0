@@ -941,3 +941,44 @@ describe("the people graph in the employee's record", (): void => {
     ]);
   });
 });
+
+describe('people lookups at Confirm', (): void => {
+  /** The lookups the scheduler holds, by the people each is for. */
+  async function lookups(harness: Harness): Promise<unknown[]> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    )
+      .filter((job) => job.name === 'peopleLookupActions:lookUpAddresses')
+      .map((job) => job.args);
+  }
+
+  it("looks a confirmed person's address up on the owner's cards once Confirm makes them a fact", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'priya@kestrel.test' });
+    const plain = await proposePriya(harness, agentId, {
+      name: 'Aman Rao',
+      evidence: [{ quote: 'Aman Rao for forecasting.', where: 'the one-to-one', at: 5 }],
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.people.confirm, { personId, agentId });
+    await owner.mutation(api.people.confirm, { personId: plain, agentId });
+    expect(await lookups(harness)).toEqual([[{ personIds: [personId] }]]);
+  });
+
+  it('drops the address with the match on A different person, so no lookup at Confirm brings the same user back', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'sara@kestrel.test' });
+    const identityId = await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      displayName: 'sara',
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.people.notThisMatch, { personId, identityId, agentId });
+    expect((await graphRows(harness)).people[0]?.primaryEmail).toBeUndefined();
+    await owner.mutation(api.people.confirm, { personId, agentId });
+    expect(await lookups(harness)).toEqual([]);
+  });
+});

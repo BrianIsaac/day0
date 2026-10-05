@@ -16,6 +16,7 @@ import {
   ownerScope,
   verifiedAddressOf,
 } from './ownership';
+import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
 import { EVIDENCE_SHOWN, GRAPH_READ_LIMIT, identitiesUnder, withEvidence } from './peopleProposals';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
@@ -355,6 +356,13 @@ export const confirm = mutation({
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();
     const edgesConfirmed = await confirmInTransaction(ctx, person, now);
+    // A confirmed person with an address is looked up on the owner's cards (13-P): the identity a
+    // reader answers by is a confirmed person's.
+    if (person.primaryEmail !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.peopleLookupActions.lookUpAddresses, {
+        personIds: [person._id],
+      });
+    }
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'person.confirmed',
@@ -484,9 +492,9 @@ export const notTheSame = mutation({
 
 /**
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **A different person**
- * on a proposal a lookup matched to a chat user. The match goes and the proposal stays, for
- * Confirm or Dismiss; no later lookup proposes it again, since a lookup runs only when an address
- * first reaches the graph.
+ * on a proposal a lookup matched to a chat user. The lookup was by the proposal's address, so the
+ * manager saying the user is someone else says the address is someone else's: the match and the
+ * address go, and the proposal stays, for Confirm or Dismiss, which then looks nothing up.
  */
 export const notThisMatch = mutation({
   args: {
@@ -508,7 +516,14 @@ export const notThisMatch = mutation({
       throw new ConvexError(NOT_THE_MATCH);
     }
     await ctx.db.delete(identity._id);
-    await ctx.db.patch(proposal._id, { updatedAt: Date.now() });
+    const addressed = await ctx.db
+      .query('personIdentities')
+      .withIndex('by_person', (q) => q.eq('personId', proposal._id))
+      .take(GRAPH_READ_LIMIT);
+    for (const row of addressed) {
+      if (row.provider === 'email') await ctx.db.delete(row._id);
+    }
+    await ctx.db.patch(proposal._id, { primaryEmail: undefined, updatedAt: Date.now() });
     return null;
   },
 });

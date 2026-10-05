@@ -233,7 +233,7 @@ function ProposalRow({
                   const identityId = proposal.match?.identityId;
                   if (identityId === undefined) return;
                   change.run(() => notThisMatch({ ...args, identityId }), {
-                    done: `Dropped the Slack match for ${name}.`,
+                    done: `Dropped the Slack match for ${name}, and the address it was found by.`,
                     refused: `The match for ${name} was not dropped.`,
                   });
                 }}
