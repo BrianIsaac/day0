@@ -335,6 +335,40 @@ describe('where a working agreement reaches', (): void => {
     expect(inScope).not.toContain(elsewhere);
   }, 30_000);
 
+  it('carries a correction kept as an agreement once, as the agreement, never again as a correction (found on the bed)', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, 'Priya');
+    const agreementId = await keptForEveryEmployee(harness);
+    const given = await seedTicket(harness, priya, 'LOG-1');
+    await drain(harness);
+    await harness.run(async (ctx) => {
+      const correctionId = await ctx.db.insert('corrections', {
+        agentId: priya,
+        workItemId: given,
+        kind: 'plan-rejection',
+        text: STATEMENT,
+        itemTitle: 'Exception: LOG-1 delayed at the port',
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: 1,
+        appliedTo: [],
+        origin: 'dashboard',
+        agreementId,
+      });
+      await ctx.db.patch(agreementId, { correctionIds: [correctionId] });
+      await ctx.db.patch(given, { state: 'cancelled' });
+    });
+    recorded.model.length = 0;
+
+    await seedTicket(harness, priya, 'LOG-2');
+    await drain(harness);
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(HEADING);
+    expect(plannerPrompt!.split(STATEMENT)).toHaveLength(2);
+    expect(plannerPrompt).not.toContain('--- Corrections the manager gave on earlier work ---');
+  }, 30_000);
+
   it('reaches no planner once retired', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const priya = await seedEmployee(harness, 'Priya');
