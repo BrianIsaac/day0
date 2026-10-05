@@ -239,6 +239,21 @@ describe('two corrections that say the same thing (F10)', (): void => {
     expect(sameGroups({ groups: [{ ids: ['c2', 'c1'] }] }, corrections)).toEqual([['c1', 'c2']]);
   });
 
+  it('keeps a group with no new correction when it joins one already proposed to one that is not', (): void => {
+    const joining: JudgedCorrection[] = [
+      { id: 'p1', text: 'a', itemTitle: 'SH-1', createdAt: 1, isNew: false, inProposal: true },
+      { id: 'c2', text: 'a', itemTitle: 'SH-2', createdAt: 2, isNew: false },
+      { id: 'c3', text: 'b', itemTitle: 'SH-3', createdAt: 3, isNew: false },
+      { id: 'p4', text: 'b', itemTitle: 'SH-4', createdAt: 4, isNew: false, inProposal: true },
+    ];
+    expect(
+      sameGroups(
+        { groups: [{ ids: ['c2', 'p1'] }, { ids: ['c3', 'c2'] }, { ids: ['p4'] }] },
+        joining,
+      ),
+    ).toEqual([['p1', 'c2']]);
+  });
+
   it('breaks a tie of times by the prompt order, which lists the newest first', (): void => {
     const tied = [
       { id: 'later', text: 'b', itemTitle: 'SH-2', createdAt: 5, isNew: true },

@@ -353,6 +353,8 @@ export interface JudgedCorrection {
   readonly createdAt: number;
   /** Whether the judgement has not read it before (`agreementJudgedAt` absent). */
   readonly isNew: boolean;
+  /** Whether it is already in a proposal still waiting on the manager, which a repeat joins. */
+  readonly inProposal?: boolean;
 }
 
 /** The sameness judgement's structured output (F10): groups of corrections that say the same thing. */
@@ -369,7 +371,7 @@ export const SAMENESS_JUDGEMENT_SYSTEM = [
   'Decide one thing: do two or more of them say the same thing, the same direction for how the work is done, in different words or the same?',
   'Two corrections say the same thing when following one is following the other. Corrections on the same subject that ask for different things do not.',
   '',
-  'Answer `groups`: each group the ids of corrections that say the same thing, with at least one marked new in every group; an empty list when none do.',
+  'Answer `groups`: each group the ids of corrections that say the same thing; an empty list when none do.',
 ].join('\n');
 
 /**
@@ -381,6 +383,7 @@ export function samenessJudgementPrompt(corrections: readonly JudgedCorrection[]
   const listed = corrections.map((correction) => ({
     id: correction.id,
     new: correction.isNew,
+    ...(correction.inProposal === true ? { proposed: true } : {}),
     from: correction.itemTitle,
     text: correction.text,
   }));
@@ -389,8 +392,9 @@ export function samenessJudgementPrompt(corrections: readonly JudgedCorrection[]
 
 /**
  * The groups a sameness reply amounts to: ids the prompt listed, at least two in a group, at least
- * one of them new, each id in one group only (the first that names it), oldest first (the prompt's
- * newest-first order breaks a tie of times).
+ * one of them new or the group joining one already in a waiting proposal to one that is not, each
+ * id in one group only (the first that names it), oldest first (the prompt's newest-first order
+ * breaks a tie of times).
  *
  * @param reply - The model's answer.
  * @param corrections - The corrections the prompt listed.
@@ -416,7 +420,10 @@ export function sameGroups(
           left.createdAt - right.createdAt ||
           (place.get(right.id) ?? 0) - (place.get(left.id) ?? 0),
       );
-    if (members.length < 2 || !members.some((member) => member.isNew)) continue;
+    const joins =
+      members.some((member) => member.inProposal === true) &&
+      members.some((member) => member.inProposal !== true);
+    if (members.length < 2 || !(members.some((member) => member.isNew) || joins)) continue;
     for (const member of members) grouped.add(member.id);
     groups.push(members.map((member) => member.id));
   }

@@ -279,6 +279,27 @@ describe('proposals from corrections', (): void => {
     expect(agreements[0]?.statement).toBe(NO_EMAIL);
   });
 
+  it('never proposes the same words twice: a correction promoted while its words wait in a proposal joins it (found on the bed)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await cancelWith(harness, agentId, 'LOG-1', NO_EMAIL);
+    const [first] = await correctionsOf(harness);
+    await planApplying(harness, agentId, 'LOG-2', [first!._id]);
+    // The same words again, judged with nothing new beside them, then applied to a further item.
+    await cancelWith(harness, agentId, 'LOG-3', NO_EMAIL);
+    const again = (await correctionsOf(harness)).find((row) => row._id !== first!._id)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(again._id, { agreementId: undefined, agreementJudgedAt: 1 });
+      const [proposal] = await ctx.db.query('workingAgreements').collect();
+      await ctx.db.patch(proposal!._id, { correctionIds: [first!._id] });
+    });
+    await planApplying(harness, agentId, 'LOG-4', [again._id]);
+
+    const agreements = await agreementsOf(harness);
+    expect(agreements).toHaveLength(1);
+    expect(agreements[0]?.correctionIds).toEqual([first!._id, again._id]);
+  });
+
   it('judges each new correction at most once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

@@ -417,12 +417,35 @@ export const proposalInputs = internalQuery({
         isNew: correction.agreementJudgedAt === undefined,
         sourceSystem: correction.sourceSystem,
         itemsGoverned: itemsGoverned(correction),
-        ...(open !== undefined ? { openAgreementId: open } : {}),
+        ...(open !== undefined ? { openAgreementId: open, inProposal: true } : {}),
       })),
       staleChecks: staleChecks.map((row) => row._id),
     };
   },
 });
+
+/**
+ * Add corrections that repeat a proposal still waiting on the manager to that proposal, oldest
+ * first, each then naming it, so its card says how often the manager said it.
+ */
+async function joinProposal(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  joining: readonly Doc<'corrections'>[],
+): Promise<void> {
+  const members = [
+    ...(await Promise.all((agreement.correctionIds ?? []).map((id) => ctx.db.get(id)))).filter(
+      (correction): correction is Doc<'corrections'> => correction !== null,
+    ),
+    ...joining,
+  ].sort(
+    (left, right) => left.createdAt - right.createdAt || left._creationTime - right._creationTime,
+  );
+  await ctx.db.patch(agreement._id, { correctionIds: members.map((member) => member._id) });
+  for (const correction of joining) {
+    await ctx.db.patch(correction._id, { agreementId: agreement._id });
+  }
+}
 
 const refusalValidator = v.object({
   reason: v.union(...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason))),
@@ -432,8 +455,8 @@ const refusalValidator = v.object({
 /**
  * Internal: record the proposal run's outcome. Keeps each checked proposal as `proposed`, or
  * `refused` with its clause, unless one of its corrections was proposed or retired since the run
- * read it; adds each correction that repeats a proposal still waiting on the manager to that
- * proposal; and marks the corrections the sameness judgement read, but for those of a proposal or
+ * read it, or joins a proposal still waiting on the manager in the same words; adds each
+ * correction that repeats such a proposal to it; and marks the corrections the sameness judgement read, but for those of a proposal or
  * a join so skipped, which are judged again. Each correction then names its
  * agreement, so it is never proposed twice. Writes `agreement.proposed` or `agreement.refused`.
  */
@@ -478,6 +501,19 @@ export const recordProposals = internalMutation({
         // Another run proposed one of them first: these are judged again with the next new one.
         for (const id of proposal.correctionIds) skipped.add(id);
         continue;
+      }
+      // The same words already waiting in a proposal: these corrections join it, never a second one.
+      if (!proposal.refusal) {
+        const waiting = (await bindingAgreements(ctx, userId, args.agentId, 'proposed')).find(
+          (row) =>
+            openProposal(row) &&
+            row.agentId === args.agentId &&
+            row.statement === proposal.statement,
+        );
+        if (waiting) {
+          await joinProposal(ctx, waiting, open);
+          continue;
+        }
       }
       const surfaces = new Set(open.map((correction) => surfaceSlug(correction.sourceSystem)));
       const [surface] = [...surfaces];
@@ -533,19 +569,7 @@ export const recordProposals = internalMutation({
         for (const id of join.correctionIds) skipped.add(id);
         continue;
       }
-      const members = [
-        ...(await Promise.all((agreement.correctionIds ?? []).map((id) => ctx.db.get(id)))).filter(
-          (correction): correction is Doc<'corrections'> => correction !== null,
-        ),
-        ...joining,
-      ].sort(
-        (left, right) =>
-          left.createdAt - right.createdAt || left._creationTime - right._creationTime,
-      );
-      await ctx.db.patch(agreement._id, { correctionIds: members.map((member) => member._id) });
-      for (const correction of joining) {
-        await ctx.db.patch(correction._id, { agreementId: agreement._id });
-      }
+      await joinProposal(ctx, agreement, joining);
     }
     for (const id of args.judged) {
       if (skipped.has(id)) continue;

@@ -135,7 +135,8 @@ export type SamenessOutcome =
 
 /**
  * Which of an employee's active corrections say the same thing (F10). Nothing is asked with fewer
- * than two corrections or with no new one among them, since no group could hold one.
+ * than two corrections, or with no new one among them and none that could join a waiting
+ * proposal, since no group could be kept.
  *
  * @param corrections - The employee's active corrections, the new ones marked.
  * @param call - The model call; the deployment's client unless a test injects one.
@@ -145,7 +146,10 @@ export async function judgeSameness(
   corrections: readonly JudgedCorrection[],
   call: SamenessJudgementCall = samenessModelCall,
 ): Promise<SamenessOutcome> {
-  if (corrections.length < 2 || !corrections.some((correction) => correction.isNew)) {
+  const joinable =
+    corrections.some((correction) => correction.inProposal === true) &&
+    corrections.some((correction) => correction.inProposal !== true);
+  if (corrections.length < 2 || !(corrections.some((correction) => correction.isNew) || joinable)) {
     return { outcome: 'judged', groups: [] };
   }
   try {
