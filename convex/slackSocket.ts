@@ -184,12 +184,13 @@ export const resolvePress = internalMutation({
     if (surface.provisioning?.appId !== args.press.appId) {
       return await ignored('pressed in another app');
     }
-    if (
-      args.press.teamId !== undefined &&
-      surface.providerWorkspaceId !== undefined &&
-      args.press.teamId !== surface.providerWorkspaceId
-    ) {
-      return await ignored('pressed in another workspace');
+    // A card that names its workspace takes a press only from it: one naming none is not known to
+    // come from it (W12-R23; only a holder of the bridge secret can send such a press).
+    if (surface.providerWorkspaceId !== undefined) {
+      if (args.press.teamId === undefined) return await ignored('the press names no workspace');
+      if (args.press.teamId !== surface.providerWorkspaceId) {
+        return await ignored('pressed in another workspace');
+      }
     }
     if (args.press.channelId !== surface.managerDmChannelId) {
       return await ignored('pressed outside the manager DM');

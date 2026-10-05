@@ -430,6 +430,37 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
     );
   });
 
+  it('decides nothing on a press that names no workspace when the card names one (W12-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness);
+    // JSON drops an undefined field, so the bridge hands over a payload with no team at all.
+    const teamless = { ...(blockActions(seeded) as Record<string, unknown>), team: undefined };
+    await expect((await press(harness, seeded, teamless)).json()).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'the press names no workspace',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId)))?.state).toBe(
+      'plan-pending',
+    );
+    // A card that names no workspace holds a press to nothing it cannot read.
+    await harness.run(
+      async (ctx) => await ctx.db.patch(seeded.surfaceId, { providerWorkspaceId: undefined }),
+    );
+    await expect(
+      (
+        await press(harness, seeded, {
+          ...teamless,
+          actions: [
+            {
+              ...(teamless.actions as Record<string, unknown>[])[0],
+              action_ts: '1787768500.000300',
+            },
+          ],
+        })
+      ).json(),
+    ).resolves.toMatchObject({ status: 'decided' });
+  });
+
   it('decides nothing on a press of a batch code, which no Day0 button carries', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness);
