@@ -447,7 +447,7 @@ function ConfirmedRow({
           const noun = RELATIONSHIP_NOUNS[edge.type];
           return (
             <li key={edge.relationshipId} className="grid gap-2">
-              <div className="grid items-start gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <span className="min-w-0 text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
                   {edgeLine(noun, edge.scope, clockTime(edge.since, zone), !edge.fromEmployee)}
                 </span>
