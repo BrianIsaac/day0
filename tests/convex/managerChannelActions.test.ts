@@ -1001,6 +1001,43 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     ).resolves.toMatchObject({ status: 'replaced', replacedBy: current });
   });
 
+  it('names a new request on the newest of an item’s replaced requests when it holds more than it reads (13-FS second pass)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: `seed${String(index).padStart(2, '0')}`,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: standing });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+      supersedes: standing,
+    });
+    const newest = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const last = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', 'seed54'),
+          )
+          .unique(),
+    );
+    expect(last?.replacedBy).toBe(newest);
+  });
+
   it('answers the oldest code of a chain an earlier release left longer than its walk with the item’s standing request (W12-R20)', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());

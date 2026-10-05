@@ -3775,9 +3775,12 @@ async function nameReplacement(
   workItemId: Id<'workItems'>,
   decision: { readonly id: string; readonly kind: DecisionKind },
 ): Promise<void> {
+  // The newest first: an older one was named when it was among them, and its answer follows that
+  // chain, or the item's own request past the walk.
   const replaced = await ctx.db
     .query('replacedDecisionRequests')
     .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .order('desc')
     .take(REPLACED_NAMED_SCAN);
   for (const earlier of replaced) {
     if (
