@@ -7,7 +7,9 @@
  * app's deletion with the current configuration token (S4). As real Slack answered the walk of 3
  * October 2026 (R41V-10): a rotation revokes the configuration token it replaces, `auth.revoke`
  * of a configuration token ends that token only (`{"ok":true,"revoked":true}`) and its refresh
- * token still rotates, and a token already revoked answers `token_revoked`. It is the network
+ * token still rotates, and a token already revoked answers `token_revoked`. Each app keeps the
+ * manifest it was created from, which `apps.manifest.export` answers and `apps.manifest.update`
+ * replaces with the configuration token (W12V-7). It is the network
  * seam (standard 11.3): the code under test makes its real calls to it. Every token is a fake in
  * the tree's short shapes.
  */
@@ -36,6 +38,8 @@ export interface DoubleApp {
   readonly botUserId: string;
   /** The bot scopes its manifest asked for; a method needing one it did not is refused. */
   readonly scopes: readonly string[];
+  /** The manifest it was created from, or last updated to. */
+  manifest: Record<string, unknown>;
   deleted: boolean;
 }
 
@@ -178,11 +182,12 @@ async function respond(
       if (refused !== undefined) return answer({ ok: false, error: refused });
       if (!form.manifest) return answer({ ok: false, error: 'invalid_manifest' });
       const n = double.apps.length + 1;
-      const manifest = JSON.parse(form.manifest) as {
+      const manifest = JSON.parse(form.manifest) as Record<string, unknown> & {
         oauth_config?: { scopes?: { bot?: string[] } };
       };
       const app: DoubleApp = {
         scopes: manifest.oauth_config?.scopes?.bot ?? [],
+        manifest,
         appId: `A0APP${n}`,
         clientId: `1234.${n}`,
         clientSecret: `w11as-secret-${n}`,
@@ -197,6 +202,27 @@ async function respond(
         app_id: app.appId,
         credentials: { client_id: app.clientId, client_secret: app.clientSecret },
       });
+    }
+    case 'apps.manifest.export': {
+      const refused = configurationAnswer(double, bearer);
+      if (refused !== undefined) return answer({ ok: false, error: refused });
+      const app = double.apps.find((candidate) => candidate.appId === form.app_id);
+      if (!app || app.deleted) return answer({ ok: false, error: 'app_not_found' });
+      return answer({ ok: true, manifest: app.manifest });
+    }
+    case 'apps.manifest.update': {
+      const refused = configurationAnswer(double, bearer);
+      if (refused !== undefined) return answer({ ok: false, error: refused });
+      const app = double.apps.find((candidate) => candidate.appId === form.app_id);
+      if (!app || app.deleted) return answer({ ok: false, error: 'app_not_found' });
+      if (!form.manifest) return answer({ ok: false, error: 'invalid_manifest' });
+      const before = JSON.stringify(app.scopes);
+      app.manifest = JSON.parse(form.manifest) as Record<string, unknown>;
+      const after = JSON.stringify(
+        (app.manifest as { oauth_config?: { scopes?: { bot?: string[] } } }).oauth_config?.scopes
+          ?.bot ?? [],
+      );
+      return answer({ ok: true, app_id: app.appId, permissions_updated: before !== after });
     }
     case 'apps.manifest.delete': {
       const refused = configurationAnswer(double, bearer);

@@ -675,6 +675,70 @@ describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a
 });
 
 describe('a Retry that re-drafts a declined plan (12-M’s replaced request, carried with the move)', (): void => {
+  it('answers the old code of a plan rejected and re-drafted by Retry as replaced, never as unknown (W12V-16)', async (): Promise<void> => {
+    // The walk on real Slack: REVOPS-1's plan request 5z73m6 rejected by the button, Retry drafted
+    // 6yrhhe, and "approve 5z73m6" was answered "I couldn’t find decision 5z73m6. Check the
+    // six-character token and try again."
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'cancelled');
+    const surfaceId = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: '5z73m6',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1791149181.056859',
+          requestText: 'Priya needs your decision.',
+          decidedAt: 2,
+          outcome: 'rejected',
+          decidedVia: 'channel',
+        },
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage', 'conversations.history'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    const answered = await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1791152146.122269',
+      reply: { verb: 'approve', id: '5z73m6' },
+    });
+
+    expect(answered).toMatchObject({ status: 'replaced', notified: true });
+    const notices = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notices.map((notice) => notice.text)).toEqual([
+      'That request (5z73m6) was replaced and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.',
+    ]);
+    // Its message already says how it was decided, so it is not edited again.
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).not.toContain(
+      'managerChannelActions:markRequestReplaced',
+    );
+  });
+
   it('remembers the undecided request the re-draft takes back, so its code stays answerable', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'cancelled');

@@ -370,6 +370,44 @@ describe('manager channel decision requests', (): void => {
     );
   });
 
+  it('never asks for a typed reply from an app that takes no messages, buttons or not (W12V-7)', (): void => {
+    // The walk on real Slack: under the DM with the kit's app Slack said "Sending messages to this
+    // app has been turned off." and offered no composer, while the request ended "... or reply
+    // “approve uacgcm” or “reject uacgcm <reason>”."
+    const held: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const request = (buttons: boolean, heldIndexes: number[]): string =>
+      decisionRequestText({
+        agentName: 'Iris',
+        title: '[w12 walk] Post the Q3 close queue count',
+        id: 'uacgcm',
+        kind: 'actions',
+        actions: [held, held, held],
+        heldIndexes,
+        surfaces: [slack],
+        buttons,
+        typedCode: false,
+      });
+    const withButtons = request(true, [0, 1, 2]);
+    expect(withButtons).not.toMatch(/reply “|“approve|“reject/i);
+    expect(withButtons.split('\n').slice(-2)).toEqual([
+      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Approve applies all 3 actions listed; to approve only some, decide in day0.',
+    ]);
+    const without = request(false, [0]);
+    expect(without).not.toMatch(/reply “|“approve|“reject/i);
+    expect(without.split('\n').at(-1)).toBe(
+      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+  });
+
   it('can edit a manager DM message only where the gate would allow chat.update', (): void => {
     const withEdit = { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'] };
     expect(canEditManagerMessage(withEdit)).toBe(true);

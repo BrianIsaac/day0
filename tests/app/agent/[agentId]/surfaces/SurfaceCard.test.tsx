@@ -35,6 +35,7 @@ const actions: SurfaceCardActions = {
   land: (): void => undefined,
   provision: (): void => undefined,
   landSocketToken: (): void => undefined,
+  confirmMessagesTab: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,
@@ -414,6 +415,34 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
   });
 
+  it('says what a covered Slack card is missing when its documentation describes no install of the app (W12V-1)', (): void => {
+    // The walk's Vela: the company bed's page says "The shared bot token is landed on your Slack
+    // card by the messaging administrator", so the card had no way on and said nothing of why.
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'ungranted',
+        reason: 'Skipped: credential not in the docs; location not documented',
+        managerApprovedAt: NOW - DAY,
+        request: {
+          credential: {
+            found: 'none',
+            method: 'value',
+            label: 'shared bot token',
+          },
+        },
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).toContain(
+      'Day0 cannot create Maya’s own Slack app from this card: the linked documentation describes no install procedure for it.',
+    );
+    expect(markup).toContain(
+      'A Slack page saying Maya’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
+  });
+
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {
     const markup = render(
       listed({ verdict: 'approved', managerApprovedAt: NOW - DAY, expiresAt: NOW + 89 * DAY }),
@@ -717,6 +746,47 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { accessRequest: REQUEST },
     );
     expect(ended).not.toContain('Ask IT to connect Linear');
+  });
+
+  it('says on a Slack card whose app takes no messages that no typed code reaches it, the toggle by name, and its control (W12V-7)', (): void => {
+    const card = (typedCode: ListedSurface['typedCode']): string =>
+      render(
+        listed({
+          ...SLACK_CARD,
+          verdict: 'connected',
+          credentialLanded: true,
+          credentialId: 'cred-bot' as ListedSurface['credentialId'],
+          managerApprovedAt: NOW - DAY,
+          expiresAt: NOW + 80 * DAY,
+          managerDmChannelId: 'D0MANAGER',
+          actsAs: { kind: 'own-app', label: 'Iris (Day0)' },
+          provisioning: {
+            appId: 'A1',
+            appName: 'Iris (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: 'cred-secret',
+            installUrl: 'https://slack.test/install',
+            redirectUrl: 'https://day0.test/api/slack/oauth',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          } as ListedSurface['provisioning'],
+          decisionButtons: { available: false, why: 'no-app-level-token' },
+          typedCode,
+        }),
+        { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+      );
+    const closed = card({ state: 'needs-toggle', appName: 'Iris (Day0)' });
+    expect(closed).toContain('Typed code: off until this app takes messages');
+    expect(closed).toContain(
+      '“Allow users to send Slash commands and messages from the messages tab”',
+    );
+    expect(closed).toContain('It is on in Slack');
+    expect(closed).toContain('Requests reach you with no buttons and no typed code');
+    expect(closed).not.toContain('typed code only');
+    const open = card({ state: 'open' });
+    expect(open).not.toContain('Typed code: off');
+    expect(open).toContain('Requests reach you with a typed code only.');
   });
 
   it("says on a renewed Slack card what its bot re-joined and what needs a person (11-AC's item 5)", (): void => {

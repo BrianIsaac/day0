@@ -398,26 +398,40 @@ export function workingFrom(
   return feedback && running.includes(item.state) ? { kind: 'rerun', feedback } : undefined;
 }
 
+/** Whose identity holds a listed ticket, as the item's owner reads it (`work.latestListing`). */
+export interface TicketHolderView {
+  readonly employeeName: string;
+  /** The ticket's assignee or delegate is the identity the employee acts as in the tracker. */
+  readonly holderIsEmployee: boolean;
+}
+
 /**
  * Where a ticket stands as intake last listed it (K D3): its state, who holds it and whether it
- * is marked not to be automated, so a retry after the ticket moved is an informed one. The
- * assignee is named by id, as the export names it.
+ * is marked not to be automated, so a retry after the ticket moved is an informed one. The holder
+ * is never named by its raw id (W12V-15): the identity the employee acts as is said to be its,
+ * anyone else is someone in the tracker; the export keeps the id.
  *
  * @param tracker - The listing's snapshot, without the assignee's address.
  * @param refused - Why intake refused the ticket on that listing, when it did.
+ * @param holder - Whether the holder is the employee's own identity, where the page knows.
  * @returns One sentence, without the listing's time.
  */
 export function ticketNowSentence(
   tracker: Omit<TicketSnapshot, 'assigneeEmail'>,
   refused?: string,
+  holder?: TicketHolderView,
 ): string {
   const state = tracker.state ? `in ${tracker.state}` : 'in a state the tracker did not name';
-  const holder = tracker.assigneeId
-    ? `assigned to ${tracker.assigneeId}`
+  const held = tracker.assigneeId
+    ? holder === undefined
+      ? 'assigned to someone in the tracker'
+      : holder.holderIsEmployee
+        ? `held by the account ${holder.employeeName} works as in the tracker`
+        : `assigned to someone other than ${holder.employeeName} in the tracker`
     : tracker.assigned
       ? 'assigned to someone the tracker did not identify'
       : 'unassigned';
   const marked = tracker.doNotAutomate ? ', marked not to be automated' : '';
   const refusal = refused ? ` Intake refused it on that listing: ${sentence(refused)}` : '';
-  return `The ticket is ${state}, ${holder}${marked}.${refusal}`;
+  return `The ticket is ${state}, ${held}${marked}.${refusal}`;
 }

@@ -402,8 +402,10 @@ describe('the access request’s words, the same wherever they are shown', (): v
         scopes: ['chat:write'],
       },
     });
+    // Re-pinned for W12V-7: the typed code does not always work, since an app that takes no
+    // messages refuses it.
     expect(draft.text).toContain(
-      'For Approve and Reject buttons in the manager’s decision requests (optional; the typed code always works): a collaborator on Maya’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on Maya’s Slack card.',
+      'For Approve and Reject buttons in the manager’s decision requests (optional; without them the manager decides each request in day0, or by its typed code where the app takes messages): a collaborator on Maya’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on Maya’s Slack card.',
     );
   });
 

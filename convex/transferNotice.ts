@@ -9,6 +9,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { accessEnded } from '../src/work/surface-access';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 
 /*
  * The one DM notice a real-mode handover request sends the named person (decision D7; the
@@ -131,11 +132,6 @@ function mayWriteUnasked(
 ): boolean {
   const write = `${slug}:write`;
   return active.has(write) || (autonomous && !revoked.has(write));
-}
-
-/** The three characters Slack reads as markup in a message's text, escaped as Slack asks. */
-function slackEscaped(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

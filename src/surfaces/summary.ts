@@ -8,6 +8,7 @@ import {
   type ParsedSurfaceAction,
 } from './policy';
 import { isSlackApiEndpoint } from './slack-endpoint';
+import { slackEscaped } from './slack-markup';
 import type { SurfaceRecord } from './types';
 
 /**
@@ -37,7 +38,17 @@ export interface SummaryContext {
    * reader who can see it (P8-6). Plain text elsewhere keeps the id.
    */
   slackMarkup?: boolean;
+  /**
+   * Whether the line goes into a Slack message's text, so what it quotes is escaped as Slack asks
+   * and a quoted `<!here>` reads as text (`slackEscaped`). The card renders the line as written.
+   */
+  slackEscape?: boolean;
 }
+
+/** How one line is written into its destination: escaped for a Slack message, as is elsewhere. */
+type Writer = (text: string) => string;
+
+const asWritten: Writer = (text: string): string => text;
 
 /** A Slack public or private channel id, the only kind a `<#…>` mention names. */
 const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{6,}$/;
@@ -303,6 +314,7 @@ function describeHttpRequest(
   parsed: Extract<ParsedSurfaceAction, { kind: 'http.request' }>,
   surfaces: readonly SurfaceRecord[],
   context: SummaryContext,
+  write: Writer,
 ): string {
   const surface = surfaces.find((row) => row.slug === parsed.surface);
   const name = surfaceName(parsed.surface, surfaces);
@@ -320,7 +332,9 @@ function describeHttpRequest(
     const extras =
       extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
     if (surface && isManagerDm(parsed, surface)) {
-      return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
+      return write(
+        `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`,
+      );
     }
     const threadTs = body ? firstString(body, ['thread_ts']) : undefined;
     const target = context.replyTarget;
@@ -329,24 +343,26 @@ function describeHttpRequest(
     // in; a channel whose name is not known stays the id the payload names.
     if (target && channel === target.channel && target.channelName) {
       const where = `#${label(target.channelName)}`;
-      if (threadTs === undefined) return `Post in ${where}${quoted}${extras}`;
-      return threadTs === target.threadTs
-        ? `Reply in ${where} thread${quoted}${extras}`
-        : `Post in ${where}, in another thread${quoted}${extras}`;
+      if (threadTs === undefined) return write(`Post in ${where}${quoted}${extras}`);
+      return write(
+        threadTs === target.threadTs
+          ? `Reply in ${where} thread${quoted}${extras}`
+          : `Post in ${where}, in another thread${quoted}${extras}`,
+      );
     }
     const thread = threadTs !== undefined ? ' (in thread)' : '';
+    // Day0's own mention of a validated channel id is the line's one piece of Slack markup, and is
+    // written as markup; everything around it is written as text.
     const named =
       channel &&
       context.slackMarkup &&
       isSlackApiEndpoint(surface?.endpoint) &&
       SLACK_CHANNEL_ID.test(channel)
         ? `<#${channel}>`
-        : channel
-          ? label(channel)
-          : '(unknown)';
-    return `Post to ${name} channel ${named}${thread}${quoted}${extras}`;
+        : write(channel ? label(channel) : '(unknown)');
+    return `${write(`Post to ${name} channel `)}${named}${write(`${thread}${quoted}${extras}`)}`;
   }
-  return `${parsed.method} ${label(parsed.path, 120)} on ${name}`;
+  return write(`${parsed.method} ${label(parsed.path, 120)} on ${name}`);
 }
 
 /**
@@ -355,7 +371,8 @@ function describeHttpRequest(
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces, for display names and the manager DM.
- *   context: The work item's reply target, when it came from a chat thread.
+ *   context: The work item's reply target, when it came from a chat thread, and whether the line
+ *     goes into a Slack message (then escaped).
  *
  * Returns:
  *   One line: what the action does, to what, with the start of any body.
@@ -367,16 +384,17 @@ export function summariseAction(
 ): string {
   const args = (action.args ?? {}) as JsonObject;
   const slug = firstString(args, ['surface', 'channelSlug', 'sheetSlug', 'tweetSlug', 'slug']);
+  const write = context.slackEscape === true ? slackEscaped : asWritten;
   if (action.tool === 'mcp.call' || action.tool === 'http.request') {
     const parsed = parseSurfaceAction(action);
     if (parsed.ok) {
       return parsed.action.kind === 'mcp.call'
-        ? describeMcpCall(parsed.action, surfaces, context.textLimit ?? SUMMARY_TEXT_LIMIT)
-        : describeHttpRequest(parsed.action, surfaces, context);
+        ? write(describeMcpCall(parsed.action, surfaces, context.textLimit ?? SUMMARY_TEXT_LIMIT))
+        : describeHttpRequest(parsed.action, surfaces, context, write);
     }
     const tool =
       action.tool === 'mcp.call' ? (firstString(args, ['tool']) ?? action.tool) : action.tool;
-    return `${label(tool)} on ${surfaceName(slug, surfaces)}`;
+    return write(`${label(tool)} on ${surfaceName(slug, surfaces)}`);
   }
-  return slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool);
+  return write(slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool));
 }

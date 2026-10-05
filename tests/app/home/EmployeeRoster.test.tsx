@@ -31,7 +31,7 @@ const roster = [
       ['2026-09-03', 11],
       ['2026-09-17', 2],
     ]),
-    decisionsReach: { kind: 'dm', channel: 'Slack', buttons: true },
+    decisionsReach: { kind: 'dm', channel: 'Slack', buttons: true, typedCode: true },
   },
   {
     agentId: 'synthetic-aiko',
@@ -189,12 +189,36 @@ describe('EmployeeRoster', (): void => {
     const typed = renderToStaticMarkup(
       <EmployeeRoster
         employees={[
-          { ...roster[0]!, decisionsReach: { kind: 'dm', channel: 'Slack', buttons: false } },
+          {
+            ...roster[0]!,
+            decisionsReach: { kind: 'dm', channel: 'Slack', buttons: false, typedCode: true },
+          },
         ]}
         waiting={waiting}
       />,
     );
     expect(readAs(typed)).toContain('Requests: Slack DM, typed codes');
+  });
+
+  it('names no typed code for an employee whose app takes no messages (W12V-7)', (): void => {
+    const row = (buttons: boolean): string =>
+      readAs(
+        renderToStaticMarkup(
+          <EmployeeRoster
+            employees={[
+              {
+                ...roster[0]!,
+                decisionsReach: { kind: 'dm', channel: 'Slack', buttons, typedCode: false },
+              },
+            ]}
+            waiting={waiting}
+          />,
+        ),
+      );
+    expect(row(true)).toContain('Requests: Slack DM, buttons');
+    expect(row(true)).not.toContain('typed code');
+    expect(row(false)).toContain('Requests: Slack DM, decide here');
+    expect(row(false)).not.toContain('typed code');
   });
 
   it('heads the card with the headcount and one manager', (): void => {

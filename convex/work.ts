@@ -140,12 +140,16 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { typedCodeReachOf } from './slackMessagesTab';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
+import { slackEscaped } from '../src/surfaces/slack-markup';
+import type { TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -374,11 +378,14 @@ export const latestListing = query({
     tracker: Omit<TicketSnapshot, 'assigneeEmail'>;
     listedAt: number;
     refused?: string;
+    holder?: TicketHolderView;
   } | null> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const kept = await keptListingAt(ctx, row, Number.MAX_SAFE_INTEGER, false);
     if (kept === undefined) return null;
     const { assigned, assigneeId, state, stateType, doNotAutomate } = kept.tracker;
+    const holder =
+      assigneeId === undefined ? undefined : await ticketHolderOf(ctx, row, assigneeId);
     return {
       tracker: {
         assigned,
@@ -389,9 +396,38 @@ export const latestListing = query({
       },
       listedAt: kept.listedAt,
       ...(kept.refused !== undefined ? { refused: kept.refused } : {}),
+      ...(holder === undefined ? {} : { holder }),
     };
   },
 });
+
+/** The most of an employee's cards the holder's reading walks. */
+const HOLDER_CARDS_READ = 100;
+
+/**
+ * Whether a listed ticket's holder is the identity the employee acts as in its tracker: the
+ * provider identity its card on the item's source system recorded (W12V-15). Undefined when no
+ * such card recorded one, so the page says only that someone holds it.
+ */
+async function ticketHolderOf(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  assigneeId: string,
+): Promise<TicketHolderView | undefined> {
+  const agent = await ctx.db.get(row.agentId);
+  if (agent === null) return undefined;
+  const cards = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .take(HOLDER_CARDS_READ);
+  // Only a card that recorded the identity it acts as can say the holder is or is not it.
+  const identities = cards
+    .filter((card) => card.slug === row.sourceSystem)
+    .flatMap((card) => [card.providerIdentityId, card.actsAs?.providerIdentityId])
+    .filter((identity): identity is string => identity !== undefined);
+  if (identities.length === 0) return undefined;
+  return { employeeName: agent.name, holderIsEmployee: identities.includes(assigneeId) };
+}
 
 /** How many of an employee's newest plan drafts the earlier-plan read walks. */
 const EARLIER_PLAN_READ_LIMIT = 200;
@@ -3571,6 +3607,9 @@ export const prepareDecisionRequest = internalMutation({
       withButtons:
         (args.kind === 'plan' || heldIndexes.length > 0) &&
         decisionButtonsFor(chat, socketBridgeConfigured()).available,
+      // Read where the request is claimed too: a typed code is offered only to an app that takes
+      // messages (W12V-7).
+      typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     };
   },
 });
@@ -3650,6 +3689,72 @@ export async function rememberReplacedRequest(
       replacedId,
     });
   }
+}
+
+/** The most of an agent's recent acknowledgements the already-decided notice reads. */
+const ACKNOWLEDGEMENTS_READ = 50;
+
+/**
+ * Whether the acknowledgement of a decision is queued and not yet sent or failed, so the notice
+ * that the request was already decided waits for it (W12V-10).
+ */
+async function acknowledgementUnsent(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  decisionId: string,
+): Promise<boolean> {
+  const recent = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(ACKNOWLEDGEMENTS_READ);
+  return recent.some(
+    (notice) =>
+      notice.decisionId === decisionId &&
+      notice.kind === 'received' &&
+      notice.providerTs === undefined &&
+      notice.failure === undefined,
+  );
+}
+
+/**
+ * Remember the request of a plan the manager turned down before Retry drafts a new one and clears
+ * it (W12V-16): an undecided request as `rememberReplacedRequest` does, and a decided one too,
+ * since the redraft's request replaces it, so its code is answered "replaced" rather than unknown.
+ * A decided request's message already says how it was decided, so it is never edited again.
+ *
+ * @param ctx - The Retry's transaction.
+ * @param row - The cancelled work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberRetriedRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined) return;
+  if (decision.decidedAt === undefined) {
+    await rememberReplacedRequest(ctx, row, now);
+    return;
+  }
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here.
+  await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    replacedAt: now,
+  });
 }
 
 /** The most of one item's replaced requests the new request names itself on. */
@@ -4552,7 +4657,12 @@ export const recordRequestClose = internalMutation({
 
 /** Claim the one acknowledgement for late or duplicate manager replies. */
 export const prepareDecisionNotice = internalMutation({
-  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    /** Send now, whether or not the acknowledgement it follows was sent (its wait ran out). */
+    afterWait: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (
@@ -4562,6 +4672,14 @@ export const prepareDecisionNotice = internalMutation({
       row.decision.duplicateNoticeClaimedAt
     ) {
       return { prepared: false as const };
+    }
+    // The notice says the request was already decided, so it follows the acknowledgement of that
+    // decision; two presses a few milliseconds apart otherwise race (W12V-10).
+    if (
+      args.afterWait !== true &&
+      (await acknowledgementUnsent(ctx, row.agentId, args.decisionId))
+    ) {
+      return { prepared: false as const, waiting: true as const };
     }
     const [agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(row.agentId),
@@ -4601,7 +4719,7 @@ export const prepareDecisionNotice = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
-      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${slackEscaped(origin)}.`,
       // The notice answers the request, so it goes in the request's thread.
       ...(row.decision.ts ? { threadTs: row.decision.ts } : {}),
     };
@@ -5661,6 +5779,8 @@ async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
   return {
     agentId,
     agentName: agent.name,
+    // Whether a typed code reaches the app these messages come from (W12V-7).
+    typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     surface: toSurfaceRecord(chat),
     surfaces: surfaceRows.map(toSurfaceRecord),
     grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
@@ -5916,6 +6036,7 @@ export const prepareManagerDigest = internalMutation({
         zone: agentZone(agent),
         notes,
         owed: await owedDecisions(ctx, args.agentId),
+        typedCode: delivery.typedCode,
       }),
     };
   },
@@ -6619,7 +6740,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
           decisionId: args.reply.id,
           messageTs: args.messageTs,
           kind: 'unknown',
-          text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
+          text: `I couldn’t find decision ${args.reply.id}. Check the six-character code and try again.`,
         })
       : false;
     return { ...(await ignored(reason)), notified };

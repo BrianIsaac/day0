@@ -52,6 +52,8 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * @property {string} surfaceId
  * @property {string} appId
  * @property {string | undefined} appName The app's name, as the backend lists it.
+ * @property {string | undefined} tokenRef Which app-level token the card holds, as the backend
+ *   names it (never the token): a different one means the token was replaced (W12V-6).
  * @property {Set<WebSocket>} sockets Every socket open or opening for the app (at most two).
  * @property {WebSocket | undefined} live The socket whose hello arrived last.
  * @property {WebSocket | undefined} pending The socket opened and not yet greeted.
@@ -114,18 +116,22 @@ export function createBridge(options) {
             {
               appId: app.appId,
               appName: typeof app.appName === 'string' ? app.appName : undefined,
+              tokenRef: typeof app.tokenRef === 'string' ? app.tokenRef : undefined,
             },
           ]),
       );
       for (const [surfaceId, state] of apps) {
-        if (listed.get(surfaceId)?.appId !== state.appId) remove(state);
+        const now = listed.get(surfaceId);
+        if (now?.appId !== state.appId) remove(state);
+        else if (now.tokenRef !== state.tokenRef) replace(state);
       }
-      for (const [surfaceId, { appId, appName }] of listed) {
+      for (const [surfaceId, { appId, appName, tokenRef }] of listed) {
         if (apps.has(surfaceId)) continue;
         const state = {
           surfaceId,
           appId,
           appName,
+          tokenRef,
           sockets: new Set(),
           live: undefined,
           pending: undefined,
@@ -160,6 +166,21 @@ export function createBridge(options) {
     close(state);
     apps.delete(state.surfaceId);
     log({ level: 'info', message: 'app no longer carries presses', appId: state.appId });
+  }
+
+  /**
+   * The card's app-level token was replaced (W12V-6): the connection opened with the earlier one
+   * is closed, and the same sync opens one with the new token, so a wrong token shows at once.
+   */
+  function replace(state) {
+    state.removed = true;
+    close(state);
+    apps.delete(state.surfaceId);
+    log({
+      level: 'info',
+      message: 'the app-level token was replaced; dialling again',
+      appId: state.appId,
+    });
   }
 
   function scheduleRetry(state) {

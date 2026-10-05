@@ -1,4 +1,5 @@
 import { summariseAction, type SummaryContext } from '../surfaces/summary';
+import { clippedSlackText, slackEscaped } from '../surfaces/slack-markup';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
@@ -381,8 +382,32 @@ function oneLine(value: unknown, fallback: string): string {
   return line || fallback;
 }
 
+/**
+ * A model's or a ticket's words on one line, escaped as Slack asks, so a quoted `<!here>` reads as
+ * text in the request (`slackEscaped`).
+ */
+function quotedText(value: unknown, fallback: string): string {
+  return slackEscaped(oneLine(value, fallback));
+}
+
 /** How a request with buttons opens its reply line; the line without them opens "Reply ". */
 export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
+
+/**
+ * The line of a request with buttons from an app that takes no messages (W12V-7): the buttons or
+ * day0, never a typed reply. Once the buttons are gone it reads {@link DAY0_ONLY_LEAD}.
+ */
+export const BUTTONS_DAY0_LEAD = 'Press Approve or Reject below, or decide in day0.';
+
+/** The line of a request no press or reply can decide: day0 alone. */
+export const DAY0_ONLY_LEAD = 'Decide in day0.';
+
+/**
+ * Why a request from an app that takes no messages offers no typed code (W12V-7): Slack answers the
+ * manager's DM with such an app with "Sending messages to this app has been turned off."
+ */
+export const TYPED_CODE_UNREACHABLE =
+  'Slack does not let you message this app yet, so a typed reply cannot reach it.';
 
 /**
  * Plain decision request sent when a supervised run parks.
@@ -414,6 +439,11 @@ export function decisionRequestText(args: {
   /** The request carries Approve and Reject buttons (RM3 (a)); the typed code works beside them. */
   buttons?: boolean;
   /**
+   * Whether the manager's typed code reaches the employee's app (W12V-7; `typedCodeReachOf`): an
+   * app that takes no messages is never asked for a reply. True unless the caller says otherwise.
+   */
+  typedCode?: boolean;
+  /**
    * The ticket closes the tripwire held, which no approval here sends (wave 12, 12-H; R-12D-1):
    * named after the held list with the run's sentence, and decided on their card. With no held
    * action left beside them the request asks nothing a reply or a press could decide.
@@ -424,16 +454,16 @@ export function decisionRequestText(args: {
   if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
     return closeOnlyRequestText({ ...args, closes });
   }
-  const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
+  const heading = `${slackEscaped(args.agentName)} needs your decision on “${quotedText(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
-  const typed = `“approve ${args.id}” or “reject ${args.id} <reason>”`;
-  const reply = args.buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
+  const reply = replyLine(args.id, args.buttons === true, args.typedCode !== false);
   // A request is read on its own, so its action lines name the ask's channel
   // and quote a body as far as a plan line does (U9 step 24).
   const summary: SummaryContext = {
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
     ...(args.slackMarkup ? { slackMarkup: true } : {}),
+    slackEscape: true,
   };
   const refused =
     args.kind === 'actions'
@@ -446,7 +476,7 @@ export function decisionRequestText(args: {
   if (args.kind === 'plan') {
     listHeading = planHeading(args.plan);
     lines = [
-      ...(args.draftedWithout ? [draftedWithoutLine(args.draftedWithout)] : []),
+      ...(args.draftedWithout ? [slackEscaped(draftedWithoutLine(args.draftedWithout))] : []),
       ...planLines(args.plan),
     ];
     noun = 'plan steps';
@@ -465,7 +495,11 @@ export function decisionRequestText(args: {
     // A Slack approval approves every held index; the card can approve some.
     if (held.length > 1) {
       const covers = held.length === 2 ? 'both actions' : `all ${held.length} actions`;
-      scope = `“approve ${args.id}” applies ${covers} listed; to approve only some, decide in day0.`;
+      const approval =
+        args.typedCode !== false ? `“approve ${args.id}”` : args.buttons ? 'Approve' : undefined;
+      if (approval !== undefined) {
+        scope = `${approval} applies ${covers} listed; to approve only some, decide in day0.`;
+      }
     }
   }
   const frame = (shown: readonly string[], omitted: number): string =>
@@ -506,6 +540,18 @@ export function decisionRequestText(args: {
 }
 
 /**
+ * A request's last line: how it is decided. The typed code only where the employee's app takes
+ * messages (W12V-7), the buttons only where it carries presses, and day0 always.
+ */
+function replyLine(id: string, buttons: boolean, typedCode: boolean): string {
+  if (typedCode) {
+    const typed = `“approve ${id}” or “reject ${id} <reason>”`;
+    return buttons ? `${BUTTONS_REPLY_LEAD}${typed}.` : `Reply ${typed}.`;
+  }
+  return `${buttons ? BUTTONS_DAY0_LEAD : DAY0_ONLY_LEAD} ${TYPED_CODE_UNREACHABLE}`;
+}
+
+/**
  * A request whose only waiting writes are ticket closes the tripwire held (wave 12, 12-H): it says
  * the close waits on its card and why, and offers no code or button, since an approval here would
  * decide nothing.
@@ -517,11 +563,12 @@ function closeOnlyRequestText(
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
     ...(args.slackMarkup ? { slackMarkup: true } : {}),
+    slackEscape: true,
   };
   const noun = args.closes.length === 1 ? 'ticket close' : 'ticket closes';
   const waits = args.closes.length === 1 ? 'waits' : 'wait';
   return [
-    `${args.agentName}’s ${noun} on “${oneLine(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
+    `${slackEscaped(args.agentName)}’s ${noun} on “${quotedText(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
     ...(args.item ? itemLines(args.item) : []),
     '',
     ...closeLines(args.actions ?? [], args.closes, args.surfaces ?? [], summary),
@@ -548,9 +595,10 @@ function closeLines(
 
 /** Why Day0 held the close, with the run's sentence when the output kept it. */
 function heldCloseSentence(agentName: string, clause: string | undefined): string {
+  const name = slackEscaped(agentName);
   return clause === undefined || clause.trim() === ''
-    ? `${agentName} answered that the work is done, but its own words say otherwise.`
-    : `${agentName} answered that the work is done, but wrote ${quotedSentence(clause)}`;
+    ? `${name} answered that the work is done, but its own words say otherwise.`
+    : `${name} answered that the work is done, but wrote ${slackEscaped(quotedSentence(clause))}`;
 }
 
 /** What a decision request says about the work item it asks about. */
@@ -574,16 +622,16 @@ export interface DecisionRequestItem {
  * and opened from a phone.
  */
 function itemLines(item: DecisionRequestItem): string[] {
-  const link = item.link === undefined ? '' : oneLine(item.link, '');
+  const link = item.link === undefined ? '' : quotedText(item.link, '');
   if (item.replyTarget) {
-    const channel = `#${oneLine(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
+    const channel = `#${quotedText(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
     return [
       `Asked in ${channel}${link ? `: ${link}` : ''}`,
       `The answer to the ask goes to its thread in ${channel}.`,
     ];
   }
   if (item.sourceCategory === 'ticket-queue') {
-    return [`Ticket: ${oneLine(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
+    return [`Ticket: ${quotedText(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
   }
   return link ? [`Source: ${link}`] : [];
 }
@@ -605,15 +653,13 @@ function refusedLines(
   context: SummaryContext,
 ): string[] {
   if (refused.length === 0) return [];
-  const clip = (text: string, limit: number): string =>
-    text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
   // The reason is what the manager needs from the line, so the action gives
   // way to it within the line's length, never the other way round.
   const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
     const action = actions[index];
     const what = action ? summariseAction(action, surfaces, context) : `action ${index + 1}`;
-    const why = ` (${clip(oneLine(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
-    return `- ${clip(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
+    const why = ` (${clippedSlackText(quotedText(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
+    return `- ${clippedSlackText(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
   });
   const more = refused.length - shown.length;
   return [
@@ -646,7 +692,7 @@ export function draftedWithoutLine(without: DraftedWithoutLine): string {
 /** The first line of a plan request: its summary, or where to read the plan. */
 function planHeading(plan: unknown): string {
   const summary = (plan ?? {}) as { summary?: unknown };
-  return `Plan: ${oneLine(summary.summary, 'The drafted plan is available in day0.')}`;
+  return `Plan: ${quotedText(summary.summary, 'The drafted plan is available in day0.')}`;
 }
 
 /** The longest plan step or note a request quotes before it clips. */
@@ -658,16 +704,15 @@ const PLAN_LINE_MAX_CHARS = 300;
  */
 function planLines(plan: unknown): string[] {
   const body = (plan ?? {}) as { steps?: unknown; riskNotes?: unknown; reversibility?: unknown };
-  const clip = (line: string): string =>
-    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const clip = (line: string): string => clippedSlackText(line, PLAN_LINE_MAX_CHARS);
   const steps = Array.isArray(body.steps)
     ? body.steps.flatMap((step): string[] => {
-        const line = oneLine(step, '');
+        const line = quotedText(step, '');
         return line ? [line] : [];
       })
     : [];
-  const risk = oneLine(body.riskNotes, '');
-  const reversibility = oneLine(body.reversibility, '');
+  const risk = quotedText(body.riskNotes, '');
+  const reversibility = quotedText(body.reversibility, '');
   return [
     ...(steps.length > 0
       ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))]
@@ -700,7 +745,7 @@ export function batchRequestLines(args: {
     `${count} held action sets are waiting, each shown in its own request:`,
     ...args.members.map(
       (member, index) =>
-        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId}${
+        `${index + 1}. ${quotedText(member.title, 'Untitled work')} (${member.decisionId}${
           member.leavesCloseForCard === true ? '; its ticket close waits on its card' : ''
         })`,
     ),

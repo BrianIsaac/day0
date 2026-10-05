@@ -43,6 +43,41 @@ function appNumbered(number) {
     installed: number === 1,
     // The app-level token a person generates in the app's settings (K2), once they have.
     appLevelToken: undefined,
+    // The manifest it was created from, or last updated to (W12V-7). The first app answered
+    // before any manifest, and takes messages as it always has.
+    manifest: undefined,
+    takesMessages: number === 1,
+  };
+}
+
+/**
+ * Whether a manifest lets a person message the app: its App Home messages tab on and not
+ * read-only, as the walk on real Slack found (W12V-7).
+ */
+function manifestTakesMessages(manifest) {
+  const home = manifest && manifest.features && manifest.features.app_home;
+  return Boolean(
+    home && home.messages_tab_enabled === true && home.messages_tab_read_only_enabled === false,
+  );
+}
+
+/** Slack's markup a message's text carries: what Slack would read as a mention or a link. */
+const MARKUP = /<(?:!(?:here|channel|everyone)|@[UW][A-Z0-9]+|#C[A-Z0-9]+)(?:\|[^>]*)?>/g;
+
+/** The same markup escaped as Slack asks (`&lt;!here&gt;`), which Slack shows as text. */
+const ESCAPED_MARKUP =
+  /&lt;(?:!(?:here|channel|everyone)|@[UW][A-Z0-9]+|#C[A-Z0-9]+)(?:\|(?:(?!&gt;).)*)?&gt;/g;
+
+/**
+ * What the fake keeps of a message's text: the markup Slack would read in it as a mention or a
+ * link, and the markup it carries escaped, which Slack shows as text (W12V-7's pre-tag). Never
+ * the body.
+ */
+function markupOf(text) {
+  const written = typeof text === 'string' ? text : '';
+  return {
+    mentions: written.match(MARKUP) || [],
+    escapedMarkup: written.match(ESCAPED_MARKUP) || [],
   };
 }
 
@@ -58,6 +93,8 @@ function resetApps() {
   revokedTokens.clear();
   memberships.clear();
   messages.clear();
+  managerMessages.length = 0;
+  holds.clear();
   for (const connection of sockets) connection.socket.destroy();
   sockets.clear();
   tickets.clear();
@@ -65,9 +102,19 @@ function resetApps() {
 }
 
 // Day0's posted messages, by channel and ts, with the app whose bot posted them: what
-// chat.update edits and a press is made on (wave 12, 12-M). Never a body: the block types and
-// each button's action id, block id and value (a decision code) only.
+// chat.update edits and a press is made on (wave 12, 12-M), with the block types and each
+// button's action id, block id and value (a decision code). Never a body: of the text, only the
+// markup Slack would read in it as a mention or a link and the markup it carries escaped, so a
+// bed can read back that a quoted `<!here>` went out as text (W12V-7's pre-tag).
 const messages = new Map();
+
+// What the manager typed in a DM with an app (W12V-7): the decision poll reads it back through
+// conversations.history, from the app the message was sent to.
+const managerMessages = [];
+
+// Calls a bed holds on the wire before answering, by method, each for its own time: a Stop lands
+// while a write is being sent (12-W's reconciliation, W12V-14's bed).
+const holds = new Map();
 
 /** What the fake keeps of a message's blocks: their types and their buttons. */
 function shapeOf(blocks) {
@@ -248,6 +295,43 @@ const server = createServer(async (request, response) => {
     app.appLevelToken = `xapp-day0-fake-app-level-token${suffix}`;
     return json(response, 200, { ok: true, token: app.appLevelToken });
   }
+  if (url.pathname === '/proof/manager-message' && request.method === 'POST') {
+    // The manager types a reply in their DM with an app (W12V-7). Slack offers no composer under
+    // an app whose messages tab is off or read-only, and says so in these words.
+    const { appId, text, threadTs } = jsonArguments(request, await bodyOf(request));
+    const app = apps.find((candidate) => candidate.appId === appId && !candidate.deleted);
+    if (!app) return json(response, 404, { ok: false, error: 'invalid_app_id' });
+    if (!app.takesMessages) {
+      return json(response, 200, {
+        ok: false,
+        error: 'messages_tab_off',
+        shown: 'Sending messages to this app has been turned off.',
+      });
+    }
+    if (typeof text !== 'string' || text.trim() === '') {
+      return json(response, 400, { ok: false, error: 'no_text' });
+    }
+    // Stamped now, as Slack stamps it: Day0 reads no reply older than its employee.
+    const ts = `${Math.floor(Date.now() / 1000)}.${String(managerMessages.length + 1).padStart(6, '0')}`;
+    managerMessages.push({
+      appId: app.appId,
+      channel: 'D_DAY0_MANAGER',
+      user: 'U_DAY0_MANAGER',
+      text,
+      ts,
+      ...(typeof threadTs === 'string' ? { threadTs } : {}),
+    });
+    return json(response, 200, { ok: true, channel: 'D_DAY0_MANAGER', ts });
+  }
+  if (url.pathname === '/proof/hold' && request.method === 'POST') {
+    // Hold the next call of a method for `ms` before it is answered.
+    const { method, ms } = jsonArguments(request, await bodyOf(request));
+    if (typeof method !== 'string' || typeof ms !== 'number' || ms <= 0) {
+      return json(response, 400, { ok: false, error: 'invalid_hold' });
+    }
+    holds.set(method, ms);
+    return json(response, 200, { ok: true });
+  }
   if (url.pathname === '/proof/press' && request.method === 'POST') {
     return json(response, 200, await press(jsonArguments(request, await bodyOf(request))));
   }
@@ -290,6 +374,11 @@ const server = createServer(async (request, response) => {
   const method = url.pathname.slice('/api/'.length);
   count(method);
   const body = await bodyOf(request);
+  const held = holds.get(method);
+  if (held !== undefined) {
+    holds.delete(method);
+    await new Promise((resolve) => setTimeout(resolve, held));
+  }
 
   if (method === 'tooling.tokens.rotate') {
     // S2: exchanges the refresh token for a new configuration token and a new
@@ -331,13 +420,46 @@ const server = createServer(async (request, response) => {
       const parsed = JSON.parse(manifest);
       const bot = parsed && parsed.oauth_config && parsed.oauth_config.scopes;
       app.scopes = Array.isArray(bot && bot.bot) ? bot.bot : [];
+      app.manifest = parsed;
     } catch {
       app.scopes = [];
+      app.manifest = undefined;
     }
+    app.takesMessages = manifestTakesMessages(app.manifest);
     return json(response, 200, {
       ok: true,
       app_id: app.appId,
       credentials: { client_id: app.clientId, client_secret: app.clientSecret },
+    });
+  }
+  if (method === 'apps.manifest.export' || method === 'apps.manifest.update') {
+    // W12V-7: the configuration token reads and changes the manifest of an app it created.
+    const refused = configurationRefusal(request);
+    if (refused) return json(response, 200, { ok: false, error: refused });
+    const form = readArguments(url, request, body);
+    const app = apps.find((candidate) => candidate.appId === form.get('app_id'));
+    if (!app || !app.created || app.deleted) {
+      return json(response, 200, { ok: false, error: 'app_not_found' });
+    }
+    if (method === 'apps.manifest.export') {
+      return json(response, 200, { ok: true, manifest: app.manifest || {} });
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(form.get('manifest') || '');
+    } catch {
+      return json(response, 200, { ok: false, error: 'invalid_manifest' });
+    }
+    const scopes = parsed && parsed.oauth_config && parsed.oauth_config.scopes;
+    const bot = Array.isArray(scopes && scopes.bot) ? scopes.bot : [];
+    const permissionsUpdated = JSON.stringify(bot) !== JSON.stringify(app.scopes || []);
+    app.manifest = parsed;
+    app.scopes = bot;
+    app.takesMessages = manifestTakesMessages(parsed);
+    return json(response, 200, {
+      ok: true,
+      app_id: app.appId,
+      permissions_updated: permissionsUpdated,
     });
   }
   if (method === 'apps.manifest.delete') {
@@ -498,7 +620,24 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { ok: false, error: 'channel_not_found' });
     }
     if (method === 'conversations.history') {
-      return json(response, 200, { ok: true, messages: [], has_more: false });
+      // What the manager typed to this bot's app, newest first, after `oldest` when given.
+      const oldest = Number(given.get('oldest') || 0);
+      const typed = managerMessages
+        .filter(
+          (message) =>
+            message.appId === bot.appId &&
+            message.channel === given.get('channel') &&
+            message.threadTs === undefined &&
+            Number(message.ts) > oldest,
+        )
+        .reverse()
+        .map((message) => ({
+          type: 'message',
+          user: message.user,
+          text: message.text,
+          ts: message.ts,
+        }));
+      return json(response, 200, { ok: true, messages: typed, has_more: false });
     }
     const ts = given.get('ts');
     if (!ts) return json(response, 200, { ok: false, error: 'invalid_arguments' });
@@ -515,6 +654,16 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
+    // Slack takes a public channel by its name, with or without its #, as well as by its id; a
+    // `#name` it does not know is not found, and any other channel the bot is not in refuses.
+    if (typeof payload.channel === 'string' && !CHANNELS.includes(payload.channel)) {
+      const name = payload.channel.replace(/^#/, '');
+      const named = PUBLIC_CHANNELS.find((channel) => channel.name === name);
+      if (named) payload.channel = named.id;
+      else if (payload.channel.startsWith('#')) {
+        return json(response, 200, { ok: false, error: 'channel_not_found' });
+      }
+    }
     if (!CHANNELS.includes(payload.channel)) {
       return json(response, 200, { ok: false, error: 'not_in_channel' });
     }
@@ -527,6 +676,7 @@ const server = createServer(async (request, response) => {
       channel: payload.channel,
       ts,
       appId: bot.appId,
+      ...markupOf(payload.text),
       ...shapeOf(payload.blocks),
       edits: 0,
     });
@@ -553,6 +703,7 @@ const server = createServer(async (request, response) => {
     }
     if (blocks !== undefined) Object.assign(message, shapeOf(blocks));
     else if (text !== undefined) Object.assign(message, shapeOf([]));
+    if (text !== undefined) Object.assign(message, markupOf(text));
     message.edits += 1;
     return json(response, 200, {
       ok: true,

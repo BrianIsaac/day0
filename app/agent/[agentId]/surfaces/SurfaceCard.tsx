@@ -20,6 +20,7 @@ import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { keepsPageScan, scopeFieldsFor } from '@/surfaces/intake-scope';
 import { organisationSystemOf, servedByIssuer } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
+import { typedCodeReaches } from '@/surfaces/slack-messages-tab';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
@@ -31,12 +32,14 @@ import {
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
+  typedCodeWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
   moveLabel,
   moveOfferWords,
   noWayOnWords,
+  slackNoInstallWords,
   slackChannelsGoWords,
   unservedConnectionWords,
   identityChip,
@@ -62,6 +65,7 @@ import {
   ONE_APPROVER,
   PageScanRow,
   DecisionButtonsRow,
+  TypedCodeRow,
   ProvisioningRow,
   SurfaceLadder,
 } from './SurfaceRows';
@@ -109,7 +113,8 @@ export interface Operation {
     | 'propose'
     | 'provision'
     | 'reject'
-    | 'socket-token';
+    | 'socket-token'
+    | 'messages-tab';
   readonly surfaceId: string;
 }
 
@@ -169,6 +174,8 @@ export interface SurfaceCardActions {
   readonly provision: (configurationToken?: string) => void;
   /** Land the app-level token a person generated for the employee's own Slack app (12-M). */
   readonly landSocketToken: (token: string) => void;
+  /** Say a person turned on the messages tab of the employee's own Slack app (W12V-7). */
+  readonly confirmMessagesTab: () => void;
   readonly setDays: (days: number) => Promise<Renewed>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
   /** Connect through the organisation's connection, where the card's system has an issuer. */
@@ -313,6 +320,7 @@ export function SurfaceCard({
   const covering = active !== undefined && servedByIssuer(active) ? active : undefined;
   const unserved = active !== undefined && covering === undefined ? active : undefined;
   const slack = system === 'slack';
+  const typedCode = surface.typedCode === undefined ? undefined : typedCodeWords(surface.typedCode);
   const provisioningPresentation = presentProvisioning({
     credential: request?.credential,
     hasPublicUrl: context.installRedirectConfigured,
@@ -393,6 +401,16 @@ export function SurfaceCard({
     !accessRequest &&
     !connectable &&
     !slack;
+  // A covered Slack card whose documentation describes no install of the employee's app has no
+  // way on either: it says what is missing (W12V-1, words only).
+  const slackNoInstall =
+    slack &&
+    covering !== undefined &&
+    approvedAccess &&
+    !ended &&
+    surface.credentialId === undefined &&
+    !accessRequest &&
+    provisioningPresentation.stage === 'not-applicable';
   const waitsOn =
     accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined;
   // The approval's own probe meets no credential and leaves the card `ungranted`; one that waits
@@ -545,12 +563,24 @@ export function SurfaceCard({
         ) : null}
         {surface.decisionButtons !== undefined ? (
           <DecisionButtonsRow
-            words={decisionButtonsWords(surface.decisionButtons, provisioning?.appName)}
+            words={decisionButtonsWords(
+              surface.decisionButtons,
+              provisioning?.appName,
+              surface.typedCode === undefined || typedCodeReaches(surface.typedCode),
+            )}
             error={failed('socket-token')}
             onLand={actions.landSocketToken}
             landing={pending === 'socket-token'}
             landings={context.socketTokenLandings?.get(String(surface._id))}
             surfaceSlug={surface.slug}
+          />
+        ) : null}
+        {typedCode !== undefined ? (
+          <TypedCodeRow
+            words={typedCode}
+            error={failed('messages-tab')}
+            onConfirm={actions.confirmMessagesTab}
+            confirming={pending === 'messages-tab'}
           />
         ) : null}
         {connectable && actions.connect !== undefined ? (
@@ -573,6 +603,11 @@ export function SurfaceCard({
         {noWayOn && covering !== undefined ? (
           <p className="text-sm text-[var(--color-warn)]">
             {noWayOnWords(covering.displayName, context.employeeName)}
+          </p>
+        ) : null}
+        {slackNoInstall ? (
+          <p className="text-sm text-[var(--color-warn)]">
+            {slackNoInstallWords(context.employeeName)}
           </p>
         ) : null}
         {/* An ended card renews first; what IT is asked for follows the renewal. */}

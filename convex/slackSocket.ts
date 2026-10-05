@@ -46,6 +46,11 @@ interface BridgeApp {
   readonly appId: string;
   /** The app's name, which `check:access` names its card by (W12-R32). */
   readonly appName: string;
+  /**
+   * Which app-level token the card holds: the id of its row, never the token. A new one tells the
+   * bridge the token was replaced, so it dials again with it (W12V-6).
+   */
+  readonly tokenRef: string;
 }
 
 /**
@@ -69,12 +74,14 @@ export const appsForBridge = internalQuery({
       .paginate({ cursor: args.cursor, numItems: BRIDGE_PAGE });
     return {
       apps: page.page.flatMap((surface) =>
-        carriesPresses(surface, now) && surface.provisioning !== undefined
+        carriesPresses(surface, now) &&
+        surface.provisioning?.appLevelTokenCredentialId !== undefined
           ? [
               {
                 surfaceId: surface._id,
                 appId: surface.provisioning.appId,
                 appName: surface.provisioning.appName,
+                tokenRef: surface.provisioning.appLevelTokenCredentialId,
               },
             ]
           : [],

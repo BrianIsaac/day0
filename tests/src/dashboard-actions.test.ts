@@ -329,10 +329,81 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toContain('run:1');
     expect(html).toContain('Outcome unknown · closing actions');
     expect(html).toContain('response lost');
-    // Answered per entry since wave 12 (U17 D1): two answers each, not one tick.
-    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(2);
-    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(2);
+    // Answered per entry since wave 12 (U17 D1), two answers for an entry of unknown outcome.
+    // Re-pinned for W12V-14: the landed entry, with the provider's own id, is shown and not asked.
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(1);
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(1);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm reconciliation<\/button>/);
+  });
+
+  it('asks only about the write whose outcome is unknown, and shows the landed ones as landed (W12V-14)', (): void => {
+    // The walk's REVOPS-6 after the Stop (row 16): note 1 on the wire, and both report DMs landed
+    // with Slack's own ts. The card asked "0 of 3 answered".
+    const html = renderToStaticMarkup(
+      createElement(ProviderReconciliationControl, {
+        entries: [
+          {
+            phase: 'prerequisite',
+            actionIndex: 0,
+            tool: 'http.request',
+            summary: 'Send the manager a Slack DM: "REVOPS-6: posting the two close-week notes."',
+            outcome: 'landed',
+            providerId: '1791151039.077839',
+            idempotencyKey: 'run:dm-1',
+          },
+          {
+            phase: 'closing',
+            actionIndex: 0,
+            tool: 'http.request',
+            summary:
+              'Post to Slack channel C0BSQTE1H7E: "[w12 walk] Close week, note 1 of 2: the Q3 close queue is being worked by Iris."',
+            outcome: 'outcome-unknown',
+            reason:
+              'outcome unknown: the run was stopped while this write was being sent; check whether it arrived before you retry',
+            idempotencyKey: 'run:note-1',
+          },
+          {
+            phase: 'closing',
+            actionIndex: 3,
+            tool: 'http.request',
+            summary: 'Send the manager a Slack DM: "REVOPS-6: posting the two close-week notes."',
+            outcome: 'landed',
+            providerId: '1791151063.770959',
+            idempotencyKey: 'run:dm-2',
+          },
+        ],
+        onConfirm: vi.fn(async (): Promise<void> => {}),
+      }),
+    );
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(1);
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(1);
+    expect(html).toContain('0 of 1 answered');
+    expect(html).toContain('provider id 1791151039.077839');
+    expect(html).toContain('provider id 1791151063.770959');
+    expect(html.match(/Landed(?:<!-- -->)? · (?:prerequisites|closing actions)/g)).toHaveLength(2);
+  });
+
+  it('asks nothing when every write landed, and lets the manager confirm (W12V-14)', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(ProviderReconciliationControl, {
+        entries: [
+          {
+            phase: 'single',
+            actionIndex: 0,
+            tool: 'mcp.call',
+            summary: 'Comment on REVOPS-6: "Posted both close-week notes in #revops."',
+            outcome: 'landed',
+            providerId: 'comment-17',
+            idempotencyKey: 'run:1',
+          },
+        ],
+        onConfirm: vi.fn(async (): Promise<void> => {}),
+      }),
+    );
+    expect(html).not.toContain('type="radio"');
+    expect(html).not.toContain('answered');
+    expect(html).toContain('>Confirm reconciliation</button>');
+    expect(html).not.toMatch(/disabled=""[^>]*>Confirm reconciliation</);
   });
 
   it('shows who reconciled, in words, and when, after provider reconciliation', (): void => {

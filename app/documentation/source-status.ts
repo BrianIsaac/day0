@@ -1,4 +1,5 @@
 import type { Doc } from '@convex/_generated/dataModel';
+import { isSyncHeldReason } from '@/docs/sync-held';
 import type { Tone } from '../components/tone';
 import { clockTime } from '../components/time';
 
@@ -12,15 +13,15 @@ export interface SourceStatusWords {
 }
 
 /**
- * What a linked source's sync state means to the manager: read, being read, or not read and why
- * it waits, with when it was last read. A refusal is drawn in warn, never on a danger fill
- * (A D4 (b)).
+ * What a linked source's sync state means to the manager: read, being read, held by the
+ * deployment's pause, or not read and why it waits, with when it was last read. A refusal is drawn
+ * in warn, never on a danger fill (A D4 (b)); a hold waits on nobody (W12V-2).
  *
- * @param source - The source's status and last sync time.
+ * @param source - The source's status, last sync time and last error.
  * @param zone - The zone the time is said in; the viewer's when absent.
  */
 export function sourceStatus(
-  source: Pick<Doc<'docSources'>, 'status' | 'lastSyncAt'>,
+  source: Pick<Doc<'docSources'>, 'status' | 'lastSyncAt' | 'lastError'>,
   zone?: string,
 ): SourceStatusWords {
   const lastRead =
@@ -31,7 +32,10 @@ export function sourceStatus(
     case 'linking':
       return { text: 'Reading', tone: 'accent', ...lastRead };
     case 'error':
-      return { text: 'Could not read', tone: 'warn', ...lastRead };
+      // A sync the deployment's pause held tried nothing, so it did not fail to read (W12V-2).
+      return isSyncHeldReason(source.lastError)
+        ? { text: 'Held', tone: 'muted', ...lastRead }
+        : { text: 'Could not read', tone: 'warn', ...lastRead };
     case 'credential-not-landed':
       return { text: 'Secret not stored', tone: 'warn', ...lastRead };
   }

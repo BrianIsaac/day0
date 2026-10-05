@@ -2882,10 +2882,25 @@ export function executorInstructions(args: {
             '',
             '--- Live run context (takes precedence over approval wording in the skill body) ---',
             actionModeInstruction(args.autonomousActions),
+            ...(args.autonomousActions ? [] : [HELD_SET_REAL]),
           ]
         : []),
   ].join('\n');
 }
+
+/**
+ * How a supervised real run's writes land (W12V-11, the walk on real Slack): with autonomous
+ * actions off, the writes one response emits wait for the manager as one set and land together
+ * when the manager approves it. A run told only that its writes are "held", and to answer whether
+ * the work was done "from the applied ledger", held its close back (REVOPS-2 run 1) or answered
+ * partial while closing (run 2), and stopped. So the run is told that the approval of the set is
+ * what lands each write in it, and answers for the work as it will stand once the set lands. A run
+ * that did not do the work still answers partial or not-done however its writes land, and never
+ * closes (decision D-1 (b)): the bed's REVOPS-3 answered done for its plan's gap note until the
+ * rule said so.
+ */
+export const HELD_SET_REAL =
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';
@@ -3200,11 +3215,12 @@ export function appliedLedgerPrompt(
     .map((entry, index): string => {
       const action = actions[index];
       const result = entry.ok && !entry.held ? 'landed' : entry.held ? 'held' : 'failed';
-      // A row withheld for a claim says whose work it is: a set authored
-      // from this ledger has to be able to say so.
-      const claimed = withheldByClaim(entry) || withheldWithClaimedWrite(entry);
+      // A held row says why it was not sent (not approved by the manager, or withheld for a
+      // claim, whose work it then names): a set authored from this ledger has to tell a write
+      // the manager declined from one that landed (W12V-11).
+      const why = entry.held || withheldByClaim(entry) || withheldWithClaimedWrite(entry);
       const detail =
-        claimed && entry.effect
+        why && entry.effect && entry.reason
           ? `${entry.effect} · ${entry.reason}`
           : (entry.effect ?? entry.reason ?? '(no provider detail)');
       const target = action
@@ -3666,8 +3682,8 @@ async function authorDependentSkillRun(
     'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
     `Emit at most ${cap} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
-    'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
-    'Answer `workDone` for the whole run as it stands once this closing set lands, from the applied ledger: the ticket state you set agrees with it, and a run that answers "partial" or "not-done" leaves the state as it is and records the step it could not finish as blocked.',
+    'If a prerequisite failed, or the ledger shows a prerequisite write the manager did not approve or Day0 withheld, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
+    'Answer `workDone` for the whole run as it will stand once this closing set lands: the applied ledger says what the earlier phase did, and the actions you emit here are what this set does. The ticket state you set agrees with it, and a run that answers "partial" or "not-done" leaves the state as it is and records the step it could not finish as blocked.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
     ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback), CHARTER_CLAUSE_RULE] : []),
     ...(advisory.length > 0

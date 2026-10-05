@@ -380,6 +380,59 @@ describe('the outbound manager-channel action', (): void => {
     expect(sent).toHaveLength(2);
   });
 
+  it('says a request was already decided only after the acknowledgement of the decision it names (W12V-10)', async (): Promise<void> => {
+    // The walk on real Slack, row 9: two presses 54 ms apart, and "Decision v9pwwd was already
+    // approved from Slack." landed 0.1 s before "Approval v9pwwd received. ...".
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `1791149347.${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    const decisionId = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!
+      .id;
+    for (const messageTs of ['1791149347.500000', '1791149347.554000']) {
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'approve', id: decisionId },
+      });
+    }
+    sent.length = 0;
+
+    // The duplicate's notice runs first, as the walk's did: it waits for the acknowledgement.
+    await expect(
+      harness.action(internal.managerChannelActions.sendDecisionNotice, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'waits for the acknowledgement it follows' });
+    expect(sent).toEqual([]);
+
+    vi.runAllTimers();
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const texts = sent.map((call) => (JSON.parse(call.body) as { text: string }).text);
+    expect(texts.findIndex((text) => text.startsWith(`Approval ${decisionId} received.`))).toBe(0);
+    expect(texts.filter((text) => text.includes('was already approved'))).toHaveLength(1);
+    expect(texts.at(-1)).toContain(`Decision ${decisionId} was already approved from`);
+    vi.useRealTimers();
+  });
+
   it('resends with a fresh code after a send that died before recording, and only once', async (): Promise<void> => {
     vi.stubGlobal(
       'fetch',
@@ -530,6 +583,7 @@ describe('the outbound manager-channel action', (): void => {
 async function landAppLevelToken(
   harness: TestConvex<typeof schema>,
   agentId: Id<'agents'>,
+  options: { readonly takesMessages?: boolean } = {},
 ): Promise<void> {
   vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
   await harness.run(async (ctx): Promise<void> => {
@@ -572,6 +626,16 @@ async function landAppLevelToken(
         appLevelTokenCredentialId: appLevel,
       },
     });
+    // An app this release creates takes messages from the start (W12V-7); one an earlier release
+    // created does not until its messages tab is opened.
+    if (options.takesMessages !== false) {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'surface.app-messages-open',
+        payload: { surfaceId: surface!._id, appId: 'A0OPS', appName: 'Ops (Day0)', how: 'created' },
+        createdAt: 2,
+      });
+    }
   });
 }
 
@@ -645,6 +709,51 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
       kind: 'plan',
     });
     expect((JSON.parse(sent[0]!.body) as { blocks?: unknown }).blocks).toBeUndefined();
+  });
+
+  it('asks for no typed reply from an app that takes no messages, its buttons and day0 the only ways (W12V-7)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId, { takesMessages: false });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const body = JSON.parse(sent[0]!.body) as {
+      text: string;
+      blocks: Array<{
+        type: string;
+        elements?: Array<{ action_id: string; confirm?: { text: { text: string } } }>;
+      }>;
+    };
+    expect(body.text).not.toMatch(/reply “|“approve|“reject/i);
+    expect(body.text.split('\n').at(-1)).toBe(
+      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+    const reject = body.blocks
+      .find((block) => block.type === 'actions')
+      ?.elements?.find((button) => button.action_id === 'day0.decision.reject');
+    expect(reject?.confirm?.text.text).toBe(
+      'Day0 will not do it. To say why, reject it in day0 instead.',
+    );
+  });
+
+  it('asks for no typed reply from an app that takes no messages and has no buttons: day0 alone (W12V-7)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId, { takesMessages: false });
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const body = JSON.parse(sent[0]!.body) as { text: string; blocks?: unknown };
+    expect(body.blocks).toBeUndefined();
+    expect(body.text.split('\n').at(-1)).toBe(
+      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
   });
 
   it('closes a request that had buttons with its text as blocks and no buttons', async (): Promise<void> => {

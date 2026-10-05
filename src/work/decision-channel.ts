@@ -27,7 +27,13 @@ export function decisionChannelOf<Card extends DecisionChannelCard>(
 /** Where an employee's decisions reach the manager: a chat DM, with or without buttons, or here. */
 export type DecisionsReach =
   | { readonly kind: 'dashboard' }
-  | { readonly kind: 'dm'; readonly channel: string; readonly buttons: boolean };
+  | {
+      readonly kind: 'dm';
+      readonly channel: string;
+      readonly buttons: boolean;
+      /** Whether the manager's typed code reaches the app the DM comes from (W12V-7). */
+      readonly typedCode: boolean;
+    };
 
 /**
  * Where an employee's decisions reach the manager (wave 12, 12-M; H D6): the dashboard always,
@@ -36,15 +42,18 @@ export type DecisionsReach =
  *
  * @param channel - The employee's decision channel, if any ({@link decisionChannelOf}).
  * @param bridgeConfigured - Whether the deployment runs the Socket Mode bridge.
+ * @param typedCode - Whether the manager's typed code reaches the channel's app (W12V-7).
  */
 export function decisionsReachOf(
   channel: DecisionChannelCard | undefined,
   bridgeConfigured: boolean,
+  typedCode: boolean,
 ): DecisionsReach {
   if (channel === undefined) return { kind: 'dashboard' };
   return {
     kind: 'dm',
     channel: channel.displayName,
     buttons: decisionButtonsFor(channel, bridgeConfigured).available,
+    typedCode,
   };
 }

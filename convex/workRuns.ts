@@ -28,7 +28,7 @@ import {
   parkOnConnection,
   queueManagerNote,
   refusedReasonEntries,
-  rememberReplacedRequest,
+  rememberRetriedRequest,
   retakeExternalClaim,
   reviewHeldActions,
   scheduleDecisionRequest,
@@ -200,7 +200,7 @@ export const retryFailed = mutation({
     // The writes the manager confirmed on the provider are carried into the retry, so a write
     // answered landed is never sent again however its row reads (P4-1).
     const carried = carriedIntoRetry(resume ?? row.output, row);
-    if (redraft) await rememberReplacedRequest(ctx, row, Date.now());
+    if (redraft) await rememberRetriedRequest(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
       // A retried item begins a new run, which the queue orders by (x4); one sent back to

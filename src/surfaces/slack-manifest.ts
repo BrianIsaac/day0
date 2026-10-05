@@ -35,6 +35,20 @@ const SETTING_KEYS = [
   'token_rotation_enabled',
 ] as const;
 
+/**
+ * The App Home a dedicated app always declares: its messages tab open for writing (W12V-7). The
+ * typed code a manager replies to a decision request is a message to the app in its DM, and with
+ * the tab read-only Slack answers that DM with "Sending messages to this app has been turned off."
+ * and offers no composer (the walk on real Slack, 5 October 2026). This exact object was accepted
+ * by `apps.manifest.validate` beside the kit's manifest. It is Day0's, like the allowlist: a page
+ * that closes the tab would leave a manager no typed code, so a page cannot set it.
+ */
+export const SLACK_APP_HOME = {
+  home_tab_enabled: false,
+  messages_tab_enabled: true,
+  messages_tab_read_only_enabled: false,
+} as const satisfies SlackAppHome;
+
 /** A Slack OAuth scope: a resource, a colon and an action, as `users:read.email` or `links.embed:write`. */
 const SLACK_SCOPE = /^[a-z][a-z_.]*:[a-z][a-z_.]*$/;
 
@@ -46,9 +60,19 @@ export interface SlackManifest {
     long_description?: string;
     background_color?: string;
   };
-  features?: { bot_user?: { display_name?: string; always_online?: boolean } };
+  features?: {
+    bot_user?: { display_name?: string; always_online?: boolean };
+    app_home?: SlackAppHome;
+  };
   oauth_config: { redirect_urls: string[]; scopes: { bot: string[] } };
   settings?: SlackManifestSettings;
+}
+
+/** The App Home switches a manifest declares, as Slack's manifest reference names them. */
+export interface SlackAppHome {
+  readonly home_tab_enabled: boolean;
+  readonly messages_tab_enabled: boolean;
+  readonly messages_tab_read_only_enabled: boolean;
 }
 
 /**
@@ -296,7 +320,11 @@ function displayInformation(
   return out;
 }
 
-/** The bot user and nothing else: no slash commands, shortcuts or unfurl domains. */
+/**
+ * The bot user and Day0's App Home, nothing else: no slash commands, shortcuts or unfurl domains.
+ * The messages tab is open for writing whatever the page wrote (`SLACK_APP_HOME`), since the typed
+ * code reaches the app as a message in its DM.
+ */
 function features(
   written: Record<string, unknown>,
   agentName: string,
@@ -310,6 +338,7 @@ function features(
         ...(displayName ? { display_name: dedicatedAppName(agentName, displayName) } : {}),
         ...(typeof bot.always_online === 'boolean' ? { always_online: bot.always_online } : {}),
       },
+      app_home: { ...SLACK_APP_HOME },
     },
   };
 }

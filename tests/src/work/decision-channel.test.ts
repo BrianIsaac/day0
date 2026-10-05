@@ -24,17 +24,25 @@ describe('decisionChannelOf', (): void => {
 
 describe('decisionsReachOf', (): void => {
   it('says here alone without a channel, and the DM with or without buttons otherwise', (): void => {
-    expect(decisionsReachOf(undefined, true)).toEqual({ kind: 'dashboard' });
+    // Re-pinned for W12V-7: the DM says whether the manager's typed code reaches the app.
+    expect(decisionsReachOf(undefined, true, true)).toEqual({ kind: 'dashboard' });
     expect(
-      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), true),
-    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: true });
-    expect(decisionsReachOf(card({ provisioning: {} }), true)).toEqual({
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), true, true),
+    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: true, typedCode: true });
+    expect(decisionsReachOf(card({ provisioning: {} }), true, true)).toEqual({
       kind: 'dm',
       channel: 'Slack',
       buttons: false,
+      typedCode: true,
     });
     expect(
-      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), false),
-    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: false });
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), false, true),
+    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: false, typedCode: true });
+  });
+
+  it('says no typed code reaches an app that takes no messages (W12V-7)', (): void => {
+    expect(
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), true, false),
+    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: true, typedCode: false });
   });
 });

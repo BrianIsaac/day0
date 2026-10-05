@@ -11,6 +11,7 @@
  */
 
 import { agentZone, formatStamp, isHourStart } from '../lib/zone';
+import { slackEscaped } from '../surfaces/slack-markup';
 
 export type ManagerNotificationMode = 'per-run' | 'digest';
 
@@ -66,8 +67,9 @@ export function digestDue(
   return managerNotificationMode(agent) === 'per-run' || isHourStart(now, agentZone(agent));
 }
 
+/** A title in quotation marks, on one line, escaped for the Slack message it goes into. */
 function quoted(title: string): string {
-  return `“${title.replace(/\s+/g, ' ').trim() || 'Untitled work'}”`;
+  return `“${slackEscaped(title.replace(/\s+/g, ' ').trim()) || 'Untitled work'}”`;
 }
 
 function changes(count: number): string {
@@ -117,11 +119,14 @@ export function landedNoteText(args: {
 }): string {
   const rows =
     args.outcome === 'completed' ? args.rows : args.rows.filter((row) => row.kind === 'write');
-  const lines = rows.map((row) => `- ${row.line}${row.outcomeUnknown ? ' (outcome unknown)' : ''}`);
+  const lines = rows.map(
+    (row) => `- ${slackEscaped(row.line)}${row.outcomeUnknown ? ' (outcome unknown)' : ''}`,
+  );
+  const name = slackEscaped(args.agentName);
   const head =
     args.outcome === 'completed'
-      ? `${args.agentName} finished ${quoted(args.title)}: ${landedCount(rows)}.`
-      : `${args.agentName} stopped on ${quoted(args.title)} after ${changes(rows.length)} landed: ${args.reason ?? 'the run did not finish'}. Reconcile the provider in day0 before a retry.`;
+      ? `${name} finished ${quoted(args.title)}: ${landedCount(rows)}.`
+      : `${name} stopped on ${quoted(args.title)} after ${changes(rows.length)} landed: ${slackEscaped(args.reason ?? 'the run did not finish')}. Reconcile the provider in day0 before a retry.`;
   return [head, ...lines].join('\n');
 }
 
@@ -139,7 +144,7 @@ export function stoppedNoteText(args: {
   title: string;
   reason: string;
 }): string {
-  return `${args.agentName} stopped on ${quoted(args.title)}: ${args.reason}. Nothing landed; Retry stands in day0.`;
+  return `${slackEscaped(args.agentName)} stopped on ${quoted(args.title)}: ${slackEscaped(args.reason)}. Nothing landed; Retry stands in day0.`;
 }
 
 /** A decision the manager still owes, as the digest names it. */
@@ -166,19 +171,24 @@ export function digestText(args: {
   zone: string;
   notes: ReadonlyArray<{ text: string; createdAt: number }>;
   owed?: readonly OwedDecision[];
+  /**
+   * Whether the manager's typed code reaches the employee's app (W12V-7): an app that takes no
+   * messages is never named a code to reply with. True unless the caller says otherwise.
+   */
+  typedCode?: boolean;
 }): string {
   const count = args.notes.length;
   const owed = args.owed ?? [];
   const shown = owed
     .slice(0, DIGEST_OWED_SHOWN)
     .map((decision) =>
-      decision.decisionId === undefined
+      decision.decisionId === undefined || args.typedCode === false
         ? `- ${quoted(decision.title)}: decide in day0`
         : `- ${quoted(decision.title)}: reply “approve ${decision.decisionId}” or “reject ${decision.decisionId} <reason>”`,
     );
   const more = owed.length - shown.length;
   return [
-    `${args.agentName}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest (times in ${args.zone}).`,
+    `${slackEscaped(args.agentName)}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest (times in ${args.zone}).`,
     ...args.notes.map((note) => `${formatStamp(note.createdAt, args.zone)}: ${note.text}`),
     ...(owed.length > 0
       ? [

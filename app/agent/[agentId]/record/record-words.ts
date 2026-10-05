@@ -222,6 +222,30 @@ function correctedParts(p: Read<'organisation.connection-corrected'>): string {
 }
 
 /**
+ * How an employee's own Slack app came to take messages, so the manager's typed code reaches it
+ * (W12V-7).
+ */
+function messagesOpenWords(p: Read<'surface.app-messages-open'>, subject: RecordSubject): string {
+  const app = text(p.appName) ?? connectionOf(subject);
+  const then = "so the manager's typed code in its DM decides a request";
+  switch (p.how) {
+    case 'created':
+    case undefined:
+      return `${app} takes messages, ${then}`;
+    case 'opened':
+      return `Day0 opened the messages tab of ${app} in Slack, ${then}`;
+    case 'found-open':
+      return `Day0 found the messages tab of ${app} open in Slack, ${then}`;
+    case 'confirmed':
+      return `${decider(subject)} said the messages tab of ${app} is open in Slack, ${then}`;
+    default: {
+      const unknown: never = p.how;
+      return `${app} takes messages (${String(unknown)})`;
+    }
+  }
+}
+
+/**
  * One call Day0 made with the organisation's Slack configuration token or its refresh token, on
  * the connection's ledger (11-AS): it names the app a creation made, never an employee (AC11).
  */
@@ -232,6 +256,19 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     return p.outcome === 'done'
       ? `Day0 created an employee's own Slack app${app} with ${token}`
       : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
+  }
+  if (p.method === 'apps.manifest.export' || p.method === 'apps.manifest.update') {
+    // W12V-7: Day0 reads an app it created before this release, and opens its messages tab, so
+    // the manager's typed code reaches it.
+    const app = text(p.appId) ? ` (${text(p.appId)})` : '';
+    if (p.method === 'apps.manifest.export') {
+      return p.outcome === 'done'
+        ? `Day0 read the settings of an employee's own Slack app${app} with ${token}`
+        : `Reading the settings of an employee's own Slack app${app} with ${token} failed${because(p.reason)}`;
+    }
+    return p.outcome === 'done'
+      ? `Day0 opened the messages tab of an employee's own Slack app${app} with ${token}`
+      : `Opening the messages tab of an employee's own Slack app${app} with ${token} failed${because(p.reason)}`;
   }
   if (p.method === 'auth.revoke') {
     // Slack's `auth.revoke` ends the token alone: its refresh token stays usable at Slack, and
@@ -794,6 +831,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
   'surface.socket-token-landed': (p, subject) =>
     `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,
+  'surface.app-messages-open': (p, subject) => messagesOpenWords(p, subject),
   'surface.install-failed': (p, subject) =>
     `Installing the app for ${connectionOf(subject)} failed${because(p.reason)}`,
   'surface.shared-credential-retired': (p, subject) =>

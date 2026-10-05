@@ -7,6 +7,8 @@ import {
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
+  typedCodeWords,
+  slackNoInstallWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -421,9 +423,13 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'Mateo (Day0)',
     );
     expect(words.title).toBe("Buttons: needs this app's socket token");
+    // Re-pinned for W12V-4: an app Day0 created from its manifest has Socket Mode on already, so
+    // the card tells nobody to turn it on; an older app's Enable Socket Mode makes the token itself
+    // (the walk's row 15).
     expect(words.note).toBe(
-      'Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack turns on Socket Mode, creates an app-level token with the connections:write scope (Basic Information, App-Level Tokens) and pastes it below.',
+      "Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.",
     );
+    expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
   });
 
@@ -446,6 +452,34 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     ).toBe('Buttons: needs the Slack socket service');
   });
 
+  it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
+    const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
+    expect(on.note).toBe(
+      'Each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+    );
+    const noToken = decisionButtonsWords(
+      { available: false, why: 'no-app-level-token' },
+      'Iris (Day0)',
+      false,
+    );
+    expect(
+      noToken.note.startsWith(
+        'Requests reach you with no buttons and no typed code, so you decide them in day0.',
+      ),
+    ).toBe(true);
+    const noBridge = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: true },
+      'Iris (Day0)',
+      false,
+    );
+    expect(noBridge.note).toContain(
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+    );
+    for (const words of [on, noToken, noBridge]) {
+      expect(words.note).not.toMatch(/typed code (only|still decides|alone)/);
+    }
+  });
+
   it('asks for no token while the socket service is missing, and says the token comes after it (W12-R18)', (): void => {
     const words = decisionButtonsWords(
       { available: false, why: 'no-bridge', tokenStored: false },
@@ -456,5 +490,35 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       'This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of Mateo (Day0).',
     );
     expect(words.asksForToken).toBe(false);
+  });
+});
+
+describe('whether the typed code reaches the app, on a Slack card (W12V-7)', (): void => {
+  it('says nothing while the app takes messages', (): void => {
+    expect(typedCodeWords({ state: 'open' })).toBeUndefined();
+  });
+
+  it('says Day0 opens the messages tab at the next check, and the toggle if it stays off', (): void => {
+    expect(typedCodeWords({ state: 'day0-opens', appName: 'Iris (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+
+  it('names the app and the one toggle a person turns on where Day0 cannot change the app', (): void => {
+    expect(typedCodeWords({ state: 'needs-toggle', appName: 'Otto (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Otto (Day0) yet, so no typed code reaches it, and Day0 cannot change this app’s settings. Someone who manages Otto (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”; then say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+});
+
+describe('a covered Slack card with no install described (W12V-1, words only)', (): void => {
+  it('says what is missing and which page would supply it', (): void => {
+    expect(slackNoInstallWords('Vela')).toBe(
+      'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
   });
 });

@@ -16,7 +16,7 @@ interface Backend {
   readonly url: string;
   readonly presses: Array<{ surfaceId: string; payload: Record<string, unknown> }>;
   readonly authorisations: string[];
-  apps: Array<{ surfaceId: string; appId: string }>;
+  apps: Array<{ surfaceId: string; appId: string; appName?: string; tokenRef?: string }>;
   /** How many press calls answer 503 before one is taken. */
   failPresses: number;
   /** How many connection URLs were handed out. */
@@ -34,7 +34,14 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
   const state = {
     presses: [] as Backend['presses'],
     authorisations: [] as string[],
-    apps: [{ surfaceId: 'surface-mateo', appId: 'A_DAY0_FAKE', appName: 'Mateo (Day0)' }],
+    apps: [
+      {
+        surfaceId: 'surface-mateo',
+        appId: 'A_DAY0_FAKE',
+        appName: 'Mateo (Day0)',
+        tokenRef: 'credential-1',
+      },
+    ] as Backend['apps'],
     failPresses: 0,
     opened: 0,
   };
@@ -251,6 +258,25 @@ describe('the Socket Mode bridge (wave 12, 12-M; RM7)', (): void => {
       async () => ((await proof()).socketConnections.A_DAY0_FAKE ?? 0) === 0,
       'the connection closed',
     );
+  });
+
+  it('dials again with the new token when the card’s app-level token is replaced (W12V-6)', async (): Promise<void> => {
+    // The walk's row 4: another app's token landed on the card, and the bridge kept the
+    // connection opened with the earlier token until a restart.
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    const before = backend.opened;
+    backend.apps = [{ ...backend.apps[0]!, tokenRef: 'credential-2' }];
+    await until(() => backend.opened > before, 'a new connection asked for');
+    await until(() => running.status().apps.some((app) => app.connected), 'the new hello');
+    expect(logged).toContainEqual(
+      expect.objectContaining({
+        message: 'the app-level token was replaced; dialling again',
+        appId: 'A_DAY0_FAKE',
+      }),
+    );
+    expect(logged.some((line) => line.message === 'app no longer carries presses')).toBe(false);
   });
 
   it('never logs a connection URL, whose ticket opens the app’s socket', async (): Promise<void> => {

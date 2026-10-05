@@ -111,6 +111,7 @@ export function SurfaceCards({
   const landCredential = useAction(api.surfaceActions.landCredential);
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const landAppLevelToken = useAction(api.slackSocketActions.landAppLevelToken);
+  const confirmMessagesTab = useMutation(api.slackMessagesTab.confirmMessagesTab);
   const connectLinear = useAction(api.linearIdentityActions.connect);
   const authoriseMcp = useAction(api.mcpOauthActions.startAuthorisation);
   const disconnect = useMutation(api.surfaces.disconnect);
@@ -301,6 +302,11 @@ export function SurfaceCards({
             refused: 'The app-level token was not stored.',
           },
         ),
+      confirmMessagesTab: () =>
+        operate('messages-tab', surface, () => confirmMessagesTab({ surfaceId: surface._id }), {
+          done: `Recorded: ${surface.provisioning?.appName ?? 'the app'} takes messages, so new requests to you through ${surface.displayName} offer the typed code.`,
+          refused: 'Nothing was recorded.',
+        }),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),
       approveTools: (tools) => approveTools({ surfaceId: surface._id, tools }),
       connect: connectFor(surface),

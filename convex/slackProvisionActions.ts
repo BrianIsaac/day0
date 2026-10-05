@@ -42,6 +42,7 @@ import {
 } from '../src/surfaces/identity-issuers/slack';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
 import { slackInstallUrl } from '../src/surfaces/slack-manifest';
+import { manifestTakesMessages } from '../src/surfaces/slack-messages-tab';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import {
   awaitLeaseHolder,
@@ -150,7 +151,7 @@ function slackErrorOf(error: unknown): string | undefined {
  * Raises:
  *   SlackCallError: If HTTP or Slack reports failure.
  */
-async function callSlack(
+export async function callSlack(
   fetcher: Fetcher,
   method: string,
   init: { form?: Record<string, string>; json?: unknown; token?: string },
@@ -266,7 +267,8 @@ async function revokeConfigurationToken(
   });
 }
 
-interface ProvisionDependencies {
+/** What the Slack provisioning paths reach the world through: replaced by behavioural tests. */
+export interface ProvisionDependencies {
   fetch: Fetcher;
   newNonce(): string;
   now(): number;
@@ -274,7 +276,8 @@ interface ProvisionDependencies {
   sleep(ms: number): Promise<void>;
 }
 
-const provisionDependencies: ProvisionDependencies = {
+/** The real network, nonce, clock and sleep. */
+export const provisionDependencies: ProvisionDependencies = {
   fetch: (input, init) => fetch(input, init),
   newNonce: newOauthNonce,
   now: () => Date.now(),
@@ -554,6 +557,33 @@ async function currentConfiguration(
   );
 }
 
+/**
+ * Make one use of the organisation's configuration token: made current first, and when Slack
+ * refuses a token Day0 held as current (revoked, or ended early), rotated and used once more.
+ *
+ * @param organisationConnectionId - The Slack configuration connection.
+ * @param call - The call, given the token; it writes its own use on the connection's ledger.
+ * @throws Error when the connection holds no live token, a rotation was refused, or the call failed
+ *   for another reason than a refused token.
+ */
+export async function withConfigurationToken<T>(
+  ctx: ActionCtx,
+  organisationConnectionId: Id<'organisationConnections'>,
+  dependencies: ProvisionDependencies,
+  call: (token: string) => Promise<T>,
+): Promise<T> {
+  const current = await currentConfiguration(ctx, organisationConnectionId, dependencies);
+  try {
+    return await call(current.token);
+  } catch (error: unknown) {
+    if (current.rotated || !configurationTokenRefused(slackErrorOf(error))) throw error;
+  }
+  const renewed = await currentConfiguration(ctx, organisationConnectionId, dependencies, {
+    rotate: true,
+  });
+  return await call(renewed.token);
+}
+
 /** The app `apps.manifest.create` created, and the connection whose token created it. */
 interface CreatedApp {
   readonly appId: string;
@@ -637,32 +667,11 @@ async function createThroughConnection(
       now: dependencies.now(),
     });
   };
-  const current = await currentConfiguration(ctx, organisationConnectionId, dependencies);
-  try {
-    const created = await createApp(
-      ctx,
-      surface,
-      ownerKey,
-      current.token,
-      built,
-      dependencies,
-      recordUse,
-    );
-    return { ...created, organisationConnectionId };
-  } catch (error: unknown) {
-    if (current.rotated || !configurationTokenRefused(slackErrorOf(error))) throw error;
-  }
-  const renewed = await currentConfiguration(ctx, organisationConnectionId, dependencies, {
-    rotate: true,
-  });
-  const created = await createApp(
+  const created = await withConfigurationToken(
     ctx,
-    surface,
-    ownerKey,
-    renewed.token,
-    built,
+    organisationConnectionId,
     dependencies,
-    recordUse,
+    async (token) => await createApp(ctx, surface, ownerKey, token, built, dependencies, recordUse),
   );
   return { ...created, organisationConnectionId };
 }
@@ -937,6 +946,7 @@ async function recordCreatedApp(
         : { organisationConnectionId: created.organisationConnectionId }),
       ...link,
       startedUnder: ownerKey,
+      takesMessages: manifestTakesMessages(built.manifest),
       now,
     });
   } catch (error: unknown) {

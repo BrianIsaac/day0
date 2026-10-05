@@ -1,4 +1,5 @@
 import { v, type Infer } from 'convex/values';
+import { typedCodeReachOf } from './slackMessagesTab';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx } from './_generated/server';
 import schema from './schema';
@@ -22,6 +23,7 @@ import { socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { isPaused } from '../src/work/pause';
 import { decisionChannelOf, decisionsReachOf } from '../src/work/decision-channel';
+import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { accessEnded } from '../src/work/surface-access';
 import {
   NEEDS_MANAGER_STATES,
@@ -170,7 +172,13 @@ export const rosterRowValidator = v.object({
   /** Where the employee's decisions reach the manager (12-M; H D6): a DM, buttons or not, or here. */
   decisionsReach: v.union(
     v.object({ kind: v.literal('dashboard') }),
-    v.object({ kind: v.literal('dm'), channel: v.string(), buttons: v.boolean() }),
+    v.object({
+      kind: v.literal('dm'),
+      channel: v.string(),
+      buttons: v.boolean(),
+      /** Whether the manager's typed code reaches the DM's app (W12V-7). */
+      typedCode: v.boolean(),
+    }),
   ),
 });
 
@@ -381,6 +389,9 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
           .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
           .take(SURFACE_READ_LIMIT),
       ]);
+      const channel = decisionChannelOf(
+        surfaces.filter((surface) => isManagerChannel(surface) && !accessEnded(surface, now)),
+      );
       return {
         agentId: agent._id,
         name: agent.name,
@@ -397,10 +408,9 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
         landedThisMonth: landed,
         decisionsReach: decisionsReachOf(
-          decisionChannelOf(
-            surfaces.filter((surface) => isManagerChannel(surface) && !accessEnded(surface, now)),
-          ),
+          channel,
           bridgeConfigured,
+          channel === undefined || typedCodeReaches(await typedCodeReachOf(ctx, channel)),
         ),
       };
     }),
