@@ -8,6 +8,7 @@ import {
   rulePlacement,
   strikePreview,
 } from '@/agent/charter-constraints';
+import type { GoalsStated } from '@/agent/charter';
 import { synthesisNotes } from '@/agent/manager-questions';
 import { useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -31,7 +32,7 @@ import { employeeTabHref } from '../employee-tabs';
 export interface CharterCardBody {
   whyThisHire: string;
   proposedFunction: string;
-  shortTermGoals: { day30: string; day60: string; day90: string };
+  shortTermGoals: { day30: string; day60: string; day90: string; stated?: GoalsStated };
   proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
   namedCollaborators: Array<{ name: string; topic: string }>;
   /** Whose lane the employee stays out of; the scope check reads these. */

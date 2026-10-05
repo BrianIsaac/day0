@@ -60,6 +60,26 @@ describe('the charter as one document', (): void => {
     expect(html).toContain('<b class="font-semibold">Priya</b>, segment and pipeline');
   });
 
+  it('draws a goal the model says was not given as a gap, whatever its words (C D11)', (): void => {
+    const html = render(
+      <CharterDocument
+        body={{
+          ...body,
+          shortTermGoals: {
+            ...body.shortTermGoals,
+            day90: 'Keep the close tidy.',
+            stated: { day30: true, day60: true, day90: false },
+          },
+        }}
+        manager="sam@kestrel.example"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html.match(/data-goal="gap"/g)).toHaveLength(1);
+    expect(html).toContain('90 days · no goal stated');
+    expect(html).not.toContain('60 days · no goal stated');
+  });
+
   it('names the manager it reports to and sends a handover to People, never to the header', (): void => {
     const html = render(
       <CharterDocument
