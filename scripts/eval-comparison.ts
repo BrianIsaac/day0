@@ -673,7 +673,8 @@ export async function driveDay0State(
       active,
       'plan',
       item.decision?.requestedAt ?? Date.now(),
-      async () => await context.client.mutation(api.work.approvePlan, { workItemId: item._id }),
+      async () =>
+        await context.client.mutation(api.planApproval.approvePlan, { workItemId: item._id }),
     );
     return;
   }

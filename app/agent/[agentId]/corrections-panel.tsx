@@ -1,8 +1,24 @@
 'use client';
 
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
+import {
+  awaitingCheck,
+  awaitingManager,
+  checkingLine,
+  NOT_KEPT,
+  PROPOSALS_DONE,
+  PROPOSALS_TITLE,
+  proposalQuestion,
+  REFUSED_WITHOUT_REASON,
+  WITHDRAWN,
+  refusalOffersAmendment,
+  refusalSentence,
+  type AgreementView,
+} from '../../../src/work/agreement-words';
+import { Button, ButtonLink } from '../../components/Button';
+import { Card } from '../../components/Card';
 import { useChange } from '../../components/use-change';
 import { StatusRegion } from '../../components/StatusRegion';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../components/time';
@@ -10,8 +26,9 @@ import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../components/
 /**
  * The manager's corrections on the employee's dashboard: what was kept, from
  * which item and when, the later items it was applied to, and the Retire
- * control; and on a plan card, the line that says the plan applies one.
- * Real mode only, as the corrections are.
+ * control; on a plan card, the line that says the plan applies one; and
+ * above them the promotion card, the working agreements Day0 proposes from
+ * them (13-W). Real mode only, as the corrections are.
  */
 
 /** A kept correction as the dashboard reads it from `corrections.listForAgent`. */
@@ -193,5 +210,190 @@ export function AppliedCorrectionsLine({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Whether the promotion card shows a working agreement: a proposal waiting on the manager, one
+ * kept from this tab or a plan approval and waiting on its check, or one refused. What was kept,
+ * edited or refused on the Charter tab's card stays there.
+ */
+function onPromotionCard(row: AgreementView): boolean {
+  if (row.sourceType === 'manager-card') return false;
+  return awaitingManager(row) || awaitingCheck(row) || row.status === 'refused';
+}
+
+/** The buttons of one row, stacked in the narrow aside so a long name or label never runs out. */
+const ROW_ACTIONS = 'mt-2 grid gap-2';
+
+/** A row button, full width and allowed to wrap. */
+const ROW_BUTTON = 'w-full whitespace-normal';
+
+/**
+ * The promotion card (13-W; the wave file's section 7), its own card above the kept corrections:
+ * each working agreement Day0 proposes from the manager's corrections with Keep for the employee,
+ * Keep for every employee and Not now; each kept one waiting on its check against the charter; and
+ * each refused one with why, the clause it contradicts quoted, Amend the charter where the charter
+ * settles it, and Dismiss. It stays drawn while the outcome of its last decision is said.
+ *
+ * @param props - The employee's agreements, its name, the Charter tab, and the two calls.
+ * @returns The card, or nothing when nothing waits and nothing is being said.
+ */
+export function AgreementProposals({
+  agreements,
+  employeeName,
+  charterHref,
+  onKeep,
+  onDismiss,
+}: {
+  agreements: readonly AgreementView[];
+  employeeName: string;
+  /** The Charter tab, where the charter is amended. */
+  charterHref: string;
+  onKeep: (agreementId: AgreementView['_id'], forEveryEmployee: boolean) => Promise<unknown>;
+  onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
+}) {
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
+  const id = useId();
+  const shown = agreements.filter(onPromotionCard);
+  if (shown.length === 0 && change.outcome === null) return null;
+  const keep = (row: AgreementView, forEveryEmployee: boolean): void =>
+    change.run(() => onKeep(row._id, forEveryEmployee), {
+      done: `Kept for ${forEveryEmployee ? 'every employee' : employeeName}. Day0 checks it against the charter before it takes effect.`,
+      refused: 'The working agreement was not kept.',
+    });
+  const withdraw = (row: AgreementView): void =>
+    change.run(() => onDismiss(row._id), {
+      done: WITHDRAWN,
+      refused: 'The working agreement was not withdrawn.',
+    });
+  const dismiss = (row: AgreementView, refused: boolean): void =>
+    change.run(() => onDismiss(row._id), {
+      done: refused ? 'Dismissed.' : 'Set aside: these corrections are not proposed again.',
+      refused: refused ? 'The refusal was not dismissed.' : 'The proposal was not set aside.',
+    });
+  return (
+    <Card title={PROPOSALS_TITLE} focusRef={card}>
+      {shown.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">{PROPOSALS_DONE}</p>
+      ) : (
+        <ul className="space-y-2">
+          {shown.map((row) => {
+            const about = `${id}-${row._id}`;
+            return (
+              <li
+                key={row._id}
+                className={`p-3 rounded-md border text-sm ${
+                  row.status === 'refused'
+                    ? 'border-[var(--color-warn-line)]'
+                    : 'border-[var(--color-accent-line)] bg-[var(--color-accent)]/5'
+                }`}
+              >
+                {row.status === 'refused' ? (
+                  <>
+                    <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
+                      {NOT_KEPT}
+                    </p>
+                    <p
+                      id={about}
+                      className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words"
+                    >
+                      “{row.statement}”
+                    </p>
+                    <p className="mt-1 text-[var(--color-fg-2)]">
+                      {row.refusal
+                        ? refusalSentence(row.refusal, employeeName, 'work')
+                        : REFUSED_WITHOUT_REASON}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      {row.refusal && refusalOffersAmendment(row.refusal) ? (
+                        <ButtonLink
+                          href={charterHref}
+                          size="small"
+                          aria-describedby={about}
+                          className={ROW_BUTTON}
+                        >
+                          Amend the charter
+                        </ButtonLink>
+                      ) : null}
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-label={`Dismiss the refused agreement “${row.statement}”`}
+                        className={ROW_BUTTON}
+                        onClick={() => dismiss(row, true)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </>
+                ) : awaitingCheck(row) ? (
+                  <>
+                    <p className="text-[var(--color-fg-2)]">
+                      {checkingLine(row.statement, 'work')}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-label={`Withdraw “${row.statement}”`}
+                        className={ROW_BUTTON}
+                        onClick={() => withdraw(row)}
+                      >
+                        Withdraw
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p
+                      id={about}
+                      className="text-[var(--color-fg)] whitespace-pre-wrap break-words"
+                    >
+                      {proposalQuestion(row, employeeName)}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      <Button
+                        variant="approve"
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => keep(row, false)}
+                      >
+                        Keep for {employeeName}
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => keep(row, true)}
+                      >
+                        Keep for every employee
+                      </Button>
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-describedby={about}
+                        className={ROW_BUTTON}
+                        onClick={() => dismiss(row, false)}
+                      >
+                        Not now
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <StatusRegion outcome={change.outcome} />
+    </Card>
   );
 }

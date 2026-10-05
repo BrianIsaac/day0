@@ -16,6 +16,7 @@ import {
   plannerCorrectionLines,
   type PlannerCorrection,
 } from './corrections';
+import { appliedAgreementIds, plannerAgreementLines, type PromptAgreement } from './agreements';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 import {
@@ -477,9 +478,9 @@ export const planSchema = z.object({
 
 /**
  * The real planner's reply: the mock schema plus the declared obligations
- * and the corrections it applied, each nullable on the wire so a reply that
- * omits them still parses and the judgement fills the obligations. The mock
- * schema is untouched.
+ * and the corrections and working agreements it applied, each nullable on the
+ * wire so a reply that omits them still parses and the judgement fills the
+ * obligations. The mock schema is untouched.
  */
 export const realPlanSchema = planSchema.extend({
   stepObligations: z
@@ -494,6 +495,7 @@ export const realPlanSchema = planSchema.extend({
   transition: z.enum(PLAN_TRANSITIONS).nullable(),
   transitionStep: z.number().int().nullable(),
   appliedCorrections: z.array(z.string()).nullable(),
+  appliedAgreements: z.array(z.string()).nullable(),
 });
 
 type RealPlanReply = z.infer<typeof realPlanSchema>;
@@ -795,6 +797,13 @@ export interface DraftPlanArgs {
   corrections?: readonly PlannerCorrection[];
   /** Set when the corrections were scrubbed without the span model; the plan records it. */
   correctionsRedaction?: 'structural-only';
+  /**
+   * The working agreements selected for this candidate, already scrubbed; real mode only, the mock
+   * prompt never carries them, and the scope judgement never reads them (13-W).
+   */
+  agreements?: readonly PromptAgreement[];
+  /** Set when the agreements were scrubbed without the span model; the plan records it. */
+  agreementsRedaction?: 'structural-only';
 }
 
 /**
@@ -876,7 +885,12 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
       renderTeamDocs(args.documents.teamDocs),
     );
   }
-  if (args.surfaceMode === 'real') lines.push(...plannerCorrectionLines(args.corrections ?? []));
+  if (args.surfaceMode === 'real') {
+    lines.push(
+      ...plannerCorrectionLines(args.corrections ?? []),
+      ...plannerAgreementLines(args.agreements ?? []),
+    );
+  }
   lines.push('', 'Draft the execution plan now.');
   return lines.join('\n');
 }
@@ -962,8 +976,8 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
 }
 
 /**
- * The plan with the corrections it applied: only ids the prompt offered,
- * and the scrub's degradation when the planner saw any.
+ * The plan with the corrections and working agreements it applied: only ids
+ * the prompt offered, and each scrub's degradation when the planner saw any.
  */
 function withCorrections(
   plan: ExecutionPlan,
@@ -972,11 +986,17 @@ function withCorrections(
 ): ExecutionPlan {
   const offered = args.corrections ?? [];
   const applied = appliedCorrectionIds(reply.appliedCorrections, offered);
+  const offeredAgreements = args.agreements ?? [];
+  const appliedAgreements = appliedAgreementIds(reply.appliedAgreements, offeredAgreements);
   return {
     ...plan,
     ...(applied.length > 0 ? { appliedCorrections: applied } : {}),
     ...(offered.length > 0 && args.correctionsRedaction
       ? { correctionsRedaction: args.correctionsRedaction }
+      : {}),
+    ...(appliedAgreements.length > 0 ? { appliedAgreements } : {}),
+    ...(offeredAgreements.length > 0 && args.agreementsRedaction
+      ? { agreementsRedaction: args.agreementsRedaction }
       : {}),
   };
 }

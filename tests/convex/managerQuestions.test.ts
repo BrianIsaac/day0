@@ -196,7 +196,7 @@ describe('asking open questions at plan approval', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedAgent(harness);
     const first = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId: first, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId: first, plan: lookerPlan });
 
     const asked = await questions(harness, agentId);
     expect(asked).toHaveLength(1);
@@ -216,7 +216,7 @@ describe('asking open questions at plan approval', (): void => {
     ]);
 
     const second = await seedClaimed(harness, agentId, 'Another Looker tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId: second, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId: second, plan: lookerPlan });
     expect(await questions(harness, agentId)).toHaveLength(1);
     const owner = harness.withIdentity(OWNER);
     expect(await owner.query(api.managerQuestions.forWorkItem, { workItemId: second })).toEqual([]);
@@ -230,7 +230,10 @@ describe('asking open questions at plan approval', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const untouched = await seedClaimed(harness, agentId, 'Reply to the #revops-asks thread');
-    await harness.mutation(internal.work.setPlan, { workItemId: untouched, plan: plainPlan });
+    await harness.mutation(internal.planApproval.setPlan, {
+      workItemId: untouched,
+      plan: plainPlan,
+    });
     expect(await questions(harness, agentId)).toEqual([]);
 
     const byCandidate = await seedClaimed(
@@ -239,7 +242,10 @@ describe('asking open questions at plan approval', (): void => {
       'Northstar account clean-up',
       'Merge the duplicate Northstar accounts.',
     );
-    await harness.mutation(internal.work.setPlan, { workItemId: byCandidate, plan: plainPlan });
+    await harness.mutation(internal.planApproval.setPlan, {
+      workItemId: byCandidate,
+      plan: plainPlan,
+    });
     const asked = await questions(harness, agentId);
     expect(asked).toHaveLength(1);
     expect(asked[0]).toMatchObject({
@@ -265,7 +271,7 @@ describe('asking open questions at plan approval', (): void => {
         }),
     );
     const workItemId = await seedClaimed(harness, agentId, 'Audit note for the checklist');
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: {
         ...plainPlan,
@@ -289,7 +295,7 @@ describe('asking open questions at plan approval', (): void => {
     const { agentId, charterId } = await seedApprovedAgent(harness);
     await harness.run(async (ctx) => await ctx.db.patch(charterId, { approved: false }));
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     expect(await questions(harness, agentId)).toEqual([]);
   });
 });
@@ -299,7 +305,7 @@ describe('answering a question', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     const owner = harness.withIdentity(OWNER);
 
@@ -343,7 +349,7 @@ describe('answering a question', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     await seedAcceptingHandover(harness, agentId, 'worker 1');
 
@@ -362,7 +368,7 @@ describe('answering a question', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     const owner = harness.withIdentity(OWNER);
     await expect(
@@ -384,7 +390,7 @@ describe('answering a question', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     const owner = harness.withIdentity(OWNER);
     const amended = await owner.mutation(api.charters.amend, {

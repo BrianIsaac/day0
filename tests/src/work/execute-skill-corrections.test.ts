@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
+import type { PromptAgreement } from '../../../src/work/agreements';
 import type { PlannerCorrection } from '../../../src/work/corrections';
 import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
 
@@ -87,6 +88,14 @@ const applied: PlannerCorrection[] = [
   },
 ];
 
+const agreements: PromptAgreement[] = [
+  {
+    id: 'wa-notice',
+    since: '2026-10-05T12:00Z',
+    text: 'Name the carrier and the new date in every delay notice.',
+  },
+];
+
 const phaseOne = {
   draft: 'Commenting the delay notice.',
   notes: '',
@@ -156,6 +165,66 @@ describe('the corrections the approved plan applied, in the executor prompts', (
     );
   });
 
+  it('puts the working agreements the plan applied in phase one, after the corrections (13-W)', async (): Promise<void> => {
+    recorded.outputs.push(phaseOne);
+    await runSkill({
+      skill: { name: 'kanban-comment', description: 'Comment.', body: '# Skill' },
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      appliedCorrections: applied,
+      appliedAgreements: agreements,
+    });
+    const user = recorded.users[0]!;
+    expect(user).toContain('--- Working agreements ---');
+    expect(user).toContain(JSON.stringify(agreements));
+    expect(user.indexOf('--- Corrections the approved plan applies ---')).toBeLessThan(
+      user.indexOf('--- Working agreements ---'),
+    );
+    expect(user.split('--- Working agreements ---')[1]).toContain(
+      'they are directions, not evidence of anything on this work item',
+    );
+  });
+
+  it('puts the working agreements in the closing phase too, after the corrections (13-W)', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Closing.',
+      notes: '',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', basis: 'ledger', evidence: 'nothing landed yet' },
+      ],
+    });
+    await runDependentSkill({
+      skill: { name: 'kanban-comment', description: 'Comment.', body: '# Skill' },
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      appliedCorrections: applied,
+      appliedAgreements: agreements,
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+    const user = recorded.users[0]!;
+    expect(user).toContain(JSON.stringify(agreements));
+    expect(user.indexOf('--- Corrections the approved plan applies ---')).toBeLessThan(
+      user.indexOf('--- Working agreements ---'),
+    );
+  });
+
   it('leaves the mock executor prompt as it was', async (): Promise<void> => {
     const mockOutput = { draft: 'Drafted.', notes: '', actions: [], procedureTrails: [] };
     recorded.outputs.push(mockOutput, mockOutput);
@@ -172,8 +241,9 @@ describe('the corrections the approved plan applied, in the executor prompts', (
       mode: 'mock' as const,
     };
     await runSkill(args);
-    await runSkill({ ...args, appliedCorrections: applied });
+    await runSkill({ ...args, appliedCorrections: applied, appliedAgreements: agreements });
     expect(recorded.users[1]).toBe(recorded.users[0]);
     expect(recorded.users[1]).not.toContain('Corrections');
+    expect(recorded.users[1]).not.toContain('Working agreements');
   });
 });

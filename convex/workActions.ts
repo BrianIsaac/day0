@@ -134,6 +134,7 @@ import {
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { scrubbedCorrectionEntries, type PlannerCorrection } from '../src/work/corrections';
+import { scrubbedAgreementEntries, type PromptAgreement } from '../src/work/agreements';
 import {
   droppedReadRefusal,
   gateRefusalStop,
@@ -767,8 +768,12 @@ async function draftPlanHandler(
         })
       : undefined;
   const record = grounded?.record;
+  const agreements =
+    SURFACE_MODE === 'real' ? await plannerAgreements(ctx, item, knownValues) : undefined;
   const corrections =
-    SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
+    SURFACE_MODE === 'real'
+      ? await plannerCorrections(ctx, item, knownValues, agreements?.covered ?? [])
+      : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
   const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
@@ -785,13 +790,19 @@ async function draftPlanHandler(
               ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
             }
           : {}),
+        ...(agreements && agreements.entries.length > 0
+          ? {
+              agreements: agreements.entries,
+              ...(agreements.redaction ? { agreementsRedaction: agreements.redaction } : {}),
+            }
+          : {}),
         onObligationEvent: async (event) =>
           await logObligationEvent(ctx, { agentId, workItemId: args.workItemId }, event),
       }),
     ),
   );
   if (plan === undefined) return { ok: false, reason: 'the plan draft failed on this item' };
-  const stored = await ctx.runMutation(internal.work.setPlan, {
+  const stored = await ctx.runMutation(internal.planApproval.setPlan, {
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
@@ -1252,6 +1263,11 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
+    const appliedAgreements = await executorAgreements(ctx, {
+      agent,
+      item: args.item,
+      plan: args.plan,
+    });
     await claimPlannedWriteTargets(ctx, {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1280,6 +1296,7 @@ async function holdDay0Actions(
       unsentWrites: args.unsentWrites,
       heldElsewhere,
       appliedCorrections,
+      appliedAgreements,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
@@ -2645,6 +2662,12 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         knownValues,
       });
+      const appliedAgreements = await executorAgreements(ctx, {
+        agent,
+        item,
+        plan,
+        knownValues,
+      });
       let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
@@ -2731,6 +2754,7 @@ export const authorDependentActions = internalAction({
             managerFeedback: feedback,
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
+            appliedAgreements,
             groundingReads,
             initialOutput: prerequisites,
             initialLedger: prerequisites.applied,
@@ -4125,12 +4149,14 @@ async function readCandidateRecord(
 /**
  * The manager's corrections a later item is planned with: this employee's
  * active ones of the item's kind, selected in code and scrubbed for the
- * prompt. The scope judgement never reads them; scope is the charter's.
+ * prompt, but for those kept as a working agreement the planner reads
+ * already. The scope judgement never reads them; scope is the charter's.
  *
  * Args:
  *   ctx: Convex action context.
  *   item: The work item about to be planned.
  *   knownValues: The owner's stored values, resolved once by the calling action.
+ *   covered: The corrections the selected working agreements were kept from.
  *
  * Returns:
  *   The prompt entries, and whether the scrub ran without the span model.
@@ -4139,8 +4165,9 @@ async function plannerCorrections(
   ctx: ActionCtx,
   item: Doc<'workItems'>,
   knownValues: readonly string[],
+  covered: readonly string[],
 ): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
-  const selected: Doc<'corrections'>[] = await ctx.runQuery(
+  const found: Doc<'corrections'>[] = await ctx.runQuery(
     internal.corrections.selectedForCandidate,
     {
       agentId: item.agentId,
@@ -4149,11 +4176,78 @@ async function plannerCorrections(
       workItemId: item._id,
     },
   );
+  // A correction kept as a working agreement the planner reads already is not said twice.
+  const selected = found.filter((correction) => !covered.includes(correction._id));
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, {
     model: spanModelFromEnv(),
     known: knownValues,
   });
+}
+
+/**
+ * The working agreements a later item is planned with: the active ones of its employee and of
+ * every employee of its owner that apply to it, selected in code (13-W) and scrubbed for the
+ * prompt. The scope judgement never reads them; scope is the charter's.
+ *
+ * @param ctx - Convex action context.
+ * @param item - The work item about to be planned.
+ * @param knownValues - The owner's stored values, resolved once by the calling action.
+ * @returns The prompt entries, whether the scrub ran without the span model, and the corrections
+ *   the selected agreements were kept from.
+ */
+async function plannerAgreements(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  knownValues: readonly string[],
+): Promise<{
+  entries: PromptAgreement[];
+  redaction?: 'structural-only';
+  covered: string[];
+}> {
+  const selected: Doc<'workingAgreements'>[] = await ctx.runQuery(
+    internal.workingAgreements.selectedForCandidate,
+    { workItemId: item._id },
+  );
+  if (selected.length === 0) return { entries: [], covered: [] };
+  const scrubbed = await scrubbedAgreementEntries(selected, {
+    model: spanModelFromEnv(),
+    known: knownValues,
+  });
+  return { ...scrubbed, covered: selected.flatMap((row) => row.correctionIds ?? []) };
+}
+
+/**
+ * The working agreements an approved plan applied, as its executor reads them (13-W): the plan's
+ * own list, each still of the employee's owner and binding this employee, scrubbed at prompt
+ * assembly. The statements were stored redacted; the scrub removes a credential stored since.
+ *
+ * @param ctx - Convex action context.
+ * @param args - The agent, the work item, its approved plan, and the owner's stored values when
+ *   the caller already resolved them.
+ * @returns The prompt entries; empty in mock mode or when the plan applied none.
+ */
+async function executorAgreements(
+  ctx: ActionCtx,
+  args: {
+    agent: Doc<'agents'>;
+    item: Doc<'workItems'>;
+    plan: ExecutionPlan;
+    knownValues?: readonly string[];
+  },
+): Promise<PromptAgreement[]> {
+  const ids = SURFACE_MODE === 'real' ? (args.plan.appliedAgreements ?? []) : [];
+  if (ids.length === 0) return [];
+  const rows: Doc<'workingAgreements'>[] = await ctx.runQuery(internal.workingAgreements.forPlan, {
+    agentId: args.item.agentId,
+    ids,
+  });
+  if (rows.length === 0) return [];
+  const scrubbed = await scrubbedAgreementEntries(rows, {
+    model: spanModelFromEnv(),
+    known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
+  });
+  return scrubbed.entries;
 }
 
 /**

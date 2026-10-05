@@ -223,6 +223,7 @@ vi.mock('../../src/lib/mastra', () => ({
           transition: null,
           transitionStep: null,
           appliedCorrections: null,
+          appliedAgreements: null,
         } as T;
       }
       if (name === 'day0-plan-obligations') return cleanPlanObligations as T;
@@ -516,6 +517,28 @@ function ledger(row: Doc<'workItems'>): AppliedAction[] {
   return ((row.output ?? {}) as { applied?: AppliedAction[] }).applied ?? [];
 }
 
+/** The most rounds {@link settleDueJobs} runs before it gives up on a scheduler that keeps scheduling. */
+const SETTLE_ROUNDS = 20;
+
+/**
+ * Run every job due now on real timers, and every job those schedule, so nothing a test started
+ * fires after it ended into the next test's shared recordings. A job scheduled for later (the
+ * six-minute apply recovery) is left: no test of this file lives that long.
+ */
+async function settleDueJobs(harness: Harness): Promise<void> {
+  for (let round = 0; round < SETTLE_ROUNDS; round += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await harness.finishInProgressScheduledFunctions();
+    const due = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (job) => job.state.kind === 'pending' && job.scheduledTime <= Date.now(),
+      ),
+    );
+    if (due.length === 0) return;
+  }
+  throw new Error('the scheduler kept scheduling due jobs');
+}
+
 describe('the 14 September sequence, replayed through the real gate', (): void => {
   beforeEach((): void => {
     useSurfaceMode('real');
@@ -717,6 +740,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       { payload: { workItemId, removedIndices: [1, 2], reason: 'prewritten closing actions' } },
     ]);
     expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
+    // Autonomy schedules the closing phase; it runs here, not in the next test.
+    await settleDueJobs(t);
   }, 30_000);
 
   it('audits a closing comment revealed by key repair before autonomy can apply it', async () => {
@@ -749,6 +774,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(events.filter((event) => event.type === 'audit.corrected')).toMatchObject([
       { payload: { workItemId, removedIndices: [1], reason: 'prewritten closing actions' } },
     ]);
+    // Autonomy schedules the closing phase; it runs here, not in the next test.
+    await settleDueJobs(t);
   }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {
@@ -793,7 +820,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
 
     // The manager approves the plan; phase one holds the whole tile sequence
     // behind the read.
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const executorPrompt = recorded.model.find((call) => call.agent.endsWith('-initial'));
     expect(executorPrompt?.user).toContain(

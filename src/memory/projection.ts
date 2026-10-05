@@ -4,8 +4,8 @@ import { mockActsAsWords, mockOfficeSystemsPhrase } from '../surfaces/mock-offic
 
 /**
  * The readable projection of what an employee knows (decision A2): its charter, the people it
- * works with, the working agreements the manager kept, its skills, its connections and its
- * documentation, projected from the structured rows each time they change and bounded at
+ * works with, the working agreements the manager kept and the lessons of the corrections the
+ * manager gave, its skills, its connections and its documentation, projected from the structured rows each time they change and bounded at
  * `PROJECTION_LIMIT` characters. It is drawn on the dashboard for the manager only and is never
  * a prompt input: the employee reads the rows themselves, not this text.
  */
@@ -49,8 +49,10 @@ export interface ProjectionInput {
   readonly zone: string;
   /** The newest approved charter, or null before the first approval. */
   readonly charter: ProjectedCharter | null;
-  /** The corrections the manager kept, newest first, each the manager's own words. */
+  /** The working agreements in effect for the employee, newest kept first (13-W). */
   readonly agreements: readonly string[];
+  /** The corrections the manager kept and has not retired, newest first, in the manager's words. */
+  readonly lessons: readonly string[];
   readonly skills: readonly ProjectedSkill[];
   readonly surfaces: readonly ProjectedSurface[];
   /** The documentation sources the employee inherits, by label. */
@@ -210,6 +212,9 @@ export function projectKnowledge(input: ProjectionInput): KnowledgeProjection {
       input.agreements.length > 0
         ? `Working agreements: ${input.agreements.join('; ')}`
         : 'Working agreements: none kept yet',
+      input.lessons.length > 0
+        ? `Lessons from your corrections: ${input.lessons.join('; ')}`
+        : 'Lessons from your corrections: none yet',
     ],
     [`Skills: ${skills.length > 0 ? skills.join(', ') : 'none registered yet'}`],
     [connectionsLine(input)],

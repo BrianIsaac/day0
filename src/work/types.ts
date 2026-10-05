@@ -182,6 +182,14 @@ export interface ExecutionPlan {
   appliedCorrections?: string[];
   /** Set when the corrections the planner saw were scrubbed without the span model. */
   correctionsRedaction?: 'structural-only';
+  /**
+   * The working agreements (`workingAgreements` ids) the planner applied, real mode only (13-W).
+   * `setPlan` keeps only active ones that bind this employee; the executor carries these and no
+   * other.
+   */
+  appliedAgreements?: string[];
+  /** Set when the agreements the planner saw were scrubbed without the span model. */
+  agreementsRedaction?: 'structural-only';
 }
 
 /** The four verbs that write to the per-agent mock environment. */

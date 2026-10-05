@@ -60,6 +60,7 @@ import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
 import type * as ownership from '../ownership.js';
 import type * as people from '../people.js';
+import type * as planApproval from '../planApproval.js';
 import type * as probeActions from '../probeActions.js';
 import type * as refreshLease from '../refreshLease.js';
 import type * as reset from '../reset.js';
@@ -105,6 +106,8 @@ import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
 import type * as workLoop from '../workLoop.js';
 import type * as workRuns from '../workRuns.js';
+import type * as workingAgreementActions from '../workingAgreementActions.js';
+import type * as workingAgreements from '../workingAgreements.js';
 import type * as workspace from '../workspace.js';
 
 import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
@@ -162,6 +165,7 @@ declare const fullApi: ApiFromModules<{
   orientationData: typeof orientationData;
   ownership: typeof ownership;
   people: typeof people;
+  planApproval: typeof planApproval;
   probeActions: typeof probeActions;
   refreshLease: typeof refreshLease;
   reset: typeof reset;
@@ -207,6 +211,8 @@ declare const fullApi: ApiFromModules<{
   workActions: typeof workActions;
   workLoop: typeof workLoop;
   workRuns: typeof workRuns;
+  workingAgreementActions: typeof workingAgreementActions;
+  workingAgreements: typeof workingAgreements;
   workspace: typeof workspace;
 }>;
 
