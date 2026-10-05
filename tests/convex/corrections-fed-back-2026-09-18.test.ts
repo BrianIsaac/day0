@@ -83,6 +83,7 @@ vi.mock('../../src/lib/mastra', () => ({
         transition: 'none',
         transitionStep: null,
         appliedCorrections: [...offeredIds(args.user), 'forged-correction-id'],
+        appliedAgreements: null,
       }) as T;
     }
     if (name === 'day0-plan-obligations') {

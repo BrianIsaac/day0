@@ -134,6 +134,7 @@ import {
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { scrubbedCorrectionEntries, type PlannerCorrection } from '../src/work/corrections';
+import { scrubbedAgreementEntries, type PromptAgreement } from '../src/work/agreements';
 import {
   droppedReadRefusal,
   gateRefusalStop,
@@ -769,6 +770,8 @@ async function draftPlanHandler(
   const record = grounded?.record;
   const corrections =
     SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
+  const agreements =
+    SURFACE_MODE === 'real' ? await plannerAgreements(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
   const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
@@ -783,6 +786,12 @@ async function draftPlanHandler(
           ? {
               corrections: corrections.entries,
               ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
+            }
+          : {}),
+        ...(agreements && agreements.entries.length > 0
+          ? {
+              agreements: agreements.entries,
+              ...(agreements.redaction ? { agreementsRedaction: agreements.redaction } : {}),
             }
           : {}),
         onObligationEvent: async (event) =>
@@ -4151,6 +4160,32 @@ async function plannerCorrections(
   );
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, {
+    model: spanModelFromEnv(),
+    known: knownValues,
+  });
+}
+
+/**
+ * The working agreements a later item is planned with: the active ones of its employee and of
+ * every employee of its owner that apply to it, selected in code (13-W) and scrubbed for the
+ * prompt. The scope judgement never reads them; scope is the charter's.
+ *
+ * @param ctx - Convex action context.
+ * @param item - The work item about to be planned.
+ * @param knownValues - The owner's stored values, resolved once by the calling action.
+ * @returns The prompt entries, and whether the scrub ran without the span model.
+ */
+async function plannerAgreements(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  knownValues: readonly string[],
+): Promise<{ entries: PromptAgreement[]; redaction?: 'structural-only' }> {
+  const selected: Doc<'workingAgreements'>[] = await ctx.runQuery(
+    internal.workingAgreements.selectedForCandidate,
+    { workItemId: item._id },
+  );
+  if (selected.length === 0) return { entries: [] };
+  return await scrubbedAgreementEntries(selected, {
     model: spanModelFromEnv(),
     known: knownValues,
   });

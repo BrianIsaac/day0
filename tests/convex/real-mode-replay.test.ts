@@ -223,6 +223,7 @@ vi.mock('../../src/lib/mastra', () => ({
           transition: null,
           transitionStep: null,
           appliedCorrections: null,
+          appliedAgreements: null,
         } as T;
       }
       if (name === 'day0-plan-obligations') return cleanPlanObligations as T;

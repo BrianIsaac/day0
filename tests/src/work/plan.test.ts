@@ -1224,6 +1224,117 @@ describe('corrections the manager gave on earlier work', (): void => {
   });
 });
 
+describe('working agreements in the planner (13-W)', (): void => {
+  const corrections = [
+    {
+      id: 'c-note',
+      from: 'Retry note on "Exception: SH-4471 held at customs"',
+      when: '2026-09-18T07:40Z',
+      text: 'Use the Delay notice B template and follow up in 48 hours.',
+    },
+  ];
+  const agreements = [
+    {
+      id: 'wa-email',
+      since: '2026-10-05T12:00Z',
+      text: 'Comment on the ticket and let the account team email the customer.',
+    },
+  ];
+
+  beforeEach((): void => {
+    planRecorded.users.length = 0;
+    planRecorded.instructions.length = 0;
+    planRecorded.outputs.length = 0;
+    planRecorded.judgements.length = 0;
+  });
+
+  it('puts them after the corrections block, before the closing line, with the same rule', (): void => {
+    const user = planUserPrompt({
+      candidate,
+      charter,
+      surfaceMode: 'real',
+      corrections,
+      agreements,
+    });
+    expect(user).toContain('--- Working agreements ---');
+    expect(user).toContain(JSON.stringify(agreements));
+    expect(user.indexOf('--- Corrections the manager gave')).toBeLessThan(
+      user.indexOf('--- Working agreements ---'),
+    );
+    expect(user.split('--- Working agreements ---')[1]).toContain(
+      'none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate',
+    );
+    expect(user.endsWith('Draft the execution plan now.')).toBe(true);
+  });
+
+  it('leaves the mock prompt and a real prompt offered none byte-identical', (): void => {
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'mock', agreements })).toBe(
+      planUserPrompt({ candidate, charter }),
+    );
+    expect(
+      planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections, agreements: [] }),
+    ).toBe(planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections }));
+  });
+
+  it('stores the ids the planner says it applied, only ids it was offered, and the scrub when limited', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Comment the delay notice.',
+      steps: ['Comment the Delay notice B template on the ticket.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: null,
+      appliedAgreements: ['wa-email', 'wa-forged'],
+    });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      agreements,
+      agreementsRedaction: 'structural-only',
+      now,
+    });
+    expect(plan.appliedAgreements).toEqual(['wa-email']);
+    expect(plan.agreementsRedaction).toBe('structural-only');
+    expect(plan).not.toHaveProperty('appliedCorrections');
+  });
+
+  it('records none on a plan offered none, whatever the reply says', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Comment the delay notice.',
+      steps: ['Comment on the ticket.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: null,
+      appliedAgreements: ['wa-email'],
+    });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      now,
+    });
+    expect(plan).not.toHaveProperty('appliedAgreements');
+    expect(plan).not.toHaveProperty('agreementsRedaction');
+  });
+
+  it('asks the real planner for the ids it applied, nullable as the corrections are', (): void => {
+    expect(Object.keys(realPlanSchema.shape)).toContain('appliedAgreements');
+    expect(realPlanSchema.shape.appliedAgreements.parse(null)).toBeNull();
+  });
+});
+
 describe('the frozen mock plan schema', (): void => {
   it('keeps the mock schema to the fields the recorded beds returned', (): void => {
     expect(Object.keys(planSchema.shape)).toEqual([
