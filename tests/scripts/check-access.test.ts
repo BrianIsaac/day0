@@ -760,6 +760,29 @@ describe('check:access: whether the typed code reaches each employee app (W12V-7
     });
   });
 
+  it('names each app whose opening Slack refused as a gap, with what a person can do (13-FS)', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        messages: {
+          state: 'read',
+          apps: [
+            { appName: 'Iris (Day0)', reach: 'refused' },
+            { appName: 'Vela (Day0)', reach: 'day0-opens' },
+          ],
+        },
+      }),
+    );
+    expect(only(checks, 'slack', 'messages')).toEqual({
+      subject: 'slack',
+      name: 'messages',
+      status: 'gap',
+      detail:
+        'Iris (Day0) takes no messages: Slack refused Day0’s opening of its messages tab, so no typed code reaches it, and Day0 does not try again on its own. Someone who manages it in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and the manager says so on its card (It is on in Slack), or presses Check the connection there for Day0 to try again.',
+    });
+  });
+
   it('says what could not be read, as a note', async (): Promise<void> => {
     const checks = await accessChecks(
       [SLACK],

@@ -626,6 +626,10 @@ async function landAppLevelToken(
         createdAt: 1,
         installedAt: 2,
         appLevelTokenCredentialId: appLevel,
+        // Re-pinned for 13-FS: the reach reads the card's own field, written beside the event.
+        ...(options.takesMessages !== false
+          ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+          : {}),
       },
     });
     // An app this release creates takes messages from the start (W12V-7); one an earlier release

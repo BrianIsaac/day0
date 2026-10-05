@@ -64,8 +64,11 @@ place to type. So:
   of the app's card (the hourly re-check, or **Check the connection** on the
   card), while the organisation's configuration connection that created it is
   still active. Both calls (`apps.manifest.export`, then the update) are on
-  that connection's ledger; if Slack refuses the update, the card's row stays
-  and the next bullet applies.
+  that connection's ledger; if Slack refuses either call, the card records the
+  refusal with Slack's words and stops asking at its routine checks (from
+  v0.17.0; an earlier release asked at every check). Day0 asks again only when
+  the manager presses **Check the connection**; otherwise the next bullet
+  applies, and `pnpm check:access` names the app in its `messages` row.
 - Where Day0 cannot (the app was created with a configuration token pasted on
   its card, the connection that created it is marked **Needs IT** on the
   organisation page, or Slack refused the update), a collaborator on the app

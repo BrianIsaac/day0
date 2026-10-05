@@ -676,8 +676,8 @@ export interface TypedCodeWords {
 /**
  * Whether the manager's typed code reaches the employee's own Slack app (W12V-7): nothing while it
  * takes messages; otherwise that it does not, who opens its messages tab (Day0 at the card's next
- * check, or only a person in Slack), the one toggle by Slack's own words, and the control with
- * which the manager says it is on.
+ * check, Day0 again only when asked after Slack refused it, or only a person in Slack), the one
+ * toggle by Slack's own words, and the control with which the manager says it is on.
  *
  * @param reach - Whether the typed code reaches the app, as `listForAgent` read it.
  */
@@ -690,6 +690,12 @@ export function typedCodeWords(reach: TypedCodeReach): TypedCodeWords | undefine
       return {
         title: 'Typed code: off until this app takes messages',
         note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
+        confirm: 'It is on in Slack',
+      };
+    case 'refused':
+      return {
+        title: 'Typed code: off until this app takes messages',
+        note: `Slack refused to open the messages tab of ${reach.appName} (${reach.reason}), so no typed code reaches it. Day0 tries again only when you press Check the connection. Otherwise someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
         confirm: 'It is on in Slack',
       };
     case 'needs-toggle':

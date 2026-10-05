@@ -871,8 +871,8 @@ function listedNames(names: readonly string[]): string {
 
 /**
  * Whether the manager's typed code reaches each installed employee app (W12V-7): an app only a
- * person can open is a gap, named with Slack's toggle; one Day0 opens at its card's next check is
- * a note; every app taking messages passes.
+ * person can open is a gap, named with Slack's toggle, and so is one whose opening Slack refused
+ * (13-FS); one Day0 opens at its card's next check is a note; every app taking messages passes.
  */
 async function messagesCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
   if (probes.messagesTab === undefined) {
@@ -900,6 +900,20 @@ async function messagesCheck(row: ConnectionRow, probes: VendorProbes): Promise<
         `${one ? 'it' : 'them'}, and Day0 cannot change ${one ? 'its' : 'their'} settings: ` +
         `someone who manages ${one ? 'it' : 'each'} in Slack turns on App Home, ` +
         `“${MESSAGES_TAB_TOGGLE}”, and the manager says so on its card (It is on in Slack).`,
+    );
+  }
+  const refused = named('refused');
+  if (refused.length > 0) {
+    const one = refused.length === 1;
+    return check(
+      row.system,
+      'messages',
+      'gap',
+      `${listedNames(refused)} take${one ? 's' : ''} no messages: Slack refused Day0’s opening of ` +
+        `${one ? 'its' : 'their'} messages tab, so no typed code reaches ${one ? 'it' : 'them'}, ` +
+        `and Day0 does not try again on its own. Someone who manages ${one ? 'it' : 'each'} in ` +
+        `Slack turns on App Home, “${MESSAGES_TAB_TOGGLE}”, and the manager says so on its card ` +
+        `(It is on in Slack), or presses Check the connection there for Day0 to try again.`,
     );
   }
   const byDay0 = named('day0-opens');

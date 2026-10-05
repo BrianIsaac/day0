@@ -1390,6 +1390,10 @@ describe('the employee roster', (): void => {
             createdAt: 1,
             installedAt: 2,
             ...(withToken ? { appLevelTokenCredentialId: secret } : {}),
+            // Re-pinned for 13-FS: the roster reads the card's own field, written beside the event.
+            ...(takesMessages
+              ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+              : {}),
           },
           createdAt: 1,
         });

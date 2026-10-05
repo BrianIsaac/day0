@@ -25,31 +25,58 @@ const IRIS_EXPORT = {
 };
 
 describe('the typed code’s reach', (): void => {
+  // Re-pinned for 13-FS (W12V-7): the reach reads the card's own `provisioning.messagesTab`, which
+  // every writer of the opening now writes, in place of the employee's record.
   const app = { appName: 'Iris (Day0)', organisationConnectionId: 'conn' };
+  const open = { state: 'open', how: 'created', at: 1 } as const;
+  const refused = {
+    state: 'refused',
+    reason: 'Slack apps.manifest.update failed: invalid_manifest',
+    at: 2,
+    attempts: 1,
+  } as const;
 
-  it('reaches an app the record says takes messages', (): void => {
-    const reach = typedCodeReachFor({ provisioning: app }, { opened: true, creatorActive: true });
+  it('reaches an app the card says takes messages', (): void => {
+    const reach = typedCodeReachFor(
+      { provisioning: { ...app, messagesTab: open } },
+      { creatorActive: true },
+    );
     expect(reach).toEqual({ state: 'open' });
     expect(typedCodeReaches(reach)).toBe(true);
   });
 
   it('is Day0’s to open for an app its active configuration connection created', (): void => {
-    const reach = typedCodeReachFor({ provisioning: app }, { opened: false, creatorActive: true });
+    const reach = typedCodeReachFor({ provisioning: app }, { creatorActive: true });
     expect(reach).toEqual({ state: 'day0-opens', appName: 'Iris (Day0)' });
     expect(typedCodeReaches(reach)).toBe(false);
   });
 
-  it('needs a person’s toggle for an app Day0 cannot update', (): void => {
+  it('says Slack refused Day0’s opening, with Slack’s words, so no probe tries it again unasked', (): void => {
     const reach = typedCodeReachFor(
-      { provisioning: { appName: 'Otto (Day0)' } },
-      { opened: false, creatorActive: false },
+      { provisioning: { ...app, messagesTab: refused } },
+      { creatorActive: true },
     );
-    expect(reach).toEqual({ state: 'needs-toggle', appName: 'Otto (Day0)' });
+    expect(reach).toEqual({
+      state: 'refused',
+      appName: 'Iris (Day0)',
+      reason: 'Slack apps.manifest.update failed: invalid_manifest',
+    });
     expect(typedCodeReaches(reach)).toBe(false);
   });
 
+  it('needs a person’s toggle for an app Day0 cannot update, refused before or not', (): void => {
+    for (const messagesTab of [undefined, refused]) {
+      const reach = typedCodeReachFor(
+        { provisioning: { appName: 'Otto (Day0)', ...(messagesTab ? { messagesTab } : {}) } },
+        { creatorActive: false },
+      );
+      expect(reach).toEqual({ state: 'needs-toggle', appName: 'Otto (Day0)' });
+      expect(typedCodeReaches(reach)).toBe(false);
+    }
+  });
+
   it('is unchanged for a card whose app Day0 did not create, which Day0 cannot read', (): void => {
-    expect(typedCodeReachFor({}, { opened: false, creatorActive: false })).toEqual({
+    expect(typedCodeReachFor({}, { creatorActive: false })).toEqual({
       state: 'open',
     });
   });

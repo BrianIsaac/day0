@@ -1,4 +1,5 @@
 import { SLACK_APP_HOME } from './slack-manifest';
+import type { MessagesTabOpenHow } from './slack-messages-tab-hows';
 
 /*
  * Whether a manager can send an employee's own Slack app a message (W12V-7, the walk on real
@@ -21,40 +22,53 @@ export const MESSAGES_TAB_TOGGLE =
  * Whether a manager's typed code can reach the app their decision requests come from:
  * `open` when it takes messages (or the card's app is not one Day0 created, which Day0 cannot
  * read, as before this release); `day0-opens` when Day0 can open its messages tab with the
- * configuration connection that created it, at the card's next check; `needs-toggle` when only a
- * person who manages the app in Slack can.
+ * configuration connection that created it, at the card's next check; `refused` when Slack refused
+ * Day0's opening, which Day0 then tries again only when a person asks (13-FS); `needs-toggle` when
+ * only a person who manages the app in Slack can.
  */
 export type TypedCodeReach =
   | { readonly state: 'open' }
   | { readonly state: 'day0-opens'; readonly appName: string }
+  | { readonly state: 'refused'; readonly appName: string; readonly reason: string }
   | { readonly state: 'needs-toggle'; readonly appName: string };
+
+/** What a card records of its app's messages tab (`surfaces.provisioning.messagesTab`). */
+export type MessagesTabState =
+  | { readonly state: 'open'; readonly how: MessagesTabOpenHow; readonly at: number }
+  | {
+      readonly state: 'refused';
+      readonly reason: string;
+      readonly at: number;
+      readonly attempts: number;
+    };
 
 /** The fields of a chat card and its app the typed code's reach depends on. */
 export interface TypedCodeCard {
   readonly provisioning?: {
     readonly appName: string;
     readonly organisationConnectionId?: unknown;
+    readonly messagesTab?: MessagesTabState;
   };
 }
 
 /**
- * Whether a card's typed code reaches its app.
+ * Whether a card's typed code reaches its app, read from the card's own record of its messages tab
+ * (13-FS; W12V-7), which every writer of the opening writes.
  *
  * @param card - The chat card the decision requests go through.
- * @param known.opened - Whether the app's record says it takes messages (a
- *   `surface.app-messages-open` event for its app).
  * @param known.creatorActive - Whether the configuration connection that created the app is still
  *   active, so Day0 can read and update its manifest.
  */
 export function typedCodeReachFor(
   card: TypedCodeCard,
-  known: { readonly opened: boolean; readonly creatorActive: boolean },
+  known: { readonly creatorActive: boolean },
 ): TypedCodeReach {
   const app = card.provisioning;
-  if (app === undefined || known.opened) return { state: 'open' };
-  return known.creatorActive
-    ? { state: 'day0-opens', appName: app.appName }
-    : { state: 'needs-toggle', appName: app.appName };
+  if (app === undefined || app.messagesTab?.state === 'open') return { state: 'open' };
+  if (!known.creatorActive) return { state: 'needs-toggle', appName: app.appName };
+  return app.messagesTab?.state === 'refused'
+    ? { state: 'refused', appName: app.appName, reason: app.messagesTab.reason }
+    : { state: 'day0-opens', appName: app.appName };
 }
 
 /** Whether a manager can reply with a typed code: only while the app takes messages. */

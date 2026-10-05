@@ -522,6 +522,20 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
     });
   });
 
+  it('says Slack refused Day0’s opening, that Day0 tries again only when asked, and the toggle (13-FS)', (): void => {
+    expect(
+      typedCodeWords({
+        state: 'refused',
+        appName: 'Iris (Day0)',
+        reason: 'Slack apps.manifest.update failed: invalid_manifest',
+      }),
+    ).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack refused to open the messages tab of Iris (Day0) (Slack apps.manifest.update failed: invalid_manifest), so no typed code reaches it. Day0 tries again only when you press Check the connection. Otherwise someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+
   it('names the app and the one toggle a person turns on where Day0 cannot change the app', (): void => {
     expect(typedCodeWords({ state: 'needs-toggle', appName: 'Otto (Day0)' })).toEqual({
       title: 'Typed code: off until this app takes messages',

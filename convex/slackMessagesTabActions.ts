@@ -46,18 +46,25 @@ function exportedManifest(reply: Record<string, unknown>): Record<string, unknow
 
 /**
  * Open the messages tab of the card's app when Day0 can and it is not open yet, recording each
- * configuration-token call on the connection's ledger and, once the app takes messages,
- * `surface.app-messages-open` on the employee's record.
+ * configuration-token call on the connection's ledger and, once the app takes messages, the card's
+ * `open` state and `surface.app-messages-open`. A refusal of either call is recorded on the card
+ * (`refused`, one more attempt), after which only a person's ask (`asked`) tries again (13-FS).
  *
  * @param surfaceId - The chat card whose app is brought over.
- * @throws Error with Slack's refusal (safe to show), after it is on the ledger.
+ * @param options.asked - The manager pressed Check the connection, so a refused opening is tried
+ *   again.
+ * @throws Error with Slack's refusal (safe to show), after it is on the ledger and the card.
  */
 export async function runOpenMessagesTab(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
+  options: { readonly asked: boolean } = { asked: false },
   dependencies: ProvisionDependencies = provisionDependencies,
 ): Promise<OpenMessagesTabOutcome> {
-  const target = await ctx.runQuery(internal.slackMessagesTab.forOpening, { surfaceId });
+  const target = await ctx.runQuery(internal.slackMessagesTab.forOpening, {
+    surfaceId,
+    asked: options.asked,
+  });
   if (target === null) return { kind: 'not-needed' };
   const { appId, organisationConnectionId } = target;
   const ledger = async (
@@ -82,7 +89,9 @@ export async function runOpenMessagesTab(
     try {
       reply = await callSlack(dependencies.fetch, method, { token, form });
     } catch (error: unknown) {
-      await ledger(method, safeFailureMessage(error, token, `Slack ${method} failed.`));
+      const reason = safeFailureMessage(error, token, `Slack ${method} failed.`);
+      await ledger(method, reason);
+      await ctx.runMutation(internal.slackMessagesTab.recordRefused, { surfaceId, appId, reason });
       throw error;
     }
     await ledger(method, undefined);
@@ -115,11 +124,12 @@ export async function runOpenMessagesTab(
 }
 
 /**
- * Internal: open the messages tab of one card's app now, as its probe does (W12V-7). For an
- * operator's `npx convex run` and the tests; the probe calls `runOpenMessagesTab` itself.
+ * Internal: open the messages tab of one card's app now, as a person's Check the connection does
+ * (W12V-7), a refused opening included. For an operator's `npx convex run` and the tests; the
+ * probe calls `runOpenMessagesTab` itself.
  */
 export const openMessagesTab = internalAction({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<OpenMessagesTabOutcome> =>
-    await runOpenMessagesTab(ctx, args.surfaceId),
+    await runOpenMessagesTab(ctx, args.surfaceId, { asked: true }),
 });

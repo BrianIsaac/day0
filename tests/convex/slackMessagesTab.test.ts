@@ -52,6 +52,8 @@ async function card(
     readonly name: string;
     readonly createdBy?: Id<'organisationConnections'>;
     readonly takesMessages?: boolean;
+    /** Slack refused Day0's opening of the app's messages tab this many times. */
+    readonly refused?: number;
     readonly ownApp?: boolean;
   },
 ): Promise<Id<'surfaces'>> {
@@ -101,6 +103,19 @@ async function card(
               ...(options.createdBy === undefined
                 ? {}
                 : { organisationConnectionId: options.createdBy }),
+              // Re-pinned for 13-FS: the card's own field is what the reach reads.
+              ...(options.takesMessages === true
+                ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+                : options.refused !== undefined
+                  ? {
+                      messagesTab: {
+                        state: 'refused' as const,
+                        reason: 'Slack apps.manifest.update failed: invalid_manifest',
+                        at: 2,
+                        attempts: options.refused,
+                      },
+                    }
+                  : {}),
             },
           }),
     });
@@ -147,6 +162,38 @@ describe('typedCodeReachOf', (): void => {
   });
 });
 
+describe('typedCodeReachOf, from the card’s own field (13-FS; W12V-7)', (): void => {
+  it('reads the card’s messagesTab, never the employee’s record, which the upgrade’s pass copied', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const recordOnly = await card(harness, { name: 'Iris', createdBy: connectionId });
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db.get(recordOnly);
+      await ctx.db.insert('events', {
+        agentId: surface!.agentId,
+        type: 'surface.app-messages-open',
+        payload: { surfaceId: recordOnly, appId: 'A0IRIS', appName: 'Iris (Day0)', how: 'opened' },
+        createdAt: 3,
+      });
+    });
+    expect(await reach(harness, recordOnly)).toEqual({
+      state: 'day0-opens',
+      appName: 'Iris (Day0)',
+    });
+  });
+
+  it('says Slack refused the opening of a card whose refusal is on the card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const refused = await card(harness, { name: 'Iris', createdBy: connectionId, refused: 1 });
+    expect(await reach(harness, refused)).toEqual({
+      state: 'refused',
+      appName: 'Iris (Day0)',
+      reason: 'Slack apps.manifest.update failed: invalid_manifest',
+    });
+  });
+});
+
 describe('confirmMessagesTab', (): void => {
   it('records the manager’s word for an app Day0 cannot read, once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -155,6 +202,18 @@ describe('confirmMessagesTab', (): void => {
       .withIdentity(managerIdentity())
       .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId: pasted });
     expect(await reach(harness, pasted)).toEqual({ state: 'open' });
+    const app = (await harness.run(async (ctx) => await ctx.db.get(pasted)))?.provisioning;
+    expect(app?.messagesTab).toMatchObject({ state: 'open', how: 'confirmed' });
+  });
+
+  it('takes the manager’s word for an app whose opening Slack refused, over the refusal', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    const refused = await card(harness, { name: 'Iris', createdBy: connectionId, refused: 2 });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId: refused });
+    expect(await reach(harness, refused)).toEqual({ state: 'open' });
   });
 
   it('refuses a signed-out caller before it reads the card', async (): Promise<void> => {
@@ -177,6 +236,7 @@ describe('messagesTabReport', (): void => {
     await card(harness, { name: 'Maya', createdBy: connectionId, takesMessages: true });
     await card(harness, { name: 'Otto' });
     await card(harness, { name: 'Leo', ownApp: false });
+    await card(harness, { name: 'Iris', createdBy: connectionId, refused: 1 });
     const report = await harness.query(internal.slackMessagesTab.messagesTabReport, {
       cursor: null,
     });
@@ -184,6 +244,7 @@ describe('messagesTabReport', (): void => {
     expect(report.apps).toEqual([
       { appName: 'Maya (Day0)', reach: 'open' },
       { appName: 'Otto (Day0)', reach: 'needs-toggle' },
+      { appName: 'Iris (Day0)', reach: 'refused' },
     ]);
   });
 });
