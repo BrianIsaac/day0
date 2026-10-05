@@ -302,10 +302,12 @@ export function SurfaceCard({
     : surface.approvalRefusal?.includes(BROWSER_DRIVER_ABSENT)
       ? BROWSER_COMPONENT_CARD_MESSAGE
       : surface.approvalRefusal;
-  const channelsNotJoined = presentChannelsNotJoined(
-    surface.channelsNotJoined,
-    provisioning?.appName,
-  );
+  // The last probe's channels ask for an invite and a fresh probe, which only a card that holds its
+  // credential can act on: an ended card keeps the list on its row and says nothing of it (13-FS).
+  const channelsNotJoined =
+    surface.credentialId === undefined
+      ? undefined
+      : presentChannelsNotJoined(surface.channelsNotJoined, provisioning?.appName);
   // The renewal's re-join, while the card holds the token that renewal installed (11-AC's item 5).
   const rejoined =
     surface.credentialId === undefined
