@@ -47,6 +47,7 @@ import {
   OWNER_IS_THE_MANAGER,
   RELATIONSHIP_ENDED,
   RELATIONSHIP_SCOPE_LIMIT,
+  RELATIONSHIP_TYPE_FIXED,
   SAME_PERSON_GONE,
   SAY_WHETHER_SAME_FIRST,
   SCOPE_TOO_LONG,
@@ -308,6 +309,21 @@ async function edgesTo(
     .take(GRAPH_READ_LIMIT);
 }
 
+/**
+ * The person a proposal is offered as possibly being (C5), while that person is still in the
+ * graph: one the manager has since dismissed is no longer an offer.
+ */
+async function offeredAs(
+  ctx: QueryCtx,
+  proposal: Doc<'people'>,
+): Promise<Doc<'people'> | undefined> {
+  if (proposal.possiblySameAs === undefined) return undefined;
+  const offered = await ctx.db.get(proposal.possiblySameAs);
+  return offered === null || offered.userId !== proposal.userId || offered.status === 'dismissed'
+    ? undefined
+    : offered;
+}
+
 /** A person the card may decide: not the owner's own row, which is the manager. */
 function decidable(person: Doc<'people'>): Doc<'people'> {
   if (person.isOwner === true) throw new ConvexError(OWNER_IS_THE_MANAGER);
@@ -322,17 +338,24 @@ function decidable(person: Doc<'people'>): Doc<'people'> {
 async function confirmInTransaction(
   ctx: MutationCtx,
   person: Doc<'people'>,
+  agentId: Id<'agents'>,
   now: number,
 ): Promise<number> {
-  if (person.possiblySameAs !== undefined) throw new ConvexError(SAY_WHETHER_SAME_FIRST);
+  if ((await offeredAs(ctx, person)) !== undefined) throw new ConvexError(SAY_WHETHER_SAME_FIRST);
+  // Only what this tab showed: another employee's edge waits on that employee's tab (A14).
   const proposed = (await edgesTo(ctx, person.userId, person._id)).filter(
-    (edge) => edge.status === 'proposed',
+    (edge) => edge.status === 'proposed' && concerns(edge, agentId),
   );
   if (person.status !== 'unverified' && proposed.length === 0) {
     throw new ConvexError(NOTHING_WAITING);
   }
   if (person.status === 'unverified') {
-    await ctx.db.patch(person._id, { status: 'active', confirmedAt: now, updatedAt: now });
+    await ctx.db.patch(person._id, {
+      status: 'active',
+      confirmedAt: now,
+      possiblySameAs: undefined,
+      updatedAt: now,
+    });
   }
   for (const edge of proposed) {
     await ctx.db.patch(edge._id, { status: 'active', confirmedAt: now, effectiveFrom: now });
@@ -355,7 +378,7 @@ export const confirm = mutation({
     const person = decidable(await assertOwnsPerson(ctx, args.personId));
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();
-    const edgesConfirmed = await confirmInTransaction(ctx, person, now);
+    const edgesConfirmed = await confirmInTransaction(ctx, person, args.agentId, now);
     // A confirmed person with an address is looked up on the owner's cards (13-P): the identity a
     // reader answers by is a confirmed person's.
     if (person.primaryEmail !== undefined) {
@@ -388,8 +411,12 @@ export const dismiss = mutation({
     const person = decidable(await assertOwnsPerson(ctx, args.personId));
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();
+    // A dismissed proposal takes every edge proposed to it; a confirmed person keeps standing and
+    // loses only the edges this tab showed.
     const proposed = (await edgesTo(ctx, person.userId, person._id)).filter(
-      (edge) => edge.status === 'proposed',
+      (edge) =>
+        edge.status === 'proposed' &&
+        (person.status === 'unverified' || concerns(edge, args.agentId)),
     );
     if (person.status !== 'unverified' && proposed.length === 0) {
       throw new ConvexError(NOTHING_WAITING);
@@ -447,7 +474,11 @@ export const samePerson = mutation({
       .take(GRAPH_READ_LIMIT);
     for (const identity of identities) await ctx.db.patch(identity._id, { personId: target._id });
     for (const edge of await edgesTo(ctx, proposal.userId, proposal._id)) {
-      await ctx.db.patch(edge._id, { toPersonId: target._id });
+      // The manager is the owner, never the end of an edge (the one-role rulings).
+      await ctx.db.patch(
+        edge._id,
+        target.isOwner === true ? { status: 'retired' } : { toPersonId: target._id },
+      );
     }
     const offered = await ctx.db
       .query('people')
@@ -635,6 +666,10 @@ export const editRelationship = mutation({
   handler: async (ctx, args): Promise<Id<'relationships'>> => {
     const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
     await assertOwnsAgent(ctx, args.agentId);
+    // An employee's edge keeps to an employee's kinds; an edge for everyone keeps its kind.
+    const allowed: readonly RelationshipType[] =
+      edge.fromAgentId === undefined ? [edge.type] : EMPLOYEE_RELATIONSHIP_TYPES;
+    if (!allowed.includes(args.type)) throw new ConvexError(RELATIONSHIP_TYPE_FIXED);
     const scope = typedScope(args.scope);
     const now = Date.now();
     await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
@@ -732,11 +767,12 @@ export async function resolvePerson(
             .withIndex('by_user_email', (q) => q.eq('userId', scope).eq('primaryEmail', externalId))
             .take(GRAPH_READ_LIMIT)
         : [];
-    const byId = resolveMatches([
+    // A printed id is the answer, found or not: a display name another id carries is someone
+    // else (Q11: never a guess).
+    return resolveMatches([
       ...(await activePeopleOf(ctx, scope, held)),
       ...addressed.filter((person) => person.status === 'active').map((person) => person._id),
     ]);
-    if (byId.kind !== 'unknown') return byId;
   }
   const nameKey = personNameKey(lookup.displayName ?? '');
   if (nameKey === '') return { kind: 'unknown' };
@@ -1024,7 +1060,13 @@ export async function approversAt(
     )
     .order('desc')
     .take(GRAPH_READ_LIMIT);
-  const held = edges.filter((edge) => edgeHeldAt(edge, at) && scopeCovers(edge.scope, covering));
+  const held = edges.filter(
+    (edge) =>
+      edge.fromAgentId === undefined &&
+      edge.fromPersonId === undefined &&
+      edgeHeldAt(edge, at) &&
+      scopeCovers(edge.scope, covering),
+  );
   const answers = await Promise.all(
     held.map(async (edge): Promise<ApproverAnswer[]> => {
       const person = await personAt(ctx, scope, edge, ['active', 'inactive']);
@@ -1196,8 +1238,7 @@ async function proposalShown(
   const match = (await identitiesOfPerson(ctx, person, 'slack')).find(
     (identity) => identity.verified && identity.displayName !== undefined,
   );
-  const offered =
-    person.possiblySameAs === undefined ? null : await ctx.db.get(person.possiblySameAs);
+  const offered = await offeredAs(ctx, person);
   const role = roleOf(person);
   return {
     personId: person._id,
@@ -1210,7 +1251,7 @@ async function proposalShown(
     ...(person.status === 'unverified' && match?.displayName !== undefined
       ? { match: { identityId: match.identityId, handle: match.displayName } }
       : {}),
-    ...(offered === null || offered.userId !== person.userId
+    ...(offered === undefined
       ? {}
       : { possiblySameAs: { personId: offered._id, name: offered.displayName } }),
     waiting: waiting.map((edge) => ({

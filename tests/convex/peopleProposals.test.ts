@@ -177,3 +177,43 @@ describe('peopleProposals', (): void => {
     expect((await graphRows(harness, 'stranger')).people[0]?.evidence).toEqual([]);
   });
 });
+
+describe('peopleProposals, the second pass', (): void => {
+  it('proposes no edge a manager dismissed on a confirmed person again, and no edge to the owner, who is the manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Priya Shah', { primaryEmail: 'priya@kestrel.test' });
+    await propose(harness, priya(agentId, { email: 'priya@kestrel.test' }));
+    await harness.run(async (ctx) => {
+      const edges = await ctx.db.query('relationships').collect();
+      for (const edge of edges) await ctx.db.patch(edge._id, { status: 'retired' });
+    });
+    await propose(
+      harness,
+      priya(agentId, {
+        email: 'priya@kestrel.test',
+        evidence: [{ quote: 'Priya Shah, pipeline lead', where: 'Team overview', at: 7 }],
+      }),
+    );
+    expect((await graphRows(harness)).edges.map((edge) => [edge.toPersonId, edge.status])).toEqual([
+      [known, 'retired'],
+    ]);
+
+    const rowan = await seedPerson(harness, 'Rowan Hale', {
+      isOwner: true,
+      primaryEmail: 'rowan@kestrel.test',
+    });
+    const outcome = await propose(
+      harness,
+      priya(agentId, {
+        name: 'Rowan Hale',
+        email: 'rowan@kestrel.test',
+        evidence: [{ quote: 'Rowan Hale approves the tile', where: 'Onboarding', at: 8 }],
+      }),
+    );
+    expect(outcome).toEqual({ kind: 'merged', personId: rowan });
+    expect((await graphRows(harness)).edges.filter((edge) => edge.toPersonId === rowan)).toEqual(
+      [],
+    );
+  });
+});

@@ -25,6 +25,9 @@ export const NOT_THE_MATCH = 'This identity is not the match proposed for this p
 /** The refusal of a change to an edge that has ended. */
 export const RELATIONSHIP_ENDED = 'This relationship has already ended.';
 
+/** The refusal of an edit that would change what kind of relationship an edge is beyond its own. */
+export const RELATIONSHIP_TYPE_FIXED = 'This relationship cannot be changed into that kind.';
+
 /** The refusal of a new edge to a person the manager has not confirmed. */
 export const CONFIRM_BEFORE_RELATING = 'Confirm this person before you add a relationship to them.';
 

@@ -239,7 +239,14 @@ async function proposeEdges(
     .query('relationships')
     .withIndex('by_user_to', (q) => q.eq('userId', scope).eq('toPersonId', personId))
     .take(GRAPH_READ_LIMIT);
-  const standing = held.filter((edge) => edge.status === 'proposed' || edge.status === 'active');
+  // Standing: proposed, in force, or dismissed (retired before it ever held), which the manager
+  // has answered and is not asked again.
+  const standing = held.filter(
+    (edge) =>
+      edge.status === 'proposed' ||
+      edge.status === 'active' ||
+      (edge.status === 'retired' && edge.effectiveUntil === undefined),
+  );
   for (const edge of proposal.edges) {
     if (standing.some((kept) => sameEdge(kept, edge))) continue;
     await ctx.db.insert('relationships', {
@@ -284,7 +291,8 @@ async function mergeProposal(
     updatedAt: now,
   });
   await addIdentities(ctx, scope, person._id, proposal.identities, origin, now);
-  await proposeEdges(ctx, scope, person._id, proposal, origin, now);
+  // The owner is the manager: no edge ends at their own row (the one-role rulings).
+  if (person.isOwner !== true) await proposeEdges(ctx, scope, person._id, proposal, origin, now);
 }
 
 /** Write a new proposal: the person `unverified`, its identities and its proposed edges. */
