@@ -7,7 +7,7 @@ import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 
 /**
- * Ask the backend, once per signed-in visit to the home, to keep the owner's own person in their
+ * Ask the backend, each time the signed-in home opens, to keep the owner's own person in their
  * people graph (`people.ensureOwner`, wave 13): the server learns the owner's verified address
  * only from a signed-in call, so this is where the graph's owner row is first written for every
  * owner from before it, and kept up to date after. The backend writes nothing in mock mode or for

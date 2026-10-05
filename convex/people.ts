@@ -25,6 +25,12 @@ interface SignedInOwner {
   readonly name: string | undefined;
 }
 
+/**
+ * The most employees of one owner, and chat cards of one employee, the owner's sign-in reads: far
+ * more than an owner has, so a read past it is a deployment this was not built for.
+ */
+const OWNER_READ_LIMIT = 500;
+
 /** A Slack user a connected chat card looked up by the owner's address, by its workspace. */
 interface LookedUpSlackUser {
   readonly workspaceId: string | undefined;
@@ -94,7 +100,7 @@ async function slackUsersOf(ctx: MutationCtx, owner: SignedInOwner): Promise<Loo
   const employees = await ctx.db
     .query('agents')
     .withIndex('by_userId', (q) => q.eq('userId', owner.scope))
-    .collect();
+    .take(OWNER_READ_LIMIT);
   const managed = employees.filter((agent) => sameManagerAddress(agent.bossEmail, owner.address));
   const cards = (
     await Promise.all(
@@ -103,7 +109,7 @@ async function slackUsersOf(ctx: MutationCtx, owner: SignedInOwner): Promise<Loo
           await ctx.db
             .query('surfaces')
             .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-            .collect(),
+            .take(OWNER_READ_LIMIT),
       ),
     )
   ).flat();
@@ -124,8 +130,9 @@ async function slackUsersOf(ctx: MutationCtx, owner: SignedInOwner): Promise<Loo
 }
 
 /**
- * Record an identity on the owner's person unless the owner scope holds that identity already, on
- * this person or another (a merge is the manager's, 13-P's).
+ * Record an identity on the owner's person unless the owner scope holds that identity already, in
+ * the same workspace (an id is unique only in its workspace), on this person or another (a merge
+ * is the manager's, 13-P's).
  *
  * @returns Whether it was added.
  */
@@ -142,8 +149,8 @@ async function addIdentity(
         .eq('provider', identity.provider)
         .eq('externalId', identity.externalId),
     )
-    .first();
-  if (held !== null) return false;
+    .take(OWNER_READ_LIMIT);
+  if (held.some((row) => row.providerWorkspaceId === identity.providerWorkspaceId)) return false;
   await ctx.db.insert('personIdentities', { userId: owner.scope, ...identity });
   return true;
 }
@@ -197,8 +204,9 @@ export async function ensureOwnerPerson(
 /**
  * Public, any signed-in caller (`getCallerOrThrow` first, 12-G): write the caller's own person in
  * their people graph, the backfill of the graph for every owner from before it and its writer
- * from then on (wave 13, 13-K; the wave file's section 5.1). The home calls it once per signed-in
- * visit, since no address is known to the server before the owner signs in. Writes `people` and
+ * from then on (wave 13, 13-K; the wave file's section 5.1). The signed-in home calls it each
+ * time it opens, since no address is known to the server before the owner signs in; an owner who
+ * never opens the home has no row yet, which every reader of the graph tolerates. Writes `people` and
  * `personIdentities` under the caller's owner scope ({@link ensureOwnerPerson}); nothing in mock
  * mode, where the graph is not kept and a hosted visitor's address is stored nowhere new, and
  * nothing for a caller whose address the issuer does not verify.

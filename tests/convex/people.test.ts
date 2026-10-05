@@ -136,6 +136,20 @@ describe('people.ensureOwner', (): void => {
     expect(written.identitiesAdded).toBe(3);
   });
 
+  it('keeps one Slack user id in two workspaces as two identities, since an id is unique only in its workspace (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness);
+    await chatCard(harness, priya);
+    await chatCard(harness, priya, { slug: 'slack-other', providerWorkspaceId: 'T0999' });
+    const written = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.ensureOwner, {});
+    const slack = (await graphOf(harness)).identities.filter((row) => row.provider === 'slack');
+    expect(slack.map((row) => row.providerWorkspaceId).sort()).toEqual(['T0123', 'T0999']);
+    expect(written.identitiesAdded).toBe(3);
+  });
+
   it('is safe to run twice: the second sign-in writes nothing and answers the same person', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

@@ -45,7 +45,7 @@ afterEach((): void => {
 });
 
 describe('useOwnerPerson', (): void => {
-  it("asks the backend once per signed-in visit to keep the owner's own person, and not again on a re-render", async (): Promise<void> => {
+  it("asks the backend to keep the owner's own person when the home opens, and not again on a re-render", async (): Promise<void> => {
     const host = document.createElement('div');
     const root = createRoot(host);
     await act(async (): Promise<void> => {
