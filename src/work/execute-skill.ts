@@ -44,6 +44,7 @@ import { closingPhaseOwed } from './obligations';
 import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
+import { executorAgreementLines, type PromptAgreement } from './agreements';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   isChatMessage,
@@ -1063,6 +1064,11 @@ export interface RunSkillArgs {
    * never evidence of anything on this item.
    */
   appliedCorrections?: readonly PlannerCorrection[];
+  /**
+   * The manager's working agreements the approved plan applied, scrubbed; real mode only (13-W).
+   * Standing directions for how the work is done, never evidence of anything on this item.
+   */
+  appliedAgreements?: readonly PromptAgreement[];
   /**
    * The reads made for this work item before its plan was drafted, redacted
    * as their events stored them; real mode only. Evidence for what the
@@ -2970,6 +2976,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
+    ...(mode === 'real' ? executorAgreementLines(args.appliedAgreements ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
@@ -3710,6 +3717,7 @@ async function authorDependentSkillRun(
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
+    ...(mode === 'real' ? executorAgreementLines(args.appliedAgreements ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),

@@ -65,6 +65,7 @@ import {
   type PlanObligations,
   type DependentExecutionOutput,
   type ExecutionOutput,
+  type ExecutionPlan,
   type MockAction,
   type PlanStepOutcome,
 } from '../../src/work/types';
@@ -199,6 +200,9 @@ const recorded = vi.hoisted(() => ({
   skillSwitches: [] as Array<boolean | undefined>,
   skillFeedback: [] as Array<string | undefined>,
   dependentFeedback: [] as Array<string | undefined>,
+  /** The working agreements each phase-one and closing run was given (13-W). */
+  skillAgreements: [] as unknown[],
+  dependentAgreements: [] as unknown[],
   dependentSwitches: [] as Array<boolean | undefined>,
   skillGroundingReads: [] as unknown[],
   dependentGroundingReads: [] as unknown[],
@@ -611,9 +615,11 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       managerAnswers?: unknown;
       managerFeedback?: string;
       groundingReads?: unknown;
+      appliedAgreements?: unknown;
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
+      recorded.skillAgreements.push(args.appliedAgreements);
       if (recorded.skillFailure !== undefined) throw recorded.skillFailure;
       recorded.skillGroundingReads.push(args.groundingReads);
       recorded.skillModes.push(args.mode);
@@ -646,9 +652,11 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       managerFeedback?: string;
       groundingReads?: unknown;
       initialLedger?: AppliedAction[];
+      appliedAgreements?: unknown;
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
+      recorded.dependentAgreements.push(args.appliedAgreements);
       recorded.dependentLedgers.push([...(args.initialLedger ?? [])]);
       if (recorded.dependentFailure !== undefined) throw recorded.dependentFailure;
       const queued = recorded.dependentOutputs.shift();
@@ -885,6 +893,8 @@ afterEach((): void => {
   recorded.skillAnswers.length = 0;
   recorded.skillFeedback.length = 0;
   recorded.dependentFeedback.length = 0;
+  recorded.skillAgreements.length = 0;
+  recorded.dependentAgreements.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentOutputs.length = 0;
@@ -10088,5 +10098,108 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect(row.state).toBe('failed');
     expect(row.approvedIndexes).toBeUndefined();
     expect(recorded.mcp.slice(sent).filter((call) => call.tool.startsWith('save_'))).toEqual([]);
+  });
+});
+
+describe('the working agreements an approved plan applied, in both executor phases (13-W)', (): void => {
+  it("carries the employee's own and every employee's agreements the plan applied to phase one and the closing phase, and no other employee's", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Asking the desk lead.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: log1SecondSittingPhaseOne,
+    };
+    recorded.dependentOutput = log1SecondSittingClosing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    const ids = await harness.run(async (ctx) => {
+      const colleague = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const base = {
+        userId: 'owner',
+        kind: 'preference' as const,
+        scope: 'global' as const,
+        sourceType: 'plan-approval' as const,
+        status: 'active' as const,
+        createdAt: 1,
+        effectiveFrom: 1,
+        appliedTo: [],
+      };
+      const own = await ctx.db.insert('workingAgreements', {
+        ...base,
+        agentId,
+        statement: 'Word the audit comment as the handbook does.',
+      });
+      const everyone = await ctx.db.insert('workingAgreements', {
+        ...base,
+        statement: 'Name the ticket in every manager DM.',
+      });
+      const colleagues = await ctx.db.insert('workingAgreements', {
+        ...base,
+        agentId: colleague,
+        statement: "Mateo's own preference.",
+      });
+      await ctx.db.patch(workItemId, {
+        externalId: sitting4Log1Candidate.externalId,
+        title: sitting4Log1Candidate.title,
+        contentSummary: sitting4Log1Candidate.contentSummary,
+        contentRefs: sitting4Log1Candidate.contentRefs,
+        plan: { ...log1SecondSittingPlan, appliedAgreements: [own, everyone, colleagues] },
+      });
+      return { own, everyone };
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+
+    const carried = [
+      {
+        id: ids.own,
+        since: '1970-01-01T00:00Z',
+        text: 'Word the audit comment as the handbook does.',
+      },
+      {
+        id: ids.everyone,
+        since: '1970-01-01T00:00Z',
+        text: 'Name the ticket in every manager DM.',
+      },
+    ];
+    expect(recorded.skillAgreements).toEqual([carried]);
+    expect(recorded.dependentAgreements).toEqual([carried]);
+    expect(agentId).toBeDefined();
+  });
+
+  it('carries none in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'mock');
+    await harness.run(async (ctx) => {
+      const own = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        agentId,
+        kind: 'preference',
+        statement: 'Word the audit comment as the handbook does.',
+        scope: 'global',
+        sourceType: 'plan-approval',
+        status: 'active',
+        createdAt: 1,
+        appliedTo: [],
+      });
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        plan: { ...(row?.plan as ExecutionPlan), appliedAgreements: [own] },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    expect(recorded.skillAgreements).toEqual([[]]);
   });
 });

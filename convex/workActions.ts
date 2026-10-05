@@ -1261,6 +1261,11 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
+    const appliedAgreements = await executorAgreements(ctx, {
+      agent,
+      item: args.item,
+      plan: args.plan,
+    });
     await claimPlannedWriteTargets(ctx, {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1289,6 +1294,7 @@ async function holdDay0Actions(
       unsentWrites: args.unsentWrites,
       heldElsewhere,
       appliedCorrections,
+      appliedAgreements,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
@@ -2654,6 +2660,12 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         knownValues,
       });
+      const appliedAgreements = await executorAgreements(ctx, {
+        agent,
+        item,
+        plan,
+        knownValues,
+      });
       let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
@@ -2740,6 +2752,7 @@ export const authorDependentActions = internalAction({
             managerFeedback: feedback,
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
+            appliedAgreements,
             groundingReads,
             initialOutput: prerequisites,
             initialLedger: prerequisites.applied,
@@ -4189,6 +4202,39 @@ async function plannerAgreements(
     model: spanModelFromEnv(),
     known: knownValues,
   });
+}
+
+/**
+ * The working agreements an approved plan applied, as its executor reads them (13-W): the plan's
+ * own list, each still of the employee's owner and binding this employee, scrubbed at prompt
+ * assembly. The statements were stored redacted; the scrub removes a credential stored since.
+ *
+ * @param ctx - Convex action context.
+ * @param args - The agent, the work item, its approved plan, and the owner's stored values when
+ *   the caller already resolved them.
+ * @returns The prompt entries; empty in mock mode or when the plan applied none.
+ */
+async function executorAgreements(
+  ctx: ActionCtx,
+  args: {
+    agent: Doc<'agents'>;
+    item: Doc<'workItems'>;
+    plan: ExecutionPlan;
+    knownValues?: readonly string[];
+  },
+): Promise<PromptAgreement[]> {
+  const ids = SURFACE_MODE === 'real' ? (args.plan.appliedAgreements ?? []) : [];
+  if (ids.length === 0) return [];
+  const rows: Doc<'workingAgreements'>[] = await ctx.runQuery(internal.workingAgreements.forPlan, {
+    agentId: args.item.agentId,
+    ids,
+  });
+  if (rows.length === 0) return [];
+  const scrubbed = await scrubbedAgreementEntries(rows, {
+    model: spanModelFromEnv(),
+    known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
+  });
+  return scrubbed.entries;
 }
 
 /**
