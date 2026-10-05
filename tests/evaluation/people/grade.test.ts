@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  extractedFromPeopleRows,
   extractedFromTrace,
   gradeExtraction,
   renderGrade,
@@ -137,5 +138,30 @@ describe('the people extraction grade (V10)', (): void => {
     const page = renderGrade(gradeExtraction(PEOPLE_LABELS, PERFECT.slice(1), COMMIT, NOW));
     expect(page).toContain('Precision 1.000, recall 0.833, F1 0.909');
     expect(page).toContain('Missed: Lee Tan (onboarding.md)');
+  });
+
+  it("reads the people table's own rows, so an address the audit export redacts still grades", (): void => {
+    const rows = [
+      {
+        displayName: 'rowan.hale@kestrel.test',
+        primaryEmail: 'rowan.hale@kestrel.test',
+        isOwner: true,
+        evidence: [
+          {
+            quote: 'RevOps operations lead: Rowan Hale',
+            where: 'Onboarding',
+            at: 1,
+            ref: 'onboarding.md',
+            sourceId: 's1',
+          },
+        ],
+      },
+    ];
+    expect(extractedFromPeopleRows(rows)).toEqual([
+      { ref: 'onboarding.md', name: 'rowan.hale@kestrel.test', email: 'rowan.hale@kestrel.test' },
+    ]);
+    expect(
+      gradeExtraction(PEOPLE_LABELS, extractedFromPeopleRows(rows), COMMIT, NOW).truePositives,
+    ).toBe(1);
   });
 });

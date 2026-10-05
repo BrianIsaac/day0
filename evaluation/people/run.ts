@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { extractedFromTrace, gradeExtraction, renderGrade } from './grade';
+import { extractedFromPeopleRows, extractedFromTrace, gradeExtraction, renderGrade } from './grade';
 import { PEOPLE_LABELS } from './labels';
 
 /** A time as a directory name. */
@@ -16,18 +16,27 @@ function stamp(now: Date): string {
 }
 
 /**
- * Grade the people a bed run extracted, read from an employee's exported trace, and write the
- * grade under `evaluation/people/<stamp>/` (V10).
+ * Grade the people a bed run extracted and write the grade under `evaluation/people/<stamp>/`
+ * (V10). The input is the bed's people table as `npx convex export` writes it
+ * (`people/documents.jsonl`), or an employee's exported trace, which redacts addresses.
  *
- *   pnpm exec tsx evaluation/people/run.ts <trace.json>
+ *   pnpm exec tsx evaluation/people/run.ts <people/documents.jsonl | trace.json>
  *
- * @param tracePath - The exported trace of an employee of the bed's owner.
+ * @param inputPath - The people rows, or a trace.
  * @returns The directory written.
  */
-export async function runPeopleGrade(tracePath: string, now = new Date()): Promise<string> {
+export async function runPeopleGrade(inputPath: string, now = new Date()): Promise<string> {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const trace: unknown = JSON.parse(await readFile(tracePath, 'utf8'));
-  const grade = gradeExtraction(PEOPLE_LABELS, extractedFromTrace(trace), commit, now);
+  const text = await readFile(inputPath, 'utf8');
+  const extracted = inputPath.endsWith('.jsonl')
+    ? extractedFromPeopleRows(
+        text
+          .split('\n')
+          .filter((line) => line.trim() !== '')
+          .map((line): unknown => JSON.parse(line)),
+      )
+    : extractedFromTrace(JSON.parse(text));
+  const grade = gradeExtraction(PEOPLE_LABELS, extracted, commit, now);
   const directory = resolve('evaluation/people', stamp(now));
   await mkdir(directory, { recursive: true });
   await Promise.all([
@@ -39,12 +48,12 @@ export async function runPeopleGrade(tracePath: string, now = new Date()): Promi
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
 if (import.meta.url === invokedPath) {
-  const tracePath = process.argv[2];
-  if (tracePath === undefined) {
-    console.error('usage: tsx evaluation/people/run.ts <trace.json>');
+  const inputPath = process.argv[2];
+  if (inputPath === undefined) {
+    console.error('usage: tsx evaluation/people/run.ts <people/documents.jsonl | trace.json>');
     process.exitCode = 2;
   } else {
-    runPeopleGrade(tracePath)
+    runPeopleGrade(inputPath)
       .then((directory) => console.log(`[people] grade: ${directory}`))
       .catch((error: unknown) => {
         console.error(error);

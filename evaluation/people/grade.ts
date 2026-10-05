@@ -122,14 +122,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * The people of an exported trace that documentation quoted, one per page each was quoted on: a
- * person proposed from the pages, and one a page's words were merged into.
+ * The people documentation quoted, one per page each was quoted on, from the people table's rows:
+ * a person proposed from the pages, and one a page's words were merged into.
  *
- * @param trace - The parsed trace file.
+ * @param people - The rows, as the table or an exported trace holds them.
  */
-export function extractedFromTrace(trace: unknown): ExtractedPerson[] {
-  const people = record(record(trace)?.sections)?.people;
-  if (!Array.isArray(people)) return [];
+export function extractedFromPeopleRows(people: readonly unknown[]): ExtractedPerson[] {
   return people.flatMap((row: unknown): ExtractedPerson[] => {
     const person = record(row);
     const name = typeof person?.displayName === 'string' ? person.displayName : undefined;
@@ -144,6 +142,18 @@ export function extractedFromTrace(trace: unknown): ExtractedPerson[] {
     );
     return [...refs].map((ref) => ({ ref, name, ...(email === undefined ? {} : { email }) }));
   });
+}
+
+/**
+ * The people documentation quoted, from an exported trace. The audit export redacts addresses, so
+ * a grade from a trace counts no address and misses a person named by theirs; the bed's own
+ * people rows (`npx convex export`) are what V10 grades.
+ *
+ * @param trace - The parsed trace file.
+ */
+export function extractedFromTrace(trace: unknown): ExtractedPerson[] {
+  const people = record(record(trace)?.sections)?.people;
+  return Array.isArray(people) ? extractedFromPeopleRows(people) : [];
 }
 
 /** A rate as the page prints it. */
