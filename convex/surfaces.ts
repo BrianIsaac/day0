@@ -526,6 +526,7 @@ export const listForAgent = query({
         !activeSystems.has(organisationSystemOf(surface) ?? '');
       const notReinstalled = keptEnded(surface);
       const { pendingAuthorisation, ...card } = listed;
+      const bridge = bridges.get(surface._id);
       return {
         ...card,
         ...(pendingAuthorisation === undefined
@@ -542,9 +543,7 @@ export const listForAgent = query({
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
         ...(notReinstalled ? { keptAppNotReinstalled: true as const } : {}),
-        ...(bridges.has(surface._id)
-          ? { decisionButtons: decisionButtonsFor(surface, bridges.get(surface._id)!) }
-          : {}),
+        ...(bridge === undefined ? {} : { decisionButtons: decisionButtonsFor(surface, bridge) }),
         ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };
     });
