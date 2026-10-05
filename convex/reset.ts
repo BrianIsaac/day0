@@ -62,8 +62,10 @@ export const AGENT_KEYED_TABLES = [
   'managerQuestions',
   'managerDecisionNotices',
   'replacedDecisionRequests',
+  'socketHeartbeats',
   'managerNotes',
   'corrections',
+  'workingAgreements',
   'decisionBatches',
   'skills',
   'permissionGrants',
@@ -200,6 +202,11 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
         .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId)),
       limit,
     ),
+  socketHeartbeats: (db, { agentId }, limit) =>
+    upTo(
+      db.query('socketHeartbeats').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
   managerNotes: (db, { agentId }, limit) =>
     upTo(
       db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
@@ -208,6 +215,13 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   corrections: (db, { agentId }, limit) =>
     upTo(
       db.query('corrections').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  // The employee's own agreements (RM5 (a)); the owner-wide ones, with no `agentId`, go with the
+  // owner's deletion instead.
+  workingAgreements: (db, { agentId }, limit) =>
+    upTo(
+      db.query('workingAgreements').withIndex('by_agent_status', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   decisionBatches: (db, { agentId }, limit) =>

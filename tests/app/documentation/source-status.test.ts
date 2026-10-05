@@ -35,6 +35,14 @@ describe('sourceStatus', (): void => {
     expect(SYNC_HELD_REASON).toContain('Re-sync');
   });
 
+  it('says a source held under its own status is held, with when it was last read (13-K)', (): void => {
+    expect(sourceStatus({ status: 'held', lastSyncAt }, 'UTC')).toEqual({
+      text: 'Held',
+      tone: 'muted',
+      lastRead: '29 Sep 2026, 14:05',
+    });
+  });
+
   it('draws a source that could not be read in warn, never on a danger fill (A D4 (b))', (): void => {
     for (const status of ['error', 'credential-not-landed'] as const) {
       expect(sourceStatus({ status }).tone).toBe('warn');
