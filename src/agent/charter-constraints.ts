@@ -1147,7 +1147,9 @@ function carriesRule(constraint: CharterConstraint, clause: string): boolean {
 
 /**
  * Where a rule is in the charter: by its words alone (a rule drafted before binds), in no clause,
- * or in the clauses it binds, with whether any of them carries the rule (`carriesRule`).
+ * or in the clauses it binds, with whether any of them carries the rule (`carriesRule`). A bound
+ * function is shown as the rule's words in it; one that carries none of them places the rule
+ * nowhere, since a strike leaves the function's sentence whole.
  *
  * @param charter - The charter the rule's binds index, as drafted or as approved.
  * @param constraint - One of its rules.
@@ -1157,15 +1159,27 @@ export function rulePlacement(
   constraint: CharterConstraint,
 ): RulePlacement {
   if (constraint.binds === undefined) return { kind: 'by-wording' };
-  const clauses = constraint.binds.flatMap((ref: ClauseRef): string[] => {
+  // The function is the role's one sentence and a strike only ever takes the rule's words from it,
+  // so a function bind is shown, and verified, as those words, and as nothing when it has none.
+  const inFunction = constraint.wording.filter((phrase: string): boolean =>
+    wordingPresent(phrase, [charter.proposedFunction]),
+  );
+  const listed = constraint.binds.flatMap((ref: ClauseRef): string[] => {
+    if (ref.field === 'proposedFunction') return [];
     const clause = clauseAt(charter, ref);
     return clause === undefined ? [] : [clause];
   });
+  const boundToFunction = constraint.binds.some(
+    (ref: ClauseRef): boolean => ref.field === 'proposedFunction',
+  );
+  const clauses = [...(boundToFunction ? inFunction : []), ...listed];
   if (clauses.length === 0) return { kind: 'in-no-clause' };
   return {
     kind: 'bound',
     clauses,
-    carriesWords: clauses.some((clause: string): boolean => carriesRule(constraint, clause)),
+    carriesWords:
+      (boundToFunction && inFunction.length > 0) ||
+      listed.some((clause: string): boolean => carriesRule(constraint, clause)),
   };
 }
 

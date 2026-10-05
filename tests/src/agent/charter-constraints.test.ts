@@ -1262,3 +1262,32 @@ describe("verifying a bound clause by the manager's words (the 13-R bed)", (): v
     });
   });
 });
+
+describe('a rule bound to the proposed function (13-R)', (): void => {
+  const moss = BED_DRAFTS_2026_10_05.Moss!;
+
+  it("shows a function bind as the rule's words in the function, never the whole sentence", (): void => {
+    const rule = (moss.constraints ?? []).find(
+      (c) => c.quote === 'Signing off the close stays with the controller.',
+    )!;
+    expect(rulePlacement(moss, rule)).toEqual({
+      kind: 'bound',
+      clauses: [
+        'sign-off of the close stays with the controller',
+        'Sign off the close, which stays with the controller.',
+      ],
+      carriesWords: true,
+    });
+  });
+
+  it('leaves out a function bind whose words the function does not carry, and does not verify by it', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'reporting-line',
+      quote: 'Keep the close checklist moving.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'proposedFunction', index: 0 }],
+    };
+    expect(rulePlacement(moss, rule)).toEqual({ kind: 'in-no-clause' });
+  });
+});
