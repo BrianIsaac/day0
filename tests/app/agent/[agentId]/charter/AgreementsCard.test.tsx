@@ -171,7 +171,8 @@ describe('the Agreements card', (): void => {
       [...view.container.querySelectorAll('a')].map((link) => link.getAttribute('href')),
     ).toEqual(['/agent/a1/work']);
     await press(view.container, 'Dismiss the refused agreement “Email the customer yourself.”');
-    expect(calls).toEqual(['dismiss wa4']);
+    await press(view.container, 'Withdraw “Name the carrier first.”');
+    expect(calls).toEqual(['dismiss wa4', 'dismiss wa3']);
     view.unmount();
   });
 

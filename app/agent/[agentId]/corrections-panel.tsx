@@ -11,6 +11,8 @@ import {
   PROPOSALS_DONE,
   PROPOSALS_TITLE,
   proposalQuestion,
+  REFUSED_WITHOUT_REASON,
+  WITHDRAWN,
   refusalOffersAmendment,
   refusalSentence,
   type AgreementView,
@@ -261,6 +263,11 @@ export function AgreementProposals({
       done: `Kept for ${forEveryEmployee ? 'every employee' : employeeName}. Day0 checks it against the charter before it takes effect.`,
       refused: 'The working agreement was not kept.',
     });
+  const withdraw = (row: AgreementView): void =>
+    change.run(() => onDismiss(row._id), {
+      done: WITHDRAWN,
+      refused: 'The working agreement was not withdrawn.',
+    });
   const dismiss = (row: AgreementView, refused: boolean): void =>
     change.run(() => onDismiss(row._id), {
       done: refused ? 'Dismissed.' : 'Set aside: these corrections are not proposed again.',
@@ -283,7 +290,7 @@ export function AgreementProposals({
                     : 'border-[var(--color-accent-line)] bg-[var(--color-accent)]/5'
                 }`}
               >
-                {row.status === 'refused' && row.refusal ? (
+                {row.status === 'refused' ? (
                   <>
                     <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
                       {NOT_KEPT}
@@ -295,10 +302,12 @@ export function AgreementProposals({
                       “{row.statement}”
                     </p>
                     <p className="mt-1 text-[var(--color-fg-2)]">
-                      {refusalSentence(row.refusal, employeeName, 'work')}
+                      {row.refusal
+                        ? refusalSentence(row.refusal, employeeName, 'work')
+                        : REFUSED_WITHOUT_REASON}
                     </p>
                     <div className={ROW_ACTIONS}>
-                      {refusalOffersAmendment(row.refusal) ? (
+                      {row.refusal && refusalOffersAmendment(row.refusal) ? (
                         <ButtonLink
                           href={charterHref}
                           size="small"
@@ -321,7 +330,23 @@ export function AgreementProposals({
                     </div>
                   </>
                 ) : awaitingCheck(row) ? (
-                  <p className="text-[var(--color-fg-2)]">{checkingLine(row.statement, 'work')}</p>
+                  <>
+                    <p className="text-[var(--color-fg-2)]">
+                      {checkingLine(row.statement, 'work')}
+                    </p>
+                    <div className={ROW_ACTIONS}>
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        disabled={change.busy}
+                        aria-label={`Withdraw “${row.statement}”`}
+                        className={ROW_BUTTON}
+                        onClick={() => withdraw(row)}
+                      >
+                        Withdraw
+                      </Button>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <p

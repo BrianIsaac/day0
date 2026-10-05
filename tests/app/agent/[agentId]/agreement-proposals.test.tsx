@@ -98,12 +98,28 @@ describe('the promotion card', (): void => {
     view.unmount();
   });
 
-  it('says a kept agreement waits on its check, with nothing left to press', (): void => {
-    const view = proposals([checking]);
+  it('says a kept agreement waits on its check, and lets the manager withdraw it', async (): Promise<void> => {
+    const calls: string[] = [];
+    const view = proposals([checking], calls);
     expect(view.container.textContent).toContain(
       'Kept. Day0 is checking “Comment on the ticket and let the account team email the customer.” against the charter',
     );
-    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    await press(
+      view.container,
+      'Withdraw “Comment on the ticket and let the account team email the customer.”',
+    );
+    expect(calls).toEqual(['dismiss wa2']);
+    expect(said(view.container).at(-1)).toBe('Withdrawn: it will not take effect.');
+    view.unmount();
+  });
+
+  it('says a refused one was not kept even when the refusal carries no reason', (): void => {
+    const bare = { ...refused, refusal: undefined };
+    const view = proposals([bare]);
+    expect(view.container.textContent).toContain(
+      'This would go beyond the charter. It was not kept.',
+    );
+    expect(view.container.textContent).not.toContain('Keep for Priya');
     view.unmount();
   });
 

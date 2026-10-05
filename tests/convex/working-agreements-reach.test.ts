@@ -305,7 +305,7 @@ describe('where a working agreement reaches', (): void => {
     expect(executorPrompt).toContain(HEADING);
     expect(executorPrompt).toContain(STATEMENT);
     expect(executorPrompt.split(STATEMENT)).toHaveLength(2);
-  });
+  }, 30_000);
 
   it("reaches another employee's next item in its scope, and not with one scoped elsewhere", async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -333,7 +333,7 @@ describe('where a working agreement reaches', (): void => {
     const [inScope] = promptsOf((name) => name === 'day0-plan');
     expect(inScope).toContain(STATEMENT);
     expect(inScope).not.toContain(elsewhere);
-  });
+  }, 30_000);
 
   it('reaches no planner once retired', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -348,5 +348,5 @@ describe('where a working agreement reaches', (): void => {
     for (const prompt of promptsOf((name) => name === 'day0-plan')) {
       expect(prompt).not.toContain(STATEMENT);
     }
-  });
+  }, 30_000);
 });

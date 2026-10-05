@@ -12,8 +12,10 @@ import {
   checkingLine,
   NOT_KEPT,
   quotedSentence,
+  REFUSED_WITHOUT_REASON,
   refusalSentence,
   sourceWords,
+  WITHDRAWN,
   type AgreementView,
 } from '@/work/agreement-words';
 import { Button } from '../../../components/Button';
@@ -238,7 +240,23 @@ export function AgreementsCard({
               key={row._id}
               className="p-3 rounded-md border border-[var(--color-border)] text-sm text-[var(--color-fg-2)]"
             >
-              {checkingLine(row.statement, 'charter')}
+              <p>{checkingLine(row.statement, 'charter')}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="quiet"
+                  size="small"
+                  disabled={change.busy}
+                  aria-label={`Withdraw “${row.statement}”`}
+                  onClick={() =>
+                    change.run(() => onDismiss(row._id), {
+                      done: WITHDRAWN,
+                      refused: 'The working agreement was not withdrawn.',
+                    })
+                  }
+                >
+                  Withdraw
+                </Button>
+              </div>
             </li>
           ))}
           {refused.map((row) => (
@@ -252,11 +270,11 @@ export function AgreementsCard({
               <p className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words">
                 “{row.statement}”
               </p>
-              {row.refusal ? (
-                <p className="mt-1 text-[var(--color-fg-2)]">
-                  {refusalSentence(row.refusal, employeeName, 'charter')}
-                </p>
-              ) : null}
+              <p className="mt-1 text-[var(--color-fg-2)]">
+                {row.refusal
+                  ? refusalSentence(row.refusal, employeeName, 'charter')
+                  : REFUSED_WITHOUT_REASON}
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
                   variant="quiet"

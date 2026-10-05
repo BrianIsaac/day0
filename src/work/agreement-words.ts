@@ -68,6 +68,12 @@ export const AGREEMENTS_LOADING = 'Reading the working agreements.';
 /** The kicker of a refused row. */
 export const NOT_KEPT = 'Not kept';
 
+/** A refused row whose refusal carries no reason (none is written so; the field is optional). */
+export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
+
+/** The live region once a kept agreement waiting on its check is withdrawn. */
+export const WITHDRAWN = 'Withdrawn: it will not take effect.';
+
 /** Whether the manager kept it on a card and its check against the charter has not answered yet. */
 export function awaitingCheck(row: Pick<AgreementView, 'status' | 'approvedAt'>): boolean {
   return row.status === 'proposed' && row.approvedAt !== undefined;
