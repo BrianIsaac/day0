@@ -7,6 +7,7 @@ import type {
 import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import type { DecisionButtons } from '@/surfaces/slack-socket';
+import { SOCKET_HEARTBEAT_FRESH_MS } from '@/surfaces/slack-socket-heartbeat';
 import { MESSAGES_TAB_TOGGLE, type TypedCodeReach } from '@/surfaces/slack-messages-tab';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
@@ -597,13 +598,14 @@ export function decisionButtonsWords(
 ): DecisionButtonsWords {
   const app = appName ?? "the employee's app";
   if (buttons.available) {
+    // The card reads the bridge's heartbeat, so it says what it knows (D-6 (b)); a request asked
+    // before the token landed keeps its typed code alone (W12-R10).
+    const live = `The Slack socket service holds a live connection for ${app}, so each new request to you arrives with Approve and Reject buttons`;
     return {
-      // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
-      // before the token landed keeps its typed code alone (W12-R10).
-      title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
+      title: 'Decisions in Slack: buttons are on',
       note: typedCode
-        ? 'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.'
-        : `Each new request to you arrives with Approve and Reject buttons. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
+        ? `${live} and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.`
+        : `${live}. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
       asksForToken: false,
       offersReplacement: true,
     };
@@ -638,6 +640,14 @@ export function decisionButtonsWords(
           ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
           : `This deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of ${app}.`,
       );
+    case 'bridge-down':
+      return {
+        title: 'Buttons: off until the Slack socket service connects',
+        note: `The app-level token of ${app} is stored, but the Slack socket service that carries a press has reported no live connection for it in the last ${SOCKET_HEARTBEAT_FRESH_MS / 60_000} minutes, so ${withoutButtons}. Buttons come back on each new request once it reports one. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.`,
+        asksForToken: false,
+        // A token Slack refuses, or one of another app, keeps the connection from opening.
+        offersReplacement: true,
+      };
     case 'no-own-app':
       return typedOnly(
         'Decisions in Slack: typed codes only',

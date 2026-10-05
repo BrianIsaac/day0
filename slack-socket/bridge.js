@@ -32,6 +32,11 @@ export const PRESS_RETRY_FIRST_MS = 500;
 export const PRESS_RETRY_CAP_MS = 10_000;
 /** How long one backend call may take. */
 export const BACKEND_TIMEOUT_MS = 15_000;
+/**
+ * How long the last report, every app down, may take as the bridge stops: inside the compose
+ * service's five-second grace, so a clean stop reaches the card at once (D-6 (b)).
+ */
+export const FAREWELL_TIMEOUT_MS = 3_000;
 
 /**
  * @typedef {object} BridgeOptions
@@ -60,6 +65,8 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * @property {boolean} requesting A connection URL is being asked for.
  * @property {number} failures Consecutive failed opens, for the backoff.
  * @property {number} liveSince When the live socket was greeted.
+ * @property {string | undefined} failure Why the last open failed, until a connection is greeted;
+ *   reported to the backend with the app (D-6 (b)).
  * @property {ReturnType<typeof setTimeout> | undefined} retry
  * @property {ReturnType<typeof setTimeout> | undefined} refresh
  * @property {boolean} mismatch The last connection answered for another app.
@@ -85,9 +92,14 @@ export function createBridge(options) {
   let timer;
   let stopped = false;
   let lastSync = { ok: false, at: 0 };
+  /** A report is on the wire, and whether another was asked for meanwhile. */
+  let reporting = false;
+  let reportAgain = false;
+  /** Whether the last report failed, so a backend that takes none is said once, not every sync. */
+  let reportFailing = false;
 
   /** POST one of the backend's bridge routes with the secret; the parsed answer and status. */
-  async function backend(path, body) {
+  async function backend(path, body, timeoutMs = BACKEND_TIMEOUT_MS) {
     const response = await fetchImpl(new URL(path, options.backendUrl), {
       method: 'POST',
       headers: {
@@ -95,10 +107,67 @@ export function createBridge(options) {
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const parsed = await response.json().catch(() => ({}));
     return { status: response.status, body: parsed ?? {} };
+  }
+
+  /** Each app the bridge holds, by its card and app, with whether it has a greeted connection. */
+  function heartbeat(live = true) {
+    return {
+      apps: [...apps.values()].map((state) => {
+        const connected = live && state.live !== undefined;
+        return {
+          surfaceId: state.surfaceId,
+          appId: state.appId,
+          live: connected,
+          ...(connected ? { liveSince: state.liveSince } : {}),
+          ...(!connected && state.failure !== undefined ? { failure: state.failure } : {}),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Tell the backend which apps hold a live connection (wave 13, 13-FS; D-6 (b)), so the card's
+   * buttons row and each request read a bridge that runs rather than one that is configured. A
+   * failure is logged when it starts and when it ends: a backend from before 0.17.0 has no route.
+   */
+  async function report(body, timeoutMs = BACKEND_TIMEOUT_MS) {
+    try {
+      const answer = await backend('/slack-socket/heartbeat', body, timeoutMs);
+      if (answer.status !== 200) throw new Error(`the backend answered ${answer.status}`);
+      if (reportFailing) log({ level: 'info', message: 'the heartbeat is reported again' });
+      reportFailing = false;
+    } catch (error) {
+      if (!reportFailing) {
+        log({
+          level: 'warn',
+          message: 'the heartbeat could not be reported',
+          reason: reasonOf(error),
+        });
+      }
+      reportFailing = true;
+    }
+  }
+
+  /** Report now, or once more after the report on the wire, so one change is never lost. */
+  async function reportSoon() {
+    if (reporting) {
+      reportAgain = true;
+      return;
+    }
+    reporting = true;
+    try {
+      do {
+        reportAgain = false;
+        if (stopped) return;
+        await report(heartbeat());
+      } while (reportAgain);
+    } finally {
+      reporting = false;
+    }
   }
 
   async function sync() {
@@ -142,11 +211,13 @@ export function createBridge(options) {
           refresh: undefined,
           mismatch: false,
           removed: false,
+          failure: undefined,
         };
         apps.set(surfaceId, state);
         void open(state); // open records its own failure and schedules the retry
       }
       lastSync = { ok: true, at: Date.now() };
+      void reportSoon(); // report logs its own failure
     } catch (error) {
       lastSync = { ok: false, at: Date.now() };
       log({ level: 'warn', message: 'the app list could not be read', reason: reasonOf(error) });
@@ -197,11 +268,19 @@ export function createBridge(options) {
   function forget(state, socket, why) {
     state.sockets.delete(socket);
     if (state.pending === socket) state.pending = undefined;
-    if (state.live === socket) state.live = undefined;
+    const wasLive = state.live === socket;
+    if (wasLive) state.live = undefined;
     if (state.sockets.size === 0 && !state.removed && !stopped) {
       log({ level: 'warn', message: why, appId: state.appId });
       scheduleRetry(state);
     }
+    // Only a connection that was carrying presses changes what the card may say.
+    if (wasLive && state.live === undefined && !stopped) void reportSoon(); // report logs its own failure
+  }
+
+  /** Why the app's last open failed, kept for the report until a connection is greeted. */
+  function failed(state, message, error) {
+    state.failure = error === undefined ? message : `${message}: ${reasonOf(error)}`;
   }
 
   /**
@@ -233,6 +312,7 @@ export function createBridge(options) {
         appId: state.appId,
         reason: reasonOf(error),
       });
+      failed(state, 'no connection URL', error);
       scheduleRetry(state);
       return;
     }
@@ -249,6 +329,7 @@ export function createBridge(options) {
         appId: state.appId,
         reason: reasonOf(error),
       });
+      failed(state, 'the connection URL was refused', error);
       scheduleRetry(state);
       return;
     }
@@ -257,6 +338,7 @@ export function createBridge(options) {
     const hello = setTimeout(() => {
       if (state.pending === socket) {
         log({ level: 'warn', message: 'no hello in time', appId: state.appId });
+        failed(state, 'no hello in time');
         socket.close();
       }
     }, helloTimeoutMs);
@@ -283,6 +365,7 @@ export function createBridge(options) {
         appId: state.appId,
         connectedAppId: appId,
       });
+      failed(state, `the connection is for another app (${appId})`);
       state.pending = undefined;
       socket.close();
       return;
@@ -292,7 +375,10 @@ export function createBridge(options) {
     state.live = socket;
     state.pending = undefined;
     state.liveSince = Date.now();
+    state.failure = undefined;
     log({ level: 'info', message: 'connected', appId: state.appId });
+    // A refresh's greeting changes nothing the card says; a first one does.
+    if (previous === undefined) void reportSoon(); // report logs its own failure
     // The connection this one replaced, after a refresh, goes once this one is greeted.
     if (previous !== undefined && previous !== socket) previous.close();
     clearTimeout(state.refresh);
@@ -383,14 +469,21 @@ export function createBridge(options) {
         void sync(); // sync logs its own failure
       }, syncIntervalMs);
     },
-    stop() {
+    /**
+     * Close everything, then report every app down, so the card stops offering buttons at once
+     * rather than when the last report ages (D-6 (b)); the report is given up after
+     * {@link FAREWELL_TIMEOUT_MS}.
+     */
+    async stop() {
       stopped = true;
       clearInterval(timer);
+      const farewell = heartbeat(false);
       for (const state of apps.values()) {
         state.removed = true;
         close(state);
       }
       apps.clear();
+      if (farewell.apps.length > 0) await report(farewell, FAREWELL_TIMEOUT_MS);
     },
     /** What the health check reports: the last list read and each app's connection. */
     status() {

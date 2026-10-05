@@ -6,6 +6,7 @@ export declare const RECONNECT_CAP_MS: number;
 export declare const PRESS_ATTEMPTS: number;
 export declare const PRESS_RETRY_FIRST_MS: number;
 export declare const BACKEND_TIMEOUT_MS: number;
+export declare const FAREWELL_TIMEOUT_MS: number;
 
 /** How a bridge is made: where the backend is, its secret, and the seams a test replaces. */
 export interface BridgeOptions {
@@ -35,7 +36,8 @@ export interface BridgeStatus {
 /** A running bridge. */
 export interface Bridge {
   start(): Promise<void>;
-  stop(): void;
+  /** Close every connection, then report every app down to the backend. */
+  stop(): Promise<void>;
   status(): BridgeStatus;
 }
 

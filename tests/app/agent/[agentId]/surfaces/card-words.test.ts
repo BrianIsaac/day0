@@ -406,14 +406,13 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
 describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
   // Re-pinned for the wave 12 review: the card no longer says the buttons are on whether the
   // bridge runs or not (W12-R16, D-6 (b)), nor that a request asked before they were on has them
-  // (W12-R10).
-  it('says buttons are on while the socket service runs, on each new request, with the typed code beside them', (): void => {
+  // (W12-R10). Re-pinned again for 13-FS: the card reads the bridge's heartbeat, so it says what
+  // it knows (a live connection for the app) rather than a condition it could not read.
+  it('says buttons are on while the socket service holds a live connection for the app, with the typed code beside them', (): void => {
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
-    expect(words.title).toBe(
-      'Decisions in Slack: buttons are on while the Slack socket service runs',
-    );
+    expect(words.title).toBe('Decisions in Slack: buttons are on');
     expect(words.note).toBe(
-      'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
+      'The Slack socket service holds a live connection for Mateo (Day0), so each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -433,6 +432,21 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     );
     expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
+  });
+
+  it('says the buttons are off while the socket service reports no live connection for the app (D-6 (b))', (): void => {
+    const words = decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Mateo (Day0)');
+    expect(words.title).toBe('Buttons: off until the Slack socket service connects');
+    expect(words.note).toBe(
+      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has reported no live connection for it in the last 3 minutes, so requests reach you with a typed code only. Buttons come back on each new request once it reports one. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
+    );
+    expect(words.asksForToken).toBe(false);
+    expect(words.offersReplacement).toBe(true);
+    expect(
+      decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Iris (Day0)', false).note,
+    ).toContain(
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+    );
   });
 
   it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
@@ -457,7 +471,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
     const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
     expect(on.note).toBe(
-      'Each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+      'The Slack socket service holds a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
     );
     const noToken = decisionButtonsWords(
       { available: false, why: 'no-app-level-token' },

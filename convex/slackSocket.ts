@@ -9,6 +9,7 @@ import { isManagerChannel } from './workLoop';
 import {
   bridgeSecretMatches,
   decisionButtonsFor,
+  parseHeartbeat,
   parsePress,
   SOCKET_BRIDGE_SECRET_VAR,
   type SocketPress,
@@ -36,7 +37,8 @@ function carriesPresses(surface: Doc<'surfaces'>, now: number): boolean {
     surface.verdict === 'connected' &&
     !accessEnded(surface, now) &&
     surface.managerDmChannelId !== undefined &&
-    decisionButtonsFor(surface, true).available
+    // The bridge itself asks, so it is live for the card by definition.
+    decisionButtonsFor(surface, 'live').available
   );
 }
 
@@ -286,6 +288,30 @@ export const bridgePress = httpAction(async (ctx, request) => {
   return json(
     await ctx.runMutation(internal.slackSocket.resolvePress, { surfaceId: target, press }),
   );
+});
+
+/** How many of a report's apps one mutation keeps: each reads its card and its row. */
+const HEARTBEAT_PAGE = 100;
+
+/**
+ * `POST /slack-socket/heartbeat` with `{ apps: [{ surfaceId, appId, live, liveSince?, failure? }] }`:
+ * the apps the bridge holds and whether each has a live connection (wave 13, 13-FS; D-6 (b)),
+ * kept one row per card (`socketHeartbeats`). Secret required and read before the body; 400 for a
+ * body that is not a report. Answers how many rows were written.
+ */
+export const bridgeHeartbeat = httpAction(async (ctx, request) => {
+  const refused = await refusal(request);
+  if (refused !== undefined) return refused;
+  const reports = parseHeartbeat(await bodyOf(request));
+  if (reports === undefined) return json({ error: 'not a heartbeat' }, 400);
+  let written = 0;
+  for (let start = 0; start < reports.length; start += HEARTBEAT_PAGE) {
+    const page = await ctx.runMutation(internal.socketHeartbeats.recordHeartbeats, {
+      reports: reports.slice(start, start + HEARTBEAT_PAGE),
+    });
+    written += page.written;
+  }
+  return json({ written });
 });
 
 /** Internal: a card id the bridge names, checked to be one. */

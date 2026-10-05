@@ -17,6 +17,10 @@ interface Backend {
   readonly presses: Array<{ surfaceId: string; payload: Record<string, unknown> }>;
   readonly authorisations: string[];
   apps: Array<{ surfaceId: string; appId: string; appName?: string; tokenRef?: string }>;
+  /** Every heartbeat the bridge reported, in order (D-6 (b)). */
+  readonly heartbeats: Array<{ apps: Array<Record<string, unknown>> }>;
+  /** What the heartbeat route answers: 404 is a backend from before 0.17.0. */
+  heartbeatStatus: number;
   /** How many press calls answer 503 before one is taken. */
   failPresses: number;
   /** How many connection URLs were handed out. */
@@ -44,6 +48,8 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
     ] as Backend['apps'],
     failPresses: 0,
     opened: 0,
+    heartbeats: [] as Backend['heartbeats'],
+    heartbeatStatus: 200,
   };
   const server: Server = createServer((request, response): void => {
     void (async (): Promise<void> => {
@@ -65,6 +71,11 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
         ).json()) as { url: string };
         state.opened += 1;
         return reply(200, { url: opened.url });
+      }
+      if (request.url === '/slack-socket/heartbeat') {
+        if (state.heartbeatStatus !== 200) return reply(state.heartbeatStatus, {});
+        state.heartbeats.push(body as Backend['heartbeats'][number]);
+        return reply(200, { written: 1 });
       }
       if (request.url === '/slack-socket/press') {
         if (state.failPresses > 0) {
@@ -107,7 +118,7 @@ beforeEach(async (): Promise<void> => {
 }, 20_000);
 
 afterEach(async (): Promise<void> => {
-  bridge?.stop();
+  await bridge?.stop();
   bridge = undefined;
   await backend.stop();
   fake.stop();
@@ -359,8 +370,9 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
   it('opens nothing for an open still in flight when it is stopped', async (): Promise<void> => {
     const running = start();
     const starting = running.start();
-    running.stop();
+    const stopping = running.stop();
     await starting;
+    await stopping;
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect((await proof()).socketConnections.A_DAY0_FAKE ?? 0).toBe(0);
   });
@@ -383,5 +395,74 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
       'one connection kept',
     );
     expect(running.status().apps[0]?.connected).toBe(true);
+  });
+});
+
+describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): void => {
+  /** The newest report's entry for the listed app. */
+  function lastReport(): Record<string, unknown> | undefined {
+    return backend.heartbeats.at(-1)?.apps.find((app) => app.surfaceId === 'surface-mateo');
+  }
+
+  it('reports each app it holds after its sync, and the app live as soon as its connection is greeted', async (): Promise<void> => {
+    const running = start();
+    await running.start();
+    await until(() => backend.heartbeats.length >= 1, 'the first report');
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    expect(lastReport()).toMatchObject({
+      surfaceId: 'surface-mateo',
+      appId: 'A_DAY0_FAKE',
+      live: true,
+      liveSince: expect.any(Number),
+    });
+    expect(new Set(backend.authorisations)).toEqual(new Set([`Bearer ${SECRET}`]));
+  });
+
+  it('reports again at every sync, so the backend can tell a bridge that runs from one that stopped', async (): Promise<void> => {
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    const reports = backend.heartbeats.length;
+    await until(() => backend.heartbeats.length >= reports + 2, 'two more syncs reported');
+  });
+
+  it('reports the app not live, with why, when its connection could not be opened', async (): Promise<void> => {
+    backend.apps = [{ surfaceId: 'surface-mateo', appId: 'A_DAY0_FAKE' }];
+    const running = start({
+      syncIntervalMs: 50,
+      WebSocket: class {
+        constructor() {
+          throw new Error('refused by the test');
+        }
+      } as unknown as typeof WebSocket,
+    });
+    await running.start();
+    await until(() => typeof lastReport()?.failure === 'string', 'the failure reported');
+    expect(lastReport()).toMatchObject({
+      live: false,
+      failure: 'the connection URL was refused: refused by the test',
+    });
+  });
+
+  it('reports every app not live as it stops, so the card does not wait for the report to age', async (): Promise<void> => {
+    const running = start();
+    await running.start();
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    await running.stop();
+    bridge = undefined;
+    expect(lastReport()).toMatchObject({ surfaceId: 'surface-mateo', live: false });
+  });
+
+  it('says once, not at every sync, that a backend from before 0.17.0 takes no heartbeat', async (): Promise<void> => {
+    backend.heartbeatStatus = 404;
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    const opened = backend.opened;
+    await until(() => backend.opened >= opened && logged.length > 0, 'a sync or two');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(
+      logged.filter((line) => line.message === 'the heartbeat could not be reported'),
+    ).toHaveLength(1);
   });
 });

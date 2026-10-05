@@ -115,10 +115,16 @@ that issues an app-level token, so a person generates one per app:
 4. In Day0, the employee's **Slack** card, **App-level token**: paste it and
    press **Turn on buttons**. Day0 checks it by opening a Socket Mode connection
    with it, keeps it encrypted and held by the organisation, and never shows it
-   again. The card then says "Decisions in Slack: buttons are on while the Slack
-   socket service runs", and each new request carries the buttons, beside its
-   typed code where the app takes messages; a request asked before the token
-   landed carries no buttons.
+   again. The `slack-socket` component dials the app and reports a live
+   connection for it, within seconds. The card then says "Decisions in Slack:
+   buttons are on", and each new request carries the buttons, beside its typed code where the app
+   takes messages; a request asked before the token landed carries no buttons.
+   While the component reports no live connection for the app (stopped, unable
+   to reach Slack, or from a release before v0.17.0, which reports nothing) the
+   card says "Buttons: off until the Slack socket service connects" and each new
+   request goes without buttons, decided by its typed code or in Day0: at once
+   when the component stops cleanly, and within three minutes of its last report
+   when it dies unseen.
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page; presses then

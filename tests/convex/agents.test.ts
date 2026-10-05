@@ -1403,6 +1403,15 @@ describe('the employee roster', (): void => {
             createdAt: 2,
           });
         }
+        // Re-pinned for D-6 (b): the roster's buttons read the bridge's live report on the app.
+        await ctx.db.insert('socketHeartbeats', {
+          agentId,
+          surfaceId,
+          appId,
+          live: true,
+          liveSince: Date.now(),
+          reportedAt: Date.now(),
+        });
       };
       await slack(buttons, true);
       await slack(typed, false);

@@ -141,12 +141,13 @@ import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
 import type { TicketHolderView } from '../src/work/item-display';
@@ -3603,10 +3604,11 @@ export const prepareDecisionRequest = internalMutation({
       pendingRunId: row.pendingRunId,
       openActionDecisions,
       // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
-      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons;
+      // nor does one sent while the bridge reports no live connection for the app (D-6 (b)).
       withButtons:
         (args.kind === 'plan' || heldIndexes.length > 0) &&
-        decisionButtonsFor(chat, socketBridgeConfigured()).available,
+        decisionButtonsFor(chat, await socketBridgeStateOf(ctx, chat, Date.now())).available,
       // Read where the request is claimed too: a typed code is offered only to an app that takes
       // messages (W12V-7).
       typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),

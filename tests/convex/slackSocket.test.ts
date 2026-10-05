@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { reportBridgeOn } from './fakes/socket-heartbeat';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
 
@@ -63,7 +64,7 @@ interface Seeded {
  */
 async function seedButtonedRequest(
   harness: TestConvex<typeof schema>,
-  options: { readonly appLevelToken?: boolean } = {},
+  options: { readonly appLevelToken?: boolean; readonly bridge?: 'live' | 'silent' } = {},
 ): Promise<Seeded> {
   const { agentId, surfaceId, workItemId } = await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
@@ -135,6 +136,8 @@ async function seedButtonedRequest(
     });
     return { agentId, surfaceId, workItemId };
   });
+  // Re-pinned for D-6 (b): a request carries buttons only while the bridge reports the app live.
+  if (options.bridge !== 'silent') await reportBridgeOn(harness, surfaceId);
   await harness.action(internal.managerChannelActions.requestDecision, {
     workItemId,
     kind: 'plan',
@@ -189,11 +192,28 @@ async function press(
   });
 }
 
+async function heartbeat(
+  harness: TestConvex<typeof schema>,
+  body: unknown,
+  authorization = `Bearer ${SECRET}`,
+): Promise<Response> {
+  return await harness.fetch('/slack-socket/heartbeat', {
+    method: 'POST',
+    headers: { authorization, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
   it('refuses a call without the deployment secret, and every call where the deployment holds none', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness);
-    for (const path of ['/slack-socket/apps', '/slack-socket/connection', '/slack-socket/press']) {
+    for (const path of [
+      '/slack-socket/apps',
+      '/slack-socket/connection',
+      '/slack-socket/press',
+      '/slack-socket/heartbeat',
+    ]) {
       const bare = await harness.fetch(path, { method: 'POST', body: '{}' });
       expect(bare.status).toBe(401);
       const wrong = await harness.fetch(path, {
@@ -205,6 +225,7 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
     }
     vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
     expect((await press(harness, seeded, blockActions(seeded))).status).toBe(503);
+    expect((await heartbeat(harness, { apps: [] })).status).toBe(503);
     const row = await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId));
     expect(row?.state).toBe('plan-pending');
   });
@@ -496,5 +517,73 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
         reply: { verb: 'reject', id: seeded.code, reason: 'not this week' },
       }),
     ).resolves.toMatchObject({ status: 'decided', outcome: 'reject' });
+  });
+});
+
+describe('the bridge’s heartbeat (wave 13, 13-FS; D-6 (b), W12-R16)', (): void => {
+  it('reads the secret before the body, so a stranger learns nothing of what it would take', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    expect((await heartbeat(harness, 'not a report', 'Bearer not-the-secret')).status).toBe(401);
+    expect((await heartbeat(harness, 'not a report')).status).toBe(400);
+  });
+
+  it('keeps what the bridge reports of each app it holds, and answers how many rows it wrote', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness, { bridge: 'silent' });
+    const response = await heartbeat(harness, {
+      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS', live: true, liveSince: 5 }],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ written: 1 });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('socketHeartbeats').collect());
+    expect(rows).toEqual([
+      expect.objectContaining({ surfaceId: seeded.surfaceId, appId: 'A0OPS', live: true }),
+    ]);
+    expect(
+      await (
+        await heartbeat(harness, {
+          apps: rows.map(() => ({
+            surfaceId: seeded.surfaceId,
+            appId: 'A0OPS',
+            live: true,
+            liveSince: 5,
+          })),
+        })
+      ).json(),
+    ).toEqual({ written: 0 });
+  });
+
+  it('sends a request made while the bridge reports nothing with no buttons, saying how to decide', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness, { bridge: 'silent' });
+    const row = await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId));
+    expect(row?.decision?.withButtons).toBeUndefined();
+    const request = sent.find((call) => call.url.endsWith('/chat.postMessage'));
+    expect(request?.body).not.toContain('day0.decision.approve');
+    const text = (JSON.parse(request?.body ?? '{}') as { text?: string }).text ?? '';
+    expect(text).not.toContain('Press Approve or Reject');
+    // The fixture's app is not recorded as taking messages, so day0 is the way to decide (W12V-7).
+    expect(text).toContain(
+      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+  });
+
+  it('sends the next request with buttons once the bridge reports the app live again', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedButtonedRequest(harness, { bridge: 'silent' });
+    await heartbeat(harness, {
+      apps: [{ surfaceId: seeded.surfaceId, appId: 'A0OPS', live: true, liveSince: 5 }],
+    });
+    await harness.mutation(internal.work.closeDecisionThread, {
+      surfaceId: seeded.surfaceId,
+      decisionId: seeded.code,
+    });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId: seeded.workItemId,
+      kind: 'plan',
+      supersedes: seeded.code,
+    });
+    const row = await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId));
+    expect(row?.decision?.withButtons).toBe(true);
   });
 });

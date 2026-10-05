@@ -23,6 +23,7 @@ import {
 import { sendTransferNotice as sendTransferNoticeFunction } from '../../convex/managerChannelActions';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { reportBridgeOn } from './fakes/socket-heartbeat';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
@@ -577,8 +578,9 @@ describe('the outbound manager-channel action', (): void => {
 });
 
 /**
- * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), and the
- * deployment its Socket Mode bridge's secret, so its requests can carry buttons.
+ * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), the deployment
+ * its Socket Mode bridge's secret, and the bridge's live report on the app, so its requests can
+ * carry buttons (re-pinned for D-6 (b): a request reads the bridge's heartbeat, not the secret).
  */
 async function landAppLevelToken(
   harness: TestConvex<typeof schema>,
@@ -637,6 +639,14 @@ async function landAppLevelToken(
       });
     }
   });
+  const surfaceId = await harness.run(
+    async (ctx) =>
+      (await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique())!._id,
+  );
+  await reportBridgeOn(harness, surfaceId);
 }
 
 describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)', (): void => {

@@ -24,25 +24,36 @@ describe('decisionChannelOf', (): void => {
 
 describe('decisionsReachOf', (): void => {
   it('says here alone without a channel, and the DM with or without buttons otherwise', (): void => {
-    // Re-pinned for W12V-7: the DM says whether the manager's typed code reaches the app.
-    expect(decisionsReachOf(undefined, true, true)).toEqual({ kind: 'dashboard' });
+    // Re-pinned for W12V-7: the DM says whether the manager's typed code reaches the app; and for
+    // D-6 (b): the bridge is what the card knows of it, no longer whether its secret is set.
+    expect(decisionsReachOf(undefined, 'live', true)).toEqual({ kind: 'dashboard' });
     expect(
-      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), true, true),
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), 'live', true),
     ).toEqual({ kind: 'dm', channel: 'Slack', buttons: true, typedCode: true });
-    expect(decisionsReachOf(card({ provisioning: {} }), true, true)).toEqual({
+    expect(decisionsReachOf(card({ provisioning: {} }), 'live', true)).toEqual({
       kind: 'dm',
       channel: 'Slack',
       buttons: false,
       typedCode: true,
     });
     expect(
-      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), false, true),
+      decisionsReachOf(
+        card({ provisioning: { appLevelTokenCredentialId: 'k' } }),
+        'unconfigured',
+        true,
+      ),
+    ).toEqual({ kind: 'dm', channel: 'Slack', buttons: false, typedCode: true });
+  });
+
+  it('says the DM carries no buttons while the bridge reports no live connection (D-6 (b))', (): void => {
+    expect(
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), 'down', true),
     ).toEqual({ kind: 'dm', channel: 'Slack', buttons: false, typedCode: true });
   });
 
   it('says no typed code reaches an app that takes no messages (W12V-7)', (): void => {
     expect(
-      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), true, false),
+      decisionsReachOf(card({ provisioning: { appLevelTokenCredentialId: 'k' } }), 'live', false),
     ).toEqual({ kind: 'dm', channel: 'Slack', buttons: true, typedCode: false });
   });
 });

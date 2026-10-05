@@ -1,7 +1,7 @@
 import {
   decisionButtonsFor,
-  socketBridgeConfigured,
   type DecisionButtons,
+  type SocketBridgeState,
 } from '../src/surfaces/slack-socket';
 import { ConvexError, v } from 'convex/values';
 import {
@@ -49,6 +49,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
 import { purgeAppLevelToken } from './credentials';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import type { TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
@@ -466,7 +467,19 @@ export const listForAgent = query({
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    const bridgeConfigured = socketBridgeConfigured();
+    const now = Date.now();
+    const bridges = new Map(
+      await Promise.all(
+        surfaces
+          .filter(carriesDecisions)
+          .map(
+            async (surface): Promise<[Id<'surfaces'>, SocketBridgeState]> => [
+              surface._id,
+              await socketBridgeStateOf(ctx, surface, now),
+            ],
+          ),
+      ),
+    );
     const typedCodes = new Map(
       await Promise.all(
         surfaces
@@ -522,8 +535,8 @@ export const listForAgent = query({
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
         ...(keptAppNotReinstalled ? { keptAppNotReinstalled: true as const } : {}),
-        ...(carriesDecisions(surface)
-          ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
+        ...(bridges.has(surface._id)
+          ? { decisionButtons: decisionButtonsFor(surface, bridges.get(surface._id)!) }
           : {}),
         ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };
