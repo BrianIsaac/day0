@@ -239,6 +239,16 @@ describe('two corrections that say the same thing (F10)', (): void => {
     expect(sameGroups({ groups: [{ ids: ['c2', 'c1'] }] }, corrections)).toEqual([['c1', 'c2']]);
   });
 
+  it('breaks a tie of times by the prompt order, which lists the newest first', (): void => {
+    const tied = [
+      { id: 'later', text: 'b', itemTitle: 'SH-2', createdAt: 5, isNew: true },
+      { id: 'earlier', text: 'a', itemTitle: 'SH-1', createdAt: 5, isNew: false },
+    ];
+    expect(sameGroups({ groups: [{ ids: ['later', 'earlier'] }] }, tied)).toEqual([
+      ['earlier', 'later'],
+    ]);
+  });
+
   it('drops a group of one, a group with no new correction, an unknown id and an id already grouped', (): void => {
     expect(
       sameGroups(

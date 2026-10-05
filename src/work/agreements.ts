@@ -389,7 +389,8 @@ export function samenessJudgementPrompt(corrections: readonly JudgedCorrection[]
 
 /**
  * The groups a sameness reply amounts to: ids the prompt listed, at least two in a group, at least
- * one of them new, each id in one group only (the first that names it), oldest first.
+ * one of them new, each id in one group only (the first that names it), oldest first (the prompt's
+ * newest-first order breaks a tie of times).
  *
  * @param reply - The model's answer.
  * @param corrections - The corrections the prompt listed.
@@ -400,6 +401,8 @@ export function sameGroups(
   corrections: readonly JudgedCorrection[],
 ): string[][] {
   const byId = new Map(corrections.map((correction) => [correction.id, correction]));
+  // The prompt lists the corrections newest first: a later place breaks a tie of times as older.
+  const place = new Map(corrections.map((correction, at) => [correction.id, at]));
   const grouped = new Set<string>();
   const groups: string[][] = [];
   for (const group of reply.groups) {
@@ -408,7 +411,11 @@ export function sameGroups(
         const correction = byId.get(id);
         return correction && !grouped.has(id) ? [correction] : [];
       })
-      .sort((left, right) => left.createdAt - right.createdAt);
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt ||
+          (place.get(right.id) ?? 0) - (place.get(left.id) ?? 0),
+      );
     if (members.length < 2 || !members.some((member) => member.isNew)) continue;
     for (const member of members) grouped.add(member.id);
     groups.push(members.map((member) => member.id));
