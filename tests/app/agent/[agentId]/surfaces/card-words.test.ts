@@ -438,7 +438,9 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     const words = decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Mateo (Day0)');
     expect(words.title).toBe('Buttons: off until the Slack socket service connects');
     expect(words.note).toBe(
-      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has reported no live connection for it in the last 3 minutes, so requests reach you with a typed code only. Buttons come back on each new request once it reports one. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
+      // Re-worded on the bed: a bridge that stops cleanly reports the app down at once, so the note
+      // says what the card knows (no live connection reported lately), not a fixed window.
+      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so requests reach you with a typed code only. Buttons come back on each new request once it does. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);

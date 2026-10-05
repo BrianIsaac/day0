@@ -7,7 +7,6 @@ import type {
 import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
 import type { DecisionButtons } from '@/surfaces/slack-socket';
-import { SOCKET_HEARTBEAT_FRESH_MS } from '@/surfaces/slack-socket-heartbeat';
 import { MESSAGES_TAB_TOGGLE, type TypedCodeReach } from '@/surfaces/slack-messages-tab';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
@@ -643,7 +642,7 @@ export function decisionButtonsWords(
     case 'bridge-down':
       return {
         title: 'Buttons: off until the Slack socket service connects',
-        note: `The app-level token of ${app} is stored, but the Slack socket service that carries a press has reported no live connection for it in the last ${SOCKET_HEARTBEAT_FRESH_MS / 60_000} minutes, so ${withoutButtons}. Buttons come back on each new request once it reports one. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.`,
+        note: `The app-level token of ${app} is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so ${withoutButtons}. Buttons come back on each new request once it does. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.`,
         asksForToken: false,
         // A token Slack refuses, or one of another app, keeps the connection from opening.
         offersReplacement: true,

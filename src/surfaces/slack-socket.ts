@@ -1,7 +1,4 @@
 import { isSlackApiEndpoint } from './slack-endpoint';
-import { SOCKET_HEARTBEAT_FRESH_MS, SOCKET_HEARTBEAT_REFRESH_MS } from './slack-socket-heartbeat';
-
-export { SOCKET_HEARTBEAT_FRESH_MS, SOCKET_HEARTBEAT_REFRESH_MS };
 
 /**
  * The deployment variable holding the secret the Socket Mode bridge (`slack-socket/`, RM7)
@@ -76,6 +73,19 @@ export function decisionButtonsFor(card: ButtonsCard, bridge: SocketBridgeState)
   if (bridge === 'down') return { available: false, why: 'bridge-down' };
   return { available: true };
 }
+
+/**
+ * How old an unchanged report may grow before the backend writes it again: the bridge reports
+ * every 30 seconds, and a row rewritten that often would wake every reader of it for nothing.
+ */
+export const SOCKET_HEARTBEAT_REFRESH_MS = 2 * 60_000;
+
+/**
+ * How recent a live report must be for a card to read the bridge as live: the refresh, the sync
+ * that lands it (30 seconds) and one missed sync (30 seconds). A bridge that stops cleanly reports
+ * every app down as it goes; one that dies unseen reads as down this long after its last report.
+ */
+export const SOCKET_HEARTBEAT_FRESH_MS = 3 * 60_000;
 
 /** The longest failure a report stores, so a bridge cannot fill the row. */
 const HEARTBEAT_FAILURE_LIMIT = 300;
