@@ -2300,8 +2300,34 @@ describe('the wave 13 schema step (13-K, N10: additive and optional)', (): void 
       ]),
     );
     expect(indexNames('workingAgreements')).toEqual(
-      expect.arrayContaining(['by_user_status', 'by_agent_status']),
+      expect.arrayContaining(['by_user_status', 'by_agent_status', 'by_user_agent_status']),
     );
+  });
+
+  it("reads one owner's every-employee agreements by owner first, never another owner's (the second pass)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agreement = (userId: string) => ({
+        userId,
+        kind: 'preference' as const,
+        statement: 'Post in the morning.',
+        scope: 'global' as const,
+        sourceType: 'manager-card' as const,
+        status: 'active' as const,
+        createdAt: 1,
+        appliedTo: [],
+      });
+      const ours = await ctx.db.insert('workingAgreements', agreement('owner'));
+      await ctx.db.insert('workingAgreements', agreement('rival'));
+      const everyEmployee = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_agent_status', (q) =>
+          q.eq('userId', 'owner').eq('agentId', undefined).eq('status', 'active'),
+        )
+        .collect();
+      return { ours, everyEmployee: everyEmployee.map((row) => row._id) };
+    });
+    expect(read.everyEmployee).toEqual([read.ours]);
   });
 });
 

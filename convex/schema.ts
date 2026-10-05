@@ -1914,8 +1914,17 @@ export default defineSchema({
   })
     /** The owner's agreements in one standing: selection, the Agreements card, the deletion. */
     .index('by_user_status', ['userId', 'status'])
-    /** One employee's agreements in one standing (absent `agentId`: every employee's). */
-    .index('by_agent_status', ['agentId', 'status']),
+    /**
+     * One employee's agreements in one standing: the reset's read of an employee's own rows.
+     * Never read with an absent `agentId`, which would answer every owner's every-employee rows;
+     * those are read by `by_user_agent_status`.
+     */
+    .index('by_agent_status', ['agentId', 'status'])
+    /**
+     * One owner's agreements for one employee, or for every employee (absent `agentId`), in one
+     * standing: selection reads the candidate's and the every-employee rows, owner first.
+     */
+    .index('by_user_agent_status', ['userId', 'agentId', 'status']),
 
   /**
    * The lease on the verification sandbox: at most one row, the skill whose
