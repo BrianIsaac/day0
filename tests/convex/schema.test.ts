@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { DataModel, Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -2302,5 +2302,39 @@ describe('the wave 13 schema step (13-K, N10: additive and optional)', (): void 
     expect(indexNames('workingAgreements')).toEqual(
       expect.arrayContaining(['by_user_status', 'by_agent_status']),
     );
+  });
+});
+
+describe('the schema module', (): void => {
+  it('evaluates without reading an environment variable, which the backend refuses while it evaluates a schema', async (): Promise<void> => {
+    // The day0-w13k bed, 5 October: a schema that imported a module whose import chain read the
+    // surface mode at load was refused at the push ("Environment variables unsupported when
+    // evaluating schema"), which convex-test never sees.
+    vi.resetModules();
+    const reads: string[] = [];
+    const real = process.env;
+    process.env = new Proxy(real, {
+      get(target, key): unknown {
+        if (typeof key === 'string') {
+          const ours = (new Error().stack ?? '')
+            .split('\n')
+            .slice(2)
+            .some(
+              (frame) =>
+                /\.tsx?:\d+/.test(frame) &&
+                !frame.includes('/tests/') &&
+                !frame.includes('node_modules'),
+            );
+          if (ours) reads.push(key);
+        }
+        return Reflect.get(target, key) as unknown;
+      },
+    });
+    try {
+      await import('../../convex/schema');
+    } finally {
+      process.env = real;
+    }
+    expect(reads).toEqual([]);
   });
 });

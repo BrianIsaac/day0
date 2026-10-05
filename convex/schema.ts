@@ -18,7 +18,7 @@ import {
   SOURCE_REVOCATION_STATES,
   TOKEN_STORES,
 } from '../src/surfaces/access-identity';
-import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab';
+import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
 import {
   IDENTITY_PROVIDERS,
   PEOPLE_SOURCES,
