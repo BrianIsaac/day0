@@ -852,7 +852,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     harness: TestConvex<typeof schema>,
     surface: 'slack' | 'linear',
     credentialId: Id<'credentials'>,
-    slack: { managerDm: string; channel: string } = {
+    slack: { managerDm: string; channel: string; contentType?: string | null } = {
       managerDm: 'D0MANAGER',
       channel: 'D0MANAGER',
     },
@@ -938,7 +938,14 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
               surface: 'slack',
               method: 'POST',
               path: '/chat.postMessage',
-              headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+              // Re-pinned for 13-FS: the write carries the JSON content type Slack requires (the first
+              // walk's row 19), which fake Slack now holds a post to; null leaves it out.
+              headersJson: JSON.stringify({
+                Authorization: 'Bearer {{secret}}',
+                ...(slack.contentType === null
+                  ? {}
+                  : { 'Content-Type': slack.contentType ?? 'application/json; charset=utf-8' }),
+              }),
               body: JSON.stringify({ channel: slack.channel, text: 'The close summary is ready.' }),
             },
           }
@@ -1057,6 +1064,17 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
       const refused = await landed(harness, elsewhere);
       expect(refused.applied.ok).toBe(false);
       expect(refused.applied.reason).toContain('not_in_channel');
+
+      // A write whose headers name no content type goes as text, which Slack refuses (13-FS).
+      const untyped = await approvedWrite(harness, 'slack', credentialId, {
+        managerDm: 'D_DAY0_MANAGER',
+        channel: 'D_DAY0_MANAGER',
+        contentType: null,
+      });
+      await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: untyped });
+      const untypedLanded = await landed(harness, untyped);
+      expect(untypedLanded.applied.ok).toBe(false);
+      expect(untypedLanded.applied.reason).toContain('invalid_arguments');
     } finally {
       fake.stop();
     }
