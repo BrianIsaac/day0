@@ -23,6 +23,8 @@ interface Backend {
   heartbeatStatus: number;
   /** How many press calls answer 503 before one is taken. */
   failPresses: number;
+  /** How many connection URLs are refused (502) before one is handed out. */
+  failConnections: number;
   /** How many connection URLs were handed out. */
   opened: number;
   stop(): Promise<void>;
@@ -47,6 +49,7 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
       },
     ] as Backend['apps'],
     failPresses: 0,
+    failConnections: 0,
     opened: 0,
     heartbeats: [] as Backend['heartbeats'],
     heartbeatStatus: 200,
@@ -63,6 +66,10 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
       if (request.url === '/slack-socket/apps') return reply(200, { apps: state.apps });
       if (request.url === '/slack-socket/connection') {
         if (!state.apps.some((app) => app.surfaceId === body.surfaceId)) return reply(404, {});
+        if (state.failConnections > 0) {
+          state.failConnections -= 1;
+          return reply(502, { error: 'slack refused' });
+        }
         const opened = (await (
           await fetch(`${fake.base}/api/apps.connections.open`, {
             method: 'POST',
@@ -129,6 +136,7 @@ function start(
     readonly syncIntervalMs?: number;
     readonly helloTimeoutMs?: number;
     readonly maxConnectionMs?: number;
+    readonly stableAfterMs?: number;
     readonly WebSocket?: typeof WebSocket;
   } = {},
 ): Bridge {
@@ -144,6 +152,7 @@ function start(
       ? {}
       : { maxConnectionMs: overrides.maxConnectionMs }),
     ...(overrides.WebSocket === undefined ? {} : { WebSocket: overrides.WebSocket }),
+    ...(overrides.stableAfterMs === undefined ? {} : { stableAfterMs: overrides.stableAfterMs }),
   });
   return bridge;
 }
@@ -384,6 +393,46 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     await until(() => running.status().apps.some((app) => app.connected), 'the hello');
     expect(await postAndPress('approve')).toMatchObject({ delivered: true, acknowledged: true });
     await until(() => backend.presses.length === 1, 'the press on the seventh offer');
+  });
+
+  it('forgets its earlier failures once a connection has lived long enough, so a later drop dials again at once (W12-R21)', async (): Promise<void> => {
+    backend.failConnections = 3;
+    const running = start({ stableAfterMs: 100 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    logged.length = 0;
+    // The fake's reset drops the connection with no disconnect frame, as a network break would.
+    await fetch(`${fake.base}/reset`, { method: 'POST' });
+    await fetch(`${fake.base}/proof/app-level-token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'A_DAY0_FAKE' }),
+    });
+    await until(
+      () => logged.some((line) => line.message === 'dialling again'),
+      'the retry after the drop',
+    );
+    expect(logged.find((line) => line.message === 'dialling again')).toMatchObject({
+      appId: 'A_DAY0_FAKE',
+      inMs: 50,
+    });
+  });
+
+  it('keeps backing off a connection that drops before it was stable (W12-R21)', async (): Promise<void> => {
+    backend.failConnections = 3;
+    const running = start({ stableAfterMs: 60_000 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    logged.length = 0;
+    await fetch(`${fake.base}/reset`, { method: 'POST' });
+    await until(
+      () => logged.some((line) => line.message === 'dialling again'),
+      'the retry after the drop',
+    );
+    expect(logged.find((line) => line.message === 'dialling again')).toMatchObject({
+      inMs: 400,
+    });
   });
 
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {

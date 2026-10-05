@@ -50,6 +50,7 @@ export const FAREWELL_TIMEOUT_MS = 3_000;
  * @property {number} [pressRetryFirstMs]
  * @property {number} [helloTimeoutMs]
  * @property {number} [maxConnectionMs]
+ * @property {number} [stableAfterMs]
  */
 
 /**
@@ -87,6 +88,7 @@ export function createBridge(options) {
   const pressRetryFirstMs = options.pressRetryFirstMs ?? PRESS_RETRY_FIRST_MS;
   const helloTimeoutMs = options.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
   const maxConnectionMs = options.maxConnectionMs ?? MAX_CONNECTION_MS;
+  const stableAfterMs = options.stableAfterMs ?? STABLE_AFTER_MS;
   /** @type {Map<string, AppState>} */
   const apps = new Map();
   let timer;
@@ -258,6 +260,7 @@ export function createBridge(options) {
     if (stopped || state.removed || state.retry !== undefined) return;
     const wait = Math.min(reconnectFirstMs * 2 ** state.failures, RECONNECT_CAP_MS);
     state.failures += 1;
+    log({ level: 'info', message: 'dialling again', appId: state.appId, inMs: wait });
     state.retry = setTimeout(() => {
       state.retry = undefined;
       void open(state); // open records its own failure and schedules the retry
@@ -270,6 +273,9 @@ export function createBridge(options) {
     if (state.pending === socket) state.pending = undefined;
     const wasLive = state.live === socket;
     if (wasLive) state.live = undefined;
+    // A connection that lived long enough ends a flap: its drop dials again at the first wait, not
+    // after the back-off its earlier failures had reached (W12-R21).
+    if (wasLive && Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
     if (state.sockets.size === 0 && !state.removed && !stopped) {
       log({ level: 'warn', message: why, appId: state.appId });
       scheduleRetry(state);
@@ -384,7 +390,7 @@ export function createBridge(options) {
     clearTimeout(state.refresh);
     state.refresh = setTimeout(() => {
       state.refresh = undefined;
-      if (Date.now() - state.liveSince >= STABLE_AFTER_MS) state.failures = 0;
+      if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       void open(state); // open records its own failure and schedules the retry
     }, maxConnectionMs);
   }
@@ -404,7 +410,7 @@ export function createBridge(options) {
     }
     if (message.type === 'disconnect') {
       log({ level: 'info', message: 'refresh asked', appId: state.appId, reason: message.reason });
-      if (Date.now() - state.liveSince >= STABLE_AFTER_MS) state.failures = 0;
+      if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       // A refresh opens the next at once; a link Slack disabled is reopened only after the backoff.
       if (message.reason === 'link_disabled') {
         socket.close();

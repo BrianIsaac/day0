@@ -20,6 +20,7 @@ export interface BridgeOptions {
   readonly pressRetryFirstMs?: number;
   readonly helloTimeoutMs?: number;
   readonly maxConnectionMs?: number;
+  readonly stableAfterMs?: number;
 }
 
 /** What the health check reports. */
