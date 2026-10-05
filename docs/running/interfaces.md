@@ -41,7 +41,7 @@ The entry points a reader is most likely to want:
 | `reset:retire` | mutation | Retires one employee, by `agentId`: real mode revokes what only it bound, deletes its rows in the enumerated tables and keeps a `retirements` row; the hosted office wipes it |
 | `reset:retirePreview` | query | What `reset:retire` would delete, revoke and keep for one employee, for the Manage tab's retire dialog; `null` once the employee is gone |
 | `people:ensureOwner` | mutation | Keeps the caller's own person in their people graph, from their verified address, with that address and each Slack user their connected chat cards looked up by it as identities; the home calls it once per signed-in visit, and it writes nothing in mock mode or what is already held |
-| `reset:deleteMyData` | mutation | Retires every one of the caller's employees; `alsoUnlinkDocumentation` unlinks the owner's documentation and revokes every owned credential too |
+| `reset:deleteMyData` | mutation | Retires every one of the caller's employees and deletes their skill library, people graph and working agreements; `alsoUnlinkDocumentation` unlinks the owner's documentation and revokes every owned credential too |
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
 

@@ -40,6 +40,11 @@ const heldKinds: readonly HeldKind[] = [
   { kind: 'employees', stored: 'your employees', goes: 'every employee and its data' },
   { kind: 'skillLibrary', stored: 'your skill library', goes: 'your skill library' },
   {
+    kind: 'people',
+    stored: 'the people and working agreements you keep',
+    goes: 'the people and working agreements you keep',
+  },
+  {
     kind: 'handoverWords',
     stored: 'the notes on your handover requests',
     goes: 'the notes on your handover requests',
