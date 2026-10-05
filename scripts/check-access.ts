@@ -118,6 +118,8 @@ export interface VendorProbes {
    * asked inside its container; absent where nothing can ask it.
    */
   socketBridge?(): Promise<SocketBridgeReading>;
+  /** What the backend holds of the service's reports, when the deployment can be read (13-FS). */
+  heartbeats?(): Promise<HeartbeatsReading>;
   /**
    * Whether the manager's typed code reaches each installed employee app (W12V-7), as the
    * deployment's records say; absent where nothing can read the deployment.
@@ -132,6 +134,21 @@ export type MessagesTabReading =
       readonly apps: ReadonlyArray<{
         readonly appName: string;
         readonly reach: TypedCodeReach['state'];
+      }>;
+    }
+  | { readonly state: 'absent'; readonly detail: string };
+
+/**
+ * What the backend holds of the Slack socket service's reports (13-FS): each employee app with an
+ * app-level token and whether a live report of it is recent, or why it could not be read.
+ */
+export type HeartbeatsReading =
+  | {
+      readonly state: 'read';
+      readonly apps: ReadonlyArray<{
+        readonly appId: string;
+        readonly appName: string;
+        readonly live: boolean;
       }>;
     }
   | { readonly state: 'absent'; readonly detail: string };
@@ -852,6 +869,20 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
         'live app-level token.',
     );
   }
+  const unreported = await unreportedApps(reading.apps, probes);
+  if (unreported.length > 0) {
+    const one = unreported.length === 1;
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      `The Slack socket service holds a connection for ${listedNames(unreported)}, but the ` +
+        `backend has no live report of ${one ? 'it' : 'them'}, so ${one ? 'its card reads' : 'their cards read'} ` +
+        `the buttons as off and ${one ? 'its' : 'their'} requests go without them: the service ` +
+        'runs a release before v0.17.0, or cannot reach the backend’s heartbeat route. Restart it: ' +
+        'pnpm exec tsx scripts/compose.ts --profile slack-socket restart slack-socket.',
+    );
+  }
   const count = reading.apps.length;
   return check(
     row.system,
@@ -862,6 +893,21 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
           'requests carry no buttons.'
       : `The Slack socket service holds a connection for ${count} employee app${count === 1 ? '' : 's'} with an app-level token.`,
   );
+}
+
+/**
+ * The apps the service holds a connection for whose live report the backend lacks (13-FS), by
+ * name; none when the deployment's reports could not be read.
+ */
+async function unreportedApps(
+  held: ReadonlyArray<{ readonly appId: string; readonly appName?: string }>,
+  probes: VendorProbes,
+): Promise<string[]> {
+  if (probes.heartbeats === undefined || held.length === 0) return [];
+  const reports = await probes.heartbeats();
+  if (reports.state === 'absent') return [];
+  const live = new Set(reports.apps.filter((app) => app.live).map((app) => app.appId));
+  return held.filter((app) => !live.has(app.appId)).map((app) => app.appName ?? `app ${app.appId}`);
 }
 
 /** Names in a sentence: "A", "A and B", "A, B and C". */
@@ -1288,6 +1334,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       socketBridge: async (): Promise<SocketBridgeReading> =>
         askSocketBridge(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile),
       messagesTab: async (): Promise<MessagesTabReading> => await readMessagesTab(admin),
+      heartbeats: async (): Promise<HeartbeatsReading> => await readHeartbeats(admin),
     },
     { install: args.install },
   );
@@ -1331,6 +1378,32 @@ async function readMessagesTab(
         apps: Array<{ appName: string; reach: TypedCodeReach['state'] }>;
         cursor: string | null;
       } = await admin.run('query', 'slackMessagesTab:messagesTabReport', { cursor });
+      apps.push(...read.apps);
+      cursor = read.cursor;
+      if (cursor === null) break;
+    }
+  } catch (err) {
+    return { state: 'absent', detail: firstLine(errorMessage(err)) };
+  }
+  return { state: 'read', apps };
+}
+
+/**
+ * What the backend holds of the Slack socket service's reports, page by page (13-FS).
+ *
+ * @param admin - The deployment's admin client.
+ */
+async function readHeartbeats(
+  admin: ReturnType<typeof deploymentAdmin>,
+): Promise<HeartbeatsReading> {
+  const apps: Array<{ appId: string; appName: string; live: boolean }> = [];
+  let cursor: string | null = null;
+  try {
+    for (let page = 0; page < MESSAGES_TAB_PAGES; page += 1) {
+      const read: {
+        apps: Array<{ appId: string; appName: string; live: boolean }>;
+        cursor: string | null;
+      } = await admin.run('query', 'socketHeartbeats:heartbeatReport', { cursor });
       apps.push(...read.apps);
       cursor = read.cursor;
       if (cursor === null) break;

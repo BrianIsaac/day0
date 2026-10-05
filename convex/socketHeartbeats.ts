@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { internalMutation, type QueryCtx } from './_generated/server';
+import { internalMutation, internalQuery, type QueryCtx } from './_generated/server';
 import {
   heartbeatWriteDue,
   SOCKET_HEARTBEAT_EXPIRY_MS,
@@ -90,6 +90,52 @@ export const expire = internalMutation({
     if (row === null || !row.live || row.reportedAt !== args.reportedAt) return null;
     await ctx.db.patch(row._id, { live: false, liveSince: undefined });
     return null;
+  },
+});
+
+/** How many chat cards one page of `heartbeatReport` reads; each reads its report. */
+const REPORT_PAGE = 200;
+
+/** One employee app in `check:access`'s socket row: whether the backend holds a live report of it. */
+interface HeartbeatRow {
+  readonly appId: string;
+  readonly appName: string;
+  readonly live: boolean;
+}
+
+/**
+ * Internal, for `check:access` (13-FS): one page of the employee apps with an app-level token, each
+ * with whether the backend holds a live and recent report of it from the bridge, so the socket row
+ * can name an app the bridge holds whose card still reads the buttons as off.
+ */
+export const heartbeatReport = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<{ apps: HeartbeatRow[]; cursor: string | null }> => {
+    const now = Date.now();
+    const page = await ctx.db
+      .query('surfaces')
+      .withIndex('by_class', (q) => q.eq('class', 'chat'))
+      .paginate({ cursor: args.cursor, numItems: REPORT_PAGE });
+    const apps = await Promise.all(
+      page.page.flatMap((surface) => {
+        const app = surface.provisioning;
+        if (app?.appLevelTokenCredentialId === undefined) return [];
+        return [
+          (async (): Promise<HeartbeatRow> => {
+            const report = await ctx.db
+              .query('socketHeartbeats')
+              .withIndex('by_surface', (q) => q.eq('surfaceId', surface._id))
+              .first();
+            return {
+              appId: app.appId,
+              appName: app.appName,
+              live: socketBridgeStateFor(true, report, app.appId, now) === 'live',
+            };
+          })(),
+        ];
+      }),
+    );
+    return { apps, cursor: page.isDone ? null : page.continueCursor };
   },
 });
 

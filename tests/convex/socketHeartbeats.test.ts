@@ -258,3 +258,29 @@ describe('socketBridgeStateOf', (): void => {
     expect(await stateOf(harness, surfaceId)).toBe('unconfigured');
   });
 });
+
+describe('heartbeatReport, for check:access (13-FS second pass)', (): void => {
+  it('lists each card with its app-level token, with whether the backend holds a live report of it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const reported = await seedCard(harness);
+    const silent = await seedCard(harness);
+    await reportBridgeOn(harness, reported.surfaceId);
+    await harness.run(async (ctx) => {
+      const card = (await ctx.db.get(silent.surfaceId))!;
+      await ctx.db.patch(silent.surfaceId, {
+        provisioning: { ...card.provisioning!, appId: 'A0SILENT', appName: 'Silent (Day0)' },
+      });
+    });
+    const report = await harness.query(internal.socketHeartbeats.heartbeatReport, {
+      cursor: null,
+    });
+    expect(report.cursor).toBeNull();
+    expect(report.apps).toEqual(
+      expect.arrayContaining([
+        { appId: 'A0MATEO', appName: 'Mateo (Day0)', live: true },
+        { appId: 'A0SILENT', appName: 'Silent (Day0)', live: false },
+      ]),
+    );
+    expect(report.apps).toHaveLength(2);
+  });
+});

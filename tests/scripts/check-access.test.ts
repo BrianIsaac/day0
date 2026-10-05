@@ -10,6 +10,7 @@ import {
   type AccessCheck,
   type ConnectionRow,
   type SocketBridgeReading,
+  type HeartbeatsReading,
   type MessagesTabReading,
   type VendorProbes,
 } from '../../scripts/check-access';
@@ -64,6 +65,8 @@ function vendors(
     readonly socket?: SocketBridgeReading;
     /** Whether the typed code reaches each employee app; none installed by default (W12V-7). */
     readonly messages?: MessagesTabReading;
+    /** What the backend holds of the service's reports; not asked by default (13-FS). */
+    readonly heartbeats?: HeartbeatsReading;
   } = {},
 ): VendorProbes & {
   readonly calls: string[];
@@ -86,6 +89,9 @@ function vendors(
       overrides.socket ?? { state: 'running', synced: true, apps: [] },
     messagesTab: async (): Promise<MessagesTabReading> =>
       overrides.messages ?? { state: 'read', apps: [] },
+    ...(overrides.heartbeats === undefined
+      ? {}
+      : { heartbeats: async (): Promise<HeartbeatsReading> => overrides.heartbeats! }),
     fromBackend: async (url: URL): Promise<ModelDial> => {
       fromTheBackend.push(url.href);
       return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
@@ -702,6 +708,63 @@ describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void
     );
     expect(socket.status).toBe('gap');
     expect(socket.detail).toContain('DAY0_SOCKET_BRIDGE_SECRET');
+  });
+});
+
+describe('check:access: the Slack socket service’s reports to the backend (13-FS)', (): void => {
+  const connected: SocketBridgeReading = {
+    state: 'running',
+    synced: true,
+    apps: [
+      { appId: 'A1', appName: 'Ana (Day0)', connected: true },
+      { appId: 'A2', appName: 'Cara (Day0)', connected: true },
+    ],
+  };
+
+  it('names each app the service holds whose live report the backend lacks, as a gap', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        socket: connected,
+        heartbeats: {
+          state: 'read',
+          apps: [
+            { appId: 'A1', appName: 'Ana (Day0)', live: false },
+            { appId: 'A2', appName: 'Cara (Day0)', live: true },
+          ],
+        },
+      }),
+    );
+    expect(only(checks, 'slack', 'socket')).toEqual({
+      subject: 'slack',
+      name: 'socket',
+      status: 'gap',
+      detail:
+        'The Slack socket service holds a connection for Ana (Day0), but the backend has no live report of it, so its card reads the buttons as off and its requests go without them: the service runs a release before v0.17.0, or cannot reach the backend’s heartbeat route. Restart it: pnpm exec tsx scripts/compose.ts --profile slack-socket restart slack-socket.',
+    });
+  });
+
+  it('passes when the backend holds a live report of every app the service holds', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        socket: connected,
+        heartbeats: {
+          state: 'read',
+          apps: [
+            { appId: 'A1', appName: 'Ana (Day0)', live: true },
+            { appId: 'A2', appName: 'Cara (Day0)', live: true },
+          ],
+        },
+      }),
+    );
+    expect(only(checks, 'slack', 'socket')).toMatchObject({
+      status: 'ok',
+      detail:
+        'The Slack socket service holds a connection for 2 employee apps with an app-level token.',
+    });
   });
 });
 
