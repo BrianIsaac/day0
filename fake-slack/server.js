@@ -654,12 +654,15 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
-    // Slack takes a public channel by its name, with or without its #, as well as by its id.
+    // Slack takes a public channel by its name, with or without its #, as well as by its id; a
+    // `#name` it does not know is not found, and any other channel the bot is not in refuses.
     if (typeof payload.channel === 'string' && !CHANNELS.includes(payload.channel)) {
       const name = payload.channel.replace(/^#/, '');
       const named = PUBLIC_CHANNELS.find((channel) => channel.name === name);
-      if (!named) return json(response, 200, { ok: false, error: 'channel_not_found' });
-      payload.channel = named.id;
+      if (named) payload.channel = named.id;
+      else if (payload.channel.startsWith('#')) {
+        return json(response, 200, { ok: false, error: 'channel_not_found' });
+      }
     }
     if (!CHANNELS.includes(payload.channel)) {
       return json(response, 200, { ok: false, error: 'not_in_channel' });
