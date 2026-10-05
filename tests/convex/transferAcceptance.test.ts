@@ -1521,3 +1521,123 @@ describe('the skill library at a move (10-K, K2)', (): void => {
     expect(after.tomasOwn?.recheckDueAt).toBeUndefined();
   });
 });
+
+describe("the people graph at a move (wave 13, 13-P): nothing of the old owner's readable", (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+  });
+
+  /** The old owner's graph around Maya: a confirmed collaborator, an escalation contact, a proposal. */
+  async function seedOldGraph(office: Office): Promise<{
+    priya: Id<'people'>;
+    collaborator: Id<'relationships'>;
+    escalation: Id<'relationships'>;
+    proposed: Id<'relationships'>;
+    agreement: Id<'workingAgreements'>;
+    everyone: Id<'workingAgreements'>;
+  }> {
+    return await office.harness.run(async (ctx) => {
+      const person = async (displayName: string, status: 'active' | 'unverified') =>
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName,
+          nameKey: displayName.toLowerCase(),
+          status,
+          source: 'one-to-one',
+          evidence: [{ quote: 'OWNER-ONE-TO-ONE-TURN', where: 'the one-to-one', at: 1 }],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const priya = await person('Priya', 'active');
+      const dana = await person('Dana Okafor', 'active');
+      const sara = await person('Sara Lim', 'unverified');
+      const edge = async (
+        toPersonId: Id<'people'>,
+        type: 'collaborator' | 'escalation-contact',
+        status: 'active' | 'proposed',
+      ) =>
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromAgentId: office.maya,
+          toPersonId,
+          type,
+          effectiveFrom: 1,
+          status,
+          source: 'one-to-one',
+          ...(status === 'active' ? { confirmedAt: 1 } : {}),
+          createdAt: 1,
+        });
+      const agreementRow = (agentId: Id<'agents'> | undefined) => ({
+        userId: 'owner',
+        ...(agentId === undefined ? {} : { agentId }),
+        kind: 'preference' as const,
+        statement: 'Post the close note before noon.',
+        scope: 'global' as const,
+        sourceType: 'manager-card' as const,
+        status: 'active' as const,
+        effectiveFrom: 1,
+        createdAt: 1,
+        appliedTo: [],
+      });
+      return {
+        priya,
+        collaborator: await edge(priya, 'collaborator', 'active'),
+        escalation: await edge(dana, 'escalation-contact', 'active'),
+        proposed: await edge(sara, 'collaborator', 'proposed'),
+        agreement: await ctx.db.insert('workingAgreements', agreementRow(office.maya)),
+        everyone: await ctx.db.insert('workingAgreements', agreementRow(undefined)),
+      };
+    });
+  }
+
+  it("a transfer leaves no edge of the old owner readable, and proposes the charter's people afresh in the new owner's graph", async (): Promise<void> => {
+    const office = await seedOffice();
+    const old = await seedOldGraph(office);
+    await acceptAsColleague(office);
+    const colleague = office.harness.withIdentity(COLLEAGUE);
+
+    expect(await colleague.query(api.people.collaboratorsOf, { agentId: office.maya })).toEqual([]);
+    expect(
+      await colleague.query(api.people.escalationContactFor, { agentId: office.maya }),
+    ).toEqual({ kind: 'manager', personId: null });
+    const view = await colleague.query(api.people.forEmployee, { agentId: office.maya });
+    expect(view.confirmed).toEqual([]);
+    expect(view.proposals).toMatchObject([
+      {
+        name: 'Priya',
+        status: 'unverified',
+        evidence: [{ quote: 'Priya: pipeline', where: 'charter version 0.1' }],
+        waiting: [{ type: 'collaborator', scope: 'pipeline' }],
+      },
+    ]);
+    expect(JSON.stringify(view)).not.toContain('OWNER-ONE-TO-ONE-TURN');
+    expect(JSON.stringify(view)).not.toContain('Dana Okafor');
+    await expect(colleague.query(api.people.identityOf, { personId: old.priya })).rejects.toThrow();
+
+    const edges = await office.harness.run(async (ctx) => ({
+      collaborator: await ctx.db.get(old.collaborator),
+      escalation: await ctx.db.get(old.escalation),
+      proposed: await ctx.db.get(old.proposed),
+    }));
+    expect(edges.collaborator).toMatchObject({ status: 'retired', userId: 'owner' });
+    expect(edges.collaborator?.effectiveUntil).toBeTypeOf('number');
+    expect(edges.escalation).toMatchObject({ status: 'retired' });
+    expect(edges.proposed).toMatchObject({ status: 'retired' });
+    expect(edges.proposed?.effectiveUntil).toBeUndefined();
+  });
+
+  it("retires the old owner's working agreements that bind the moved employee, and keeps theirs for everyone", async (): Promise<void> => {
+    const office = await seedOffice();
+    const old = await seedOldGraph(office);
+    await acceptAsColleague(office);
+    const [bound, everyone] = await office.harness.run(async (ctx) => [
+      await ctx.db.get(old.agreement),
+      await ctx.db.get(old.everyone),
+    ]);
+    expect(bound).toMatchObject({ status: 'retired', userId: 'owner' });
+    expect(bound?.effectiveUntil).toBeTypeOf('number');
+    expect(everyone).toMatchObject({ status: 'active' });
+    expect(everyone?.effectiveUntil).toBeUndefined();
+  });
+});

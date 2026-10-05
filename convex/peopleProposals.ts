@@ -1,7 +1,9 @@
 import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
-import { employeeOwnerScope } from './ownership';
+import { employeeOwnerScope, ownerScope } from './ownership';
+import { retireEdgesOf } from './reset';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { normaliseManagerAddress } from '../src/agent/manager-address';
 import { transcriptTurns, type TranscriptTurn } from '../src/agent/transcript-turns';
 import { charterPeople, charterQuote, type CharterPerson } from '../src/people/charter-people';
@@ -439,15 +441,24 @@ function charterProposal(
 export const ONE_TO_ONE_WHERE = 'the one-to-one';
 
 /**
+ * Whether a proposal may quote the one-to-one: at the charter's approval it may; at a handover's
+ * move it may not, since the conversation was the old manager's own and left with them (decision
+ * 1 (a) of the wave 9 review), so the charter's own line is the evidence.
+ */
+export type OneToOneQuoting = 'quote' | 'charter-only';
+
+/**
  * Propose the people an approved charter names into its employee's owner's graph (A1): one per
  * named collaborator and neighbouring role, each with the manager's own sentence from the
- * one-to-one where it can be found, else the charter's line, and the edge from the employee. Safe
- * to run again: the same words are a repeat. Nothing for an employee no owner holds.
+ * one-to-one where it can be found and may be quoted, else the charter's line, and the edge from
+ * the employee. Safe to run again: the same words are a repeat. Nothing for an employee no owner
+ * holds.
  *
  * @param ctx - The mutation's context.
- * @param agent - The employee whose charter it is.
+ * @param agent - The employee whose charter it is, keyed by the owner whose graph it proposes into.
  * @param charter - The approved charter.
  * @param now - The proposal's time.
+ * @param quoting - Whether the one-to-one may be quoted.
  * @returns What each person came to.
  */
 export async function proposeCharterPeople(
@@ -455,12 +466,13 @@ export async function proposeCharterPeople(
   agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
   charter: Doc<'charters'>,
   now: number,
+  quoting: OneToOneQuoting,
 ): Promise<ProposalOutcome[]> {
   const scope = employeeOwnerScope(agent);
   if (scope === undefined) return [];
   const people = charterPeople(charter.body);
   if (people.length === 0) return [];
-  const oneToOne = await oneToOneOf(ctx, charter);
+  const oneToOne = quoting === 'quote' ? await oneToOneOf(ctx, charter) : undefined;
   const outcomes: ProposalOutcome[] = [];
   for (const person of people) {
     const { proposal, origin } = charterProposal(person, agent._id, charter, oneToOne, now);
@@ -487,7 +499,7 @@ export const proposeFromCharter = internalMutation({
     if (agent === null || charter === null || charter.agentId !== agent._id || !charter.approved) {
       return { proposed: 0 };
     }
-    const outcomes = await proposeCharterPeople(ctx, agent, charter, Date.now());
+    const outcomes = await proposeCharterPeople(ctx, agent, charter, Date.now(), 'quote');
     return {
       proposed: outcomes.filter(
         (outcome) => outcome.kind === 'proposed' || outcome.kind === 'possibly',
@@ -495,3 +507,68 @@ export const proposeFromCharter = internalMutation({
     };
   },
 });
+
+/** The standings of a working agreement a move ends: one in force, or one still proposed. */
+const AGREEMENTS_ENDED_AT_A_MOVE = ['active', 'proposed'] as const;
+
+/**
+ * The people graph at a handover's move (wave 13, 13-P; the wave file's section 5.2), in the
+ * move's transaction: the employee's edges in the old owner's graph are retired
+ * (`retireEdgesOf`), the old owner's working agreements that bind the employee alone are retired
+ * (their preferences were never the new manager's to approve, A14; the ones for every employee
+ * stay theirs), and in real mode the carried charter's people are proposed afresh in the new
+ * owner's graph on the charter's own words, for the new manager to confirm. Nothing of the old
+ * owner's graph moves.
+ *
+ * @param ctx - The move's mutation context.
+ * @param move - The employee, the two owners' keys and the move's time.
+ * @returns How many edges and agreements it retired, and how many people it proposed.
+ */
+export async function moveGraphInTransaction(
+  ctx: MutationCtx,
+  move: {
+    readonly agentId: Id<'agents'>;
+    readonly fromOwnerKey: string;
+    readonly toOwnerKey: string;
+    readonly now: number;
+  },
+): Promise<{ edgesRetired: number; agreementsRetired: number; peopleProposed: number }> {
+  const edgesRetired = await retireEdgesOf(ctx, move.agentId, move.now);
+  const fromScope = ownerScope({ ownerKey: move.fromOwnerKey });
+  let agreementsRetired = 0;
+  for (const status of AGREEMENTS_ENDED_AT_A_MOVE) {
+    const bound = await ctx.db
+      .query('workingAgreements')
+      .withIndex('by_user_agent_status', (q) =>
+        q.eq('userId', fromScope).eq('agentId', move.agentId).eq('status', status),
+      )
+      .take(GRAPH_READ_LIMIT);
+    for (const agreement of bound) {
+      await ctx.db.patch(agreement._id, {
+        status: 'retired',
+        ...(status === 'active' ? { effectiveUntil: move.now } : {}),
+      });
+      agreementsRetired += 1;
+    }
+  }
+  if (SURFACE_MODE !== 'real') return { edgesRetired, agreementsRetired, peopleProposed: 0 };
+  const charters = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', move.agentId))
+    .order('desc')
+    .take(VERSIONS_WALKED);
+  const carried = charters.find((charter) => charter.approved);
+  if (carried === undefined) return { edgesRetired, agreementsRetired, peopleProposed: 0 };
+  const outcomes = await proposeCharterPeople(
+    ctx,
+    { _id: move.agentId, userId: move.toOwnerKey },
+    carried,
+    move.now,
+    'charter-only',
+  );
+  return {
+    edgesRetired,
+    agreementsRetired,
+    peopleProposed: outcomes.filter((outcome) => outcome.kind !== 'dismissed').length,
+  };
+}
