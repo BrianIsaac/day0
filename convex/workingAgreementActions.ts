@@ -44,33 +44,63 @@ interface ProposalDraft {
   readonly text: string;
 }
 
+/** Corrections that repeat a proposal still waiting on the manager, which they join. */
+interface ProposalJoin {
+  readonly agreementId: Id<'workingAgreements'>;
+  readonly correctionIds: Id<'corrections'>[];
+}
+
 /**
- * The proposals one run drafts: each group of corrections the judgement found alike (oldest
- * first), in the newest correction's own words; and each correction now applied to a second item that no group holds.
+ * What one run does with the judgement's groups and the corrections applied to a second item: a
+ * group holding a correction already in a proposal still waiting on the manager joins its other
+ * members to that proposal; any other group is a new proposal in its newest correction's own
+ * words (members oldest first); and each correction now applied to a second item that no group
+ * holds and no proposal holds is a proposal of its own.
  */
-function proposalDrafts(inputs: ProposalInputs, groups: readonly string[][]): ProposalDraft[] {
+function proposalWork(
+  inputs: ProposalInputs,
+  groups: readonly string[][],
+): { drafts: ProposalDraft[]; joins: ProposalJoin[] } {
   const byId = new Map<string, ProposalInputs['corrections'][number]>(
     inputs.corrections.map((correction) => [correction.id, correction]),
   );
   const grouped = new Set<string>(groups.flat());
-  const alike = groups.flatMap((group): ProposalDraft[] => {
+  const drafts: ProposalDraft[] = [];
+  const joins: ProposalJoin[] = [];
+  for (const group of groups) {
     const members = group.flatMap((id) => {
       const correction = byId.get(id);
       return correction ? [correction] : [];
     });
+    const proposed = members.find((member) => member.openAgreementId !== undefined);
+    const fresh = members.filter((member) => member.openAgreementId === undefined);
+    if (proposed?.openAgreementId !== undefined) {
+      if (fresh.length > 0) {
+        joins.push({
+          agreementId: proposed.openAgreementId,
+          correctionIds: fresh.map((member) => member.id),
+        });
+      }
+      continue;
+    }
     const newest = members[members.length - 1];
-    return newest ? [{ correctionIds: members.map((member) => member.id), text: newest.text }] : [];
-  });
-  const promoted = inputs.corrections
-    .filter((correction) => correction.itemsGoverned >= 2 && !grouped.has(correction.id))
-    .map((correction) => ({ correctionIds: [correction.id], text: correction.text }));
-  return [...alike, ...promoted];
+    if (newest)
+      drafts.push({ correctionIds: members.map((member) => member.id), text: newest.text });
+  }
+  for (const correction of inputs.corrections) {
+    if (correction.openAgreementId !== undefined || grouped.has(correction.id)) continue;
+    if (correction.itemsGoverned >= 2) {
+      drafts.push({ correctionIds: [correction.id], text: correction.text });
+    }
+  }
+  return { drafts, joins };
 }
 
 /**
  * Internal: an employee's proposal run. Proposes a working agreement from each correction applied
  * to a second item and from each group of corrections the model judges alike (F10, at most once per
- * new correction), each checked against the charter before it is shown (F11): a refused one is kept
+ * new correction), or adds a correction that repeats a proposal still waiting on the manager to
+ * that proposal, each checked against the charter before it is shown (F11): a refused one is kept
  * refused with its clause, and one whose check could not be had is not shown, its corrections left
  * for the next run. Kept agreements whose check never answered are checked again. Scheduled where a
  * correction is kept and where a plan is stored.
@@ -98,7 +128,7 @@ export const proposeFromCorrections = internalAction({
       });
     }
     const groups = sameness.outcome === 'judged' ? sameness.groups : [];
-    const drafts = proposalDrafts(inputs, groups);
+    const { drafts, joins } = proposalWork(inputs, groups);
     const known = drafts.length > 0 ? await knownValuesOf(ctx, inputs.userId) : [];
     const proposals: Array<{
       correctionIds: Id<'corrections'>[];
@@ -129,11 +159,12 @@ export const proposeFromCorrections = internalAction({
             .filter((correction) => correction.isNew && !unshown.has(correction.id))
             .map((correction) => correction.id)
         : [];
-    if (judged.length === 0 && proposals.length === 0) return;
+    if (judged.length === 0 && proposals.length === 0 && joins.length === 0) return;
     await ctx.runMutation(internal.workingAgreements.recordProposals, {
       agentId: args.agentId,
       judged,
       proposals,
+      joins,
     });
   },
 });

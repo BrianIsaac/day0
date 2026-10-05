@@ -291,6 +291,37 @@ async function unproposedCorrections(
   return active.filter((correction) => correction.agreementId === undefined);
 }
 
+/** Whether an agreement is a proposal still waiting on the manager, which a repeat may join. */
+function openProposal(row: Doc<'workingAgreements'> | null): row is Doc<'workingAgreements'> {
+  return row !== null && row.status === 'proposed' && row.approvedAt === undefined;
+}
+
+/**
+ * The corrections the sameness judgement reads: the employee's active ones, newest first, bounded,
+ * not yet proposed or proposed into an agreement still waiting on the manager, which a correction
+ * that repeats one of them joins (so its card says the manager said it twice).
+ */
+async function judgeableCorrections(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<Array<{ correction: Doc<'corrections'>; open?: Id<'workingAgreements'> }>> {
+  const active = await ctx.db
+    .query('corrections')
+    .withIndex('by_agent_active_createdAt', (q) =>
+      q.eq('agentId', agentId).eq('retiredAt', undefined),
+    )
+    .order('desc')
+    .take(CORRECTIONS_JUDGED);
+  const judged = await Promise.all(
+    active.map(async (correction) => {
+      if (correction.agreementId === undefined) return [{ correction }];
+      const agreement = await ctx.db.get(correction.agreementId);
+      return openProposal(agreement) ? [{ correction, open: agreement._id }] : [];
+    }),
+  );
+  return judged.flat();
+}
+
 /**
  * Schedule the employee's proposal run when a plan just stored gives it work: a correction the plan
  * applied may now govern a second item, a correction governs one and was not shown (its check could
@@ -354,6 +385,8 @@ export interface ProposalInputs {
       readonly id: Id<'corrections'>;
       readonly sourceSystem: string;
       readonly itemsGoverned: number;
+      /** The proposal still waiting on the manager it was proposed into, which a repeat joins. */
+      readonly openAgreementId?: Id<'workingAgreements'>;
     }
   >;
   readonly staleChecks: readonly Id<'workingAgreements'>[];
@@ -371,12 +404,12 @@ export const proposalInputs = internalQuery({
     if (!agent || userId === undefined) return null;
     const charter = await approvedBounds(ctx, agent);
     if (charter === null) return null;
-    const corrections = await unproposedCorrections(ctx, args.agentId);
+    const corrections = await judgeableCorrections(ctx, args.agentId);
     const staleChecks = await staleChecksOf(ctx, args.agentId);
     return {
       userId,
       charter,
-      corrections: corrections.map((correction) => ({
+      corrections: corrections.map(({ correction, open }) => ({
         id: correction._id,
         text: correction.text,
         itemTitle: correction.itemTitle,
@@ -384,6 +417,7 @@ export const proposalInputs = internalQuery({
         isNew: correction.agreementJudgedAt === undefined,
         sourceSystem: correction.sourceSystem,
         itemsGoverned: itemsGoverned(correction),
+        ...(open !== undefined ? { openAgreementId: open } : {}),
       })),
       staleChecks: staleChecks.map((row) => row._id),
     };
@@ -398,8 +432,9 @@ const refusalValidator = v.object({
 /**
  * Internal: record the proposal run's outcome. Keeps each checked proposal as `proposed`, or
  * `refused` with its clause, unless one of its corrections was proposed or retired since the run
- * read it, and marks the corrections the sameness judgement read, but for those of a proposal so
- * skipped, which are judged again. Each correction then names its
+ * read it; adds each correction that repeats a proposal still waiting on the manager to that
+ * proposal; and marks the corrections the sameness judgement read, but for those of a proposal or
+ * a join so skipped, which are judged again. Each correction then names its
  * agreement, so it is never proposed twice. Writes `agreement.proposed` or `agreement.refused`.
  */
 export const recordProposals = internalMutation({
@@ -412,6 +447,15 @@ export const recordProposals = internalMutation({
         statement: v.string(),
         refusal: v.optional(refusalValidator),
       }),
+    ),
+    /** Corrections that repeat a proposal still waiting on the manager, to join it. */
+    joins: v.optional(
+      v.array(
+        v.object({
+          agreementId: v.id('workingAgreements'),
+          correctionIds: v.array(v.id('corrections')),
+        }),
+      ),
     ),
   },
   handler: async (ctx, args): Promise<{ proposed: Id<'workingAgreements'>[] }> => {
@@ -475,6 +519,33 @@ export const recordProposals = internalMutation({
             },
       );
       if (!proposal.refusal) proposed.push(agreementId);
+    }
+    for (const join of args.joins ?? []) {
+      const agreement = await ctx.db.get(join.agreementId);
+      const joining = (await Promise.all(join.correctionIds.map((id) => ctx.db.get(id)))).filter(
+        (correction): correction is Doc<'corrections'> =>
+          correction !== null &&
+          correction.agentId === args.agentId &&
+          correction.retiredAt === undefined &&
+          correction.agreementId === undefined,
+      );
+      if (!openProposal(agreement) || agreement.agentId !== args.agentId || joining.length === 0) {
+        for (const id of join.correctionIds) skipped.add(id);
+        continue;
+      }
+      const members = [
+        ...(await Promise.all((agreement.correctionIds ?? []).map((id) => ctx.db.get(id)))).filter(
+          (correction): correction is Doc<'corrections'> => correction !== null,
+        ),
+        ...joining,
+      ].sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left._creationTime - right._creationTime,
+      );
+      await ctx.db.patch(agreement._id, { correctionIds: members.map((member) => member._id) });
+      for (const correction of joining) {
+        await ctx.db.patch(correction._id, { agreementId: agreement._id });
+      }
     }
     for (const id of args.judged) {
       if (skipped.has(id)) continue;

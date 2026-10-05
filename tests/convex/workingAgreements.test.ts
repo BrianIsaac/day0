@@ -260,6 +260,25 @@ describe('proposals from corrections', (): void => {
     for (const correction of corrections) expect(sameness).toContain(correction._id);
   });
 
+  it('adds a correction given again to the open proposal it repeats, so the card says it was said twice (found on the bed)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await cancelWith(harness, agentId, 'LOG-1', NO_EMAIL);
+    const [first] = await correctionsOf(harness);
+    // The planner applies it to the next item before the manager rejects that one too.
+    await planApplying(harness, agentId, 'LOG-2', [first!._id]);
+    const [proposal] = await agreementsOf(harness);
+    expect(proposal?.correctionIds).toEqual([first!._id]);
+
+    await cancelWith(harness, agentId, 'LOG-3', NO_EMAIL_AGAIN);
+    const agreements = await agreementsOf(harness);
+    expect(agreements).toHaveLength(1);
+    const again = (await correctionsOf(harness)).find((row) => row._id !== first!._id);
+    expect(agreements[0]?.correctionIds).toEqual([first!._id, again!._id]);
+    expect(again?.agreementId).toBe(proposal?._id);
+    expect(agreements[0]?.statement).toBe(NO_EMAIL);
+  });
+
   it('judges each new correction at most once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -624,13 +643,11 @@ describe('a keep whose check is slow, doubled or overtaken (second pass)', (): v
     const agentId = await seedEmployee(harness);
     const original = await active(harness, agentId);
     recorded.refusalDown = true;
-    const { agreementId } = await harness
-      .withIdentity(OWNER)
-      .mutation(api.workingAgreements.edit, {
-        agreementId: original,
-        agentId,
-        statement: NO_EMAIL_AGAIN,
-      });
+    const { agreementId } = await harness.withIdentity(OWNER).mutation(api.workingAgreements.edit, {
+      agreementId: original,
+      agentId,
+      statement: NO_EMAIL_AGAIN,
+    });
     await drain(harness);
     expect((await agreementsOf(harness)).find((row) => row._id === agreementId)?.status).toBe(
       'proposed',
@@ -649,13 +666,11 @@ describe('a keep whose check is slow, doubled or overtaken (second pass)', (): v
     const agentId = await seedEmployee(harness);
     const original = await active(harness, agentId);
     recorded.refusalDown = true;
-    const { agreementId } = await harness
-      .withIdentity(OWNER)
-      .mutation(api.workingAgreements.edit, {
-        agreementId: original,
-        agentId,
-        statement: NO_EMAIL_AGAIN,
-      });
+    const { agreementId } = await harness.withIdentity(OWNER).mutation(api.workingAgreements.edit, {
+      agreementId: original,
+      agentId,
+      statement: NO_EMAIL_AGAIN,
+    });
     for (let wait = 0; wait < 6; wait += 1) {
       await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(600_000));
     }
