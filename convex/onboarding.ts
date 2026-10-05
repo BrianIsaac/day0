@@ -654,10 +654,11 @@ export const postCharterApproval = internalAction({
   handler: async (ctx, args): Promise<{ workItemsGenerated: number } | { failed: string }> => {
     const attempt = args.attempt ?? 1;
     try {
-      // The people the charter names are proposed for the manager to confirm (wave 13, 13-P): the
-      // graph is real mode's, and a retry proposes nobody twice.
+      // The people the charter names are proposed for the manager to confirm (wave 13, 13-P), as a
+      // step of its own so a fault there never holds the seeding back: the graph is real mode's,
+      // and a retry proposes nobody twice.
       if (SURFACE_MODE === 'real') {
-        await ctx.runMutation(internal.peopleProposals.proposeFromCharter, {
+        await ctx.scheduler.runAfter(0, internal.peopleProposals.proposeFromCharter, {
           agentId: args.agentId,
           charterId: args.charterId,
         });

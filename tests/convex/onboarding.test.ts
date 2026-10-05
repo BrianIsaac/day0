@@ -489,6 +489,14 @@ describe('charter approval proposes people', (): void => {
     const { agentId, charterId } = await seedApprovedCharter(harness);
     await namePeople(harness, agentId, charterId);
     await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    // Its own scheduled step: the seeding is done before a person is written, so a fault in the
+    // people step never holds the charter's surfaces back.
+    expect(await harness.run(async (ctx) => await ctx.db.query('people').collect())).toEqual([]);
+    expect((await outcome(harness, agentId)).surfaces).toEqual([
+      'linear:declared',
+      'slack:declared',
+    ]);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const people = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -522,6 +530,7 @@ describe('charter approval proposes people', (): void => {
     ]);
 
     await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const again = await harness.run(async (ctx) => await ctx.db.query('people').collect());
     expect(again).toHaveLength(2);
     expect(await proposedEvents()).toHaveLength(2);
