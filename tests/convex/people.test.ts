@@ -785,3 +785,69 @@ describe('people.resolveItemPeople: intake writes whom the strings are, beside t
     ).toBeUndefined();
   });
 });
+
+describe("people.recordOwnerChatIdentity: the probe's looked-up manager on the owner's person", (): void => {
+  /** Record a looked-up Slack user for Priya's card, in workspace T1. */
+  async function lookedUp(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    userId: string,
+  ): Promise<string> {
+    return await harness.mutation(internal.people.recordOwnerChatIdentity, {
+      agentId,
+      workspaceId: 'T1',
+      userId,
+      name: 'Rowan',
+      lookedUpAt: 50,
+    });
+  }
+
+  it("adds the user as the owner's Slack identity, and reconciles a card whose Slack user changed", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = await seedPerson(harness, 'Rowan Hale', {
+      isOwner: true,
+      primaryEmail: MANAGER_ADDRESS,
+    });
+    await seedIdentity(harness, owner, {
+      provider: 'slack',
+      externalId: 'U0ELSEWHERE',
+      providerWorkspaceId: 'T2',
+    });
+    expect(await lookedUp(harness, agentId, 'U0OLD')).toBe('added');
+    expect(await lookedUp(harness, agentId, 'U0OLD')).toBe('held');
+    expect(await lookedUp(harness, agentId, 'U0NEW')).toBe('added');
+    const slack = (await graphRows(harness)).identities
+      .filter((identity) => identity.provider === 'slack')
+      .map((identity) => [identity.externalId, identity.providerWorkspaceId, identity.personId]);
+    expect(slack.sort()).toEqual(
+      [
+        ['U0ELSEWHERE', 'T2', owner],
+        ['U0NEW', 'T1', owner],
+      ].sort(),
+    );
+  });
+
+  it('writes nothing for an owner with no row yet, or an employee managed under another address', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    expect(await lookedUp(harness, agentId, 'U0BOSS')).toBe('no-owner-person');
+    await seedPerson(harness, 'Rowan Hale', { isOwner: true, primaryEmail: 'rowan@kestrel.test' });
+    expect(await lookedUp(harness, agentId, 'U0BOSS')).toBe('not-the-owner');
+    expect((await graphRows(harness)).identities).toEqual([]);
+  });
+
+  it('leaves an id another person already holds to the manager to merge', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await seedPerson(harness, 'Rowan Hale', { isOwner: true, primaryEmail: MANAGER_ADDRESS });
+    const other = await seedPerson(harness, 'R. Hale');
+    await seedIdentity(harness, other, {
+      provider: 'slack',
+      externalId: 'U0BOSS',
+      providerWorkspaceId: 'T1',
+    });
+    expect(await lookedUp(harness, agentId, 'U0BOSS')).toBe('held-by-another');
+    expect((await graphRows(harness)).identities).toHaveLength(1);
+  });
+});

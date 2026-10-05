@@ -1301,3 +1301,83 @@ export const resolveItemPeople = internalMutation({
     return true;
   },
 });
+
+/** What {@link recordOwnerChatIdentity} came to. */
+const ownerChatIdentityOutcome = v.union(
+  v.literal('added'),
+  v.literal('held'),
+  v.literal('held-by-another'),
+  v.literal('no-owner-person'),
+  v.literal('not-the-owner'),
+);
+
+/**
+ * Internal, called by the Slack probe once the connection is recorded (`convex/surfaceActions.ts`,
+ * the identity region): the manager `users.lookupByEmail` found is the owner's own person's Slack
+ * identity in that workspace (`source: 'provider-lookup'`, verified at the lookup). A card whose
+ * Slack user changed is reconciled: the owner's looked-up identities in the workspace that name
+ * another user go, since Slack answers one user per address there. Only for an employee managed
+ * under the owner's verified address (13-K: a typed address from before wave 9 looked up whoever
+ * it is); nothing for an owner with no row yet (`ensureOwner` adds it from the card at the next
+ * sign-in), and nothing when another person already holds the id (a merge is the manager's).
+ */
+export const recordOwnerChatIdentity = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    workspaceId: v.optional(v.string()),
+    userId: v.string(),
+    name: v.optional(v.string()),
+    lookedUpAt: v.number(),
+  },
+  returns: ownerChatIdentityOutcome,
+  handler: async (ctx, args): Promise<Infer<typeof ownerChatIdentityOutcome>> => {
+    const agent = await ctx.db.get(args.agentId);
+    const scope = agent === null ? undefined : employeeOwnerScope(agent);
+    if (agent === null || scope === undefined) return 'no-owner-person';
+    const owner = await ctx.db
+      .query('people')
+      .withIndex('by_user_owner', (q) => q.eq('userId', scope).eq('isOwner', true))
+      .first();
+    if (owner === null) return 'no-owner-person';
+    if (
+      owner.primaryEmail === undefined ||
+      !sameManagerAddress(agent.bossEmail, owner.primaryEmail)
+    ) {
+      return 'not-the-owner';
+    }
+    const own = await ctx.db
+      .query('personIdentities')
+      .withIndex('by_person', (q) => q.eq('personId', owner._id))
+      .take(GRAPH_READ_LIMIT);
+    for (const stale of own) {
+      if (
+        stale.userId === scope &&
+        stale.provider === 'slack' &&
+        stale.source === 'provider-lookup' &&
+        stale.providerWorkspaceId === args.workspaceId &&
+        stale.externalId !== args.userId
+      ) {
+        await ctx.db.delete(stale._id);
+      }
+    }
+    const held = (
+      await identitiesUnder(ctx, scope, [{ provider: 'slack', externalId: args.userId }])
+    ).filter((identity) => identity.providerWorkspaceId === args.workspaceId);
+    if (held.some((identity) => identity.personId === owner._id)) return 'held';
+    if (held.length > 0) return 'held-by-another';
+    await ctx.db.insert('personIdentities', {
+      userId: scope,
+      personId: owner._id,
+      provider: 'slack',
+      ...(args.workspaceId === undefined ? {} : { providerWorkspaceId: args.workspaceId }),
+      externalId: args.userId,
+      ...(args.name === undefined
+        ? {}
+        : { displayName: args.name, displayNameKey: personNameKey(args.name) }),
+      verifiedAt: args.lookedUpAt,
+      source: 'provider-lookup',
+      createdAt: args.lookedUpAt,
+    });
+    return 'added';
+  },
+});
