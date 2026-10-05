@@ -539,7 +539,8 @@ const AGREEMENTS_ENDED_AT_A_MOVE = ['active', 'proposed'] as const;
 /**
  * The people graph at a handover's move (wave 13, 13-P; the wave file's section 5.2), in the
  * move's transaction: the employee's edges in the old owner's graph are retired
- * (`retireEdgesOf`), the old owner's working agreements that bind the employee alone are retired
+ * (`retireEdgesOf`), its work items let go of whom intake resolved their strings to there, the
+ * old owner's working agreements that bind the employee alone are retired
  * (their preferences were never the new manager's to approve, A14; the ones for every employee
  * stay theirs), and in real mode the carried charter's people are proposed afresh in the new
  * owner's graph on the charter's own words, for the new manager to confirm. Nothing of the old
@@ -559,6 +560,14 @@ export async function moveGraphInTransaction(
   },
 ): Promise<{ edgesRetired: number; agreementsRetired: number; peopleProposed: number }> {
   const edgesRetired = await retireEdgesOf(ctx, move.agentId, move.now);
+  // Whom intake resolved an item's requester and owner to is a person of the old owner's graph;
+  // the strings stay, and the new owner's graph answers again from them.
+  for await (const item of ctx.db
+    .query('workItems')
+    .withIndex('by_agent', (q) => q.eq('agentId', move.agentId))) {
+    if (item.requesterPerson === undefined && item.ownerPerson === undefined) continue;
+    await ctx.db.patch(item._id, { requesterPerson: undefined, ownerPerson: undefined });
+  }
   const fromScope = ownerScope({ ownerKey: move.fromOwnerKey });
   let agreementsRetired = 0;
   for (const status of AGREEMENTS_ENDED_AT_A_MOVE) {

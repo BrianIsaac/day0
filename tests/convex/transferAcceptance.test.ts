@@ -1640,4 +1640,24 @@ describe("the people graph at a move (wave 13, 13-P): nothing of the old owner's
     expect(everyone).toMatchObject({ status: 'active' });
     expect(everyone?.effectiveUntil).toBeUndefined();
   });
+
+  it("clears the moved employee's work items of the old owner's people, and keeps their strings", async (): Promise<void> => {
+    const office = await seedOffice();
+    const old = await seedOldGraph(office);
+    const itemId = await office.harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          ...workItemFields(office.maya, 'REVOPS-77'),
+          state: 'discovered',
+          requester: 'Priya',
+          requesterPerson: { kind: 'person', personId: old.priya },
+          ownerPerson: { kind: 'unknown' },
+        }),
+    );
+    await acceptAsColleague(office);
+    const item = await office.harness.run(async (ctx) => await ctx.db.get(itemId));
+    expect(item?.requester).toBe('Priya');
+    expect(item?.requesterPerson).toBeUndefined();
+    expect(item?.ownerPerson).toBeUndefined();
+  });
 });
