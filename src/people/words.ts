@@ -46,6 +46,27 @@ export const RELATIONSHIP_WORDS: Readonly<Record<RelationshipType, string>> = {
   'approval-authority': 'approves',
 };
 
+/** An edge type as a noun for the person it points at, as the record says it. */
+export const RELATIONSHIP_NOUNS: Readonly<Record<RelationshipType, string>> = {
+  'escalation-contact': 'escalation contact',
+  collaborator: 'collaborator',
+  'adjacent-role': 'neighbouring role',
+  'dotted-line': 'dotted-line contact',
+  'approval-authority': 'approver',
+};
+
+/**
+ * An edge type's noun from a stored row, read defensively: a row that carries no type, or one
+ * this release does not know, reads as a plain relationship.
+ *
+ * @param type - What the row holds.
+ */
+export function relationshipNoun(type: unknown): string {
+  return typeof type === 'string' && Object.hasOwn(RELATIONSHIP_NOUNS, type)
+    ? RELATIONSHIP_NOUNS[type as RelationshipType]
+    : 'relationship';
+}
+
 /** The edge types the manager can add from one employee's People tab: an employee's own edges. */
 export const EMPLOYEE_RELATIONSHIP_TYPES = [
   'collaborator',

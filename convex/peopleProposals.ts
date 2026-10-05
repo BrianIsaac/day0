@@ -6,6 +6,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
+import { appendEvent } from './eventLog';
 import { employeeOwnerScope, ownerScope } from './ownership';
 import { retireEdgesOf } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -481,7 +482,20 @@ export async function proposeCharterPeople(
   const outcomes: ProposalOutcome[] = [];
   for (const person of people) {
     const { proposal, origin } = charterProposal(person, agent._id, charter, oneToOne, now);
-    outcomes.push(await proposePersonInTransaction(ctx, scope, proposal, origin, now));
+    const outcome = await proposePersonInTransaction(ctx, scope, proposal, origin, now);
+    outcomes.push(outcome);
+    if (outcome.kind !== 'proposed' && outcome.kind !== 'possibly') continue;
+    await appendEvent(ctx, {
+      agentId: agent._id,
+      type: 'person.proposed',
+      payload: {
+        personId: outcome.personId,
+        person: person.name,
+        via: quoting === 'quote' ? 'charter' : 'handover',
+        ...(outcome.kind === 'possibly' ? { possiblySame: true } : {}),
+      },
+      createdAt: now,
+    });
   }
   return outcomes;
 }

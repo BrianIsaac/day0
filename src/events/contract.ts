@@ -32,6 +32,7 @@ import type { ClaimHolder } from '../work/claim-key';
 import type { DecisionKind } from '../work/manager-channel';
 import type { ManagerNotificationMode } from '../work/manager-notes';
 import type { PlannerObligations } from '../work/plan-obligations';
+import type { RelationshipType } from '../people/vocabulary';
 import type { ReconciliationEntry } from '../work/reconciliation';
 import type { TicketSnapshot } from '../work/ticket-ownership';
 import type { ExecutionPlan, PlanObligations } from '../work/types';
@@ -425,6 +426,51 @@ export interface CharterSeedingFailedPayload {
   readonly attempt: number;
   readonly reason: string;
   readonly retrying: boolean;
+}
+
+/** How a person came to be proposed: the employee's approved charter, or the one a handover brought. */
+export type PersonProposedVia = 'charter' | 'handover';
+
+/** The payload of `person.proposed` (wave 13, 13-P): a person the charter names, for the manager to confirm. */
+export interface PersonProposedPayload {
+  readonly personId: Id<'people'>;
+  /** The person's name, as the charter gives it. */
+  readonly person: string;
+  readonly via: PersonProposedVia;
+  /** Offered as possibly someone already in the people, by name alone (C5). */
+  readonly possiblySame?: boolean;
+}
+
+/** How the manager confirmed a person: Confirm, or Same person on a name-only match. */
+export type PersonConfirmedHow = 'confirm' | 'same-person';
+
+/** The payload of `person.confirmed` (wave 13, 13-P). */
+export interface PersonConfirmedPayload {
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  readonly how: PersonConfirmedHow;
+  /** How many proposed edges Confirm made facts. */
+  readonly edgesConfirmed?: number;
+}
+
+/** The payload of `person.dismissed` (wave 13, 13-P). */
+export interface PersonDismissedPayload {
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  /** How many proposed edges the dismissal retired. */
+  readonly edgesRetired?: number;
+}
+
+/** What the manager did to an edge on the People tab. */
+export type RelationshipChange = 'added' | 'edited' | 'retired';
+
+/** The payload of `relationship.changed` (wave 13, 13-P). */
+export interface RelationshipChangedPayload {
+  readonly relationshipId: Id<'relationships'>;
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  readonly change: RelationshipChange;
+  readonly type: RelationshipType;
 }
 
 /** The payload of `work.charter-derived`. */
@@ -1634,6 +1680,10 @@ export interface EventPayloads {
   'charter.evidence-rejected': CharterEvidenceRejectedPayload;
   'charter.seeding-failed': CharterSeedingFailedPayload;
   'work.charter-derived': WorkCharterDerivedPayload;
+  'person.proposed': PersonProposedPayload;
+  'person.confirmed': PersonConfirmedPayload;
+  'person.dismissed': PersonDismissedPayload;
+  'relationship.changed': RelationshipChangedPayload;
   'coworker.replied': CoworkerRepliedPayload;
   'documentation.systems-discovered': DocumentationSystemsDiscoveredPayload;
   'evaluation.transport-ready': EvaluationTransportReadyPayload;
@@ -1819,6 +1869,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'charter.evidence-rejected',
   'charter.seeding-failed',
   'work.charter-derived',
+  'person.proposed',
+  'person.confirmed',
+  'person.dismissed',
+  'relationship.changed',
   'coworker.replied',
   'documentation.systems-discovered',
   'evaluation.transport-ready',

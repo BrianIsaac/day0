@@ -512,9 +512,19 @@ describe('charter approval proposes people', (): void => {
       ['adjacent-role', 'proposed', agentId],
     ]);
 
+    const proposedEvents = async (): Promise<unknown[]> =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event) => event.type === 'person.proposed')
+        .map((event) => event.payload);
+    expect(await proposedEvents()).toEqual([
+      { personId: people[0]?._id, person: 'Priya Shah', via: 'charter' },
+      { personId: people[1]?._id, person: 'Dana Okafor', via: 'charter' },
+    ]);
+
     await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
     const again = await harness.run(async (ctx) => await ctx.db.query('people').collect());
     expect(again).toHaveLength(2);
+    expect(await proposedEvents()).toHaveLength(2);
   });
 
   it('in mock mode proposes nobody: the graph is real mode only', async (): Promise<void> => {

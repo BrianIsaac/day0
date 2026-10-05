@@ -16,8 +16,10 @@ import {
   ownerScope,
   verifiedAddressOf,
 } from './ownership';
+import { appendEvent } from './eventLog';
 import { EVIDENCE_SHOWN, GRAPH_READ_LIMIT, identitiesUnder, withEvidence } from './peopleProposals';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
+import type { RelationshipChange } from '../src/events/contract';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import {
   edgeHeldAt,
@@ -351,7 +353,15 @@ export const confirm = mutation({
   handler: async (ctx, args): Promise<{ edgesConfirmed: number }> => {
     const person = decidable(await assertOwnsPerson(ctx, args.personId));
     await assertOwnsAgent(ctx, args.agentId);
-    return { edgesConfirmed: await confirmInTransaction(ctx, person, Date.now()) };
+    const now = Date.now();
+    const edgesConfirmed = await confirmInTransaction(ctx, person, now);
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'person.confirmed',
+      payload: { personId: person._id, person: person.displayName, how: 'confirm', edgesConfirmed },
+      createdAt: now,
+    });
+    return { edgesConfirmed };
   },
 });
 
@@ -380,6 +390,12 @@ export const dismiss = mutation({
       await ctx.db.patch(person._id, { status: 'dismissed', dismissedAt: now, updatedAt: now });
     }
     for (const edge of proposed) await ctx.db.patch(edge._id, { status: 'retired' });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'person.dismissed',
+      payload: { personId: person._id, person: person.displayName, edgesRetired: proposed.length },
+      createdAt: now,
+    });
     return { edgesRetired: proposed.length };
   },
 });
@@ -437,6 +453,12 @@ export const samePerson = mutation({
       }
     }
     await ctx.db.delete(proposal._id);
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'person.confirmed',
+      payload: { personId: target._id, person: target.displayName, how: 'same-person' },
+      createdAt: now,
+    });
     return { personId: target._id };
   },
 });
@@ -491,6 +513,31 @@ export const notThisMatch = mutation({
   },
 });
 
+/** Record a change the manager made to an edge in the tab's employee's record. */
+async function recordEdgeChange(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  relationshipId: Id<'relationships'>,
+  change: RelationshipChange,
+  now: number,
+): Promise<void> {
+  const edge = await ctx.db.get(relationshipId);
+  const person = edge === null ? null : await ctx.db.get(edge.toPersonId);
+  if (edge === null || person === null) return;
+  await appendEvent(ctx, {
+    agentId,
+    type: 'relationship.changed',
+    payload: {
+      relationshipId,
+      personId: person._id,
+      person: person.displayName,
+      change,
+      type: edge.type,
+    },
+    createdAt: now,
+  });
+}
+
 /** A scope the manager typed, trimmed and bounded, or undefined for none. */
 function typedScope(scope: string | undefined): string | undefined {
   const trimmed = scope?.trim();
@@ -520,7 +567,7 @@ export const addRelationship = mutation({
     if (person.status !== 'active') throw new ConvexError(CONFIRM_BEFORE_RELATING);
     const scope = typedScope(args.scope);
     const now = Date.now();
-    return await ctx.db.insert('relationships', {
+    const relationshipId = await ctx.db.insert('relationships', {
       userId: person.userId,
       fromAgentId: args.agentId,
       toPersonId: person._id,
@@ -532,6 +579,8 @@ export const addRelationship = mutation({
       confirmedAt: now,
       createdAt: now,
     });
+    await recordEdgeChange(ctx, args.agentId, relationshipId, 'added', now);
+    return relationshipId;
   },
 });
 
@@ -564,7 +613,7 @@ export const editRelationship = mutation({
     const scope = typedScope(args.scope);
     const now = Date.now();
     await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
-    return await ctx.db.insert('relationships', {
+    const relationshipId = await ctx.db.insert('relationships', {
       userId: edge.userId,
       ...(edge.fromAgentId === undefined ? {} : { fromAgentId: edge.fromAgentId }),
       ...(edge.fromPersonId === undefined ? {} : { fromPersonId: edge.fromPersonId }),
@@ -578,6 +627,8 @@ export const editRelationship = mutation({
       confirmedAt: now,
       createdAt: now,
     });
+    await recordEdgeChange(ctx, args.agentId, relationshipId, 'edited', now);
+    return relationshipId;
   },
 });
 
@@ -591,7 +642,9 @@ export const retireRelationship = mutation({
   handler: async (ctx, args): Promise<null> => {
     const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
     await assertOwnsAgent(ctx, args.agentId);
-    await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: Date.now() });
+    const now = Date.now();
+    await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now });
+    await recordEdgeChange(ctx, args.agentId, edge._id, 'retired', now);
     return null;
   },
 });

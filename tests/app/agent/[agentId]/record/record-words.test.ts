@@ -1255,3 +1255,43 @@ describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)'
     );
   });
 });
+
+describe('recordWords: the people graph (wave 13, 13-P)', (): void => {
+  it('says what was proposed and what the manager decided on the People tab, in the manager’s terms', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'person.proposed',
+          payload: { personId: 'p1', person: 'Priya Shah', via: 'charter', possiblySame: true },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira proposed Priya Shah from its approved charter, for you to confirm, as possibly someone already in the people.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'person.confirmed',
+          payload: { personId: 'p1', person: 'Priya Shah', how: 'confirm', edgesConfirmed: 1 },
+        },
+        subject,
+      ),
+    ).toBe('You confirmed Priya Shah and 1 relationship to them.');
+    expect(
+      recordWords(
+        { type: 'person.dismissed', payload: { personId: 'p2', person: 'Sara Lim' } },
+        subject,
+      ),
+    ).toBe('You dismissed Sara Lim.');
+    expect(
+      recordWords(
+        {
+          type: 'relationship.changed',
+          payload: { person: 'Dana Okafor', change: 'retired', type: 'escalation-contact' },
+        },
+        subject,
+      ),
+    ).toBe("You ended Mira's escalation contact Dana Okafor.");
+  });
+});

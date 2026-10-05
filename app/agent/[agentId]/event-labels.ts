@@ -9,6 +9,7 @@ import {
 import type { RecordKind } from '../../components/RecordLine';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
+import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
@@ -394,6 +395,19 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `seeding the approved charter failed${text(payload.reason) ? `: ${payload.reason}` : ''}${
       payload.retrying === true ? ' · trying again' : ' · gave up'
     }`,
+  'person.proposed': (payload) =>
+    `person proposed: ${text(payload.person) ?? 'from the charter'}${
+      payload.via === 'handover' ? ' · from the charter the handover brought' : ''
+    }`,
+  'person.confirmed': (payload) =>
+    `person confirmed: ${text(payload.person) ?? 'a proposal'}${
+      payload.how === 'same-person' ? ' · the same as one already known' : ''
+    }`,
+  'person.dismissed': (payload) => `person dismissed: ${text(payload.person) ?? 'a proposal'}`,
+  'relationship.changed': (payload) =>
+    `${relationshipNoun(payload.type)} ${
+      payload.change === 'retired' ? 'ended' : payload.change === 'edited' ? 'changed' : 'added'
+    }: ${text(payload.person) ?? 'a person'}`,
   'work.charter-derived': (payload) =>
     `${counted(payload.count, 'work item') ?? 'work items'} seeded from the charter`,
   'coworker.replied': (payload) =>

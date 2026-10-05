@@ -851,3 +851,93 @@ describe("people.recordOwnerChatIdentity: the probe's looked-up manager on the o
     expect((await graphRows(harness)).identities).toHaveLength(1);
   });
 });
+
+describe("the people graph in the employee's record", (): void => {
+  /** The employee's events, oldest first, as type and payload. */
+  async function eventsOf(
+    harness: Harness,
+    agentId: Id<'agents'>,
+  ): Promise<Array<{ type: string; payload: unknown }>> {
+    return (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect(),
+      )
+    ).map(({ type, payload }) => ({ type, payload }));
+  }
+
+  it('records each decision on the card and each change to an edge against the tab’s employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const confirmed = await proposePriya(harness, agentId);
+    await owner.mutation(api.people.confirm, { personId: confirmed, agentId });
+    const dismissed = await seedPerson(harness, 'Sara Lim', { status: 'unverified' });
+    await owner.mutation(api.people.dismiss, { personId: dismissed, agentId });
+    const known = await seedPerson(harness, 'Aman Rao');
+    const offered = await seedPerson(harness, 'Aman Rao', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    await owner.mutation(api.people.samePerson, { personId: offered, agentId });
+    const edge = await owner.mutation(api.people.addRelationship, {
+      personId: known,
+      agentId,
+      type: 'escalation-contact',
+    });
+    const edited = await owner.mutation(api.people.editRelationship, {
+      relationshipId: edge,
+      agentId,
+      type: 'collaborator',
+    });
+    await owner.mutation(api.people.retireRelationship, { relationshipId: edited, agentId });
+
+    expect(await eventsOf(harness, agentId)).toEqual([
+      {
+        type: 'person.confirmed',
+        payload: { personId: confirmed, person: 'Priya Shah', how: 'confirm', edgesConfirmed: 1 },
+      },
+      {
+        type: 'person.dismissed',
+        payload: { personId: dismissed, person: 'Sara Lim', edgesRetired: 0 },
+      },
+      {
+        type: 'person.confirmed',
+        payload: { personId: known, person: 'Aman Rao', how: 'same-person' },
+      },
+      {
+        type: 'relationship.changed',
+        payload: {
+          relationshipId: edge,
+          personId: known,
+          person: 'Aman Rao',
+          change: 'added',
+          type: 'escalation-contact',
+        },
+      },
+      {
+        type: 'relationship.changed',
+        payload: {
+          relationshipId: edited,
+          personId: known,
+          person: 'Aman Rao',
+          change: 'edited',
+          type: 'collaborator',
+        },
+      },
+      {
+        type: 'relationship.changed',
+        payload: {
+          relationshipId: edited,
+          personId: known,
+          person: 'Aman Rao',
+          change: 'retired',
+          type: 'collaborator',
+        },
+      },
+    ]);
+  });
+});
