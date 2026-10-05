@@ -38,6 +38,8 @@ function appNumbered(number) {
     code: `day0-fake-authorisation-code${suffix}`,
     botToken: `xoxb-day0-fake-dedicated-token${suffix}`,
     botUserId: number === 1 ? 'U_DAY0_BOT' : `U_DAY0_BOT_${number}`,
+    // The bot's own id, which a bot token's auth.test names as Slack's does (13-FS).
+    botId: number === 1 ? 'B_DAY0_BOT' : `B_DAY0_BOT_${number}`,
     created: false,
     deleted: false,
     installed: number === 1,
@@ -46,19 +48,27 @@ function appNumbered(number) {
     // The manifest it was created from, or last updated to (W12V-7). The first app answered
     // before any manifest, and takes messages as it always has.
     manifest: undefined,
-    takesMessages: number === 1,
+    // Its App Home messages tab: `open` takes a person's messages, `read-only` takes only the
+    // bot's own, `off` takes neither (13-FS, the re-walk's row 2).
+    messagesTab: number === 1 ? 'open' : 'read-only',
   };
 }
 
 /**
- * Whether a manifest lets a person message the app: its App Home messages tab on and not
- * read-only, as the walk on real Slack found (W12V-7).
+ * The messages tab a manifest leaves an app with, as the walks on real Slack found it: an app
+ * created with no App Home has the tab on and read-only (the first walk's Iris), an update that
+ * leaves App Home out turns the tab off altogether (the re-walk's row 2), and an App Home block says
+ * which of the three it is.
+ *
+ * @param {Record<string, unknown> | undefined} manifest
+ * @param {'create' | 'update'} how
+ * @returns {'open' | 'read-only' | 'off'}
  */
-function manifestTakesMessages(manifest) {
+function messagesTabOf(manifest, how) {
   const home = manifest && manifest.features && manifest.features.app_home;
-  return Boolean(
-    home && home.messages_tab_enabled === true && home.messages_tab_read_only_enabled === false,
-  );
+  if (!home) return how === 'create' ? 'read-only' : 'off';
+  if (home.messages_tab_enabled !== true) return 'off';
+  return home.messages_tab_read_only_enabled === false ? 'open' : 'read-only';
 }
 
 /** Slack's markup a message's text carries: what Slack would read as a mention or a link. */
@@ -303,13 +313,25 @@ const server = createServer(async (request, response) => {
     app.appLevelToken = `xapp-day0-fake-app-level-token${suffix}`;
     return json(response, 200, { ok: true, token: app.appLevelToken });
   }
+  if (url.pathname === '/proof/configuration-token' && request.method === 'POST') {
+    // IT's Generate Token under Your App Configuration Tokens (13-FS): a fresh pair after a
+    // revoke, so a bed lands Slack again without restarting the fake and losing its apps.
+    configuration.generated = (configuration.generated || 0) + 1;
+    configuration.token = `xoxe-day0-fake-configuration-token-generated-${configuration.generated}`;
+    configuration.refreshToken = `xoxe-day0-fake-configuration-refresh-generated-${configuration.generated}`;
+    return json(response, 200, {
+      ok: true,
+      token: configuration.token,
+      refresh_token: configuration.refreshToken,
+    });
+  }
   if (url.pathname === '/proof/manager-message' && request.method === 'POST') {
     // The manager types a reply in their DM with an app (W12V-7). Slack offers no composer under
     // an app whose messages tab is off or read-only, and says so in these words.
     const { appId, text, threadTs } = jsonArguments(request, await bodyOf(request));
     const app = apps.find((candidate) => candidate.appId === appId && !candidate.deleted);
     if (!app) return json(response, 404, { ok: false, error: 'invalid_app_id' });
-    if (!app.takesMessages) {
+    if (app.messagesTab !== 'open') {
       return json(response, 200, {
         ok: false,
         error: 'messages_tab_off',
@@ -444,7 +466,7 @@ const server = createServer(async (request, response) => {
       app.scopes = [];
       app.manifest = undefined;
     }
-    app.takesMessages = manifestTakesMessages(app.manifest);
+    app.messagesTab = messagesTabOf(app.manifest, 'create');
     return json(response, 200, {
       ok: true,
       app_id: app.appId,
@@ -474,7 +496,7 @@ const server = createServer(async (request, response) => {
     const permissionsUpdated = JSON.stringify(bot) !== JSON.stringify(app.scopes || []);
     app.manifest = parsed;
     app.scopes = bot;
-    app.takesMessages = manifestTakesMessages(parsed);
+    app.messagesTab = messagesTabOf(parsed, 'update');
     return json(response, 200, {
       ok: true,
       app_id: app.appId,
@@ -579,7 +601,12 @@ const server = createServer(async (request, response) => {
   const bot = botOf(request);
   if (!bot) return json(response, 200, { ok: false, error: 'invalid_auth' });
   if (method === 'auth.test') {
-    return json(response, 200, { ok: true, user_id: bot.botUserId, team_id: 'T_DAY0' });
+    return json(response, 200, {
+      ok: true,
+      user_id: bot.botUserId,
+      bot_id: bot.botId,
+      team_id: 'T_DAY0',
+    });
   }
   if (method === 'conversations.join') {
     // RM4: a bot joins a public channel itself (`channels:join`); a private one needs a person.
@@ -667,11 +694,30 @@ const server = createServer(async (request, response) => {
     });
   }
   if (method === 'chat.postMessage') {
+    // Slack reads a post from a JSON body only under a JSON content type, and from a form body:
+    // the first walk's hand-in DM, JSON with no such header, was refused (row 19, 13-FS).
+    const contentType = String(request.headers['content-type'] || '');
     let payload;
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return json(response, 200, { ok: false, error: 'invalid_json' });
+    if (contentType.startsWith('application/json')) {
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        return json(response, 200, { ok: false, error: 'invalid_json' });
+      }
+    } else if (contentType.startsWith('application/x-www-form-urlencoded')) {
+      const form = new URLSearchParams(body);
+      payload = {
+        channel: form.get('channel') ?? undefined,
+        text: form.get('text') ?? undefined,
+        ...(form.get('blocks') ? { blocks: JSON.parse(form.get('blocks')) } : {}),
+      };
+    } else {
+      return json(response, 200, { ok: false, error: 'invalid_arguments' });
+    }
+    // An app whose messages tab is off takes not even its own bot's post to a DM (the re-walk's
+    // row 2: Day0's plan request refused).
+    if (bot.messagesTab === 'off' && String(payload.channel || '').startsWith('D')) {
+      return json(response, 200, { ok: false, error: 'messages_tab_disabled' });
     }
     // Slack takes a public channel by its name, with or without its #, as well as by its id; a
     // `#name` it does not know is not found, and any other channel the bot is not in refuses.
@@ -762,6 +808,7 @@ function readFrames(connection, onText) {
   let buffer = connection.buffer;
   for (;;) {
     if (buffer.length < 2) break;
+    const fin = (buffer[0] & 0x80) !== 0;
     const opcode = buffer[0] & 0x0f;
     let length = buffer[1] & 0x7f;
     let offset = 2;
@@ -789,7 +836,17 @@ function readFrames(connection, onText) {
     }
     connection.alive = true;
     if (opcode === 0x9) sendFrame(connection.socket, payload.toString(), 0xa);
-    if (opcode === 0x1) onText(payload.toString());
+    // A text message may come in fragments: a first frame without FIN, then continuations, the
+    // last with FIN; control frames may arrive between them (RFC 6455, section 5.4; 13-FS).
+    if (opcode === 0x1 || opcode === 0x0) {
+      if (opcode === 0x1) connection.fragments = [];
+      connection.fragments.push(payload);
+      if (fin) {
+        const text = Buffer.concat(connection.fragments).toString();
+        connection.fragments = [];
+        onText(text);
+      }
+    }
   }
   connection.buffer = buffer;
 }
@@ -817,6 +874,8 @@ server.on('upgrade', (request, socket) => {
     // The address the app dialled, which its presses' response_urls are served at.
     host: request.headers.host || `fake-slack:${port}`,
     buffer: Buffer.alloc(0),
+    // A text message's frames read so far, until its last (FIN) arrives.
+    fragments: [],
     waiting: new Map(),
     alive: true,
   };

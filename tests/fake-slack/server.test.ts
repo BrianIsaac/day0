@@ -57,7 +57,14 @@ describe('the isolated Slack provisioning proof', (): void => {
 
   it('probes a dedicated identity and reports documented channels as not joined', async (): Promise<void> => {
     const token = 'xoxb-day0-fake-dedicated-token';
-    expect(await api('auth.test', token)).toMatchObject({ ok: true, user_id: 'U_DAY0_BOT' });
+    // A bot token's auth.test names its bot as Slack's does, so the card's intake stores an app
+    // identity (13-FS; the second pre-tag's "intake failed: Slack probe stored no app identity").
+    expect(await api('auth.test', token)).toMatchObject({
+      ok: true,
+      user_id: 'U_DAY0_BOT',
+      bot_id: 'B_DAY0_BOT',
+      team_id: 'T_DAY0',
+    });
     expect(await api('users.lookupByEmail', token, 'email=operator%40example.test')).toMatchObject({
       user: { id: 'U_DAY0_MANAGER' },
     });
@@ -73,10 +80,12 @@ describe('the isolated Slack provisioning proof', (): void => {
   });
 
   it('accepts a private manager note without retaining its body', async (): Promise<void> => {
+    // Re-pinned for 13-FS: the helper posts a form, and the fake now reads a post as Slack does,
+    // so the note goes as a form body rather than JSON under a form's content type.
     const posted = await api(
       'chat.postMessage',
       'xoxb-day0-fake-dedicated-token',
-      JSON.stringify({ channel: 'D_DAY0_MANAGER', text: 'isolated proof note' }),
+      new URLSearchParams({ channel: 'D_DAY0_MANAGER', text: 'isolated proof note' }).toString(),
     );
     expect(posted).toMatchObject({
       ok: true,
@@ -198,6 +207,22 @@ describe('the isolated Slack provisioning proof', (): void => {
         ok: false,
         error: 'invalid_arguments',
       });
+    });
+
+    it('refuses a write whose JSON body comes without a JSON content type, as Slack refused the walk’s hand-in DM (13-FS)', async (): Promise<void> => {
+      // The first walk's row 19 (22:06:51Z): HTTP 200 {"ok":false,"error":"invalid_arguments", ...}.
+      const body = JSON.stringify({ channel: 'C_REVOPS', text: 'a note' });
+      expect(await call('POST', 'chat.postMessage', undefined, body)).toEqual({
+        ok: false,
+        error: 'invalid_arguments',
+      });
+      expect(await call('POST', 'chat.postMessage', 'text/plain;charset=UTF-8', body)).toEqual({
+        ok: false,
+        error: 'invalid_arguments',
+      });
+      expect(
+        await call('POST', 'chat.postMessage', FORM, 'channel=C_REVOPS&text=a%20form%20note'),
+      ).toMatchObject({ ok: true, channel: 'C_REVOPS' });
     });
 
     it('still reads a JSON body on the write methods that take one', async (): Promise<void> => {
