@@ -740,6 +740,10 @@ describe('a rerun over a volume nothing was pushed to', (): void => {
     expect(at('npx convex data')).toBeLessThan(at('run sync:env'));
     expect(at('run sync:env')).toBeLessThan(at('convex dev --once'));
     expect(at('convex dev --once')).toBeLessThan(at('migrations:runPending'));
+    // 13-FS: the bridge is restarted after the backend, so it runs this checkout's code.
+    expect(at('run convex:restart')).toBeLessThan(
+      at('exec tsx scripts/compose.ts --profile slack-socket restart slack-socket'),
+    );
     const printed = h.output.join('\n');
     expect(printed).toContain('a new volume, starting at 0.3.0');
     expect(printed).toContain('nothing was ever pushed here, so the env goes first');

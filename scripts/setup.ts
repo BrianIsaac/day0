@@ -3692,6 +3692,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     if (!runStep('convex:restart', 'pnpm convex:restart')) return 1;
     await io.waitForBackend(ports.backend, 180_000);
+    if (
+      steps.includes('slack-socket:restart') &&
+      !runStep('slack-socket:restart', 'the Slack socket bridge, restarted on this checkout')
+    ) {
+      return 1;
+    }
 
     if (real && redactor) {
       const health =
