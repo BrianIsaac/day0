@@ -30,11 +30,16 @@ describe('the ticket now (K D3)', (): void => {
     backend.queries['work:latestListing'] = {
       tracker: { assigned: true, assigneeId: 'user-7', state: 'In Progress', doNotAutomate: false },
       listedAt: Date.UTC(2026, 8, 29, 7, 2),
+      holder: { employeeName: 'Mira', holderIsEmployee: false },
     };
     const markup = renderToStaticMarkup(<TicketNowLine workItemId={ITEM} zone="Asia/Singapore" />);
     expect(backend.args).toEqual([{ workItemId: ITEM }]);
     expect(markup).toContain('The ticket now');
-    expect(markup).toContain('The ticket is in In Progress, assigned to user-7.');
+    // Re-pinned for W12V-15: the holder is never named by its raw id.
+    expect(markup).toContain(
+      'The ticket is in In Progress, assigned to someone other than Mira in the tracker.',
+    );
+    expect(markup).not.toContain('user-7');
     expect(markup).toMatch(
       /As intake last listed it at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>/,
     );

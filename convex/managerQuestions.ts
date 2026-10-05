@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { mutation, query, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { amendCharterInTransaction } from './charters';
 import type { AmendmentVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
@@ -214,10 +214,14 @@ export const openForAgent = query({
   },
 });
 
-/** Answer one question from the dashboard; the answer amends the charter. */
+/**
+ * Answer one question from the dashboard; the answer amends the charter. Public, guarded by
+ * `getCallerOrThrow` first and then the question's employee's owner.
+ */
 export const answer = mutation({
   args: { questionId: v.id('managerQuestions'), text: v.string() },
   handler: async (ctx, args): Promise<{ amendedCharterId: Id<'charters'> | null }> => {
+    await getCallerOrThrow(ctx);
     const record = await ctx.db.get(args.questionId);
     if (!record) throw new Error('question not found');
     await assertOwnsAgent(ctx, record.agentId);

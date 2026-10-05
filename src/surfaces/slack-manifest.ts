@@ -12,7 +12,8 @@ import { slackAuthorizeUrl } from './slack-endpoint';
  * its description, its bot user and its bot scopes. Everything else is Day0's:
  * the manifest sent with the administrator's token is rebuilt from an
  * allowlist, so a page edit cannot add an event subscription, an interactivity
- * or slash-command address, user-token scopes or a second redirect.
+ * or slash-command address, user-token scopes or a second redirect. Interactivity
+ * itself, the switch alone, is kept with Socket Mode on (wave 12, 12-M).
  */
 
 /** The placeholder the policy page uses for the employee's name. */
@@ -34,6 +35,20 @@ const SETTING_KEYS = [
   'token_rotation_enabled',
 ] as const;
 
+/**
+ * The App Home a dedicated app always declares: its messages tab open for writing (W12V-7). The
+ * typed code a manager replies to a decision request is a message to the app in its DM, and with
+ * the tab read-only Slack answers that DM with "Sending messages to this app has been turned off."
+ * and offers no composer (the walk on real Slack, 5 October 2026). This exact object was accepted
+ * by `apps.manifest.validate` beside the kit's manifest. It is Day0's, like the allowlist: a page
+ * that closes the tab would leave a manager no typed code, so a page cannot set it.
+ */
+export const SLACK_APP_HOME = {
+  home_tab_enabled: false,
+  messages_tab_enabled: true,
+  messages_tab_read_only_enabled: false,
+} as const satisfies SlackAppHome;
+
 /** A Slack OAuth scope: a resource, a colon and an action, as `users:read.email` or `links.embed:write`. */
 const SLACK_SCOPE = /^[a-z][a-z_.]*:[a-z][a-z_.]*$/;
 
@@ -45,10 +60,29 @@ export interface SlackManifest {
     long_description?: string;
     background_color?: string;
   };
-  features?: { bot_user?: { display_name?: string; always_online?: boolean } };
+  features?: {
+    bot_user?: { display_name?: string; always_online?: boolean };
+    app_home?: SlackAppHome;
+  };
   oauth_config: { redirect_urls: string[]; scopes: { bot: string[] } };
-  settings?: Partial<Record<(typeof SETTING_KEYS)[number], boolean>>;
+  settings?: SlackManifestSettings;
 }
+
+/** The App Home switches a manifest declares, as Slack's manifest reference names them. */
+export interface SlackAppHome {
+  readonly home_tab_enabled: boolean;
+  readonly messages_tab_enabled: boolean;
+  readonly messages_tab_read_only_enabled: boolean;
+}
+
+/**
+ * The settings a dedicated app may carry: the documented switches, and interactivity with Socket
+ * Mode on (wave 12, 12-M), which takes no request URL, so a press reaches Day0 over the socket and
+ * the manifest names no address.
+ */
+export type SlackManifestSettings = Partial<Record<(typeof SETTING_KEYS)[number], boolean>> & {
+  interactivity?: { is_enabled: boolean };
+};
 
 export interface BuiltSlackManifest {
   appName: string;
@@ -286,7 +320,11 @@ function displayInformation(
   return out;
 }
 
-/** The bot user and nothing else: no slash commands, shortcuts or unfurl domains. */
+/**
+ * The bot user and Day0's App Home, nothing else: no slash commands, shortcuts or unfurl domains.
+ * The messages tab is open for writing whatever the page wrote (`SLACK_APP_HOME`), since the typed
+ * code reaches the app as a message in its DM.
+ */
 function features(
   written: Record<string, unknown>,
   agentName: string,
@@ -300,16 +338,25 @@ function features(
         ...(displayName ? { display_name: dedicatedAppName(agentName, displayName) } : {}),
         ...(typeof bot.always_online === 'boolean' ? { always_online: bot.always_online } : {}),
       },
+      app_home: { ...SLACK_APP_HOME },
     },
   };
 }
 
-/** The documented switches, when the template set them, and no addresses. */
+/**
+ * The documented switches, when the template set them, and no addresses. Interactivity is kept
+ * only as its switch and only with Socket Mode on: Slack refuses interactivity with neither a
+ * request URL nor Socket Mode, and a request URL is an inbound address Day0 never declares (Q13).
+ */
 function settings(written: Record<string, unknown>): Pick<SlackManifest, 'settings'> {
-  const out: NonNullable<SlackManifest['settings']> = {};
+  const out: SlackManifestSettings = {};
   for (const key of SETTING_KEYS) {
     const value = written[key];
     if (typeof value === 'boolean') out[key] = value;
+  }
+  const interactive = record(written.interactivity).is_enabled;
+  if (out.socket_mode_enabled === true && typeof interactive === 'boolean') {
+    out.interactivity = { is_enabled: interactive };
   }
   return Object.keys(out).length > 0 ? { settings: out } : {};
 }

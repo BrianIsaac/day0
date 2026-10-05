@@ -3,9 +3,13 @@
 import { act } from 'react';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { Id } from '../../../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
 import type { MockAction } from '../../../../../src/work/types';
-import { PendingDecisionsPanel } from '../../../../../app/agent/[agentId]/work/PendingDecisionsPanel';
+import {
+  PendingDecisionsPanel,
+  pendingDecisionMembers,
+} from '../../../../../app/agent/[agentId]/work/PendingDecisionsPanel';
+import { HELD_CLOSE_AGAINST_WORDS, HELD_MUTATION } from '../../../../../src/surfaces/policy';
 import { button, mount, press, said } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
@@ -53,6 +57,7 @@ describe('approving held actions across items at once (step 45)', (): void => {
     title: `Answer ${id}`,
     actions: [action],
     heldIndexes: [0],
+    leftForCard: [],
     refused: 0,
   });
 
@@ -77,6 +82,114 @@ describe('approving held actions across items at once (step 45)', (): void => {
     expect(said(view.container)).toEqual([
       'Approved 2 held actions across 2 items: they apply now.',
     ]);
+    view.unmount();
+  });
+});
+
+describe('the Needs you batch and a close Day0 held (12-H, R-12D-1)', (): void => {
+  const comment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-12","body":"Audit note posted."}',
+    },
+  };
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-12","state":"Done"}',
+    },
+  };
+  const row = (id: string, actions: MockAction[], reasons: string[], applied: unknown[] = []) =>
+    ({
+      _id: id,
+      state: 'actions-pending',
+      pendingRunId: `run-${id}`,
+      title: `Close ${id}`,
+      output: { draft: '', notes: '', actions, applied },
+      actionVerdicts: reasons.map((reason) => ({ disposition: 'held', reason })),
+    }) as unknown as Doc<'workItems'>;
+
+  it('leaves a tripped close out of what the batch approves, and lists a set that holds only one', (): void => {
+    const members = pendingDecisionMembers([
+      row('w1', [comment, close], [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS]),
+      row('w2', [comment], [HELD_MUTATION]),
+      row(
+        'w3',
+        [comment, close],
+        [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS],
+        [{ tool: 'mcp.call', ok: true, authority: 'manager' }],
+      ),
+    ]);
+    expect(
+      members.map((member) => [member.workItemId, member.heldIndexes, member.leftForCard]),
+    ).toEqual([
+      ['w1', [0], [1]],
+      ['w2', [0], []],
+      ['w3', [], [1]],
+    ]);
+  });
+
+  it('counts only what it sends, and says the close is left for its card', async (): Promise<void> => {
+    const sent: unknown[] = [];
+    const members = pendingDecisionMembers([
+      row('w1', [comment, close], [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS]),
+      row('w2', [comment], [HELD_MUTATION]),
+    ]);
+    const view = mount(
+      <PendingDecisionsPanel
+        members={members}
+        surfaces={[]}
+        onApproveBatch={async (batch) => {
+          sent.push(batch);
+        }}
+      />,
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain(
+      'Day0 held its ticket close because the run’s own words say the work was not done: decide it on its card.',
+    );
+    expect(text).toContain(
+      '1 ticket close that Day0 held is not in this batch: decide it on its card, and approve it there only if the work was done.',
+    );
+    await press(view.container, 'Approve 2 held actions across 2 items');
+    expect(sent).toEqual([
+      [
+        { workItemId: 'w1', pendingRunId: 'run-w1', approvedIndexes: [0] },
+        { workItemId: 'w2', pendingRunId: 'run-w2', approvedIndexes: [0] },
+      ],
+    ]);
+    expect(said(view.container)).toEqual([
+      'Approved 2 held actions across 2 items: they apply now. The ticket close waits on its card.',
+    ]);
+    view.unmount();
+  });
+
+  it('offers no button when every waiting write is a close Day0 held, and says where each is decided', (): void => {
+    const members = pendingDecisionMembers([
+      row(
+        'w1',
+        [comment, close],
+        [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS],
+        [{ tool: 'mcp.call', ok: true, authority: 'manager' }],
+      ),
+      row(
+        'w2',
+        [comment, close],
+        [HELD_MUTATION, HELD_CLOSE_AGAINST_WORDS],
+        [{ tool: 'mcp.call', ok: true, authority: 'manager' }],
+      ),
+    ]);
+    const view = mount(
+      <PendingDecisionsPanel members={members} surfaces={[]} onApproveBatch={async () => {}} />,
+    );
+    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    expect(view.container.textContent).toContain(
+      'Nothing here can be approved from this list: each ticket close waits on its card.',
+    );
     view.unmount();
   });
 });

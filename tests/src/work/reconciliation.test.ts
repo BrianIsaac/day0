@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { landedRowCount } from '../../../src/work/reconciliation';
+import {
+  answeredEntries,
+  isOutcomeUnknownReason,
+  landedRowCount,
+  OUTCOME_UNKNOWN_AFTER_STOP_REASON,
+  OUTCOME_UNKNOWN_REASON,
+  providerReconciliationEntries,
+  reconcilerOf,
+  reconciliationAnswered,
+  reconciliationOwed,
+  retryAnswersOf,
+  type ReconciliationEntry,
+} from '../../../src/work/reconciliation';
 
 describe('landedRowCount', (): void => {
   it('counts every row that reached the work environment, in both phases, reads and writes alike', (): void => {
@@ -25,5 +37,156 @@ describe('landedRowCount', (): void => {
     expect(landedRowCount({ applied: [{ ok: true, held: true }, { ok: false }] })).toBe(0);
     expect(landedRowCount(undefined)).toBe(0);
     expect(landedRowCount({})).toBe(0);
+  });
+});
+
+describe('the reconciliation answered per entry (U17 D1)', () => {
+  const landed: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'mcp.call',
+    outcome: 'landed',
+  };
+  const unknown: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 1,
+    tool: 'mcp.call',
+    outcome: 'outcome-unknown',
+  };
+
+  it('owes an answer for every write of unknown outcome, and none for a landed one', () => {
+    expect(answeredEntries([landed, unknown], [])).toEqual({ ok: false, unanswered: [unknown] });
+    // Re-pinned for W12X-3: a landed entry nobody answered was stored with `answer: 'landed'`, so
+    // the card said "You said it landed." of a write the manager was never asked about.
+    expect(
+      answeredEntries([landed, unknown], [{ phase: 'single', actionIndex: 1, answer: 'not-sent' }]),
+    ).toEqual({
+      ok: true,
+      entries: [landed, { ...unknown, answer: 'not-sent' }],
+    });
+    expect(answeredEntries([landed], [])).toEqual({ ok: true, entries: [landed] });
+  });
+
+  it('takes the answer given for a landed entry, and reads an answer only at its own place', () => {
+    expect(
+      answeredEntries(
+        [landed, unknown],
+        [
+          { phase: 'single', actionIndex: 0, answer: 'not-sent' },
+          { phase: 'closing', actionIndex: 1, answer: 'landed' },
+        ],
+      ),
+    ).toEqual({ ok: false, unanswered: [unknown] });
+  });
+
+  it('gives a retry every answer the manager gave, and landed for a write Day0 recorded as landed (W12X-3)', () => {
+    expect(
+      retryAnswersOf([
+        landed,
+        { ...unknown, answer: 'not-sent' },
+        { ...landed, actionIndex: 2, answer: 'not-sent' },
+        { ...unknown, actionIndex: 3 },
+      ]),
+    ).toEqual([
+      { phase: 'single', actionIndex: 0, answer: 'landed' },
+      { phase: 'single', actionIndex: 1, answer: 'not-sent' },
+      { phase: 'single', actionIndex: 2, answer: 'not-sent' },
+    ]);
+  });
+});
+
+describe('an outcome unknown, whichever ended the apply', (): void => {
+  it('reads an apply the manager stopped as unknown, as it reads an interrupted one', (): void => {
+    for (const reason of [OUTCOME_UNKNOWN_REASON, OUTCOME_UNKNOWN_AFTER_STOP_REASON]) {
+      expect(isOutcomeUnknownReason(reason)).toBe(true);
+      expect(
+        providerReconciliationEntries({
+          actions: [{ tool: 'http.request', args: {} }],
+          applied: [{ tool: 'http.request', ok: false, reason }],
+        }),
+      ).toEqual([
+        {
+          phase: 'single',
+          actionIndex: 0,
+          tool: 'http.request',
+          outcome: 'outcome-unknown',
+          reason,
+        },
+      ]);
+    }
+    expect(isOutcomeUnknownReason('HTTP 500 · {"ok":false}')).toBe(false);
+  });
+
+  // Re-pinned for W12-R9: the reasons reach the manager on the card, in their words.
+  it('says a stopped apply was stopped, never that it was interrupted', (): void => {
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).not.toContain('interrupted');
+    expect(OUTCOME_UNKNOWN_AFTER_STOP_REASON).toContain(
+      'check whether it arrived before you retry',
+    );
+  });
+
+  it('words both reasons for a manager, with no spaced hyphen, and still reads the old words (W12-R9)', (): void => {
+    for (const reason of [OUTCOME_UNKNOWN_REASON, OUTCOME_UNKNOWN_AFTER_STOP_REASON]) {
+      expect(reason).not.toMatch(/ - |\bapply\b|\bprovider\b/);
+    }
+    const legacy = 'outcome unknown after interrupted apply - verify provider before retry';
+    expect(isOutcomeUnknownReason(legacy)).toBe(true);
+    expect(
+      isOutcomeUnknownReason(
+        'outcome unknown after the apply was stopped - verify provider before retry',
+      ),
+    ).toBe(true);
+    // A row recorded before v0.16.0 is listed in the words a row carries now.
+    expect(
+      providerReconciliationEntries({
+        actions: [{ tool: 'http.request', args: {} }],
+        applied: [{ tool: 'http.request', ok: false, reason: legacy, idempotencyKey: 'k' }],
+      })[0]?.reason,
+    ).toBe(OUTCOME_UNKNOWN_REASON);
+  });
+});
+
+describe('reconcilerOf', (): void => {
+  it('names the manager who checked as you, or one before a handover, and never by the owner key', (): void => {
+    expect(reconcilerOf('dev-no-auth|local-boss', 'dev-no-auth|local-boss')).toBe('you');
+    expect(reconcilerOf('issuer|old-manager', 'issuer|new-manager')).toBe('previous-manager');
+    expect(reconcilerOf('issuer|old-manager', undefined)).toBeUndefined();
+  });
+});
+
+describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a))', (): void => {
+  const unknown: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'mcp.call',
+    outcome: 'outcome-unknown',
+  };
+  const landed: ReconciliationEntry = { ...unknown, actionIndex: 1, outcome: 'landed' };
+  const output = {
+    actions: [{ tool: 'mcp.call', args: {} }],
+    applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+  };
+
+  it('counts as answered only once every write of unknown outcome has an answer', (): void => {
+    expect(reconciliationAnswered(undefined)).toBe(false);
+    expect(reconciliationAnswered({ entries: [unknown, landed] })).toBe(false);
+    expect(reconciliationAnswered({ entries: [{ ...unknown, answer: 'not-sent' }, landed] })).toBe(
+      true,
+    );
+    expect(reconciliationAnswered({ entries: [landed] })).toBe(true);
+  });
+
+  it('owes the check until it is answered, and never where nothing may have landed', (): void => {
+    expect(reconciliationOwed({ output })).toBe(true);
+    expect(reconciliationOwed({ output, providerReconciliation: { entries: [unknown] } })).toBe(
+      true,
+    );
+    expect(
+      reconciliationOwed({
+        output,
+        providerReconciliation: { entries: [{ ...unknown, answer: 'landed' }] },
+      }),
+    ).toBe(false);
+    expect(reconciliationOwed({ output: { actions: [], applied: [] } })).toBe(false);
   });
 });

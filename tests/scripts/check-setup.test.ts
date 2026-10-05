@@ -320,6 +320,15 @@ describe('the support report', (): void => {
     }
   });
 
+  it('names the Socket Mode host the slack-socket component dials, as the walk saw it, and how to find it (W12V-17)', (): void => {
+    const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
+    const socket = rows.find((row) => row.host === 'wss-primary.slack.com');
+    expect(socket?.purpose).toBe(
+      "the slack-socket component's Socket Mode connections over wss:// (the host is the one in the URL Slack's apps.connections.open answers; this was it on Slack in October 2026)",
+    );
+    expect(rows.map((row) => row.host)).toContain('slack.com');
+  });
+
   it('carries versions, digests and each section as a status, and no value from the env file', (): void => {
     const report = setupReport({
       values: {

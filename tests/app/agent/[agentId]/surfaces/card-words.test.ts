@@ -6,11 +6,16 @@ import {
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
+  decisionButtonsWords,
+  typedCodeWords,
+  slackNoInstallWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
   identityChip,
   moveOfferWords,
+  NOT_REINSTALLED_ACCESS,
+  NOT_REINSTALLED_ACTS_AS,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -337,6 +342,9 @@ describe("the manager's line for a system IT connected", (): void => {
         'UTC',
       ),
     ).toBe('Connected for your organisation by IT on 1 October');
+    expect(
+      connectedForOrganisationWords({ connectedAt: Date.UTC(2026, 9, 1, 9) }, 'UTC', true),
+    ).toBe('Connected for your organisation by IT on 1 October. This card does not use it yet.');
   });
 });
 
@@ -392,5 +400,148 @@ describe("the latest re-join after a Slack renewal (11-AC's item 5)", (): void =
     expect(rejoinWords(AFTER, 'Leo', 30)).toBeUndefined();
     expect(rejoinWords(undefined, 'Leo', 10)).toBeUndefined();
     expect(rejoinWords({ joined: [], needsPerson: [], at: 20 }, 'Leo', 10)).toBeUndefined();
+  });
+});
+
+describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3)', (): void => {
+  // Re-pinned for the wave 12 review: the card no longer says the buttons are on whether the
+  // bridge runs or not (W12-R16, D-6 (b)), nor that a request asked before they were on has them
+  // (W12-R10).
+  it('says buttons are on while the socket service runs, on each new request, with the typed code beside them', (): void => {
+    const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
+    expect(words.title).toBe(
+      'Decisions in Slack: buttons are on while the Slack socket service runs',
+    );
+    expect(words.note).toBe(
+      'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
+    );
+    expect(words.asksForToken).toBe(false);
+    expect(words.offersReplacement).toBe(true);
+  });
+
+  it('names the socket token an app without one needs, and asks for it', (): void => {
+    const words = decisionButtonsWords(
+      { available: false, why: 'no-app-level-token' },
+      'Mateo (Day0)',
+    );
+    expect(words.title).toBe("Buttons: needs this app's socket token");
+    // Re-pinned for W12V-4: an app Day0 created from its manifest has Socket Mode on already, so
+    // the card tells nobody to turn it on; an older app's Enable Socket Mode makes the token itself
+    // (the walk's row 15).
+    expect(words.note).toBe(
+      "Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.",
+    );
+    expect(words.note).not.toContain('turns on Socket Mode');
+    expect(words.asksForToken).toBe(true);
+  });
+
+  it('says why the requests carry the typed code alone otherwise, asking for nothing', (): void => {
+    for (const buttons of [
+      { available: false, why: 'no-bridge', tokenStored: true },
+      { available: false, why: 'no-bridge', tokenStored: false },
+      { available: false, why: 'no-own-app' },
+      { available: false, why: 'not-slack-api' },
+    ] as const) {
+      const words = decisionButtonsWords(buttons, 'Mateo (Day0)');
+      expect(`${words.title} ${words.note}`, buttons.why).toContain('typed code');
+      expect(words.asksForToken, buttons.why).toBe(false);
+    }
+    expect(
+      decisionButtonsWords(
+        { available: false, why: 'no-bridge', tokenStored: true },
+        'Mateo (Day0)',
+      ).title,
+    ).toBe('Buttons: needs the Slack socket service');
+  });
+
+  it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
+    const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
+    expect(on.note).toBe(
+      'Each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+    );
+    const noToken = decisionButtonsWords(
+      { available: false, why: 'no-app-level-token' },
+      'Iris (Day0)',
+      false,
+    );
+    expect(
+      noToken.note.startsWith(
+        'Requests reach you with no buttons and no typed code, so you decide them in day0.',
+      ),
+    ).toBe(true);
+    const noBridge = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: true },
+      'Iris (Day0)',
+      false,
+    );
+    expect(noBridge.note).toContain(
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+    );
+    for (const words of [on, noToken, noBridge]) {
+      expect(words.note).not.toMatch(/typed code (only|still decides|alone)/);
+    }
+  });
+
+  it('asks for no token while the socket service is missing, and says the token comes after it (W12-R18)', (): void => {
+    const words = decisionButtonsWords(
+      { available: false, why: 'no-bridge', tokenStored: false },
+      'Mateo (Day0)',
+    );
+    expect(words.title).toBe('Buttons: needs the Slack socket service');
+    expect(words.note).toBe(
+      'This deployment does not run the Slack socket service that carries a press, so requests reach you with a typed code only. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of Mateo (Day0).',
+    );
+    expect(words.asksForToken).toBe(false);
+  });
+});
+
+describe('whether the typed code reaches the app, on a Slack card (W12V-7)', (): void => {
+  it('says nothing while the app takes messages', (): void => {
+    expect(typedCodeWords({ state: 'open' })).toBeUndefined();
+  });
+
+  it('says Day0 opens the messages tab at the next check, and the toggle if it stays off', (): void => {
+    expect(typedCodeWords({ state: 'day0-opens', appName: 'Iris (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Iris (Day0) yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+
+  it('names the app and the one toggle a person turns on where Day0 cannot change the app', (): void => {
+    expect(typedCodeWords({ state: 'needs-toggle', appName: 'Otto (Day0)' })).toEqual({
+      title: 'Typed code: off until this app takes messages',
+      note: 'Slack does not let you message Otto (Day0) yet, so no typed code reaches it, and Day0 cannot change this app’s settings. Someone who manages Otto (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”; then say so here.',
+      confirm: 'It is on in Slack',
+    });
+  });
+});
+
+describe('a covered Slack card with no install described (W12V-1, words only)', (): void => {
+  it('says what is missing and which page would supply it', (): void => {
+    expect(slackNoInstallWords('Vela')).toBe(
+      'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
+  });
+});
+
+describe('a Slack card whose own app is not installed again (W12X-4)', (): void => {
+  it('acts as nobody, says nothing goes through it and reads as ended, whatever it waited on', (): void => {
+    expect(NOT_REINSTALLED_ACTS_AS).toBe('nobody');
+    expect(NOT_REINSTALLED_ACCESS).toBe('Nothing is read or sent through this card.');
+    const card = {
+      displayName: 'Slack',
+      verdict: 'approved',
+      managerApprovedAt: 1,
+      expiresAt: Date.UTC(2027, 0, 3),
+    } as unknown as WordedSurface;
+    for (const waitsOn of [undefined, 'it', 'connect'] as const) {
+      expect(
+        stateChip(card, Date.UTC(2026, 9, 5), 'UTC', { waitsOn, notReinstalled: true }),
+      ).toEqual({
+        text: 'Ended',
+        tone: 'warn',
+      });
+    }
   });
 });

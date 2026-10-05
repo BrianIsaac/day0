@@ -25,6 +25,7 @@ import type {
 } from '../surfaces/access-identity';
 import type { AccessEnd } from '../surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../surfaces/revokers/outcome';
+import type { MessagesTabOpenHow } from '../surfaces/slack-messages-tab';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -192,6 +193,16 @@ export interface AgentAutonomyChangedPayload {
   readonly from: boolean;
   readonly to: boolean;
   readonly reason: string;
+}
+
+/** The payload of `agent.paused`: the manager's reason, when they gave one (12-P). */
+export interface AgentPausedPayload {
+  readonly reason?: string;
+}
+
+/** The payload of `agent.resumed`: when the pause it ends began (12-P). */
+export interface AgentResumedPayload {
+  readonly pausedAt: number;
 }
 
 /** The payload of `agent.retired`: the retire's record is the named `retirements` row, under its owner. */
@@ -481,6 +492,13 @@ export interface VoiceFinalisationFailedPayload {
   readonly retryScheduled: boolean;
 }
 
+/** The payload of `voice.restarted`: the manager held the one-to-one again after its draft failed (m16). */
+export interface VoiceRestartedPayload {
+  readonly sessionId: SessionId;
+  /** The conversation the session moved on to; a write for an earlier one is refused. */
+  readonly conversation: number;
+}
+
 /** The payload of `voice.finalisation-abandoned`. */
 export interface VoiceFinalisationAbandonedPayload {
   readonly sessionId: SessionId;
@@ -720,6 +738,28 @@ export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
   readonly appName: string;
 }
 
+/**
+ * The payload of `surface.socket-token-landed`: a person's app-level token landed for the
+ * employee's own Slack app, so its decision requests carry buttons (12-M; RM3 (a)). Names no token.
+ */
+export interface SurfaceSocketTokenLandedPayload extends SurfaceNamed {
+  readonly appName: string;
+  /** An earlier token was replaced, and its row ended in Day0. */
+  readonly replaced: boolean;
+}
+
+/**
+ * The payload of `surface.app-messages-open`: the employee's own Slack app takes messages, so the
+ * manager's typed code can reach it (W12V-7). `created` from a manifest that opens the messages
+ * tab; `opened` by Day0's `apps.manifest.update`; `found-open` when Day0 read the app's manifest and
+ * someone had opened it; `confirmed` on the manager's word, for an app Day0 cannot read.
+ */
+export interface SurfaceAppMessagesOpenPayload extends SurfaceNamed {
+  readonly appId: string;
+  readonly appName: string;
+  readonly how: MessagesTabOpenHow;
+}
+
 /** The payload of `surface.install-failed`. */
 export type SurfaceInstallFailedPayload = SurfaceReason;
 
@@ -741,6 +781,11 @@ export interface CredentialSupersededPayload {
   readonly page: string;
   /** This agent's surfaces it was bound to, each sent back to landing a credential. */
   readonly surfaceIds: readonly SurfaceId[];
+  /**
+   * This agent's surfaces it was bound to that the page swap re-bound to the value the page
+   * states now under the same label, each checked again (N23; 12-S3). Absent on rows before it.
+   */
+  readonly reboundSurfaceIds?: readonly SurfaceId[];
 }
 
 /** The payload of `surface.reoriented`: orientation the manager's re-run placed for one surface. */
@@ -876,12 +921,14 @@ export interface OrganisationConnectionRotatedPayload extends OrganisationConnec
  * The payload of `organisation.connection-corrected` (the wave 11 review's M12 e): the redirect or
  * the scopes a connection records, corrected in place to what IT registered at the vendor; the
  * scopes with what they were, the redirect only as corrected, so no address reaches a ledger line
- * or an export. No secret changes and no card ends.
+ * or an export; and an MCP connection's issuer, recorded where it was landed with none (the round
+ * review's m13), as recorded only. No secret changes and no card ends.
  */
 export interface OrganisationConnectionCorrectedPayload extends OrganisationConnectionNamed {
   readonly redirectCorrected?: boolean;
   readonly scopes?: readonly string[];
   readonly previousScopes?: readonly string[];
+  readonly issuerRecorded?: boolean;
 }
 
 /** The payload of `organisation.connection-revoked`. */
@@ -963,6 +1010,8 @@ export interface OrganisationRevokedAtSourcePayload {
 export type SlackConfigurationMethod =
   | 'tooling.tokens.rotate'
   | 'apps.manifest.create'
+  | 'apps.manifest.export'
+  | 'apps.manifest.update'
   | 'auth.revoke';
 
 /**
@@ -986,7 +1035,7 @@ export interface OrganisationConfigurationUsedPayload {
   readonly outcome: 'done' | 'failed' | 'superseded' | 'already-revoked' | 'unrecognised';
   /** Slack's words for a failure, or why a rotation was superseded. */
   readonly reason?: string;
-  /** The app `apps.manifest.create` made. */
+  /** The app `apps.manifest.create` made, or the one `apps.manifest.export` or `.update` read or changed. */
   readonly appId?: string;
   /** When the configuration token a rotation issued lapses. */
   readonly expiresAt?: number;
@@ -1287,13 +1336,20 @@ export interface WorkDecisionRequestAskedPayload extends WorkItemNamed {
 /** The payload of `work.decision-request-closing`: the edit that marks a decided request so in the DM. */
 export type WorkDecisionRequestClosingPayload = DecisionNamed;
 
+/**
+ * The payload of `work.decision-request-replacing`: the one edit that marks a replaced request so
+ * in the DM (12-M; F2 D14).
+ */
+export type WorkDecisionRequestReplacingPayload = DecisionNamed;
+
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
-  readonly kind: 'received' | 'unknown';
+  /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
+  readonly kind: 'received' | 'unknown' | 'replaced';
 }
 
 /** The payload of `work.decision-ignored`. */
@@ -1343,6 +1399,49 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
 
 /** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
 export type WorkDismissedPayload = WorkItemNamed;
+
+/**
+ * The payload of `work.closed-without-retry`: the manager closed a failed item whose ledger named
+ * nothing to reconcile, without a retry (E-8; it is dismissed as `work.dismissed` dismisses).
+ */
+export interface WorkClosedWithoutRetryPayload extends WorkItemNamed {
+  /** The owner key of the manager who closed it. */
+  readonly actor: string;
+}
+
+/** One row a finished run held and never sent. */
+export interface WithheldRow {
+  /** The phase of the run the row belongs to: one phase, or the prerequisite or closing one. */
+  readonly phase: 'single' | 'prerequisite' | 'closing';
+  /** The row's index in its phase's actions. */
+  readonly index: number;
+  readonly tool: string;
+  /** Why it was held: the manager left it out, the gate refused it, or a write before it failed. */
+  readonly reason?: string;
+  /** What it would have done, in the ledger's words. */
+  readonly effect?: string;
+}
+
+/**
+ * The payload of `work.actions-withheld`: a run that finished held some of its rows and never sent
+ * them (the wave 6 review's D4 (b)), so the record lists them under "Refused and withheld".
+ */
+export interface WorkActionsWithheldPayload extends WorkItemNamed {
+  readonly runId?: RunId;
+  readonly withheld: readonly WithheldRow[];
+}
+
+/** The payload of `work.stopped`: the manager stopped an item the employee was working (wave 12). */
+export interface WorkStoppedPayload extends WorkItemNamed {
+  /** The state the item was in: `claimed`, `plan-approved` or `executing`. */
+  readonly fromState: Doc<'workItems'>['state'];
+  /** The owner key of the manager who stopped it. */
+  readonly actor: string;
+  /** The manager's reason, when they gave one. */
+  readonly reason?: string;
+  /** Whether an apply was sending the run's writes, so some may have landed. */
+  readonly applyInFlight: boolean;
+}
 
 /** The payload of `work.cancelled`. */
 export interface WorkCancelledPayload extends WorkItemNamed {
@@ -1401,6 +1500,11 @@ export interface WorkActionsAutoApplyingPayload extends ActionSetSplit {
 export interface WorkActionsPendingPayload extends ActionSetSplit {
   readonly autonomousActions?: boolean;
   readonly autoApplied?: true;
+  /**
+   * Parked again after an approval from Slack or the Needs you batch landed the rest of the set:
+   * what waits (`heldIndexes`) is a close the tripwire held, left for its card (wave 12, 12-H).
+   */
+  readonly leftForCard?: true;
 }
 
 /** The payload of `work.actions-approved`. */
@@ -1409,6 +1513,11 @@ export interface WorkActionsApprovedPayload extends WorkItemRun {
   readonly rejectedIndexes: number[];
   readonly refusedIndexes: number[];
   readonly autoIndexes: number[];
+  /**
+   * The closes the tripwire held that this approval left for their card (wave 12, 12-H): an
+   * approval from Slack or the Needs you batch decides every other held write, never these.
+   */
+  readonly leftForCard?: number[];
   readonly decidedVia: DecidedVia;
 }
 
@@ -1501,6 +1610,8 @@ export interface EventPayloads {
   'agent.notifications-changed': AgentNotificationsChangedPayload;
   'agent.zone-changed': AgentZoneChangedPayload;
   'agent.autonomy-changed': AgentAutonomyChangedPayload;
+  'agent.paused': AgentPausedPayload;
+  'agent.resumed': AgentResumedPayload;
   'agent.retired': AgentRetiredPayload;
   'permission.granted': PermissionGrantedPayload;
   'permission.revoked': PermissionRevokedPayload;
@@ -1532,6 +1643,7 @@ export interface EventPayloads {
   'voice.completed': VoiceCompletedPayload;
   'voice.finalisation-failed': VoiceFinalisationFailedPayload;
   'voice.finalisation-abandoned': VoiceFinalisationAbandonedPayload;
+  'voice.restarted': VoiceRestartedPayload;
   'skill.authoring-refused': SkillAuthoringRefusedPayload;
   'skill.builtin-installed': SkillBuiltinInstalledPayload;
   'skill.proposed': SkillProposedPayload;
@@ -1562,6 +1674,8 @@ export interface EventPayloads {
   'surface.proposal-requested': SurfaceProposalRequestedPayload;
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
+  'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
+  'surface.app-messages-open': SurfaceAppMessagesOpenPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
   'credential.superseded': CredentialSupersededPayload;
@@ -1628,6 +1742,7 @@ export interface EventPayloads {
   'work.decision-request-asked': WorkDecisionRequestAskedPayload;
   'work.decision-notifying': WorkDecisionNotifyingPayload;
   'work.decision-request-closing': WorkDecisionRequestClosingPayload;
+  'work.decision-request-replacing': WorkDecisionRequestReplacingPayload;
   'work.decision-acknowledging': WorkDecisionAcknowledgingPayload;
   'work.decision-ignored': WorkDecisionIgnoredPayload;
   'work.decision-duplicate': WorkDecisionDuplicatePayload;
@@ -1637,6 +1752,9 @@ export interface EventPayloads {
   'work.provider-reconciled': WorkProviderReconciledPayload;
   'work.cancelled': WorkCancelledPayload;
   'work.dismissed': WorkDismissedPayload;
+  'work.stopped': WorkStoppedPayload;
+  'work.closed-without-retry': WorkClosedWithoutRetryPayload;
+  'work.actions-withheld': WorkActionsWithheldPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1677,6 +1795,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'agent.notifications-changed',
   'agent.zone-changed',
   'agent.autonomy-changed',
+  'agent.paused',
+  'agent.resumed',
   'agent.retired',
   'permission.granted',
   'permission.revoked',
@@ -1708,6 +1828,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'voice.completed',
   'voice.finalisation-failed',
   'voice.finalisation-abandoned',
+  'voice.restarted',
   'skill.authoring-refused',
   'skill.builtin-installed',
   'skill.proposed',
@@ -1738,6 +1859,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.proposal-requested',
   'surface.orientation-failed',
   'surface.app-provisioned',
+  'surface.socket-token-landed',
+  'surface.app-messages-open',
   'surface.install-failed',
   'surface.shared-credential-retired',
   'credential.superseded',
@@ -1804,6 +1927,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.decision-request-asked',
   'work.decision-notifying',
   'work.decision-request-closing',
+  'work.decision-request-replacing',
   'work.decision-acknowledging',
   'work.decision-ignored',
   'work.decision-duplicate',
@@ -1813,6 +1937,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.provider-reconciled',
   'work.cancelled',
   'work.dismissed',
+  'work.stopped',
+  'work.closed-without-retry',
+  'work.actions-withheld',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

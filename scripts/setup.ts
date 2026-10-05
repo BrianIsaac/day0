@@ -242,8 +242,16 @@ export const FEATHERLESS_SETTINGS: Readonly<Record<string, string>> = {
   OPENAI_REASONING_EFFORT: 'low',
 };
 
-/** The optional components real mode starts on top of `real`, `sandbox` and `redactor`. */
-export const REAL_MODE_PROFILES: readonly string[] = ['docs-notion', 'browser', 'demo'];
+/**
+ * The optional components real mode starts on top of `real`, `sandbox` and `redactor`, the Slack
+ * socket bridge among them (12-M; RM7): its secret is minted with the other real-mode keys.
+ */
+export const REAL_MODE_PROFILES: readonly string[] = [
+  'docs-notion',
+  'browser',
+  'demo',
+  'slack-socket',
+];
 
 /** Where the backend reaches the two components real mode starts. */
 export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
@@ -416,7 +424,8 @@ export class ProtectedProjectError extends Error {
   }
 }
 
-const USAGE = `Usage: pnpm setup:local [options]
+/** The helper's usage text, which `--help` prints. */
+export const SETUP_USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear | backup | upgrade | pause | unpause [options]
        pnpm setup:local restore <backup.tar.gz> [options]
        pnpm setup:local sign-in --provider <entra|okta|google> [sign-in options]
@@ -513,7 +522,8 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
                                           form instead of the shared app's (per employee)
     --correct <slack|linear|https://...>  record the redirect Day0 returns to and the kit's
                                           scopes on that system's connection, after IT fixed
-                                          them at the vendor; no secret changes, no card ends
+                                          them at the vendor, and an MCP public client's
+                                          missing issuer; no secret changes, no card ends
   ./setup.sh install --provider entra     the lifecycle target checks, then sign-in, then access,
                                           then check:setup and check:sign-in; stops at the first
                                           that fails and says which. Takes both verbs' flags;
@@ -524,8 +534,10 @@ The organisation's systems, with the customer's IT (docs/running/install.md, acc
                                           kept by later pushes)
 
 Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the sync):
-  ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
-  ./setup.sh unpause                      each job runs again at its next turn
+  ./setup.sh pause                        every job skips and queued work steps hold until
+                                          unpause; an upgrade leaves it so
+  ./setup.sh unpause                      each job runs again at its next turn, and the held
+                                          work steps go on
 
 Your own copy on Convex cloud and Vercel, as the hosted demo runs, is the cloud
 verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
@@ -1758,6 +1770,7 @@ export const SECRET_NAMES: readonly string[] = [
   'DEV_NO_AUTH_SIGNING_KEY',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_SOCKET_BRIDGE_SECRET',
   'DAY0_NANGO_SECRET_KEY',
   'DAY0_NANGO_ENCRYPTION_KEY',
   'DAY0_NANGO_DB_PASSWORD',
@@ -4632,8 +4645,10 @@ async function switchScheduledJobs(
     io.log(
       verb === 'pause'
         ? `Paused ${project}'s scheduled jobs: the intake and decision polls, the digests, the sweeps and ` +
-            `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. Work they ` +
-            'scheduled before now runs to its end.'
+            `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. A step ` +
+            'already under way finishes the step it is on and holds before the next, and a ' +
+            'documentation sync stops once its current batch is read; each goes on from where it ' +
+            'stopped once the jobs run again.'
         : `Lifted the pause on ${project}'s scheduled jobs: each runs again at its next turn, and the ` +
             'polls start from where they stopped.',
     );
@@ -5739,7 +5754,7 @@ async function main(): Promise<number> {
     return 2;
   }
   if (options.help) {
-    console.log(USAGE);
+    console.log(SETUP_USAGE);
     return 0;
   }
   try {

@@ -11,7 +11,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -63,16 +63,21 @@ import {
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
-// The redaction component the actions reach through DAY0_REDACTOR_URL, served
-// in-process from the recorded span model.
-let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
-beforeAll(async (): Promise<void> => {
-  redactorDouble = await serveSpanModel();
-  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+// The redaction component the actions reach through DAY0_REDACTOR_URL, answered
+// in-process from the recorded span model by the global fetch each test starts
+// with, never over a socket: the tests that fake setTimeout would otherwise hold
+// it on undici 6.28 (Node 22.23), whose pooled socket waits for a zero-delay
+// timer a faked clock never fires (12-N, 5 October 2026). The registry stub
+// below hands the component's calls on to that global.
+const redactorFetch = routeSpanModelFetch(globalThis.fetch);
+beforeAll((): void => {
+  process.env.DAY0_REDACTOR_URL = SPAN_MODEL_TEST_URL;
 });
-afterAll(async (): Promise<void> => {
+afterAll((): void => {
   delete process.env.DAY0_REDACTOR_URL;
-  await redactorDouble?.close();
+});
+beforeEach((): void => {
+  vi.stubGlobal('fetch', redactorFetch);
 });
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
@@ -204,8 +209,7 @@ function stubRegistry(): ReturnType<typeof vi.fn> {
   const realFetch = globalThis.fetch;
   const fetchMock = vi.fn(async (input: URL | string, init?: RequestInit): Promise<Response> => {
     // The redaction component is reached over the same global; its calls are its own.
-    if (redactorDouble && String(input).startsWith(redactorDouble.url))
-      return realFetch(input, init);
+    if (String(input).startsWith(SPAN_MODEL_TEST_URL)) return realFetch(input, init);
     const search = new URL(String(input)).searchParams.get('search')?.toLowerCase() ?? '';
     const servers = Object.values(REGISTRY_SERVERS).filter((entry): boolean =>
       `${entry.server.name} ${entry.server.title}`.toLowerCase().includes(search),

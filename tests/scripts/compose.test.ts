@@ -78,9 +78,10 @@ describe('the profile list and the compose file agree', (): void => {
     expect([...defined].sort()).toEqual(Object.keys(PROFILES).sort());
   });
 
-  it('says what every profile starts, the test issuer beside fake Slack included (10-S)', (): void => {
+  it('says what every profile starts, the test issuer and the fake Linear beside fake Slack included (10-S, 12-FL)', (): void => {
     expect(PROFILES.test).toContain('fake Slack');
     expect(PROFILES.test).toContain('test OpenID Connect issuer');
+    expect(PROFILES.test).toContain('fake Linear');
     const components = readFileSync(
       new URL('../../docs/running/components.md', import.meta.url),
       'utf8',
@@ -89,7 +90,7 @@ describe('the profile list and the compose file agree', (): void => {
     const testServices = [
       ...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['test'\]$/gm),
     ].map((match: RegExpMatchArray): string => match[1]);
-    expect(testServices.sort()).toEqual(['fake-oidc', 'fake-slack']);
+    expect(testServices.sort()).toEqual(['fake-linear', 'fake-oidc', 'fake-slack']);
     for (const service of testServices) {
       expect(components, service).toContain(`| \`${service}\` | \`test\` |`);
     }
@@ -116,6 +117,7 @@ describe('the profile list and the compose file agree', (): void => {
     expect(profileFor.get('looker-tile')).toBe('demo');
     expect(profileFor.get('fake-slack')).toBe('test');
     expect(profileFor.get('dashboard')).toBe('dev');
+    expect(profileFor.get('slack-socket')).toBe('slack-socket');
   });
 
   it('keeps notion-mcp reachable as an alias, so links made before the rename still sync', (): void => {

@@ -29,6 +29,9 @@ KEYS=(
   DAY0_DOCS_ROOT
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
+  # The Slack socket bridge's secret (12-M): the backend's internal routes refuse a call
+  # without it, and no request carries buttons where the deployment holds none.
+  DAY0_SOCKET_BRIDGE_SECRET
   DAY0_PUBLIC_URL
   DAY0_BROWSER_MCP_URL
   DAY0_REDACTOR_URL
@@ -115,6 +118,8 @@ CLEAR_WHEN_EMPTY=(
   DAY0_PRIVATE_HOSTS
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
+  # A dropped secret must stop admitting the bridge, and turns the buttons off.
+  DAY0_SOCKET_BRIDGE_SECRET
   # A quick tunnel's hostname changes on every restart, so a stale value here
   # would have an app manifest declaring a redirect that no longer resolves.
   # Clearing it makes provisioning refuse plainly instead.

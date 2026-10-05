@@ -331,6 +331,18 @@ export interface LandedWrite {
 }
 
 /**
+ * A write an earlier run of this work item attempted that the manager,
+ * checking the provider before the retry, answered was not sent (wave 12
+ * review W12-R13): the retry sends it afresh, and the landed write that
+ * shares its target no longer stands in for every write to that target.
+ */
+export interface UnsentWrite {
+  readonly action: MockAction;
+  /** The keys its ledger row was recorded under: the row's own and, for a reuse, the row it reused. */
+  readonly idempotencyKeys: readonly string[];
+}
+
+/**
  * An action an audit withheld after its one repair: never sent, kept on the
  * row with the reason so the manager can read what was written against why
  * it was turned away, while the rest of the response went on.
@@ -361,7 +373,7 @@ export interface OpenQuestion {
 export type DeclaredQuestion = string | null;
 
 /** A run's output as the executor returns it and the row stores it: draft, notes, actions and their ledger. */
-export interface ExecutionOutput {
+export interface ExecutionOutput extends WorkDoneFields {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
   /** Actions the evidence invariant withheld after its one repair; see `WithheldAction`. */
@@ -379,6 +391,11 @@ export interface ExecutionOutput {
   earlierQuestion?: string | null;
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
+  /**
+   * Writes the earlier run attempted that the manager answered were not sent;
+   * server-derived on the retry that follows the reconciliation, absent otherwise.
+   */
+  unsentWrites?: UnsentWrite[];
   draft: string;
   notes: string;
   actions: MockAction[];
@@ -468,7 +485,7 @@ export interface RefusedClosing {
 }
 
 /** Output authored once, after the initial action ledger has settled. */
-export interface DependentExecutionOutput {
+export interface DependentExecutionOutput extends WorkDoneFields {
   draft: string;
   notes: string;
   actions: MockAction[];
@@ -487,6 +504,32 @@ export interface DependentExecutionOutput {
   /** Server-derived real-transport ambiguities; absent from model-authored schemas. */
   procedureTrailLimitations?: ProcedureTrailLimitation[];
   planStepOutcomes: PlanStepOutcome[];
+}
+
+/** The three answers a run gives to whether the work its item asked for was done (decision D-1 (b)). */
+export const WORK_DONE_ANSWERS = ['done', 'partial', 'not-done'] as const;
+
+/**
+ * Whether the work an item asked for was done, as the run answers it: `done` (all of it),
+ * `partial` (some of it) or `not-done` (none of it).
+ */
+export type WorkDoneAnswer = (typeof WORK_DONE_ANSWERS)[number];
+
+/**
+ * The fields a run reports on its own work, model-authored from v0.16.0 in both phases and both
+ * modes. Optional on a persisted output: a row, a fixture or a trace recorded before the release
+ * carries neither, and is read by the rule in `src/work/work-done.ts`.
+ */
+export interface WorkDoneFields {
+  /** The run's answer; see `WorkDoneAnswer`. */
+  workDone?: WorkDoneAnswer;
+  /** One line, in the run's own words, of why it answered so. */
+  workDoneWhy?: string;
+  /**
+   * Server-derived: the run answered `done` twice while its own words said the work was not done
+   * (the tripwire), so its close waits for the manager; the clause the words said it in.
+   */
+  closeAgainstWords?: string;
 }
 
 /** The mock office as the executor reads it: guides, team docs, sheets, channels, tweets and tickets. */

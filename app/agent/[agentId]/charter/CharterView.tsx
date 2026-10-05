@@ -17,7 +17,7 @@ import { charterActors } from './charter-actors';
  * until a handover: the old manager's words leave with them, and the tab says whose they were.
  */
 export function CharterView() {
-  const { agent, charter, arriving, reportSentBack } = useEmployee();
+  const { agent, charter, arriving, reportSentBack, surfaceMode } = useEmployee();
   const oneToOne = useQuery(
     api.charters.transcriptOf,
     charter ? { charterId: charter._id } : 'skip',
@@ -76,6 +76,7 @@ export function CharterView() {
         manager={agent.bossEmail}
         name={agent.name}
         autonomous={agent.autonomousActions === true}
+        pageDrivesWork={surfaceMode === 'mock'}
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
         actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />

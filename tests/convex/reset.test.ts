@@ -17,6 +17,7 @@ import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { RETIREMENT_READ_LIMIT } from '../../convex/retirements';
 
@@ -750,6 +751,60 @@ describe('retire in real mode', (): void => {
     });
   });
 
+  it('keeps a retired employee’s claim on an item a Retry moved on with a write that may have landed, and names it to its colleagues (M2, M3)', async (): Promise<void> => {
+    const { harness, retiring, sibling } = await seedRealOwner();
+    const comment = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Audit note."}',
+      },
+    };
+    const { held, asking } = await harness.run(async (ctx) => {
+      // Retried after a stop whose comment's outcome was unknown: the manager answered it landed,
+      // and the retry carries it, so the row now waits in plan-approved.
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(retiring, 'REVOPS-9', 'Close REVOPS-9'),
+        state: 'plan-approved',
+        output: {
+          actions: [comment],
+          applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k0' }],
+          landedWrites: [
+            { action: comment, applied: { tool: 'mcp.call', ok: true, idempotencyKey: 'k0' } },
+          ],
+        },
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-9',
+        agentId: retiring,
+        workItemId: held,
+        claimedAt: 1,
+      });
+      const asking = await ctx.db.insert('workItems', {
+        ...workItemFields(sibling, 'REVOPS-90', 'Report on REVOPS-9'),
+        state: 'plan-approved',
+      });
+      return { held, asking };
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+
+    expect((await retirementsOf(harness))[0].claims).toMatchObject([
+      { key: 'linear:REVOPS-9', workItemId: held, title: 'Close REVOPS-9' },
+    ]);
+    const named = await harness.query(internal.work.itemsHeldElsewhere, { workItemId: asking });
+    expect(named).toContainEqual({
+      externalId: 'REVOPS-9',
+      sourceSystem: 'linear',
+      holderName: 'retiring (retired)',
+      sameEmployee: false,
+      title: 'Close REVOPS-9',
+      state: 'plan-approved',
+    });
+  });
+
   it('releases a retired employee’s claim on work it had not begun to write, and wakes the colleague it refused (review M8)', async (): Promise<void> => {
     vi.useFakeTimers();
     const { harness, retiring, sibling } = await seedRealOwner();
@@ -1422,6 +1477,7 @@ describe('holdings: what a deletion would remove, read before its control is pre
     handoverWords: false,
     retiredBoundaries: false,
     documentation: false,
+    credentials: false,
   };
 
   afterEach((): void => {
@@ -1479,9 +1535,102 @@ describe('holdings: what a deletion would remove, read before its control is pre
     });
   }
 
-  it('answers an anonymous caller with nothing to read', async (): Promise<void> => {
+  it("holds a credential the manager landed and kept, and the deletion with the unlink choice takes it (the wave 11 review's m15)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    expect(await harness.query(api.reset.holdings, {})).toBeNull();
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Notion integration token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('credentials', {
+        userId: 'rival',
+        kind: 'value',
+        label: 'Rival token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+    });
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, credentials: true });
+
+    await owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+  });
+
+  it("counts no credential the deletion's purge would keep: one held for its vendor's revocation, or an identity kept for another manager's employee (the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Token held for its revocation',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        revokedAt: 1,
+        sourceRevocation: { state: 'pending', end: 'retire', attempts: 0 },
+        createdAt: 1,
+      });
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const kept = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Leo (Day0) bot token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        issuedBy: {
+          system: 'slack',
+          grant: 'oauth-install',
+          organisationConnectionId: connectionId,
+        },
+        createdAt: 1,
+      });
+      const leo = await ctx.db.insert('agents', {
+        bossEmail: 'colleague@day0.local',
+        name: 'Leo',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId: leo,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'proposed',
+        whereFound: [],
+        credentialLanded: false,
+        credentialId: kept,
+        createdAt: 1,
+      });
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
+  });
+
+  it('refuses a caller with no identity (the anonymous-caller guard, 12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(harness.query(api.reset.holdings, {})).rejects.toMatchObject(await guardRefusal());
   });
 
   it('holds nothing for a manager who has stored nothing, and another owner’s rows do not count', async (): Promise<void> => {

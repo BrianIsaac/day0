@@ -13,6 +13,7 @@ import {
   WithheldActionsDetails,
 } from './RunDetails';
 import type { PhasedLedgerRow, RunOutput } from './work-item';
+import { outcomeUnknownDetail } from '@/work/reconciliation';
 
 /** A box of ledger rows that did not land, in the tone of what happened to them. */
 function UnlandedRows({
@@ -39,8 +40,9 @@ function UnlandedRows({
       <p className={`text-[15px] font-medium ${text}`}>{headline}</p>
       <ul className="grid gap-1 text-sm text-[var(--color-fg-2)]">
         {rows.map((row, index) => (
-          <li key={index} className="break-words">
-            <span className="font-mono text-[13px]">{row.tool}</span> - {row.reason ?? fallback}
+          <li key={index} className="min-w-0 break-words">
+            {row.summary ?? <span className="font-mono text-[13px]">{row.tool}</span>}:{' '}
+            {outcomeUnknownDetail(row.reason) ?? row.reason ?? fallback}
             <PhaseLabel phase={row.phase} />
             {notes ? (
               <>

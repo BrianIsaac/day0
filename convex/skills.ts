@@ -465,7 +465,7 @@ export const retireUnshaped = internalMutation({
  * somebody else has it.
  *
  * This is the whole of the concurrency control for authoring, and it is the
- * same shape as `work.claimForExecution`: a mutation is a transaction, so the
+ * same shape as `workRuns.claimForExecution`: a mutation is a transaction, so the
  * state check and the move to `authoring` cannot be split by a second caller,
  * where an action that reads the state and writes it back as two calls can be -
  * and both callers then author, verify and write a result for the same skill.

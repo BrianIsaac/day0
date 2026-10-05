@@ -4,6 +4,7 @@ import {
   type EventPayloads,
   type EventType,
   type GrantSource,
+  type WorkDecisionAcknowledgingPayload,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
@@ -203,14 +204,45 @@ function inWords(value: unknown): string | undefined {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-/** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
+/**
+ * What a correction of an organisation connection did: corrected the redirect or the scopes (M12
+ * e), recorded an MCP connection's missing issuer (the round review's m13, never "corrected":
+ * nothing was recorded before), or both.
+ */
 function correctedParts(p: Read<'organisation.connection-corrected'>): string {
   const scopes = listed(p.scopes);
   const parts = [
     ...(p.redirectCorrected === true ? ['redirect'] : []),
     ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
   ];
-  return parts.length === 0 ? 'registration' : parts.join(' and ');
+  const issuer = p.issuerRecorded === true;
+  if (parts.length === 0) return issuer ? 'issuer recorded' : 'recorded registration corrected';
+  const corrected = `recorded ${parts.join(' and ')} corrected`;
+  return issuer ? `${corrected} and its issuer recorded` : corrected;
+}
+
+/**
+ * How an employee's own Slack app came to take messages, so the manager's typed code reaches it
+ * (W12V-7).
+ */
+function messagesOpenWords(p: Read<'surface.app-messages-open'>, subject: RecordSubject): string {
+  const app = text(p.appName) ?? connectionOf(subject);
+  const then = "so the manager's typed code in its DM decides a request";
+  switch (p.how) {
+    case 'created':
+    case undefined:
+      return `${app} takes messages, ${then}`;
+    case 'opened':
+      return `Day0 opened the messages tab of ${app} in Slack, ${then}`;
+    case 'found-open':
+      return `Day0 found the messages tab of ${app} open in Slack, ${then}`;
+    case 'confirmed':
+      return `${decider(subject)} said the messages tab of ${app} is open in Slack, ${then}`;
+    default: {
+      const unknown: never = p.how;
+      return `${app} takes messages (${String(unknown)})`;
+    }
+  }
 }
 
 /**
@@ -224,6 +256,19 @@ function configurationUsedWords(p: Read<'organisation.configuration-used'>): str
     return p.outcome === 'done'
       ? `Day0 created an employee's own Slack app${app} with ${token}`
       : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
+  }
+  if (p.method === 'apps.manifest.export' || p.method === 'apps.manifest.update') {
+    // W12V-7: Day0 reads an app it created before this release, and opens its messages tab, so
+    // the manager's typed code reaches it.
+    const app = text(p.appId) ? ` (${text(p.appId)})` : '';
+    if (p.method === 'apps.manifest.export') {
+      return p.outcome === 'done'
+        ? `Day0 read the settings of an employee's own Slack app${app} with ${token}`
+        : `Reading the settings of an employee's own Slack app${app} with ${token} failed${because(p.reason)}`;
+    }
+    return p.outcome === 'done'
+      ? `Day0 opened the messages tab of an employee's own Slack app${app} with ${token}`
+      : `Opening the messages tab of an employee's own Slack app${app} with ${token} failed${because(p.reason)}`;
   }
   if (p.method === 'auth.revoke') {
     // Slack's `auth.revoke` ends the token alone: its refresh token stays usable at Slack, and
@@ -508,6 +553,16 @@ const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
   authoring: 'skill writing',
 };
 
+/** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
+const ACKNOWLEDGEMENT_WORDS: Readonly<
+  Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
+> = {
+  received: (subject) => `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
+  unknown: () => 'A reply with no open request was answered',
+  replaced: (subject) =>
+    `${subject.name} answered ${whose(subject)} reply to a replaced request${forItem(subject)} with the request that replaced it`,
+};
+
 /**
  * The record's words for every event type the contract lists, in the manager's terms: the
  * employee by name, the manager as "you", the work item by its title. An event from before a
@@ -543,6 +598,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.reason === HANDOVER_SETTINGS_REASON
       ? `Autonomous actions were turned off when ${subject.name} was handed over`
       : `${decider(subject)} turned autonomous actions ${p.to === true ? 'on' : 'off'}`,
+  'agent.paused': (p, subject) => `${decider(subject)} paused ${subject.name}${because(p.reason)}`,
+  'agent.resumed': (_, subject) => `${decider(subject)} resumed ${subject.name}`,
   'agent.retired': (_, { name }) => `${name} was retired`,
   'permission.granted': (p, subject) =>
     `${subject.name} was granted ${text(p.scope) ?? 'a permission'}${
@@ -661,6 +718,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'voice.finalisation-abandoned': (p) =>
     `The one-to-one's wrap-up was given up${because(p.reason)}`,
+  'voice.restarted': () => 'The one-to-one was held again, from a new conversation',
   'skill.authoring-refused': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} was not moved on: it is ${
       text(p.state) ?? 'elsewhere'
@@ -771,6 +829,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Finding a way to reach ${subject.connection ?? 'a system'} failed${because(p.reason)}`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
+  'surface.socket-token-landed': (p, subject) =>
+    `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,
+  'surface.app-messages-open': (p, subject) => messagesOpenWords(p, subject),
   'surface.install-failed': (p, subject) =>
     `Installing the app for ${connectionOf(subject)} failed${because(p.reason)}`,
   'surface.shared-credential-retired': (p, subject) =>
@@ -778,10 +839,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'credential.superseded': (p) => {
     const label = text(p.label);
     const page = text(p.page);
-    const cards = counted(p.surfaceIds?.length, 'card');
-    return `The credential${label ? ` \u201c${label}\u201d` : ''} is no longer in the documentation${
-      page ? ` (${page})` : ''
-    }${cards ? `; land one again on ${cards}` : ''}`;
+    const rebound = p.reboundSurfaceIds?.length
+      ? counted(p.reboundSurfaceIds.length, 'card')
+      : undefined;
+    const unbound = p.surfaceIds?.length ? counted(p.surfaceIds.length, 'card') : undefined;
+    const named = `${label ? ` \u201c${label}\u201d` : ''}`;
+    const where = page ? ` (${page})` : '';
+    const landAgain = unbound ? `; land one again on ${unbound}` : '';
+    return rebound
+      ? `The documentation replaced the credential${named}${where}; Day0 bound its new value on ${rebound}${landAgain}`
+      : `The credential${named} is no longer in the documentation${where}${landAgain}`;
   },
   'surface.reoriented': (_, subject) =>
     `${decider(subject)} asked ${subject.name} to look again for a way to reach ${
@@ -852,7 +919,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'organisation.connection-rotated': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
   'organisation.connection-corrected': (p) =>
-    `The organisation's ${organisationSystem(p.displayName)} connection had its recorded ${correctedParts(p)} corrected${registeredVia(p.via)}`,
+    `The organisation's ${organisationSystem(p.displayName)} connection had its ${correctedParts(p)}${registeredVia(p.via)}`,
   'organisation.connection-revoked': (p) =>
     `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
   'surface.authorised': (p, subject) =>
@@ -994,10 +1061,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} is telling ${addressee(subject)} what was decided${forItem(subject)}`,
   'work.decision-request-closing': (_, subject) =>
     `${subject.name} is marking the decided request${forItem(subject)} in ${whose(subject)} DMs`,
+  'work.decision-request-replacing': (_, subject) =>
+    `${subject.name} is marking the replaced request${forItem(subject)} in ${whose(subject)} DMs`,
   'work.decision-acknowledging': (p, subject) =>
-    p.kind === 'unknown'
-      ? 'A reply with no open request was answered'
-      : `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
+    (ACKNOWLEDGEMENT_WORDS[p.kind ?? 'received'] ?? ACKNOWLEDGEMENT_WORDS.received)(subject),
   'work.decision-ignored': (p) => `A chat reply was ignored${because(p.reason)}`,
   'work.decision-duplicate': () => 'A repeated decision reply was ignored',
   'work.decision-batch-issued': (p) =>
@@ -1018,6 +1085,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia, whose(subject))}${because(p.reason)}`,
   'work.dismissed': (_, subject) =>
     `${decider(subject)} dismissed ${itemOf(subject)} from ${their(subject)} inbox. It stays on the Work tab, where Retry runs it again`,
+  'work.actions-withheld': (p, subject) =>
+    `${subject.name} held ${counted(p.withheld?.length, 'action') ?? 'some actions'}${forItem(subject)} and never sent ${
+      p.withheld?.length === 1 ? 'it' : 'them'
+    }`,
+  'work.closed-without-retry': (_, subject) =>
+    `${decider(subject)} closed ${itemOf(subject)} without a retry. It stays in the record`,
+  'work.stopped': (p, subject) =>
+    `${decider(subject)} stopped ${itemOf(subject)}${because(p.reason)}${
+      p.applyInFlight === true ? '. Some writes may have landed; the card lists them to check' : ''
+    }`,
   'work.execution-claimed': (_, subject) => `${subject.name} started the run${forItem(subject)}`,
   'work.dependent-authoring': (_, subject) =>
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
@@ -1033,13 +1110,20 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       subject,
     )} ${p.autonomousActions === true ? 'under autonomous actions' : 'on its own, as allowed'}`,
   'work.actions-pending': (p, subject) =>
-    `${subject.name} held ${counted(p.heldIndexes?.length, 'action') ?? 'actions'}${onItem(
-      subject,
-    )} for ${addressee(subject)}. Nothing has reached a surface`,
+    // Parked again after an approval from Slack or the Needs you batch left a close for its card (12-H).
+    p.leftForCard === true
+      ? `${subject.name} holds the ticket close${onItem(subject)} for ${addressee(subject)}: the earlier approval has been applied, and the close waits on its card`
+      : `${subject.name} held ${counted(p.heldIndexes?.length, 'action') ?? 'actions'}${onItem(
+          subject,
+        )} for ${addressee(subject)}. Nothing has reached a surface`,
   'work.actions-approved': (p, subject) =>
     `${decider(subject)} approved ${counted(p.approvedIndexes?.length, 'held action') ?? 'held actions'}${onItem(
       subject,
-    )}${decidedFrom(p.decidedVia, their(subject))}`,
+    )}${decidedFrom(p.decidedVia, their(subject))}${
+      (p.leftForCard?.length ?? 0) > 0
+        ? '. The ticket close Day0 held was left out and waits on its card'
+        : ''
+    }`,
   'work.actions-rejected': (p, subject) =>
     `${decider(subject)} rejected the held actions${onItem(subject)}${decidedFrom(p.decidedVia, their(subject))}${yourReason(
       p.reason,

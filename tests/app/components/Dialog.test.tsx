@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Dialog, DialogFooter } from '../../../app/components/Dialog';
 import { focusableIn } from '../../../app/components/use-modal';
 import { mount, press } from '../../fixtures/dom/press';
+import { installBrowserDoubles } from '../marketing/browser-doubles';
 
 afterEach((): void => {
   document.body.replaceChildren();
@@ -257,6 +258,72 @@ describe('a long dialog’s footer (11-AC’s item 13)', (): void => {
       '',
       'Cancel',
       'Ask',
+    ]);
+  });
+});
+
+describe('a dialog whose body scrolls (the v0.15.0 walk’s finding 3)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Give the dialog's body a height and a content height, as a layout would. */
+  function lay(body: HTMLElement, scrollHeight: number, clientHeight: number): void {
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: scrollHeight });
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: clientHeight });
+  }
+
+  /** A dialog whose answers sit in its footer, so its body holds nothing a key can reach. */
+  function TakeOn() {
+    return (
+      <Dialog title="Take on Lark?" onClose={() => undefined}>
+        <ul>
+          {Array.from({ length: 30 }, (_, index) => (
+            <li key={index}>Its connection to system {index} comes to you.</li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <button type="button">Decline</button>
+          <button type="button">Take on</button>
+        </DialogFooter>
+      </Dialog>
+    );
+  }
+
+  it('takes keyboard focus while its content runs past its height, named by the title, and adds no stop once it fits', async (): Promise<void> => {
+    const doubles = installBrowserDoubles();
+    mount(<TakeOn />);
+    await act(async (): Promise<void> => {
+      await Promise.resolve();
+    });
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    const body = dialog?.querySelector<HTMLElement>('[data-dialog-body]');
+    if (!dialog || !body) throw new Error('no dialog body');
+
+    lay(body, 1400, 600);
+    act((): void => doubles.resize());
+    expect(body.tabIndex).toBe(0);
+    expect(body.getAttribute('role')).toBe('group');
+    expect(document.getElementById(body.getAttribute('aria-labelledby') ?? '')?.textContent).toBe(
+      'Take on Lark?',
+    );
+    expect(focusableIn(dialog).map((element) => element.textContent?.slice(0, 13))).toEqual([
+      'Take on Lark?',
+      'Decline',
+      'Take on',
+    ]);
+
+    // Focused while it scrolls, then its content shrinks to fit: focus stays inside the dialog.
+    act((): void => body.focus());
+    expect(document.activeElement).toBe(body);
+    lay(body, 600, 600);
+    act((): void => doubles.resize());
+    expect(document.activeElement).toBe(dialog);
+    expect(body.hasAttribute('tabindex')).toBe(false);
+    expect(body.hasAttribute('role')).toBe(false);
+    expect(focusableIn(dialog).map((element) => element.textContent)).toEqual([
+      'Decline',
+      'Take on',
     ]);
   });
 });

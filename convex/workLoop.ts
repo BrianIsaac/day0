@@ -1,8 +1,14 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { internalQuery, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -21,6 +27,9 @@ import {
 import { appendEvent, eventsOfType } from './eventLog';
 import { isBeingHandedOver } from './transferInFlight';
 import type { EventType } from '../src/events/contract';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { isPaused, stepHoldReason } from '../src/work/pause';
+import { runHoldOf, type RunHold } from '../src/work/item-display';
 
 /**
  * The server-driven work loop, real mode only.
@@ -108,6 +117,63 @@ export function holdsLiveStepClaim(
 /** Why a step was not claimed: the row moved on, or another run holds it; when claimed, the claim's time. */
 export type StepClaim = { claimed: true; claimedAt: number } | { claimed: false; reason: string };
 
+/** Whether a step of an employee may start now, and why not when it may not. */
+export type StepPermission = { readonly mayRun: true } | { readonly mayRun: false; reason: string };
+
+/**
+ * Whether a step of this employee may start now (wave 12, 12-P): not while the manager has paused
+ * the employee, and not while the deployment's scheduled work is paused (`DAY0_CRONS_PAUSED`).
+ *
+ * Read at both ends of every step. Where a step is queued (`queueStep`, `wakeQueuedWork`), a
+ * refusal schedules nothing; where a step starts (each claim), a refusal holds a step queued
+ * before either pause, so neither pause leaves a queued chain running (the gap `crons.ts` named).
+ * The row stays in the state it was ready in, as a handover in flight leaves it, and the
+ * stalled-step sweep, or the resume's own pass, queues it again. Real mode only: in mock mode the
+ * page drives every step and nothing is held.
+ *
+ * @param db - Any reader.
+ * @param agentId - The employee whose step it is.
+ */
+export async function stepMayRun(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+): Promise<StepPermission> {
+  if (SURFACE_MODE !== 'real') return { mayRun: true };
+  const reason = stepHoldReason(await db.get(agentId), cronsPauseReason());
+  return reason === undefined ? { mayRun: true } : { mayRun: false, reason };
+}
+
+/**
+ * What holds this employee's next step, as a card or an acknowledgement names it: the manager's
+ * pause of the employee, then the deployment's pause of its scheduled work, as {@link stepMayRun}
+ * reads them; undefined while a step may start, and always in mock mode.
+ *
+ * @param db - The reader.
+ * @param agentId - The employee.
+ */
+export async function stepHoldOf(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+): Promise<RunHold | undefined> {
+  const agent = await db.get(agentId);
+  return runHoldOf({
+    real: SURFACE_MODE === 'real',
+    employeeName: agent?.name ?? 'the employee',
+    employeePaused: agent !== null && isPaused(agent),
+    scheduledWorkPaused: cronsPauseReason() !== undefined,
+  });
+}
+
+/**
+ * Internal: {@link stepMayRun} for a step that starts in an action, read before it does anything
+ * a claim would otherwise have refused (the executor picks a skill, and parks the row behind a
+ * missing one, before its claim). Writes nothing.
+ */
+export const stepPermission = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, { agentId }): Promise<StepPermission> => await stepMayRun(ctx.db, agentId),
+});
+
 /**
  * Claim one step of one row, or report why not.
  *
@@ -119,6 +185,8 @@ export type StepClaim = { claimed: true; claimedAt: number } | { claimed: false;
  * the employee has a free slot, an evaluation already in flight holding one:
  * the slot is checked before the scope model call, not after it, so a poll
  * that seeds two hundred tickets spends at most the cap's worth of calls.
+ * A paused employee, or a paused deployment, claims nothing (`stepMayRun`):
+ * the row stays ready, with no claim and no attempt counted.
  *
  * Args:
  *   ctx: Mutation context.
@@ -140,6 +208,8 @@ export async function claimLoopStepInTransaction(
   const ready = step === 'evaluation' ? 'discovered' : 'claimed';
   if (row.state !== ready) return { claimed: false, reason: `state=${row.state}` };
   if (holdsLiveStepClaim(row, step, now)) return { claimed: false, reason: 'claimed' };
+  const permission = await stepMayRun(ctx.db, row.agentId);
+  if (!permission.mayRun) return { claimed: false, reason: permission.reason };
   if (step === 'evaluation') {
     if ((await queueState(ctx, row.agentId, now, row._id)).free === 0) {
       return { claimed: false, reason: 'queued' };
@@ -396,6 +466,7 @@ async function parkSpentEvaluations(
     const reason = unavailable ? SCOPE_JUDGEMENT_UNAVAILABLE : EVALUATION_ATTEMPTS_SPENT;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason, attempts, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
@@ -412,6 +483,100 @@ async function parkSpentEvaluations(
 
 async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
   await ctx.scheduler.runAfter(0, internal.workActions.evaluateWorkItemInternal, { workItemId });
+}
+
+/** A step of a row's run that the loop queues and Stop can cancel. */
+export type QueuedStep = 'draft' | 'execute' | 'apply';
+
+/**
+ * Queue one step of a row's run and record it on the row (`stepJobId`, wave 12; V12-3), so a Stop
+ * can cancel it before it starts. One id is kept, the latest: an earlier step still pending is held
+ * off by the fences Stop clears. Nothing is queued while the employee or the deployment is paused
+ * (`stepMayRun`, 12-P): the row waits in its ready state for the resume's pass or the sweep.
+ *
+ * @param ctx - The transition's mutation context.
+ * @param workItemId - The row.
+ * @param step - The draft, the execution or the apply.
+ * @param delayMs - How long the step waits before it runs.
+ * @returns Whether the step was queued.
+ */
+export async function queueStep(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  step: QueuedStep,
+  delayMs = 0,
+): Promise<boolean> {
+  const row = await ctx.db.get(workItemId);
+  if (row === null || !(await stepMayRun(ctx.db, row.agentId)).mayRun) return false;
+  const args = { workItemId };
+  const stepJobId =
+    step === 'draft'
+      ? await ctx.scheduler.runAfter(delayMs, internal.workActions.draftPlanInternal, args)
+      : step === 'execute'
+        ? await ctx.scheduler.runAfter(
+            delayMs,
+            internal.workActions.executeApprovedPlanInternal,
+            args,
+          )
+        : await ctx.scheduler.runAfter(delayMs, internal.workActions.applyApprovedActions, args);
+  await ctx.db.patch(workItemId, { stepJobId });
+  return true;
+}
+
+/**
+ * How long an apply may go unfinished before the recovery timer acts on it: an
+ * approved set whose apply never claimed is rescheduled, and one whose apply
+ * claimed has this phase's outcomes recorded unknown and is never replayed.
+ */
+export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
+
+/**
+ * Schedule the apply for the row's current approved set, with its recovery timer.
+ *
+ * This timer reschedules an apply that never started. An apply that started
+ * is covered by the timer its claim arms (`armApplySwitch`), so a start that
+ * comes late is measured from the claim, not from here. While the employee or
+ * the deployment is paused nothing is scheduled, the timer included, so a held
+ * set does not reschedule itself every few minutes; the resume's pass or the
+ * sweep schedules it (12-P).
+ *
+ * @param ctx - Mutation context.
+ * @param workItemId - The work item.
+ * @param pendingRunId - The run the approval belongs to.
+ * @param phase - Which apply phase is scheduled.
+ * @returns Whether the apply was scheduled.
+ */
+export async function scheduleApply(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  pendingRunId: Id<'events'>,
+  phase: 'auto' | 'approved',
+): Promise<boolean> {
+  if (!(await queueStep(ctx, workItemId, 'apply'))) return false;
+  await armApplySwitch(ctx, workItemId, pendingRunId, phase);
+  return true;
+}
+
+/**
+ * Arm the apply's dead-man switch: `recoverInterruptedApply` after `APPLY_RECOVERY_MS`.
+ *
+ * @param ctx - Mutation context.
+ * @param workItemId - The work item.
+ * @param pendingRunId - The run the approval belongs to.
+ * @param phase - Which apply phase the switch guards.
+ */
+export async function armApplySwitch(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  pendingRunId: Id<'events'>,
+  phase: 'auto' | 'approved',
+): Promise<void> {
+  await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
+    workItemId,
+    pendingRunId,
+    phase,
+    fromTimer: true,
+  });
 }
 
 /** The deferral reason of a row parked because the employee's charter awaits approval. */
@@ -456,6 +621,7 @@ async function parkForCharter(
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
     await ctx.db.patch(row._id, {
       state: 'deferred',
+      waitingSince: now,
       verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
@@ -499,14 +665,15 @@ async function evaluateNext(ctx: MutationCtx, agentId: Id<'agents'>, now: number
  * Called by every transition that may free a slot, and by the autonomy
  * switch, which raises the cap without moving any row. The row it wakes
  * wakes the next one when its own verdict lands, so several free slots fill
- * one after another. Real mode only.
+ * one after another. Real mode only; a paused employee or deployment wakes
+ * nothing (`stepMayRun`).
  *
  * Args:
  *   ctx: Mutation context.
  *   agentId: The employee.
  */
 export async function wakeQueuedWork(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
-  if (SURFACE_MODE !== 'real') return;
+  if (SURFACE_MODE !== 'real' || !(await stepMayRun(ctx.db, agentId)).mayRun) return;
   await evaluateNext(ctx, agentId, Date.now());
 }
 
@@ -533,17 +700,11 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'claimed':
-      if (row.plan === undefined) {
-        await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
-          workItemId: row._id,
-        });
-      }
+      if (row.plan === undefined) await queueStep(ctx, row._id, 'draft');
       await wakeQueuedWork(ctx, row.agentId);
       return;
     case 'plan-approved':
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
+      await queueStep(ctx, row._id, 'execute');
       return;
     case 'plan-pending':
     case 'executing':
@@ -595,10 +756,13 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
   if (row.draftClaimedAt !== undefined) {
     const resumed = await draftResumesSinceRetry(ctx, row);
     if (resumed >= MAX_DRAFT_RESUMES) {
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+      // The dead draft's claim rides with the stop, so a Stop and Retry before the job runs
+      // leave the new draft's row alone (W12-R7; 12-J's fence).
+      await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
         workItemId: row._id,
         reason: `the plan draft died ${resumed + 1} times without an answer; Retry drafts it again`,
         stopped: true,
+        draftClaimedAt: row.draftClaimedAt,
       });
       return true;
     }
@@ -609,12 +773,82 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
       createdAt: now,
     });
   }
-  await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, { workItemId: row._id });
+  await queueStep(ctx, row._id, 'draft');
   return true;
 }
 
 /**
- * Reschedule every step the loop lost, for every employee.
+ * Whether the step recorded on the row (`stepJobId`) is still waiting in the scheduler or
+ * running, so the sweep leaves it to run rather than queue a second.
+ *
+ * @param ctx - Mutation context.
+ * @param row - The row whose recorded step is read.
+ */
+async function recordedStepPending(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
+  if (row.stepJobId === undefined) return false;
+  const job = await ctx.db.system.get(row.stepJobId);
+  return job !== null && (job.state.kind === 'pending' || job.state.kind === 'inProgress');
+}
+
+/**
+ * Schedule again the apply of each approved set, or each run's auto phase, whose apply a pause
+ * refused at its claim (12-P): no apply attempt on the row and the apply recorded on it
+ * (`stepJobId`) no longer waiting or running, so a set whose apply is still queued is left to it
+ * and never doubled. At most `SWEEP_BATCH` rows of each state.
+ *
+ * @param ctx - Mutation context.
+ * @param agentId - The employee, which may run steps now (`stepMayRun`).
+ * @returns How many applies were scheduled.
+ */
+async function resumeHeldApplies(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
+  let scheduled = 0;
+  for (const [state, phase] of [
+    ['actions-pending', 'approved'],
+    ['executing', 'auto'],
+  ] as const) {
+    let read = 0;
+    for await (const row of ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))) {
+      if (++read > SWEEP_BATCH) break;
+      if (
+        isRevocationTrialRow(row) ||
+        row.pendingRunId === undefined ||
+        row.approvedIndexes === undefined ||
+        row.applyAttemptId !== undefined ||
+        (phase === 'auto' && row.applyPhase !== 'auto') ||
+        (await recordedStepPending(ctx, row))
+      ) {
+        continue;
+      }
+      if (await scheduleApply(ctx, row._id, row.pendingRunId, phase)) scheduled += 1;
+    }
+  }
+  return scheduled;
+}
+
+/**
+ * Reschedule every step the loop lost, for every employee: one pass of
+ * {@link resumeAgentStepsInTransaction} each.
+ *
+ * @param ctx - Mutation context.
+ * @param now - The instant to judge claims against.
+ * @returns How many steps were scheduled.
+ */
+export async function resumeStalledStepsInTransaction(
+  ctx: MutationCtx,
+  now: number,
+): Promise<{ rescheduled: number }> {
+  if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
+  let rescheduled = 0;
+  for (const agent of await ctx.db.query('agents').collect()) {
+    rescheduled += await resumeAgentStepsInTransaction(ctx, agent._id, now);
+  }
+  return { rescheduled };
+}
+
+/**
+ * Reschedule every step the loop lost, or a pause held, for one employee.
  *
  * Scheduling shares the transaction of each transition, so what is lost is
  * a step that ran and died: an action killed at its time limit, a model call
@@ -628,136 +862,277 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
  * an evaluation that died once its lease has passed and recovers a wake-up
  * lost with a step that died after freeing the slot.
  *
- * An employee whose handover is finishing (`accepting`, decision D18) has
- * nothing resumed: no draft, no approved plan, no decision request and no
- * evaluation starts for it, since the new manager decides once it moves. Its
- * stalled runs are still stopped, which ends them for the move sooner than
- * the handover's deadline would.
+ * A step a pause held (12-P) is ready in the same way, and is queued again
+ * here: the claimed row and the approved plan as above, and an approved set,
+ * or a run's auto phase, whose apply was refused at its claim
+ * ({@link resumeHeldApplies}). The resume runs this pass for
+ * its employee in its own transaction; the sweep runs it for every employee,
+ * which is how a step the deployment's pause held goes on once the jobs run.
  *
- * Args:
- *   ctx: Mutation context.
- *   now: The instant to judge claims against.
+ * An employee whose handover is finishing (`accepting`, decision D18), or that
+ * is paused, or on a deployment whose jobs are paused (`stepMayRun`), has
+ * nothing resumed: no draft, no approved plan, no apply, no decision request
+ * and no evaluation starts for it. Its stalled runs are still stopped, which
+ * ends them for a handover's move sooner than its deadline would.
  *
- * Returns:
- *   How many steps were scheduled.
+ * @param ctx - Mutation context.
+ * @param agentId - The employee.
+ * @param now - The instant to judge claims against.
+ * @returns How many steps were scheduled.
  */
-export async function resumeStalledStepsInTransaction(
+export async function resumeAgentStepsInTransaction(
   ctx: MutationCtx,
+  agentId: Id<'agents'>,
   now: number,
-): Promise<{ rescheduled: number }> {
-  if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
+): Promise<number> {
+  if (SURFACE_MODE !== 'real') return 0;
   let rescheduled = 0;
-  for (const agent of await ctx.db.query('agents').collect()) {
-    const resumes = !(await isBeingHandedOver(ctx.db, agent._id));
-    const ready = async (
-      state: 'claimed' | 'plan-approved' | 'plan-pending' | 'executing' | 'actions-pending',
-      eligible: (row: Doc<'workItems'>) => boolean | Promise<boolean>,
-    ) => {
-      const rows: Doc<'workItems'>[] = [];
-      for await (const row of ctx.db
-        .query('workItems')
-        .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))) {
-        if (isRevocationTrialRow(row) || !(await eligible(row))) continue;
-        rows.push(row);
-        if (rows.length === SWEEP_BATCH) break;
-      }
-      return rows;
-    };
-    // A finishing handover's employee has its stalled runs stopped and nothing resumed.
-    const resumable: typeof ready = async (state, eligible) =>
-      resumes ? await ready(state, eligible) : [];
-    for (const row of await resumable(
-      'claimed',
-      (row) => row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now),
-    )) {
-      if (await resumeDraft(ctx, row, now)) rescheduled += 1;
+  const resumes =
+    !(await isBeingHandedOver(ctx.db, agentId)) && (await stepMayRun(ctx.db, agentId)).mayRun;
+  const ready = async (
+    state: 'claimed' | 'plan-approved' | 'plan-pending' | 'executing' | 'actions-pending',
+    eligible: (row: Doc<'workItems'>) => boolean | Promise<boolean>,
+  ) => {
+    const rows: Doc<'workItems'>[] = [];
+    for await (const row of ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))) {
+      if (isRevocationTrialRow(row) || !(await eligible(row))) continue;
+      rows.push(row);
+      if (rows.length === SWEEP_BATCH) break;
     }
-    for (const row of await resumable('plan-approved', () => true)) {
-      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-        workItemId: row._id,
-      });
-      rescheduled += 1;
-    }
-    for (const row of await resumable(
-      'plan-pending',
-      (row) =>
-        !row.decision &&
-        (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS),
-    )) {
-      await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
-        workItemId: row._id,
-        recovery: true,
-      });
-      rescheduled += 1;
-    }
-    for (const row of await ready('executing', async (row) => {
-      if (
-        !row.executionRunId ||
-        row.pendingRunId ||
-        row.applyAttemptId ||
-        row.applyClaimedAt ||
-        row.applyPhase
-      )
-        return false;
-      const claim = await ctx.db.get(row.executionRunId);
-      return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
-    })) {
-      // A closing phase whose authoring never claimed the run keeps its
-      // landed prerequisites: it is failed so Retry resumes it, not as a stop.
-      const runId = row.executionRunId;
-      if (
-        runId &&
-        (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring'
-      ) {
-        await ctx.scheduler.runAfter(0, internal.work.recoverDependentAuthoring, {
-          workItemId: row._id,
-          runId,
-        });
-        rescheduled += 1;
-        continue;
-      }
-      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
-        workItemId: row._id,
-        runId: row.executionRunId,
-        reason: 'execution interrupted before the exact-action gate',
-        stopped: true,
-        onlyIfStalled: true,
-      });
-      rescheduled += 1;
-    }
-    // A held set parked while no manager channel existed was never asked
-    // about; once a channel is back the request goes out. `prepareDecisionRequest`
-    // claims it, so a request already on its way is not doubled.
-    const channel = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect()
-    ).some(isManagerChannel);
-    if (channel) {
-      for (const row of await resumable('actions-pending', async (row) => {
-        if (row.decision || row.approvedIndexes !== undefined || !row.pendingRunId) return false;
-        // A set with nothing held has nothing to ask about; the request would
-        // refuse it and the next sweep would ask again.
-        const count = (row.output as { actions?: unknown[] } | undefined)?.actions?.length ?? 0;
-        const held = Array.from({ length: count }, (_, index) =>
-          normaliseActionVerdict(row.actionVerdicts?.[index] ?? {}),
-        ).some((verdict) => verdict.disposition === 'held');
-        if (!held) return false;
-        const parked = await ctx.db.get(row.pendingRunId);
-        return !!parked && now - parked.createdAt >= STEP_LEASE_MS;
-      })) {
-        await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
-          workItemId: row._id,
-          kind: 'actions',
-        });
-        rescheduled += 1;
-      }
-    }
-    if (resumes) rescheduled += await evaluateNext(ctx, agent._id, now);
+    return rows;
+  };
+  // A finishing handover's or a paused employee's stalled runs are stopped and nothing resumed.
+  const resumable: typeof ready = async (state, eligible) =>
+    resumes ? await ready(state, eligible) : [];
+  for (const row of await resumable(
+    'claimed',
+    (row) => row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now),
+  )) {
+    if (await resumeDraft(ctx, row, now)) rescheduled += 1;
   }
-  return { rescheduled };
+  for (const row of await resumable('plan-approved', () => true)) {
+    await queueStep(ctx, row._id, 'execute');
+    rescheduled += 1;
+  }
+  for (const row of await resumable(
+    'plan-pending',
+    (row) =>
+      !row.decision &&
+      (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS),
+  )) {
+    await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
+      workItemId: row._id,
+      recovery: true,
+    });
+    rescheduled += 1;
+  }
+  if (resumes) rescheduled += await resumeHeldApplies(ctx, agentId);
+  for (const row of await ready('executing', async (row) => {
+    if (
+      !row.executionRunId ||
+      row.pendingRunId ||
+      row.applyAttemptId ||
+      row.applyClaimedAt ||
+      row.applyPhase
+    )
+      return false;
+    const claim = await ctx.db.get(row.executionRunId);
+    return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
+  })) {
+    // A closing phase whose authoring never claimed the run keeps its
+    // landed prerequisites: it is failed so Retry resumes it, not as a stop.
+    const runId = row.executionRunId;
+    if (runId && (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring') {
+      await ctx.scheduler.runAfter(0, internal.work.recoverDependentAuthoring, {
+        workItemId: row._id,
+        runId,
+      });
+      rescheduled += 1;
+      continue;
+    }
+    await ctx.scheduler.runAfter(0, internal.workRuns.setFailed, {
+      workItemId: row._id,
+      runId: row.executionRunId,
+      reason: 'execution interrupted before the exact-action gate',
+      stopped: true,
+      onlyIfStalled: true,
+    });
+    rescheduled += 1;
+  }
+  // A held set parked while no manager channel existed was never asked
+  // about; once a channel is back the request goes out. `prepareDecisionRequest`
+  // claims it, so a request already on its way is not doubled.
+  const channel = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect()
+  ).some(isManagerChannel);
+  if (channel) {
+    for (const row of await resumable('actions-pending', async (row) => {
+      if (row.decision || row.approvedIndexes !== undefined || !row.pendingRunId) return false;
+      // A set with nothing held has nothing to ask about; the request would
+      // refuse it and the next sweep would ask again.
+      const count = (row.output as { actions?: unknown[] } | undefined)?.actions?.length ?? 0;
+      const held = Array.from({ length: count }, (_, index) =>
+        normaliseActionVerdict(row.actionVerdicts?.[index] ?? {}),
+      ).some((verdict) => verdict.disposition === 'held');
+      if (!held) return false;
+      const parked = await ctx.db.get(row.pendingRunId);
+      return !!parked && now - parked.createdAt >= STEP_LEASE_MS;
+    })) {
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+        workItemId: row._id,
+        kind: 'actions',
+      });
+      rescheduled += 1;
+    }
+  }
+  if (resumes) rescheduled += await evaluateNext(ctx, agentId, now);
+  return rescheduled;
 }
+
+/**
+ * How long a claim on one of the manager channel's sends or edits is honoured (N-3): longer than a
+ * Convex action's ten-minute limit, so a claim this old with no result belongs to an action that
+ * died between its claim and its record.
+ */
+export const MANAGER_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
+/** The failure a lapsed claim is recorded with (wave 12, 12-W; a wording draft). */
+export const MANAGER_CLAIM_LAPSED_REASON =
+  'the send stopped before it recorded a result, so it is not known whether Slack took it';
+
+/** Lapsed claims settled per employee and kind in one sweep; the rest wait for the next. */
+const LEASE_BATCH = 50;
+
+/**
+ * Settle every manager-channel claim an action died holding (N-3), for one employee, as the
+ * claim's own failure path would have: a digest's notes are released for the next digest with
+ * the reason and a `work.manager-digest-failed` event (`recordManagerDigest`); a decision
+ * acknowledgement, a duplicate-reply notice, the edit that closes a decided request (12-M writes
+ * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
+ * edit record the failure and are not sent again, since the message may have landed. A per-run
+ * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
+ * older than the lease on its index, so a claim with a result is never read.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param agentId - The employee.
+ * @param now - The instant the lease is judged against.
+ * @returns How many claims were settled.
+ */
+async function settleLapsedManagerClaims(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const before = now - MANAGER_CLAIM_LEASE_MS;
+  const failure = MANAGER_CLAIM_LAPSED_REASON;
+  const [notes, notices, duplicates, closes, edits] = await Promise.all([
+    ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .eq('discardedAt', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('managerDecisionNotices')
+      .withIndex('by_agent_claim_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('providerTs', undefined)
+          .eq('failure', undefined)
+          .gt('claimedAt', 0)
+          .lt('claimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_duplicate_notice_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.duplicateNoticeTs', undefined)
+          .eq('decision.duplicateNoticeFailure', undefined)
+          .gt('decision.duplicateNoticeClaimedAt', 0)
+          .lt('decision.duplicateNoticeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_close_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('decision.closedAt', undefined)
+          .eq('decision.closeFailure', undefined)
+          .gt('decision.closeClaimedAt', 0)
+          .lt('decision.closeClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+    ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_edit_open', (q) =>
+        q
+          .eq('agentId', agentId)
+          .eq('editedAt', undefined)
+          .eq('editFailure', undefined)
+          .gt('editClaimedAt', 0)
+          .lt('editClaimedAt', before),
+      )
+      .take(LEASE_BATCH),
+  ]);
+  const digestNotes = notes.filter((note) => note.digestId !== undefined);
+  for (const note of digestNotes) {
+    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+  }
+  if (digestNotes.length > 0) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.manager-digest-failed',
+      payload: { noteIds: digestNotes.map((note) => note._id), reason: failure },
+      createdAt: now,
+    });
+  }
+  for (const notice of notices) await ctx.db.patch(notice._id, { failure });
+  // One row can hold both claims, so each patch merges into the decision as it stands now.
+  const settleDecision = async (
+    workItemId: Id<'workItems'>,
+    field: 'duplicateNoticeFailure' | 'closeFailure',
+  ): Promise<void> => {
+    const decision = (await ctx.db.get(workItemId))?.decision;
+    if (decision) await ctx.db.patch(workItemId, { decision: { ...decision, [field]: failure } });
+  };
+  for (const row of duplicates) await settleDecision(row._id, 'duplicateNoticeFailure');
+  for (const row of closes) await settleDecision(row._id, 'closeFailure');
+  for (const edit of edits) await ctx.db.patch(edit._id, { editFailure: failure });
+  return digestNotes.length + notices.length + duplicates.length + closes.length + edits.length;
+}
+
+/**
+ * Settle the manager-channel claims every employee's actions died holding (N-3); see
+ * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
+ * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back.
+ *
+ * @returns How many claims were settled.
+ */
+export const settleLapsedClaims = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ settled: number }> => {
+    const now = Date.now();
+    let settled = 0;
+    for (const agent of await ctx.db.query('agents').collect()) {
+      settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+    }
+    return { settled };
+  },
+});
 
 /** How often one employee's work surfaces may be polled on demand. */
 export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;
@@ -790,6 +1165,7 @@ const WORK_SURFACE_CLASSES = new Set(['kanban', 'chat']);
 export const checkForNewWork = mutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ scheduled: number; retryInMs?: number }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Checking for new work');
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();

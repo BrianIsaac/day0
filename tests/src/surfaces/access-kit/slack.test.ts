@@ -37,10 +37,34 @@ describe('the Slack recipe', (): void => {
       scopes: { bot: [...SLACK_KIT_BOT_SCOPES] },
     });
     expect(scopes).toEqual([...SLACK_KIT_BOT_SCOPES]);
+    // Re-pinned for 12-M: the kit's apps turn on Socket Mode and interactivity with no request URL,
+    // so Approve and Reject presses reach Day0 over the bridge's outbound socket (RM7, Q13).
     expect(manifest.settings).toEqual({
       org_deploy_enabled: false,
-      socket_mode_enabled: false,
+      socket_mode_enabled: true,
       token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
+    });
+  });
+
+  it('lets a manager send the app a message, so the typed code can be replied in its DM (W12V-7)', (): void => {
+    // The walk on real Slack (5 October): without the App Home messages tab Slack answers the DM
+    // with "Sending messages to this app has been turned off." and offers no composer; the kit's
+    // manifest with exactly this `app_home` was accepted by `apps.manifest.validate`
+    // (`HTTP 200 {"ok":true,"errors":[]}`) and the typed code then decided in 56 s.
+    const { manifest } = slackKitManifest({ employeeName: 'Maya', publicUrl: PUBLIC_URL });
+    expect(manifest.features).toEqual({
+      bot_user: { display_name: 'Maya (Day0)', always_online: false },
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
+    });
+    expect(JSON.parse(slackKitManifestTemplate()).features.app_home).toEqual({
+      home_tab_enabled: false,
+      messages_tab_enabled: true,
+      messages_tab_read_only_enabled: false,
     });
   });
 
@@ -78,8 +102,12 @@ describe('the Slack recipe', (): void => {
     expect(perEmployee.secretLifetime.words).toContain('12 hours');
     // The renewal as the code makes it (the wave 11 review's M12 d): an hour before the token
     // lapses, before any use in its last half hour, and after a lapse through the refresh token.
+    // Re-pinned for the re-walk on real Slack: a pair IT lands is of unknown age to Day0, so its
+    // first use renews it whatever its age (`configurationRenewal`), and the landing queues a
+    // renewal a quarter of an hour on (`keepConfigurationCurrentFrom`), deferred while the jobs
+    // are paused; the words said neither.
     expect(perEmployee.secretLifetime.words).toBe(
-      "The configuration token expires 12 hours after it is generated. Day0 renews it with its refresh token before any use in its last half hour and, once it has used it, an hour before it lapses; the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.",
+      "The configuration token expires 12 hours after it is generated. Day0 cannot tell how old a pair you hand it is, so it renews the pair with its refresh token at its first use or a quarter of an hour after it lands, whichever comes first (later while the deployment's scheduled jobs are paused); from then on it renews it before any use in its last half hour and an hour before it lapses, and the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.",
     );
     expect(perEmployee.secretLifetime.words).not.toContain('each time it creates an app');
     expect(perEmployee.landsAtInstall).toBe(true);

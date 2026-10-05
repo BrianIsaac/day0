@@ -1,6 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { seedItemInTransaction, workItemSeedFields } from './work';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { isTerminalWorkState } from '../src/evaluation/states';
@@ -30,6 +30,11 @@ const originatingTicketFields = {
   priority: v.string(),
 } as const;
 
+/**
+ * Seed the harness's evaluation tasks onto an employee's queue. Public, guarded by
+ * `getCallerOrThrow` first and then the employee's owner, on an evaluation bed in mock mode only.
+ * Writes the work items.
+ */
 export const seedTasks = mutation({
   args: {
     agentId: v.id('agents'),
@@ -41,6 +46,7 @@ export const seedTasks = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.seedTasks');
     await assertOwnsAgent(ctx, args.agentId);
     if (args.tasks.length === 0 || args.tasks.length > 50) {
@@ -79,9 +85,14 @@ export const seedTasks = mutation({
   },
 });
 
+/**
+ * Time an evaluation task out. Public, guarded by `getCallerOrThrow` first and then the item's
+ * employee's owner, on an evaluation bed in mock mode only. Writes the item and its event.
+ */
 export const timeoutTask = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.timeoutTask');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -111,9 +122,15 @@ export const timeoutTask = mutation({
   },
 });
 
+/**
+ * Fail an evaluation task's skill authoring. Public, guarded by `getCallerOrThrow` first and then
+ * the item's employee's owner, on an evaluation bed in mock mode only. Writes the item and its
+ * event.
+ */
 export const failSkillAuthoringAttempts = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ failed: boolean }> => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.failSkillAuthoringAttempts');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -143,9 +160,14 @@ export const failSkillAuthoringAttempts = mutation({
   },
 });
 
+/**
+ * The rows an evaluation run reads back for an employee. Public, guarded by `getCallerOrThrow`
+ * first and then the employee's owner, on an evaluation bed in mock mode only. Writes nothing.
+ */
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await getCallerOrThrow(ctx);
     requireEvaluationBed('evaluation.snapshot');
     await assertOwnsAgent(ctx, args.agentId);
     const [workItems, events, spreadsheets, slackMessages, tweetReplies, tickets] =

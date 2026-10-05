@@ -189,6 +189,9 @@ describe('dashboard exact-action gate', (): void => {
     ).toBe(
       '1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface',
     );
+    expect(pendingHeadline([{ disposition: 'held', reason: HELD_MUTATION }], 1)).toBe(
+      '1 action awaiting your approval · not sent until you approve',
+    );
   });
 
   it('reads persisted verdicts of either shape and pads a run held before verdicts existed', (): void => {
@@ -297,6 +300,7 @@ describe('dashboard exact-action gate', (): void => {
             phase: 'prerequisite',
             actionIndex: 1,
             tool: 'mcp.call',
+            summary: 'Reply in #revops thread: Deal 1 reconciled.',
             outcome: 'landed',
             effect: 'comment created',
             providerId: 'comment-17',
@@ -315,30 +319,109 @@ describe('dashboard exact-action gate', (): void => {
       }),
     );
     expect(html).toContain('Provider reconciliation required');
-    expect(html).toContain('prerequisite action 1');
-    expect(html).toContain('landed');
+    // Re-pinned for W12-R9: an entry is named by what it does, its place and key kept quieter.
+    expect(html).toContain('Reply in #revops thread: Deal 1 reconciled.');
+    expect(html).not.toContain('prerequisite action 1');
+    expect(html).toContain('Landed · prerequisites');
     expect(html).toContain('comment created');
     expect(html).toContain('provider id comment-17');
-    expect(html).toContain('idempotency key run:1');
-    expect(html).toContain('closing action 0');
-    expect(html).toContain('outcome unknown');
+    expect(html).toContain('Ledger key (for support)');
+    expect(html).toContain('run:1');
+    expect(html).toContain('Outcome unknown · closing actions');
     expect(html).toContain('response lost');
-    expect(html).toMatch(/<input[^>]*type="checkbox"/);
+    // Answered per entry since wave 12 (U17 D1), two answers for an entry of unknown outcome.
+    // Re-pinned for W12V-14: the landed entry, with the provider's own id, is shown and not asked.
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(1);
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(1);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm reconciliation<\/button>/);
   });
 
-  it('shows the durable actor and timestamp after provider reconciliation', (): void => {
+  it('asks only about the write whose outcome is unknown, and shows the landed ones as landed (W12V-14)', (): void => {
+    // The walk's REVOPS-6 after the Stop (row 16): note 1 on the wire, and both report DMs landed
+    // with Slack's own ts. The card asked "0 of 3 answered".
     const html = renderToStaticMarkup(
       createElement(ProviderReconciliationControl, {
-        entries: [],
-        reconciliation: { actor: 'operator-7', confirmedAt: 1_788_190_200_000 },
+        entries: [
+          {
+            phase: 'prerequisite',
+            actionIndex: 0,
+            tool: 'http.request',
+            summary: 'Send the manager a Slack DM: "REVOPS-6: posting the two close-week notes."',
+            outcome: 'landed',
+            providerId: '1791151039.077839',
+            idempotencyKey: 'run:dm-1',
+          },
+          {
+            phase: 'closing',
+            actionIndex: 0,
+            tool: 'http.request',
+            summary:
+              'Post to Slack channel C0BSQTE1H7E: "[w12 walk] Close week, note 1 of 2: the Q3 close queue is being worked by Iris."',
+            outcome: 'outcome-unknown',
+            reason:
+              'outcome unknown: the run was stopped while this write was being sent; check whether it arrived before you retry',
+            idempotencyKey: 'run:note-1',
+          },
+          {
+            phase: 'closing',
+            actionIndex: 3,
+            tool: 'http.request',
+            summary: 'Send the manager a Slack DM: "REVOPS-6: posting the two close-week notes."',
+            outcome: 'landed',
+            providerId: '1791151063.770959',
+            idempotencyKey: 'run:dm-2',
+          },
+        ],
         onConfirm: vi.fn(async (): Promise<void> => {}),
       }),
     );
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="landed"/g)).toHaveLength(1);
+    expect(html.match(/<input[^>]*type="radio"[^>]*value="not-sent"/g)).toHaveLength(1);
+    expect(html).toContain('0 of 1 answered');
+    expect(html).toContain('provider id 1791151039.077839');
+    expect(html).toContain('provider id 1791151063.770959');
+    expect(html.match(/Landed(?:<!-- -->)? · (?:prerequisites|closing actions)/g)).toHaveLength(2);
+  });
+
+  it('asks nothing when every write landed, and lets the manager confirm (W12V-14)', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(ProviderReconciliationControl, {
+        entries: [
+          {
+            phase: 'single',
+            actionIndex: 0,
+            tool: 'mcp.call',
+            summary: 'Comment on REVOPS-6: "Posted both close-week notes in #revops."',
+            outcome: 'landed',
+            providerId: 'comment-17',
+            idempotencyKey: 'run:1',
+          },
+        ],
+        onConfirm: vi.fn(async (): Promise<void> => {}),
+      }),
+    );
+    expect(html).not.toContain('type="radio"');
+    expect(html).not.toContain('answered');
+    expect(html).toContain('>Confirm reconciliation</button>');
+    expect(html).not.toMatch(/disabled=""[^>]*>Confirm reconciliation</);
+  });
+
+  it('shows who reconciled, in words, and when, after provider reconciliation', (): void => {
+    const shown = (by: 'you' | 'previous-manager' | undefined): string =>
+      renderToStaticMarkup(
+        createElement(ProviderReconciliationControl, {
+          entries: [],
+          reconciliation: { confirmedAt: 1_788_190_200_000, ...(by ? { by } : {}) },
+          onConfirm: vi.fn(async (): Promise<void> => {}),
+        }),
+      );
+    const html = shown('you');
     expect(html).toContain('Provider state reconciled');
-    expect(html).toContain('operator-7');
+    expect(html).toContain('Verified by you at');
     expect(html).toContain('Retry is enabled');
     expect(html).not.toContain('Confirm reconciliation');
+    expect(shown('previous-manager')).toContain('Verified by a previous manager at');
+    expect(shown(undefined)).toContain('Verified at');
   });
 });
 

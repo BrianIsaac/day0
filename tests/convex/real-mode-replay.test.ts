@@ -282,9 +282,9 @@ vi.mock('../../src/lib/mastra', () => ({
     };
     // The recorded executor replies predate the declared question; they declare none.
     const executor = args.agent.name.endsWith('-initial') || args.agent.name.endsWith('-dependent');
-    return args.schema.parse(
-      executor ? (await import('./fakes/executor-reply')).asCurrentExecutorReply(reply()) : reply(),
-    ) as T;
+    return executor
+      ? (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, reply())
+      : (args.schema.parse(reply()) as T);
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -557,7 +557,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     });
 
     // The retry resumes at plan-approved; the server runs the plan and its apply.
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     for (let round = 0; round < 20; round += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
       await t.finishInProgressScheduledFunctions();
@@ -625,8 +625,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       });
       await t
         .withIdentity(OWNER)
-        .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-      await t.withIdentity(OWNER).mutation(api.work.retryFailed, {
+        .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+      await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
         workItemId,
         feedback: 'Retry the closing note from the recorded read-back.',
       });
@@ -800,7 +800,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       `Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     );
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
         workItemId,
         feedback: 'Repeat the current work',
       }),

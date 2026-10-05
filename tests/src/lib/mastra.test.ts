@@ -372,12 +372,16 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       statusCode: 503,
     });
     let called = 0;
-    await collect(() =>
+    vi.useFakeTimers();
+    const retried = collect(() =>
       withModelRetry('privacy-retry', async () => {
         if (called++ === 0) throw retryError;
         return 'ok';
       }),
     );
+    // 2 s after the transient failure: the policy's first backoff, on the faked clock.
+    await vi.advanceTimersByTimeAsync(2_000);
+    await retried;
     const warnings = warning.mock.calls
       .flat()
       .map((value) => (value instanceof Error ? `${value.name}: ${value.message}` : String(value)))

@@ -183,6 +183,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const latest = useQuery(api.charters.latest, present);
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const surfaceMode = surfaceConfig?.mode;
+  const scheduledWorkPaused = surfaceConfig?.scheduledWorkPaused === true;
   const surfaceRows = useQuery(
     api.surfaces.listForAgent,
     surfaceMode === 'real' ? present : 'skip',
@@ -310,6 +311,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
             agent,
             charter,
             surfaceMode,
+            scheduledWorkPaused,
             surfaces,
             arriving,
             reportSentBack,
@@ -317,7 +319,17 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
             setLastAttempt,
           }
         : null,
-    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack, lastAttempt, setLastAttempt],
+    [
+      agent,
+      charter,
+      surfaceMode,
+      scheduledWorkPaused,
+      surfaces,
+      arriving,
+      reportSentBack,
+      lastAttempt,
+      setLastAttempt,
+    ],
   );
 
   if (agent === null) {

@@ -225,6 +225,15 @@ describe('the organisation page for an administrator', (): void => {
     expect(lines[1]).toContain('Slack was connected for the organisation by the setup command.');
   });
 
+  it("names the zone its times are in, as the employee page names the employee's day (the wave 11 review's m23)", async (): Promise<void> => {
+    asAdministrator();
+    const view = mount(<OrganisationPage zone="Asia/Singapore" />);
+    await settle();
+    expect(text(view.container)).toContain(
+      "Times on this page are in Asia/Singapore, this browser's zone.",
+    );
+  });
+
   it('says no system is connected yet, and how IT connects one', async (): Promise<void> => {
     asAdministrator([]);
     backend.queries['connectionEvents:forAdministrator'] = [];

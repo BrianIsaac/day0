@@ -380,7 +380,8 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      version: 5,
+      // Version 6 adds the replaced decision requests (12-M; F2 D14).
+      version: 6,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -515,6 +516,7 @@ describe('the paged trace export', (): void => {
       surfaces: 1,
       managerNotes: 0,
       decisionNotices: 0,
+      replacedRequests: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);
@@ -573,6 +575,37 @@ describe('the paged trace export', (): void => {
       trace.sections.decisionNotices.map((notice) => [notice.decisionId, notice.providerTs]),
     ).toEqual([['D-7Q2', '1789000000.000300']]);
     expect(trace.manifest.counts).toMatchObject({ managerNotes: 2, decisionNotices: 1 });
+  });
+
+  it('lists every decision request a newer one replaced, with the code that replaced it and its edit (12-M; F2 D14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const item = (await ctx.db.query('workItems').first())!;
+      await ctx.db.insert('replacedDecisionRequests', {
+        agentId,
+        workItemId: item._id,
+        decisionId: 'ab3xyz',
+        replacedBy: 'cd4wvu',
+        kind: 'plan',
+        surfaceSlug: 'slack',
+        channel: 'D0MANAGER',
+        ts: '1789000000.000400',
+        requestText: 'Priya needs your decision. Token: xoxb-1234567890-abcdefghij',
+        withButtons: true,
+        replacedAt: 10,
+        editClaimedAt: 11,
+        editedAt: 12,
+      });
+    });
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
+    expect(
+      trace.sections.replacedRequests.map((row) => [row.decisionId, row.replacedBy, row.editedAt]),
+    ).toEqual([['ab3xyz', 'cd4wvu', 12]]);
+    expect(trace.manifest.counts).toMatchObject({ replacedRequests: 1 });
+    expect(JSON.stringify(trace.sections.replacedRequests)).not.toContain(
+      'xoxb-1234567890-abcdefghij',
+    );
   });
 
   it('carries no live install claim and no manager identity on a surface', async (): Promise<void> => {
@@ -894,6 +927,14 @@ describe('the dashboard ticker', (): void => {
 });
 
 describe('export redaction', (): void => {
+  it('blanks a value under a credential-class key, as the record does (m30)', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    const { CREDENTIAL_VALUE_REDACTION } = await import('../../src/lib/credential-keys');
+    expect(redactForExport({ probe: { api_key: 'plainwordsecret', state: 'connected' } })).toEqual({
+      probe: { api_key: CREDENTIAL_VALUE_REDACTION, state: 'connected' },
+    });
+  });
+
   it('drops the assignee’s address as it drops the manager’s', async (): Promise<void> => {
     const { redactForExport } = await import('../../convex/events');
     expect(

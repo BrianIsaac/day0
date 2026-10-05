@@ -396,6 +396,52 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      recordWords(
+        {
+          type: 'work.decision-acknowledging',
+          payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+        },
+        { name: 'Mira', item: 'Refresh pipeline coverage view' },
+      );
+    expect(answered('received')).toBe(
+      'Mira acknowledged your reply for “Refresh pipeline coverage view”.',
+    );
+    expect(answered('unknown')).toBe('A reply with no open request was answered.');
+    expect(answered('replaced')).toBe(
+      'Mira answered your reply to a replaced request for “Refresh pipeline coverage view” with the request that replaced it.',
+    );
+  });
+
+  it('says which credential left the documentation, and a page swap that bound the new value (N23; 12-S3)', (): void => {
+    const payload = {
+      credentialId: 'c1',
+      label: 'linear service token',
+      sourceId: 'd1',
+      page: 'runbooks/linear.md',
+    };
+    expect(
+      recordWords(
+        { type: 'credential.superseded', payload: { ...payload, surfaceIds: ['s1', 's2'] } },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The credential \u201clinear service token\u201d is no longer in the documentation (runbooks/linear.md); land one again on 2 cards.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'credential.superseded',
+          payload: { ...payload, surfaceIds: [], reboundSurfaceIds: ['s1'] },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'The documentation replaced the credential \u201clinear service token\u201d (runbooks/linear.md); Day0 bound its new value on 1 card.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(
@@ -425,6 +471,16 @@ describe('recordWords', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),
     ).toBe('The plan was approved under autonomous actions.');
+  });
+
+  it('says who paused the employee and why, and who resumed it (12-P)', (): void => {
+    expect(
+      recordWords({ type: 'agent.paused', payload: { reason: 'Quarter close.' } }, subject),
+    ).toBe('You paused Mira: Quarter close.');
+    expect(recordWords({ type: 'agent.paused', payload: {} }, subject)).toBe('You paused Mira.');
+    expect(recordWords({ type: 'agent.resumed', payload: { pausedAt: 1 } }, subject)).toBe(
+      'You resumed Mira.',
+    );
   });
 
   it('says a type only an older release wrote under the name it was stored as', (): void => {
@@ -538,6 +594,15 @@ describe('the access request and the organisation connection ledger in the recor
     ).toBe(
       "The organisation's Slack connection had its recorded redirect and scopes (now chat:write, im:write) corrected by the setup command.",
     );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-corrected',
+          payload: { ...named, via: 'setup-cli', issuerRecorded: true },
+        },
+        subject,
+      ),
+    ).toBe("The organisation's Slack connection had its issuer recorded by the setup command.");
     expect(
       recordWords(
         {
@@ -956,6 +1021,15 @@ describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8
     }
   });
 
+  it('names the manager then who paused or resumed the employee', (): void => {
+    expect(recordWords({ type: 'agent.paused', payload: {} }, earlier)).toBe(
+      "Mira's manager then, sam@company.com, paused Mira.",
+    );
+    expect(recordWords({ type: 'agent.resumed', payload: {} }, earlier)).toBe(
+      "Mira's manager then, sam@company.com, resumed Mira.",
+    );
+  });
+
   it('says a withheld handover note to the manager it was addressed to as addressed to them', (): void => {
     const withheld = {
       type: 'manager.transfer-note-withheld',
@@ -1151,6 +1225,33 @@ describe('what the record says an end of access did at the vendor (11-AR; the ac
       ),
     ).toBe(
       "The Slack connection was disconnected when the organisation's connection was revoked: Slack was disconnected for everyone by IT.",
+    );
+  });
+});
+
+describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)', (): void => {
+  it('says who approved what, and that the close was decided apart', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.actions-approved',
+          payload: { approvedIndexes: [0, 3], leftForCard: [1], decidedVia: 'channel' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You approved 2 held actions on “Draft response for new tier-two RevOps ask” from your DMs. The ticket close Day0 held was left out and waits on its card.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'work.actions-pending',
+          payload: { heldIndexes: [1], workItemId: 'w1', leftForCard: true },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira holds the ticket close on “Draft response for new tier-two RevOps ask” for you: the earlier approval has been applied, and the close waits on its card.',
     );
   });
 });

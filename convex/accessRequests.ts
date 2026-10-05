@@ -10,7 +10,7 @@ import {
 import { internal } from './_generated/api';
 import { appendEvent, eventsOfType } from './eventLog';
 import { activeConnectionFor, systemConnectionRevoked } from './organisationConnectionReads';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -26,6 +26,7 @@ import { BOSS_MESSAGE_SCOPE, surfaceRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { accessEnded } from '../src/work/surface-access';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 
 /*
  * The access request (the access plan, section 4.5; A24): when an approved card's system has no
@@ -95,6 +96,8 @@ async function ownedCard(
   ctx: QueryCtx | MutationCtx,
   surfaceId: Id<'surfaces'>,
 ): Promise<{ surface: Doc<'surfaces'>; agent: Doc<'agents'> }> {
+  // The guard first, so a caller with no identity is never told whether a card exists (12-G).
+  await getCallerOrThrow(ctx);
   const surface = await ctx.db.get(surfaceId);
   if (surface === null) throw new ConvexError('That card no longer exists.');
   const agent = await assertOwnsAgent(ctx, surface.agentId);
@@ -391,11 +394,6 @@ async function managerDmCardOf(
       !accessEnded(surface, now) &&
       surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
   );
-}
-
-/** The three characters Slack reads as markup in a message's text, escaped as Slack asks. */
-function slackEscaped(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

@@ -31,6 +31,7 @@ import type * as eventLog from '../eventLog.js';
 import type * as events from '../events.js';
 import type * as exportActions from '../exportActions.js';
 import type * as handoverFence from '../handoverFence.js';
+import type * as http from '../http.js';
 import type * as intakeActions from '../intakeActions.js';
 import type * as intakeIdentity from '../intakeIdentity.js';
 import type * as intakeScopeBackfill from '../intakeScopeBackfill.js';
@@ -79,8 +80,12 @@ import type * as skillRegistration from '../skillRegistration.js';
 import type * as skillSandboxCheck from '../skillSandboxCheck.js';
 import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
+import type * as slackMessagesTab from '../slackMessagesTab.js';
+import type * as slackMessagesTabActions from '../slackMessagesTabActions.js';
 import type * as slackProvision from '../slackProvision.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
+import type * as slackSocket from '../slackSocket.js';
+import type * as slackSocketActions from '../slackSocketActions.js';
 import type * as sourceRevocation from '../sourceRevocation.js';
 import type * as sourceRevocationActions from '../sourceRevocationActions.js';
 import type * as sourceRevocationSend from '../sourceRevocationSend.js';
@@ -98,6 +103,7 @@ import type * as waitingWork from '../waitingWork.js';
 import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
 import type * as workLoop from '../workLoop.js';
+import type * as workRuns from '../workRuns.js';
 import type * as workspace from '../workspace.js';
 
 import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
@@ -126,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   events: typeof events;
   exportActions: typeof exportActions;
   handoverFence: typeof handoverFence;
+  http: typeof http;
   intakeActions: typeof intakeActions;
   intakeIdentity: typeof intakeIdentity;
   intakeScopeBackfill: typeof intakeScopeBackfill;
@@ -174,8 +181,12 @@ declare const fullApi: ApiFromModules<{
   skillSandboxCheck: typeof skillSandboxCheck;
   skillVersions: typeof skillVersions;
   skills: typeof skills;
+  slackMessagesTab: typeof slackMessagesTab;
+  slackMessagesTabActions: typeof slackMessagesTabActions;
   slackProvision: typeof slackProvision;
   slackProvisionActions: typeof slackProvisionActions;
+  slackSocket: typeof slackSocket;
+  slackSocketActions: typeof slackSocketActions;
   sourceRevocation: typeof sourceRevocation;
   sourceRevocationActions: typeof sourceRevocationActions;
   sourceRevocationSend: typeof sourceRevocationSend;
@@ -193,6 +204,7 @@ declare const fullApi: ApiFromModules<{
   work: typeof work;
   workActions: typeof workActions;
   workLoop: typeof workLoop;
+  workRuns: typeof workRuns;
   workspace: typeof workspace;
 }>;
 

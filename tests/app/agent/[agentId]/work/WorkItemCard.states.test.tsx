@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { openQuestionStopReason } from '../../../../../src/work/obligations';
+import { INTERRUPTED_APPLY_REASON } from '../../../../../src/work/reconciliation';
 import { EVALUATION_ATTEMPTS_SPENT } from '../../../../../src/work/queue-order';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { button, focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
+import { axeViolations } from '../../../../fixtures/dom/axe';
 import {
   DRAWN,
   EMPLOYEE,
@@ -18,6 +20,8 @@ import {
   THREAD_REPLY,
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
+import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
+import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -66,6 +70,8 @@ function card(
         onRejectActions={record('rejectActions')}
         onResendDecision={record('resend')}
         onDismiss={record('dismiss')}
+        onStop={record('stop')}
+        onCloseWithoutRetry={record('closeWithoutRetry')}
         servedByLoop={options.loop ?? true}
       />
     </AgentZoneContext>,
@@ -200,8 +206,94 @@ describe('working (work-working.html)', (): void => {
     expect(view.text()).toContain('Answered at approval');
     expect(view.text()).toContain('Ad-hoc asks and anything about the on-call rota.');
     expect(view.text()).toContain("Your answers to the charter's questions were written into it.");
-    // No Stop: nothing on the server can stop a run under way (recorded for the work-loop unit).
-    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    // Re-pinned in wave 12 (12-W): the server can stop a run under way, so Stop is the one
+    // control a working card offers.
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Stop',
+    ]);
+  });
+});
+
+describe('Stop on a working card (wave 12)', (): void => {
+  it('asks first, keeps working by default, and stops with the reason given', async (): Promise<void> => {
+    const view = card(DRAWN.working);
+    expect(view.text()).toContain(
+      'Mira, once stopped, sends nothing more, and the item waits for you with Retry.',
+    );
+    await press(view.container, 'Stop');
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    expect(dialog?.querySelector('h2')?.textContent).toBe(
+      'Stop work on “Draft response for new tier-two RevOps ask”?',
+    );
+    expect(dialog?.textContent).toContain(
+      'Mira stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep working');
+    typeInto(field(document.body, 'Reason (optional)'), 'Wrong ticket.');
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([['stop', 'Wrong ticket.']]);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([
+      'Stopped: Draft response for new tier-two RevOps ask. It waits for you with Retry.',
+    ]);
+  });
+
+  it('closes with nothing stopped when Keep working is pressed', async (): Promise<void> => {
+    const view = card(DRAWN.working);
+    await press(view.container, 'Stop');
+    await press(document.body, 'Keep working');
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(view.calls).toEqual([]);
+  });
+
+  it('does not say writes are being sent while the closing phase is only being written', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.working,
+      applyAttemptId: 'authoring-1',
+    } as unknown as Doc<'workItems'>);
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira stops now and sends nothing more.',
+    );
+  });
+
+  it('says, while the approved writes are being sent, that one may still land and is listed to check', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.working,
+      applyAttemptId: 'apply-1',
+      pendingRunId: 'run-1',
+    } as unknown as Doc<'workItems'>);
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.',
+    );
+  });
+});
+
+describe('Stop on an approval that has not started (W12-R14, D-7 (b))', (): void => {
+  it('offers Stop on a set you approved that waits, and says the approval is taken back', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.held,
+      approvedIndexes: [1, 2],
+      applyPhase: 'approved',
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain(
+      'Mira has not sent the writes you approved yet. Stop takes your approval back and sends none of them.',
+    );
+    await press(view.container, 'Stop');
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Mira has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.',
+    );
+    expect(focusedName()).toBe('Keep the approval');
+    await press(document.body, 'Take the approval back');
+    expect(view.calls).toEqual([['stop', '']]);
+  });
+
+  it('offers no Stop on a held set still waiting for your decision', (): void => {
+    const view = card(DRAWN.held);
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Stop',
+    );
   });
 });
 
@@ -315,16 +407,18 @@ describe('landed (work-landed.html)', (): void => {
       field(view.container, 'Note for the retry: say what to change or answer what Mira asked'),
       'Add the escalation note.',
     );
-    // The writes landed, so a send-back first asks for the provider check (U17 D1), one tick each.
+    // The writes landed, so a send-back first asks for the provider check (U17 D1). Re-pinned
+    // for W12V-14: each write the ledger records as landed is shown as landed and asked nothing,
+    // so the check is one confirmation, and each stays as Day0 recorded it.
     expect(view.text()).toContain('Provider reconciliation required');
     expect(send()?.disabled).toBe(true);
-    const ticks = [...view.container.querySelectorAll('label input[type="checkbox"]')];
-    expect(ticks).toHaveLength(3);
-    expect(() => button(view.container, 'Confirm reconciliation')).toThrow();
-    for (const tick of ticks)
-      await act(async (): Promise<void> => (tick as HTMLInputElement).click());
+    expect(view.container.querySelectorAll('input[type="radio"]')).toHaveLength(0);
+    expect(view.text()).toContain('Each write below landed, as Day0 recorded it from the provider');
+    expect(view.text()).not.toContain('answered');
     await press(view.container, 'Confirm reconciliation');
-    expect(view.calls).toEqual([['reconcile', true]]);
+    // Re-pinned for W12X-3: the confirmation sent `landed` for each of the three as if the
+    // manager had answered; nobody was asked, so no answer is sent and Day0's record stands.
+    expect(view.calls).toEqual([['reconcile', []]]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
     view.unmount();
 
@@ -424,6 +518,219 @@ describe('stopped with a write that may have landed', (): void => {
     } as unknown as Doc<'workItems'>);
     expect(view.text()).toContain('Provider reconciliation required');
     expect(view.container.textContent).not.toContain('Dismiss');
+  });
+
+  it('asks it landed or not sent in a named group per entry, with no axe violation and 44 px answers', async (): Promise<void> => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: stopped by the manager',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY],
+        applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' }],
+      },
+    } as unknown as Doc<'workItems'>);
+    const group = view.container.querySelector('fieldset');
+    // Re-pinned for W12-R9: the group is named by what the write does, then its outcome.
+    expect(group?.querySelector('legend')?.textContent).toContain('Reply in #revops-asks thread');
+    expect(group?.querySelector('legend')?.textContent).toContain('Outcome unknown');
+    expect(group?.querySelector('legend')?.textContent).not.toContain('http.request');
+    // The run record's list names the write the same way, with no tool id and no spaced hyphen.
+    expect(view.text()).toContain('with an unknown outcome · may have landed');
+    expect(view.text()).not.toContain('http.request - ');
+    expect(
+      [...view.container.querySelectorAll('details > summary')].map(
+        (summary) => summary.textContent,
+      ),
+    ).toContain('Ledger key (for support)');
+    for (const radio of group?.querySelectorAll('input[type="radio"]') ?? []) {
+      expect(radio.closest('label')?.className).toMatch(/(^|\s)min-h-11(\s|$)/);
+    }
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+  });
+});
+
+describe('the rows a stopped apply never sent (W12-R11, second pass)', (): void => {
+  it('names each by what it would have done and says once that it was not sent', (): void => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: stopped by the manager',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY, THREAD_REPLY],
+        applied: [
+          { tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' },
+          {
+            tool: 'http.request',
+            ok: true,
+            held: true,
+            reason: 'not sent: the run was stopped before this write went out',
+            effect: 'http.request slack · POST /chat.postMessage · body "{...}"',
+            idempotencyKey: 'w:1',
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('1 action held · never sent');
+    expect(view.text()).toContain('Reply in #revops-asks thread');
+    expect(view.text()).toContain('not sent: the run stopped before it went out');
+    expect(view.text()).not.toContain('POST /chat.postMessage');
+  });
+});
+
+describe('Close without retry (E-8)', (): void => {
+  const stoppedByYou = {
+    ...DRAWN.rejected,
+    skipReason: 'stopped: stopped by the manager: Wrong ticket.',
+    managerFeedback: undefined,
+    output: { draft: 'd', notes: '', actions: [THREAD_REPLY] },
+  } as unknown as Doc<'workItems'>;
+
+  it('closes a stopped item that left nothing to reconcile, in place of Dismiss, Retry kept', async (): Promise<void> => {
+    const view = card(stoppedByYou);
+    expect(() => button(view.container, 'Dismiss')).toThrow();
+    expect(button(view.container, 'Retry').disabled).toBe(false);
+    expect(view.text()).toContain(
+      'Close without retry takes it out of your inbox and keeps it in the record; Retry is still here if you change your mind.',
+    );
+    await press(view.container, 'Close without retry');
+    expect(view.calls).toEqual([['closeWithoutRetry', undefined]]);
+    expect(said(view.container)).toEqual([
+      'Closed: Draft response for new tier-two RevOps ask is out of your inbox and stays in the record.',
+    ]);
+  });
+
+  it('is the one way out of an interrupted apply that names nothing to check', (): void => {
+    const view = card({
+      ...stoppedByYou,
+      skipReason: INTERRUPTED_APPLY_REASON,
+      output: { draft: 'd', notes: '', actions: [THREAD_REPLY], applied: [] },
+    } as unknown as Doc<'workItems'>);
+    const named = (name: string): HTMLButtonElement | undefined =>
+      [...view.container.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === name,
+      );
+    expect(named('Retry')?.disabled).toBe(true);
+    expect(named('Close without retry')?.disabled).toBe(false);
+  });
+
+  it('keeps Dismiss on an item you rejected', (): void => {
+    const view = card(DRAWN.rejected);
+    expect(button(view.container, 'Dismiss')).toBeTruthy();
+    expect(() => button(view.container, 'Close without retry')).toThrow();
+  });
+});
+
+describe('what a finished run says it did not do (the 4 October demo)', (): void => {
+  it('says on the card, in the run’s own words, what was not done', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...(DRAWN.landed.output as object),
+        draft:
+          "I could not reconcile the three October closed-won deals: I can't find them in the tracker.",
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Not done, in Mira’s own words');
+    expect(view.text()).toContain('I could not reconcile the three October closed-won deals');
+    expect(view.text()).toContain('I can’t find them in the tracker.'.replace('’', "'"));
+  });
+
+  it('says nothing of the kind for a run whose words say the work was done', (): void => {
+    expect(card(DRAWN.landed).text()).not.toContain('Not done, in');
+  });
+});
+
+describe('what the run answered about its own work (12-D, decision D-1 (b))', (): void => {
+  /** A finished row whose run answered, with its comment as its own words. */
+  function answered(
+    workDone: 'done' | 'partial' | 'not-done',
+    words: string,
+    why: string,
+  ): Doc<'workItems'> {
+    return {
+      ...DRAWN.landed,
+      output: { ...(DRAWN.landed.output as object), draft: words, workDone, workDoneWhy: why },
+    } as unknown as Doc<'workItems'>;
+  }
+
+  it('reads a finished run as finished when it answered done, whatever the detector reads in its words (Quill)', (): void => {
+    const view = card(answered('done', QUILL_COMMENT, 'All three deals match the tracker.'));
+    expect(view.text()).not.toContain('Not done, in');
+    expect(view.text()).not.toContain('Partly done, in');
+  });
+
+  it('says what was left in the run’s one line of why when it answered partial (Pip), and not done when it answered so (Nell)', (): void => {
+    const pip = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    ).text();
+    expect(pip).toContain('Partly done, in Mira’s own words');
+    // The one line of why is a sentence, not a list of one.
+    const pipCard = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    );
+    const why = [...pipCard.container.querySelectorAll('q')].find((quote) =>
+      quote.textContent?.includes('two need the CRM export'),
+    );
+    expect(why?.closest('li')).toBeNull();
+    expect(pip).toContain('One of the three deals is reconciled; two need the CRM export.');
+    expect(pip).not.toContain('Not done, in');
+    const nell = card(
+      answered('not-done', ROOK_COMMENT, 'The October deal list is not in the tracker.'),
+    ).text();
+    expect(nell).toContain('Not done, in Mira’s own words');
+    expect(nell).toContain('The October deal list is not in the tracker.');
+  });
+
+  it('says a run was only partly done before what landed, since that is the first thing the manager asks', (): void => {
+    const text = card(
+      answered(
+        'partial',
+        ROOK_COMMENT,
+        'One of the three deals is reconciled; two need the CRM export.',
+      ),
+    ).text();
+    expect(text.indexOf('Partly done, in Mira’s own words')).toBeGreaterThan(-1);
+    expect(text.indexOf('Partly done, in Mira’s own words')).toBeLessThan(
+      text.indexOf('reached the work environment'),
+    );
+  });
+
+  it('reads a row recorded before the release, with no answer, as it read before', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: { ...(DRAWN.landed.output as object), draft: QUILL_COMMENT },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Not done, in Mira’s own words');
+    expect(view.text()).toContain('I could not find a mismatch');
+  });
+
+  it('sets the list of what was not done in a block, never a list inside a paragraph (a hydration error on the bed)', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...(DRAWN.landed.output as object),
+        draft: `${QUILL_COMMENT} Nothing was reconciled.`,
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.container.querySelector('p ul, p li')).toBeNull();
+    expect(
+      [...view.container.querySelectorAll('div > ul')].some((list) =>
+        list.textContent?.includes('I could not find a mismatch'),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -563,4 +870,60 @@ describe('every drawn card is an anchor the inbox lands on (U17 D13, A D8)', ():
       ).toBe(item.title);
     },
   );
+});
+
+describe('a close Day0 held, after an approval in Slack sent the rest (12-H, R-12D-1)', (): void => {
+  const CLOSE = {
+    tool: 'mcp.call' as const,
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: JSON.stringify({ id: 'REVOPS-202', state: 'Done' }),
+    },
+  };
+  const parkedAgain = (): Doc<'workItems'> => {
+    const held = DRAWN.held as unknown as {
+      output: { actions: unknown[]; draft: string; notes: string };
+    };
+    return {
+      ...DRAWN.held,
+      output: {
+        ...held.output,
+        actions: [THREAD_REPLY, CLOSE],
+        closeAgainstWords: 'I could not find the stale tile.',
+        applied: [
+          {
+            tool: 'http.request',
+            ok: true,
+            effect: 'Replied in #revops-asks: “Draft for Manager Review.”',
+            providerId: '1790000000.000300',
+            authority: 'manager',
+          },
+          { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, reason: 'awaiting' },
+        ],
+      },
+      actionVerdicts: [
+        { disposition: 'held', reason: 'public post held for the manager' },
+        { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+      ],
+    } as unknown as Doc<'workItems'>;
+  };
+
+  it('lists what the approval sent as landed, offers only the close, and finishes without it on a choice of its own', async (): Promise<void> => {
+    const view = card(parkedAgain());
+    expect(view.text()).toContain('Landed: Replied in #revops-asks');
+    expect(view.container.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+    expect(view.text()).toContain('Close held:');
+    expect(view.text()).toContain(
+      'Your earlier approval has been applied; only the close is left.',
+    );
+    expect(view.text()).toContain(
+      'Approve all sends the close, so use it only if the work was done.',
+    );
+    await press(view.container, 'Finish without the close');
+    expect(view.calls).toEqual([['approveActions', []]]);
+    expect(said(view.container)).toContain(
+      'Finished without the ticket close: nothing more is sent on Draft response for new tier-two RevOps ask, and the close stays withheld.',
+    );
+  });
 });

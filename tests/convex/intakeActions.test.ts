@@ -8,6 +8,7 @@ import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { PAUSED_INTAKE_REASON } from '../../src/work/pause';
 import { sealForOwner } from '../../src/lib/credential-crypto';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { nangoLocation } from '../../src/surfaces/nango-token-store';
@@ -978,6 +979,80 @@ describe('real surface intake', (): void => {
     expect(JSON.stringify(harness.records)).not.toContain('slack-test-value');
   });
 
+  it('reads a reply the manager left in the thread of a decided or replaced request, not only an open one (M10)', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-27T02:00:00.000Z');
+    const pollAt = Date.parse('2026-08-27T02:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history', 'conversations.replies'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+          managerDmChannelId: 'DMANAGER',
+          managerUserId: 'UMANAGER',
+          lastPolledAt: checkpoint,
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const replacedTs = '1787770600.000100';
+    harness.openDecisions.set('surface-slack', {
+      requests: [{ decisionId: 'zz9xyz', ts: '1787770900.000100' }],
+      batches: [],
+      noticeOwed: true,
+      threads: [replacedTs],
+    });
+    const replyCalls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.replies')) {
+        replyCalls.push(url);
+        if (url.searchParams.get('ts') !== replacedTs) {
+          return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+        }
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: replacedTs, user: 'UBOT', text: 'Replaced (ab3xyz)', reply_count: 1 },
+            {
+              ts: '1787770802.000100',
+              thread_ts: replacedTs,
+              user: 'UMANAGER',
+              text: 'approve ab3xyz',
+            },
+            // Small talk under Day0's other messages is no decision and is not answered as one.
+            { ts: '1787770803.000100', thread_ts: replacedTs, user: 'UMANAGER', text: 'thanks!' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+    };
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+    ).resolves.toMatchObject({ polled: 1 });
+    expect(replyCalls.map((url) => url.searchParams.get('ts'))).toEqual([
+      '1787770900.000100',
+      replacedTs,
+    ]);
+    // A request is open, so an unreadable reply in its own thread or the DM would be answered.
+    expect(harness.unreadableReplies).toEqual([]);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1787770802.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+    ]);
+  });
+
   it('leaves threads alone when nothing is open or the surface cannot read them', async (): Promise<void> => {
     const slackCredential = id<'credentials'>('credential-slack');
     const surface = surfaceRow('slack', 'Slack', 'chat', {
@@ -1256,6 +1331,88 @@ describe('real surface intake', (): void => {
     );
     // Named before the credential was decrypted; nothing was dialled.
     expect(harness.records).toHaveLength(1);
+  });
+
+  it('takes no intake for a paused employee, says why on each card, and still reads the manager’s replies (12-P)', async (): Promise<void> => {
+    const slackCredential = id<'credentials'>('credential-slack');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      credentialId: id<'credentials'>('credential-linear'),
+      toolAllowlist: ['list_issues'],
+      waterfallPosition: 2,
+    });
+    const slack = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: 1_000,
+    });
+    const harness = runtimeHarness(
+      [linear, slack],
+      [],
+      new Map([
+        ['credential-linear', 'linear-value'],
+        [String(slackCredential), 'slack-test-value'],
+      ]),
+      [{ ...agentRow(), pausedAt: 5, pausedBy: 'owner' }],
+    );
+    const calls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      calls.push(new URL(String(input)));
+      return slackResponse({
+        ok: true,
+        messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve ab3xyz' }],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, fetcher }),
+    ).resolves.toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 2, surfaces: 2 });
+    expect(calls).toEqual([]);
+    expect(harness.decrypted).toEqual([]);
+    expect(harness.seeds.size).toBe(0);
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 2, skipReason: PAUSED_INTAKE_REASON },
+      { surfaceId: slack._id, waterfallPosition: 0, skipReason: PAUSED_INTAKE_REASON },
+    ]);
+
+    // The decision asked before the pause stays answerable: the manager's DM is still read.
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => 20_000, fetcher });
+    expect(harness.decisions).toEqual([
+      expect.objectContaining({ reply: { verb: 'approve', id: 'ab3xyz' } }),
+    ]);
+  });
+
+  it('leaves a paused employee’s card that intake would not read anyway with its own reason (12-P)', async (): Promise<void> => {
+    const jira = surfaceRow('jira', 'Jira', 'kanban', {
+      verdict: 'declared',
+      credentialLanded: false,
+      intakeSkipReason: 'surface is declared; awaiting connection',
+    });
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      credentialId: id<'credentials'>('credential-linear'),
+      toolAllowlist: ['list_issues'],
+      waterfallPosition: 2,
+    });
+    const harness = runtimeHarness(
+      [jira, linear],
+      [],
+      new Map([['credential-linear', 'linear-value']]),
+      [{ ...agentRow(), pausedAt: 5, pausedBy: 'owner' }],
+    );
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000 });
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 2, skipReason: PAUSED_INTAKE_REASON },
+    ]);
   });
 
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
@@ -4999,5 +5156,96 @@ describe('the credential intake reads comes from the token store (11-AT)', (): v
         async (ctx): Promise<string> => await convexRuntime(ctx).decrypt(credentialId),
       ),
     ).resolves.toBe('fake-cc-9');
+  });
+});
+
+describe("a Slack ask's asker, by name where the card allows users.info (the second pre-tag's recorded item)", (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  it('labels each ask with the name Slack gives the asker, keeps the id as the requester, and keeps the id where Slack gives no name', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
+    const pollTime = Date.parse('2026-08-26T02:00:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history', 'users.info'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+          lastPolledAt: checkpoint,
+        }),
+      ],
+      [
+        pageRow('slack.md', 'Slack policy', SLACK),
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+      ],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const infoAsked: string[] = [];
+    const slackFetch = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      if (url.searchParams.get('channel') === 'CREVOPS') {
+        return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+      }
+      if (url.pathname.endsWith('/users.info')) {
+        const user = url.searchParams.get('user') ?? '';
+        infoAsked.push(user);
+        return user === 'UPRIYA'
+          ? slackResponse({
+              ok: true,
+              user: {
+                id: 'UPRIYA',
+                name: 'priya',
+                real_name: 'Priya Shah',
+                profile: { display_name: 'Priya' },
+              },
+            })
+          : slackResponse({ ok: false, error: 'user_not_found' });
+      }
+      return slackResponse({
+        ok: true,
+        messages: [
+          { ts: '1770000000.000100', user: 'UPRIYA', text: '<@UBOT> please review REVOPS-1' },
+          { ts: '1770000000.000101', user: 'UPRIYA', text: '<@UBOT> and REVOPS-2' },
+          { ts: '1770000000.000102', user: 'UGONE', text: '<@UBOT> one more' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    });
+
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => pollTime,
+      fetcher: slackFetch,
+    });
+
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000100')).toMatchObject({
+      requesterLabel: 'Priya',
+      requester: 'UPRIYA',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000101')).toMatchObject({
+      requesterLabel: 'Priya',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000102')).toMatchObject({
+      requesterLabel: 'UGONE',
+      requester: 'UGONE',
+    });
+    // One question per asker, however many asks they made.
+    expect(infoAsked.toSorted()).toEqual(['UGONE', 'UPRIYA']);
   });
 });

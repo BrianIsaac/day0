@@ -12,6 +12,7 @@ import type { SlackManifest } from '../../src/surfaces/slack-manifest';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 const POLICY = readFileSync(
   resolve(__dirname, '../fixtures/notion-pages/slack-day0-app.md'),
@@ -701,5 +702,17 @@ describe("the administrator's one action (P7-3, P3-17)", (): void => {
     await expect(provision(harness, surfaceId)).rejects.toThrow(
       'Slack apps.manifest.create returned HTTP 502 with a body that is not JSON.',
     );
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the card exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const surfaceId = await goneRowOf(harness, 'surfaces');
+    await expect(
+      harness.action(api.slackProvisionActions.provisionApp, { surfaceId }),
+    ).rejects.toMatchObject(refusal);
   });
 });

@@ -201,6 +201,9 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.stdout).toContain('./setup.sh pause | unpause [--dry-run]');
     expect(outcome.stdout).toContain('./setup.sh pause     the intake and decision polls');
     expect(outcome.stdout).toContain('./setup.sh unpause   lift the pause');
+    // A step already under way holds before its next one; nothing runs on to its end (W12-R5).
+    expect(outcome.stdout).not.toContain('runs to its end');
+    expect(outcome.stdout).toContain('finishes the step it is on and holds before the next');
   });
 
   it('names access and install in its usage and header, and hands them to the typed entry with stdin kept', (): void => {

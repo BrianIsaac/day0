@@ -17,6 +17,7 @@ import {
   managerIdentity,
   OWNER_SUBJECT,
 } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -89,10 +90,10 @@ describe('transferDepartures.employeePage', (): void => {
         page: 'employee',
       });
     }
-    // An anonymous caller is left to the page's own read, which the session gate sits before.
-    expect(await harness.query(api.transferDepartures.employeePage, { agentId: maya })).toEqual({
-      page: 'employee',
-    });
+    // An anonymous caller is refused, as every function but the release refuses it (12-G).
+    await expect(
+      harness.query(api.transferDepartures.employeePage, { agentId: maya }),
+    ).rejects.toMatchObject(await guardRefusal());
   });
 
   it('says where a handed-over employee went, to the account that handed it over only, without a refusal', async (): Promise<void> => {

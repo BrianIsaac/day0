@@ -6,14 +6,30 @@ import {
   type CharterClauseRef,
   type ArgumentRepairAttempt,
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+  type WorkDoneAnswer,
 } from '@/work/types';
 import type { Doc } from '@convex/_generated/dataModel';
-import { isStopped, stopDetail, isGateRefusalStop, GATE_REFUSAL_STOP } from '@/work/stop';
+import {
+  isStopped,
+  stopDetail,
+  isGateRefusalStop,
+  GATE_REFUSAL_STOP,
+  managerStopNote,
+} from '@/work/stop';
 import { isOpenQuestionStop } from '@/work/obligations';
-import { landedRowCount, retryRequiresProviderReconciliation } from '@/work/reconciliation';
+import {
+  INTERRUPTED_APPLY_REASON,
+  landedRowCount,
+  providerReconciliationEntries,
+  reconciliationAnswered,
+  retryRequiresProviderReconciliation,
+  type ReconciliationEntry,
+} from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
+import { notDoneStatements, runOwnWords } from '@/work/not-done';
+import { workDoneFactOf } from '@/work/work-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -64,7 +80,11 @@ export interface RunOutput {
   notes: string;
   actions?: MockAction[];
   applied?: LedgerRow[];
-  initial?: { applied?: LedgerRow[]; withheldActions?: WithheldActionRow[] };
+  initial?: {
+    actions?: MockAction[];
+    applied?: LedgerRow[];
+    withheldActions?: WithheldActionRow[];
+  };
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
@@ -74,6 +94,12 @@ export interface RunOutput {
   withheldActions?: WithheldActionRow[];
   /** A first phase whose approval starts the closing phase. */
   needsDependentPhase?: boolean;
+  /** The run's answer on whether the work was done; absent on a row recorded before v0.16.0. */
+  workDone?: WorkDoneAnswer;
+  /** The run's one line of why it answered so. */
+  workDoneWhy?: string;
+  /** The clause the tripwire read when the run answered done twice over it; its close waits for the manager. */
+  closeAgainstWords?: string;
 }
 
 /** An action withheld from a run and never sent, with the reason. */
@@ -95,7 +121,11 @@ export interface RefusedClosingRow {
 }
 
 /** A ledger row labelled with the phase that applied it, when the run had two. */
-export type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+export type PhasedLedgerRow = LedgerRow & {
+  phase?: 'prerequisite' | 'closing';
+  /** What the row's action does, in a manager's words, where the card has named it. */
+  summary?: string;
+};
 
 /**
  * Every applied row of a run, prerequisite phase first, each labelled with the
@@ -317,8 +347,14 @@ export function failedItemReason(item: {
     applied?: unknown;
     initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
   } | null;
-  providerReconciliation?: { confirmedAt: number };
+  providerReconciliation?: { entries: readonly ReconciliationEntry[] };
 }): string | undefined {
+  // The engine's own reason for an interrupted apply, said to the manager plainly (W12-R9, bed).
+  if (item.skipReason === INTERRUPTED_APPLY_REASON) {
+    return providerReconciliationEntries(item.output).length > 0
+      ? 'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.'
+      : 'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.';
+  }
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
@@ -329,7 +365,22 @@ export function failedItemReason(item: {
   }
   if (item.skipReason && isStopped(item.skipReason)) {
     const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
-    const unconfirmed = landed && !item.providerReconciliation;
+    const unconfirmed = landed && !reconciliationAnswered(item.providerReconciliation);
+    // The manager's own stop says so in their words, once, then what is left (wave 12).
+    const note = managerStopNote(item.skipReason);
+    if (note !== undefined) {
+      // The quoted reason ends the sentence: a full stop after it unless it carries its own (W12-R9).
+      const said =
+        note === ''
+          ? 'You stopped the run.'
+          : `You stopped the run: “${note}”${/[.!?…]$/.test(note) ? '' : '.'}`;
+      if (unconfirmed) {
+        return `${said} A write landed or may have; confirm the provider below before Retry.`;
+      }
+      if (landed)
+        return `${said} A write landed before it stopped; a retry does not send it again.`;
+      return `${said} Nothing landed, so there is nothing to check.`;
+    }
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
     if (item.output?.refusedClosing) {
@@ -415,24 +466,34 @@ export function pendingVerdicts(
 }
 
 /**
- * The one-line headline of the gate box.
+ * The one-line headline of the gate box. With nothing applied on its own it says nothing reached
+ * a surface, unless the run already landed a row the card lists above the box (a phase-one read):
+ * then it says only that the held ones are not sent until the manager approves.
  *
- * Args:
- *   verdicts: The run's verdicts.
- *
- * Returns:
- *   `2 applied automatically · 1 awaiting your approval`, or the no-auto form.
+ * @param verdicts - The run's verdicts.
+ * @param landed - How many rows the run already landed.
+ * @param decidedEarlier - How many held rows an earlier approval of this set decided (12-H): they
+ *   no longer await the manager.
+ * @returns `2 applied automatically · 1 awaiting your approval`, or a no-auto form.
  */
-export function pendingHeadline(verdicts: readonly ActionVerdict[]): string {
+export function pendingHeadline(
+  verdicts: readonly ActionVerdict[],
+  landed = 0,
+  decidedEarlier = 0,
+): string {
   const auto = verdicts.filter((verdict) => verdict.disposition === 'auto').length;
-  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length;
+  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length - decidedEarlier;
   const refused = verdicts.filter((verdict) => verdict.disposition === 'refused').length;
   const awaiting = `${held} ${held === 1 ? 'action' : 'actions'} awaiting your approval`;
   const refusedNote = refused > 0 ? ` · ${refused} refused by the gate` : '';
   if (auto > 0) {
     return `${auto} applied automatically · ${awaiting}${refusedNote}`;
   }
-  return `${awaiting}${refusedNote} · nothing has reached a surface`;
+  // Beside a landed row the held ones are said as unsent, before any refusal so the clause is
+  // theirs alone.
+  return landed > 0
+    ? `${awaiting} · not sent until you approve${refusedNote}`
+    : `${awaiting}${refusedNote} · nothing has reached a surface`;
 }
 
 /** What the waiting line reads of a row. */
@@ -491,4 +552,50 @@ export function waitingLine(item: WaitingItem, zone: string | undefined): string
     return `Evaluation started ${clockTime(item.evaluationClaimedAt, zone)}${attempt}; if it does not answer, the item waits for the next free slot.`;
   }
   return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
+}
+
+/** The most clauses the card quotes of what a run says it did not do; the rest say the same. */
+const UNFINISHED_SHOWN = 3;
+
+/**
+ * What a finished run's own words say it did not do (the 4 October live demo): the first clauses
+ * of its draft and of every comment and message it wrote, in both phases, that say the work was
+ * not done, at most {@link UNFINISHED_SHOWN}.
+ *
+ * @param output - The run's output.
+ * @returns The clauses, in order; empty when the words say nothing of the kind.
+ */
+export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
+  if (!output) return [];
+  const initial = output.initial?.actions ?? [];
+  return notDoneStatements(
+    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
+  ).slice(0, UNFINISHED_SHOWN);
+}
+
+/** What a finished run's card says was not done: the run's answer, and the words it says it in. */
+export interface NotDoneOnCard {
+  readonly answer: 'partial' | 'not-done';
+  readonly statements: readonly string[];
+}
+
+/**
+ * What a finished run's card says was not done (12-D, decision D-1 (b)). It follows the run's own
+ * answer: `partial` or `not-done` with its one line of why, and nothing for a run that answered
+ * `done`, whatever its words read as. A row recorded before v0.16.0 carries no answer and reads as
+ * it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
+ *
+ * @param output - The finished run's output.
+ * @returns The answer and its words, or undefined for a run that reads as finished.
+ */
+export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | undefined {
+  if (!output) return undefined;
+  const fact = workDoneFactOf(output);
+  if (fact !== undefined) {
+    return fact.workDone === 'done'
+      ? undefined
+      : { answer: fact.workDone, statements: [fact.workDoneWhy] };
+  }
+  const statements = unfinishedInOwnWords(output);
+  return statements.length > 0 ? { answer: 'not-done', statements } : undefined;
 }

@@ -37,6 +37,7 @@ export function asEmployee(node: ReactNode, overrides: Partial<Employee> = {}): 
     agent: EMPLOYEE_ROW,
     charter: APPROVED_CHARTER,
     surfaceMode: 'mock',
+    scheduledWorkPaused: false,
     surfaces: [],
     arriving: false,
     reportSentBack: () => undefined,

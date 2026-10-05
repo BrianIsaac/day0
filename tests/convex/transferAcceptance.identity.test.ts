@@ -22,6 +22,7 @@ import {
   type IssuedIdentities,
 } from './fakes/issued-identities';
 import { SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
+import { landAppLevelTokenRow } from './fakes/app-level-token';
 
 /*
  * A handover keeps the employee's own identities (A25; the access plan, section 4.12): a card
@@ -164,6 +165,40 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     ]);
   });
 
+  it("marks the card that kept its identity with the move's time, and the new manager's approval clears it (the round review's m16)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
+    const movedAt = Date.now();
+
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(harness, leo.slack.surfaceId))?.keptIdentitySince).toBe(movedAt);
+    // A cut card keeps nothing to mark.
+    expect((await read(harness, leo.linear.surfaceId))?.keptIdentitySince).toBeUndefined();
+
+    await harness
+      .withIdentity(COLLEAGUE)
+      .mutation(api.surfaces.approve, { surfaceId: leo.slack.surfaceId });
+    expect((await read(harness, leo.slack.surfaceId))?.keptIdentitySince).toBeUndefined();
+  });
+
+  it("ends at Slack, on the new manager's retire, a kept identity a release before v0.14.0 stored under the old owner's key (the wave 11 review's m6)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'owner' });
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const kept = await read(harness, leo.slack.token);
+    expect(kept).toMatchObject({ userId: 'owner' });
+    expect(kept?.holder).toBeUndefined();
+
+    await harness.withIdentity(COLLEAGUE).mutation(api.reset.retire, { agentId: leo.agentId });
+
+    const token = await read(harness, leo.slack.token);
+    expect(token?.revokedAt).toEqual(expect.any(Number));
+    expect(token?.sourceRevocation?.end).toBe('retire');
+  });
+
   it("keeps a per-employee Linear identity as the product lands it, and calls neither vendor (the review's M11 c)", async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });
@@ -225,6 +260,35 @@ describe("the employee's own identity at a handover (A25)", (): void => {
         ['slack', 'transfer', 'token-revoked'],
       ]),
     );
+  });
+
+  it("ends in Day0 the app-level token of a cut card's app, which the deployment forgets, and keeps a kept identity's (W12-R2)", async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    const appLevel = await landAppLevelTokenRow(harness, leo.slack.surfaceId);
+    network.answer('/api/auth.revoke', { status: 200, body: { ok: true, revoked: true } });
+
+    await handOverLeo(harness, leo);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(harness, leo.slack.surfaceId))?.provisioning).toBeUndefined();
+    const cut = await read(harness, appLevel);
+    expect(cut).toMatchObject({ revokedAt: expect.any(Number) });
+    expect([cut?.ciphertext, cut?.iv]).toEqual([undefined, undefined]);
+
+    // A card that keeps the employee's own identity keeps its app, and the app its token, even
+    // through the old manager's "Delete my data": it is no longer theirs to end.
+    const kept = await realHarness();
+    const maya = await seedIssuedIdentities(kept, { connection: true, heldBy: 'organisation' });
+    const keptToken = await landAppLevelTokenRow(kept, maya.slack.surfaceId);
+    await handOverLeo(kept, maya);
+    await kept
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    await kept.finishAllScheduledFunctions(vi.runAllTimers);
+    const live = await read(kept, keptToken);
+    expect(live?.revokedAt).toBeUndefined();
+    expect(live?.ciphertext).toEqual(expect.any(String));
   });
 
   it('keeps the identity when the old manager later deletes their data, since it is no longer theirs to end', async (): Promise<void> => {

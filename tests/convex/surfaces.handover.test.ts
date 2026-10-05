@@ -11,6 +11,7 @@ import {
   surfaceHandoversOf,
 } from '../../convex/surfaces';
 import { LINEAR_MCP_ENDPOINT } from '../../src/surfaces/fixed-endpoints';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -95,6 +96,66 @@ describe('the credentials a card binds (11-AK item 1, for the retire and the han
       };
     });
     expect([...bound.walked].sort()).toEqual([...bound.expected].sort());
+  });
+});
+
+describe('the app-level token a card binds (wave 12, 12-M)', (): void => {
+  it('names the employee app’s app-level token, so a retire or a handover ends it with the app', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const bound = await harness.run(async (ctx) => {
+      const row = async (label: string) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: 1,
+        });
+      const secret = await row('Slack client secret');
+      // As `landAppLevelToken` writes it: held by the organisation, with the app's id, no issuer
+      // (re-pinned for the wave 12 review's W12-R2 from an owner's row, which the product never writes).
+      const appLevel = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Maya (Day0) app-level token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        appId: 'A0W12M',
+        createdAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const slack = await ctx.db.insert('surfaces', {
+        ...SURFACE_BASE,
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        verdict: 'approved',
+        provisioning: {
+          appId: 'A0W12M',
+          appName: 'Maya (Day0)',
+          clientId: '1234.5678',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'http://localhost:3000/api/oauth/slack',
+          scopes: [],
+          createdAt: 1,
+          appLevelTokenCredentialId: appLevel,
+        },
+      });
+      const card = (await ctx.db.get(slack))!;
+      return { walked: [...(await credentialsBoundBy(ctx.db, [card]))], appLevel, secret };
+    });
+    expect([...bound.walked].sort()).toEqual([bound.appLevel, bound.secret].sort());
   });
 });
 

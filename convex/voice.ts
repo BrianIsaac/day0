@@ -224,7 +224,8 @@ export const attachConversationId = mutation({
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
  * after it produced a charter. Any other session comes back `active` with those fields cleared,
- * one with nothing to set aside included, so the room can open a new call on it.
+ * one with nothing to set aside included, so the room can open a new call on it. Writes a
+ * `voice.restarted` event naming the new conversation.
  *
  * @throws ConvexError with the refusal, which the room shows.
  */
@@ -236,9 +237,10 @@ export const restart = mutation({
     if (session.state === 'synthesising' || session.state === 'done') {
       throw new ConvexError('The charter is being drafted from this one-to-one; wait for it.');
     }
+    const conversation = conversationOf(session) + 1;
     await ctx.db.patch(args.sessionId, {
       state: 'active',
-      conversation: conversationOf(session) + 1,
+      conversation,
       conversationEndedAt: undefined,
       turns: undefined,
       replyDraft: undefined,
@@ -248,6 +250,12 @@ export const restart = mutation({
       recoveryAttempts: undefined,
       finalisationError: undefined,
       finalisationFailedAt: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: session.agentId,
+      type: 'voice.restarted',
+      payload: { sessionId: session._id, conversation },
+      createdAt: Date.now(),
     });
     return { ok: true };
   },

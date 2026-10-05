@@ -1,6 +1,5 @@
-import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -12,21 +11,16 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
-import {
-  HANDOVER_IN_PROGRESS_REASON,
-  HANDOVER_STOP_REASON,
-  isBeingHandedOver,
-  settleHandoverAfterRun,
-} from './transferInFlight';
+import { settleHandoverAfterRun } from './transferInFlight';
 import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
-  stoppedRowOffersMove,
+  waitingStamp,
 } from '../src/work/needs-manager';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import {
@@ -35,20 +29,26 @@ import {
   markCorrectionsAppliedInTransaction,
 } from './corrections';
 import {
+  APPLY_RECOVERY_MS,
   AWAITING_CHARTER,
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
   isManagerChannel,
   OPEN_WORK_STATES,
   openSlotCount,
+  queueStep,
   resumeStalledStepsInTransaction,
+  scheduleApply,
   scheduleNextStep,
   STEP_LEASE_MS,
+  stepHoldOf,
+  stepMayRun,
   type StepClaim,
 } from './workLoop';
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
+  HELD_CLOSE_AGAINST_WORDS,
   HELD_NOT_APPROVED,
   HELD_WRITE,
   isAuditComment,
@@ -59,6 +59,15 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { closeAgainstWordsOf, closingChanges } from '../src/work/work-done';
+import {
+  awaitingIndexes,
+  isCloseHeldAgainstWords,
+  LEFT_FOR_CARD_KEY,
+  leftForCardOf,
+  wholeSetApproval,
+  withoutLeftForCard,
+} from '../src/work/held-close';
 import {
   accessRequestReason,
   organisationSystemOf,
@@ -67,7 +76,7 @@ import {
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { isOpenQuestionStop, transitionWithheld } from '../src/work/obligations';
+import { transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -76,7 +85,6 @@ import {
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   COLD_START_WIP_LIMIT,
   type MockAction,
-  type ReplyTarget,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
   SCOPE_JUDGEMENT_UNAVAILABLE,
@@ -84,6 +92,7 @@ import {
 import {
   HELD_ELSEWHERE_LIMIT,
   browserFieldId,
+  claimKeyItem,
   providerItemKey,
   writeTargetIds,
   type ClaimHolder,
@@ -91,11 +100,15 @@ import {
   type WriteClaimHolder,
 } from '../src/work/claim-key';
 import { landedWritesOf } from '../src/work/landed-writes';
+import { reportedRows, withoutApplyProgress } from '../src/work/apply-progress';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   askedFor,
   batchDecisionNoticeText,
   canEditManagerMessage,
+  CLOSE_ONLY_ON_CARD_REASON,
+  closeOnCardNoticeText,
+  decisionNoticeText,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -108,13 +121,11 @@ import {
 } from '../src/work/manager-channel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { skillBodyHash } from '../src/work/skill-body';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import {
   INTERRUPTED_APPLY_REASON,
-  OUTCOME_UNKNOWN_REASON,
-  providerReconciliationEntries,
-  retryRequiresProviderReconciliation,
+  outcomeUnknownReasonFor,
+  type ApplyEnd,
 } from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
@@ -129,18 +140,20 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { typedCodeReachOf } from './slackMessagesTab';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
-import { retiredClaimOn, retiredHolderName } from './retirements';
-import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
+import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
+import { slackEscaped } from '../src/surfaces/slack-markup';
+import type { TicketHolderView } from '../src/work/item-display';
+import { pressFreeText } from '../src/work/decision-blocks';
+import { decisionChannelOf } from '../src/work/decision-channel';
+import { compareProviderTs } from '../src/work/provider-ts';
 
-/**
- * How long an apply may go unfinished before the recovery timer acts on it: an
- * approved set whose apply never claimed is rescheduled, and one whose apply
- * claimed has this phase's outcomes recorded unknown and is never replayed.
- */
-export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
  * How long a closing phase's authoring may hold its claim before its switch
  * fails the row. The backend kills a Node action after ten minutes; this is
@@ -157,13 +170,13 @@ export const REEVALUATION_BATCH = 100;
 export { MANAGER_FEEDBACK_MAX_CHARS };
 
 /** The manager's words as kept: whitespace collapsed and capped at `MANAGER_FEEDBACK_MAX_CHARS`. */
-function managerText(text: string | undefined): string {
+export function managerText(text: string | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
 }
 export { INTERRUPTED_APPLY_REASON };
 
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */
-async function scheduleDecisionRequest(
+export async function scheduleDecisionRequest(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   kind: DecisionKind,
@@ -202,7 +215,14 @@ function askableChannel(surface: Doc<'surfaces'>): boolean {
  * so the last boundary before a send refuses it whatever its row still says.
  */
 export const transportAuthority = internalQuery({
-  args: { agentId: v.id('agents'), surfaceSlug: v.string() },
+  args: {
+    agentId: v.id('agents'),
+    surfaceSlug: v.string(),
+    /** The apply claim the send is made under, when an apply makes it (W12-R11). */
+    applyClaim: v.optional(
+      v.object({ workItemId: v.id('workItems'), applyAttemptId: v.id('events') }),
+    ),
+  },
   handler: async (
     ctx,
     args,
@@ -220,6 +240,8 @@ export const transportAuthority = internalQuery({
          * access end date passed before the hourly sweep ended it (Q5, M21).
          */
         accessEnded?: string;
+        /** Whether the apply still holds the claim it was asked about; absent when none was. */
+        applyClaimHeld?: boolean;
       }
   > => {
     const agent = await ctx.db.get(args.agentId);
@@ -236,6 +258,7 @@ export const transportAuthority = internalQuery({
         .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
+    const claimed = args.applyClaim ? await ctx.db.get(args.applyClaim.workItemId) : undefined;
     const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
     const revoked = [
       ...new Set(
@@ -252,6 +275,13 @@ export const transportAuthority = internalQuery({
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
       ...(surface?.expiresAt !== undefined && accessEnded(surface, Date.now())
         ? { accessEnded: accessEndedReason(surface.expiresAt, agentZone(agent)) }
+        : {}),
+      ...(args.applyClaim
+        ? {
+            applyClaimHeld:
+              claimed?.state === 'executing' &&
+              claimed.applyAttemptId === args.applyClaim.applyAttemptId,
+          }
         : {}),
     };
   },
@@ -295,7 +325,7 @@ export const transportAuthority = internalQuery({
  * means an internal caller has crossed two agents' contexts, not that a boss
  * pressed the wrong button.
  */
-async function assertSameAgent(
+export async function assertSameAgent(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   skillId: Id<'skills'>,
@@ -348,11 +378,14 @@ export const latestListing = query({
     tracker: Omit<TicketSnapshot, 'assigneeEmail'>;
     listedAt: number;
     refused?: string;
+    holder?: TicketHolderView;
   } | null> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const kept = await keptListingAt(ctx, row, Number.MAX_SAFE_INTEGER, false);
     if (kept === undefined) return null;
     const { assigned, assigneeId, state, stateType, doNotAutomate } = kept.tracker;
+    const holder =
+      assigneeId === undefined ? undefined : await ticketHolderOf(ctx, row, assigneeId);
     return {
       tracker: {
         assigned,
@@ -363,9 +396,38 @@ export const latestListing = query({
       },
       listedAt: kept.listedAt,
       ...(kept.refused !== undefined ? { refused: kept.refused } : {}),
+      ...(holder === undefined ? {} : { holder }),
     };
   },
 });
+
+/** The most of an employee's cards the holder's reading walks. */
+const HOLDER_CARDS_READ = 100;
+
+/**
+ * Whether a listed ticket's holder is the identity the employee acts as in its tracker: the
+ * provider identity its card on the item's source system recorded (W12V-15). Undefined when no
+ * such card recorded one, so the page says only that someone holds it.
+ */
+async function ticketHolderOf(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  assigneeId: string,
+): Promise<TicketHolderView | undefined> {
+  const agent = await ctx.db.get(row.agentId);
+  if (agent === null) return undefined;
+  const cards = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .take(HOLDER_CARDS_READ);
+  // Only a card that recorded the identity it acts as can say the holder is or is not it.
+  const identities = cards
+    .filter((card) => card.slug === row.sourceSystem)
+    .flatMap((card) => [card.providerIdentityId, card.actsAs?.providerIdentityId])
+    .filter((identity): identity is string => identity !== undefined);
+  if (identities.length === 0) return undefined;
+  return { employeeName: agent.name, holderIsEmployee: identities.includes(assigneeId) };
+}
 
 /** How many of an employee's newest plan drafts the earlier-plan read walks. */
 const EARLIER_PLAN_READ_LIMIT = 200;
@@ -1434,10 +1496,11 @@ const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Se
 const DISCOVERED_FROM_LIMIT = 32;
 
 /** Why an execution is not claimed with a skill a Revise has cleared. */
-const SKILL_UNDER_REVISION_REASON = 'the skill is being revised; it runs once it registers again';
+export const SKILL_UNDER_REVISION_REASON =
+  'the skill is being revised; it runs once it registers again';
 
 /** Why a claim found its skill taken out of use: retired by the manager, or replaced by its revision. */
-const SKILL_OUT_OF_USE_REASONS = {
+export const SKILL_OUT_OF_USE_REASONS = {
   retired: 'the skill was retired, so it no longer runs',
   superseded: 'the skill was replaced by its revision, so this run did not start',
 } as const;
@@ -1518,6 +1581,8 @@ async function liveClaimOn(
       await releaseClaim(ctx, claim, now);
       continue;
     }
+    // A write-target claim whose holder finished gives way to work created after (M9).
+    if (!holdsAgainst(claim, row)) continue;
     const agent = await ctx.db.get(claim.agentId);
     return {
       holder: {
@@ -1649,7 +1714,7 @@ async function logClaimRefused(
  * Raises:
  *   Error: When another work item holds the item.
  */
-async function retakeExternalClaim(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
+export async function retakeExternalClaim(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
   const taken = await takeExternalClaim(ctx, row, Date.now());
   if (!taken?.heldBy) return;
   const { holder } = taken.heldBy;
@@ -1876,7 +1941,8 @@ export const claimLandedTicketWrites = internalMutation({
     if (row.state !== 'executing' || row.executionRunId !== args.runId) return [];
     const userId = (await ctx.db.get(row.agentId))?.userId;
     if (!userId) return [];
-    const keys = new Set<string>();
+    // Each key with the ticket it names, so the claim is a write target that settles (M9).
+    const keys = new Map<string, { surface: string; field: string }>();
     for (const write of args.writes) {
       const surface = await ctx.db
         .query('surfaces')
@@ -1891,14 +1957,19 @@ export const claimLandedTicketWrites = internalMutation({
           { sourceSystem: surface.slug, externalId: target },
           SURFACE_MODE,
         );
-        if (key !== undefined && key !== row.externalClaimKey && key !== row.externalClaimAlias) {
-          keys.add(key);
+        if (
+          key !== undefined &&
+          key !== row.externalClaimKey &&
+          key !== row.externalClaimAlias &&
+          !keys.has(key)
+        ) {
+          keys.set(key, { surface: surface.slug, field: target });
         }
       }
     }
     const now = Date.now();
     const taken: string[] = [];
-    for (const key of keys) {
+    for (const [key, writeTarget] of keys) {
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
@@ -1910,6 +1981,7 @@ export const claimLandedTicketWrites = internalMutation({
         key,
         agentId: row.agentId,
         workItemId: row._id,
+        writeTarget,
         claimedAt: now,
       });
       taken.push(key);
@@ -2052,7 +2124,7 @@ export const takeWriteTargetClaims = internalMutation({
  *   workItemId: The work item that finished.
  *   now: The time it finished.
  */
-async function settleWriteTargetClaims(
+export async function settleWriteTargetClaims(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   now: number,
@@ -2190,6 +2262,27 @@ export const itemsHeldElsewhere = internalQuery({
             ...(UNCLAIMED_STATES.has(holding.state) ? { unclaimed: true } : {}),
           });
         }
+      }
+    }
+    // A retired or handed-over employee's kept claims bind its colleagues as a live holder's do
+    // (the wave 3.5 review's M3): the executor is told, so it announces no write the guard withholds.
+    for (const retirement of await ownerRetirements(ctx, userId)) {
+      for (const claim of retirement.claims) {
+        if (held.length >= HELD_ELSEWHERE_LIMIT) return held;
+        if (own.has(claim.key) || (claim.aliases ?? []).some((alias) => own.has(alias))) continue;
+        held.push({
+          ...(claim.writeTarget
+            ? {
+                externalId: claim.writeTarget.field,
+                sourceSystem: claim.writeTarget.surface,
+                pageField: true,
+              }
+            : claimKeyItem(claim.key)),
+          holderName: retiredHolderName(retirement),
+          sameEmployee: false,
+          title: claim.title,
+          state: claim.state,
+        });
       }
     }
     return held;
@@ -2757,6 +2850,7 @@ export async function applyVerdict(
   await ctx.db.patch(workItemId, {
     verdict: effective,
     state: nextState,
+    ...waitingStamp(nextState, Date.now()),
     ...(nextState === 'claimed' ? { claimedAt: Date.now() } : {}),
     ...(skipReason ? { skipReason } : {}),
     // The verdict ends the evaluation step; a row queued at the cap must be
@@ -3034,17 +3128,37 @@ async function withAppliedCorrections(
  * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
  * plan drafted while its system was down, which is connected by now, is not
  * stored: the row goes straight back to drafting (`redrafting`).
+ *
+ * `draftClaimedAt` is the claim a real-mode draft took before its model call
+ * (`claimLoopStep`). Only the draft that still holds that claim stores its
+ * plan: a draft the manager stopped, whose row Retry sent back to `claimed`
+ * with the claim cleared, finds the row ready again and would otherwise land
+ * the plan drafted before the Retry over its successor's (`superseded`; wave
+ * 12, 12-W and 12-P Findings 3). A caller that took no claim (the page's
+ * mock-mode draft) is fenced by the state alone.
  */
 export const setPlan = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     plan: v.any(),
     draftedWithout: v.optional(planDraftedWithoutValidator),
+    draftClaimedAt: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{ stored: boolean; redrafting?: true }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    stored: boolean;
+    redrafting?: true;
+    superseded?: true;
+    movedOn?: Doc<'workItems'>['state'];
+  }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    if (row.state !== 'claimed') return { stored: false };
+    if (row.state !== 'claimed') return { stored: false, movedOn: row.state };
+    if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) {
+      return { stored: false, superseded: true };
+    }
     // The system the draft could not read connected while the model drafted:
     // a connection that landed first found no plan to send back, so this does.
     if (args.draftedWithout?.cause === 'not-connected') {
@@ -3066,6 +3180,7 @@ export const setPlan = internalMutation({
       state: 'plan-pending',
       planDraftedWithout: args.draftedWithout,
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
+      waitingSince: Date.now(),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
     await appendEvent(ctx, {
@@ -3139,6 +3254,7 @@ async function sendBackToDrafting(
   surface: Doc<'surfaces'>,
   now: number,
 ): Promise<void> {
+  await rememberReplacedRequest(ctx, row, now);
   await ctx.db.patch(row._id, {
     state: 'claimed',
     plan: undefined,
@@ -3340,14 +3456,7 @@ export const prepareDecisionRequest = internalMutation({
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
       .collect();
-    const chat = surfaceRows
-      .filter(askableChannel)
-      .sort(
-        (left, right) =>
-          (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
-            (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) ||
-          left.createdAt - right.createdAt,
-      )[0];
+    const chat = decisionChannelOf(surfaceRows.filter(askableChannel));
     if (!chat?.managerDmChannelId) {
       return { prepared: false as const, reason: 'no connected manager chat channel' };
     }
@@ -3357,7 +3466,22 @@ export const prepareDecisionRequest = internalMutation({
       .collect();
     const actions = actionsOf(row.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
-    const heldIndexes = args.kind === 'actions' ? indexesWith(verdicts, 'held') : [];
+    // An approval in Slack decides every held write still waiting but a close the tripwire held,
+    // which the request names apart and leaves for its card (12-H, R-12D-1).
+    const approval =
+      args.kind === 'actions'
+        ? wholeSetApproval(verdicts, ledgerOf(row.output))
+        : { approve: [], leftForCard: [] };
+    const heldIndexes = [...approval.approve];
+    const leftForCard =
+      approval.leftForCard.length > 0
+        ? {
+            indexes: [...approval.leftForCard],
+            ...(closeAgainstWordsOf(row.output) !== undefined
+              ? { clause: closeAgainstWordsOf(row.output) }
+              : {}),
+          }
+        : undefined;
     const refused =
       args.kind === 'actions'
         ? refusedReasonEntries(row.actionVerdicts, actions.length).map(([index, reason]) => ({
@@ -3365,7 +3489,7 @@ export const prepareDecisionRequest = internalMutation({
             reason,
           }))
         : [];
-    if (args.kind === 'actions' && heldIndexes.length === 0) {
+    if (args.kind === 'actions' && heldIndexes.length === 0 && leftForCard === undefined) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
     }
     // The other held action sets already asked on this channel, so the
@@ -3394,12 +3518,19 @@ export const prepareDecisionRequest = internalMutation({
             ) {
               return [];
             }
+            // A set whose only waiting write is a close Day0 held has nothing a code decides.
+            const otherApproval = wholeSetApproval(
+              verdictList(other.actionVerdicts, actionsOf(other.output).length),
+              ledgerOf(other.output),
+            );
+            if (otherApproval.approve.length === 0) return [];
             return [
               {
                 workItemId: other._id,
                 decisionId: decision.id,
                 pendingRunId: other.pendingRunId,
                 title: other.title,
+                ...(otherApproval.leftForCard.length > 0 ? { leavesCloseForCard: true } : {}),
               },
             ];
           })
@@ -3423,7 +3554,9 @@ export const prepareDecisionRequest = internalMutation({
       surfaceSlug: chat.slug,
       surfaceName: chat.displayName,
     };
+    await rememberReplacedRequest(ctx, row, decision.requestedAt);
     await ctx.db.patch(row._id, { decision });
+    await nameReplacement(ctx, row._id, decision);
     await settleClosedBatchesOn(ctx, {
       agentId: row.agentId,
       surfaceSlug: chat.slug,
@@ -3460,6 +3593,7 @@ export const prepareDecisionRequest = internalMutation({
         : {}),
       output: row.output,
       heldIndexes,
+      ...(leftForCard !== undefined ? { leftForCard } : {}),
       refused,
       decisionId: args.decisionId,
       requestRunId,
@@ -3468,6 +3602,14 @@ export const prepareDecisionRequest = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       pendingRunId: row.pendingRunId,
       openActionDecisions,
+      // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      withButtons:
+        (args.kind === 'plan' || heldIndexes.length > 0) &&
+        decisionButtonsFor(chat, socketBridgeConfigured()).available,
+      // Read where the request is claimed too: a typed code is offered only to an app that takes
+      // messages (W12V-7).
+      typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     };
   },
 });
@@ -3502,6 +3644,194 @@ async function supersedeDecisionRequest(
     kind: decision.kind,
     supersedes: decision.id,
   });
+}
+
+/**
+ * Remember a decision request a newer one replaces, or a path takes back, before the row's
+ * `decision` is overwritten or cleared (wave 12, 12-M; F2 D14): its code stays answerable ("that
+ * request was replaced by ..."), and a delivered message whose text was kept is edited once to say
+ * so. A decided request is history on the row's record, not a replaced one, and a code already
+ * remembered is not remembered twice. Only a row whose employee has a manager chat channel ever
+ * carries a request, so nothing else writes a row here.
+ *
+ * @param ctx - The transaction that replaces or clears the request.
+ * @param row - The work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberReplacedRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined || decision.decidedAt !== undefined) return;
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  const replacedId = await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    ...(decision.ts === undefined ? {} : { ts: decision.ts }),
+    ...(decision.requestText === undefined ? {} : { requestText: decision.requestText }),
+    ...(decision.withButtons === true ? { withButtons: true } : {}),
+    replacedAt: now,
+  });
+  if (decision.ts !== undefined && decision.requestText !== undefined) {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.markRequestReplaced, {
+      replacedId,
+    });
+  }
+}
+
+/** The most of an agent's recent acknowledgements the already-decided notice reads. */
+const ACKNOWLEDGEMENTS_READ = 50;
+
+/**
+ * Whether the acknowledgement of a decision is queued and not yet sent or failed, so the notice
+ * that the request was already decided waits for it (W12V-10).
+ */
+async function acknowledgementUnsent(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  decisionId: string,
+): Promise<boolean> {
+  const recent = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(ACKNOWLEDGEMENTS_READ);
+  return recent.some(
+    (notice) =>
+      notice.decisionId === decisionId &&
+      notice.kind === 'received' &&
+      notice.providerTs === undefined &&
+      notice.failure === undefined,
+  );
+}
+
+/**
+ * Remember the request of a plan the manager turned down before Retry drafts a new one and clears
+ * it (W12V-16): an undecided request as `rememberReplacedRequest` does, and a decided one too,
+ * since the redraft's request replaces it, so its code is answered "replaced" rather than unknown.
+ * A decided request's message already says how it was decided, so it is never edited again.
+ *
+ * @param ctx - The Retry's transaction.
+ * @param row - The cancelled work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberRetriedRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined) return;
+  if (decision.decidedAt === undefined) {
+    await rememberReplacedRequest(ctx, row, now);
+    return;
+  }
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here.
+  await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    replacedAt: now,
+  });
+}
+
+/** The most of one item's replaced requests the new request names itself on. */
+const REPLACED_NAMED_SCAN = 50;
+
+/**
+ * Name a new request on the item's earlier requests of its kind that nothing replaced yet, so a
+ * reply to one of those codes is answered with this one.
+ */
+async function nameReplacement(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  decision: { readonly id: string; readonly kind: DecisionKind },
+): Promise<void> {
+  const replaced = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .take(REPLACED_NAMED_SCAN);
+  for (const earlier of replaced) {
+    if (
+      earlier.replacedBy !== undefined ||
+      earlier.kind !== decision.kind ||
+      earlier.decisionId === decision.id
+    ) {
+      continue;
+    }
+    await ctx.db.patch(earlier._id, { replacedBy: decision.id });
+  }
+}
+
+/** How many replacements the answer to a replaced code follows to the request that stands. */
+const REPLACEMENT_HOPS = 5;
+
+/**
+ * What Day0 answers a reply or a press naming a replaced request: the request that replaced it
+ * and where that one stands (open, or already decided), following a chain of replacements to the
+ * request that stands; or that nothing replaced it yet.
+ *
+ * @param ctx - The decision's transaction.
+ * @param replaced - The replaced request the code names.
+ * @returns The answer's words, and the code that stands, when there is one.
+ */
+async function replacedRequestAnswer(
+  ctx: MutationCtx,
+  replaced: Doc<'replacedDecisionRequests'>,
+): Promise<{ readonly text: string; readonly replacedBy?: string }> {
+  const opening = `That request (${replaced.decisionId}) was replaced`;
+  let code = replaced.replacedBy;
+  for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
+    const current = code;
+    const standing = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', replaced.agentId).eq('decision.id', current),
+      )
+      .first();
+    const decision = standing?.decision;
+    if (decision !== undefined) {
+      return decision.decidedAt === undefined
+        ? { text: `${opening} by ${current}. Decide on ${current} instead.`, replacedBy: current }
+        : {
+            text: `${opening} by ${current}, which was already ${decision.outcome ?? 'decided'}.`,
+            replacedBy: current,
+          };
+    }
+    const next = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', replaced.agentId).eq('decisionId', current),
+      )
+      .first();
+    if (next?.replacedBy === undefined) break;
+    code = next.replacedBy;
+  }
+  return {
+    text: `${opening} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+  };
 }
 
 /** What the manager's note says ended a run whose apply was interrupted. */
@@ -3556,6 +3886,7 @@ export async function voidDecisionRequestsForHandover(
     }
     // A delivered request keeps its code, marked failed, for the probe to re-send; one still on
     // its way would be re-sent by nothing, so it is taken back and the stall sweep asks afresh.
+    if (decision.ts === undefined) await rememberReplacedRequest(ctx, row, now);
     await ctx.db.patch(row._id, {
       decision:
         decision.ts === undefined
@@ -3612,6 +3943,7 @@ export async function returnApprovalsForHandover(
     await ctx.db.patch(row._id, {
       state: 'plan-pending',
       planPendingAt: now,
+      waitingSince: now,
       decision: undefined,
       managerAnswers: undefined,
     });
@@ -3628,6 +3960,8 @@ export async function returnApprovalsForHandover(
       approvedIndexes: undefined,
       applyPhase: undefined,
       decision: undefined,
+      // The set waits on the manager again, from now.
+      waitingSince: now,
     });
   }
   return approvedPlans.length + approvedSets.length;
@@ -3917,6 +4251,7 @@ export const openDecisions = internalQuery({
         .filter((id) => openIds.has(id));
       return decisionIds.length > 0 ? [{ batchId: batch.id, decisionIds }] : [];
     });
+    const since = Date.now() - DECISION_NOTICE_WINDOW_MS;
     const decidedLately = await ctx.db
       .query('workItems')
       .withIndex('by_agent_decision_channel_decided', (q) =>
@@ -3924,12 +4259,74 @@ export const openDecisions = internalQuery({
           .eq('agentId', surface.agentId)
           .eq('decision.surfaceSlug', surface.slug)
           .eq('decision.channel', channel)
-          .gte('decision.decidedAt', Date.now() - DECISION_NOTICE_WINDOW_MS),
+          .gte('decision.decidedAt', since),
       )
-      .first();
-    return { requests, batches, noticeOwed: decidedLately !== null };
+      .order('desc')
+      .take(RECENT_THREADS_READ);
+    const threads = await recentThreadsOn(ctx, surface, channel, since, {
+      decided: decidedLately.flatMap((row) => (row.decision?.ts ? [row.decision.ts] : [])),
+      open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
+    });
+    return {
+      requests,
+      batches,
+      noticeOwed: decidedLately.length > 0,
+      ...(threads.length > 0 ? { threads } : {}),
+    };
   },
 });
+
+/** The most of Day0's other recent messages in a DM whose threads one poll reads (M10). */
+const RECENT_THREADS_READ = 10;
+
+/**
+ * The provider timestamps of Day0's other messages in a manager DM within the notice window,
+ * newest first, at most {@link RECENT_THREADS_READ} (M10): the requests decided in it, the
+ * replaced requests whose message was edited in it, and the notes sent in it. An open request's
+ * own thread is read already and is left out.
+ *
+ * @param since - The start of the notice window.
+ * @param known - The decided requests' timestamps, and the open requests' to leave out.
+ */
+async function recentThreadsOn(
+  ctx: QueryCtx,
+  surface: Doc<'surfaces'>,
+  channel: string,
+  since: number,
+  known: { readonly decided: readonly string[]; readonly open: readonly string[] },
+): Promise<string[]> {
+  const [replaced, notes] = await Promise.all([
+    ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_edit_open', (q) =>
+        q.eq('agentId', surface.agentId).gte('editedAt', since),
+      )
+      // Newest edits first, so a window with more than one poll reads keeps the latest.
+      .order('desc')
+      .take(RECENT_THREADS_READ),
+    ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent', (q) => q.eq('agentId', surface.agentId))
+      .order('desc')
+      .take(RECENT_THREADS_READ),
+  ]);
+  const open = new Set(known.open);
+  const stamps = [
+    ...known.decided,
+    ...replaced.flatMap((row) =>
+      row.ts !== undefined && row.surfaceSlug === surface.slug && row.channel === channel
+        ? [row.ts]
+        : [],
+    ),
+    ...notes.flatMap((note) =>
+      note.providerTs !== undefined && note.createdAt >= since ? [note.providerTs] : [],
+    ),
+  ];
+  return [...new Set(stamps)]
+    .filter((ts) => !open.has(ts))
+    .sort((left, right) => compareProviderTs(right, left))
+    .slice(0, RECENT_THREADS_READ);
+}
 
 /**
  * Record the outcome of one manager-reply poll.
@@ -3969,6 +4366,8 @@ export const recordDecisionRequest = internalMutation({
     ts: v.optional(v.string()),
     /** The text the request carried, kept for the edit that marks it decided. */
     text: v.optional(v.string()),
+    /** The request went out with Approve and Reject buttons, which its edits remove. */
+    withButtons: v.optional(v.boolean()),
     failure: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -3982,6 +4381,7 @@ export const recordDecisionRequest = internalMutation({
         ...(args.ts && args.text
           ? { requestText: redactTokenShapes(args.text).slice(0, REQUEST_TEXT_KEPT) }
           : {}),
+        ...(args.ts && args.withButtons === true ? { withButtons: true } : {}),
         ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
       },
     });
@@ -4076,10 +4476,12 @@ export const prepareRequestClose = internalMutation({
       payload: { workItemId: row._id, decisionId: decision.id },
       createdAt: Date.now(),
     });
-    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: Date.now() } });
+    const claimedAt = Date.now();
+    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: claimedAt } });
     const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
     return {
       prepared: true as const,
+      claimedAt,
       agentId: row.agentId,
       agentName: agent.name,
       requestRunId,
@@ -4088,14 +4490,179 @@ export const prepareRequestClose = internalMutation({
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       channel: decision.channel,
       ts: decision.ts,
-      text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
+      withButtons: decision.withButtons === true,
+      text: `${pressFreeText(decision.requestText)}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
     };
+  },
+});
+
+/** The most of a close edit's failure a decision keeps. */
+const CLOSE_FAILURE_KEPT = 240;
+
+/** Why a replaced request's message was not edited: no connected card can edit it now. */
+const REPLACED_EDIT_UNAVAILABLE =
+  "the manager DM's chat card cannot edit this message now (not connected, another DM, or no chat.update)";
+
+/**
+ * Claim the one edit that marks a replaced request in the manager DM (wave 12, 12-M; F2 D14), and
+ * say what it writes: the request as it was sent, then that it no longer decides anything.
+ * Internal; the replaced edit's action. Refused when the message was never delivered or kept no
+ * text, or the edit was claimed or settled already; a message no connected card can edit (the
+ * DM's card changed, or allows no `chat.update`) is settled with the reason, so nothing reads it
+ * as open.
+ */
+export const prepareReplacedEdit = internalMutation({
+  args: { replacedId: v.id('replacedDecisionRequests') },
+  handler: async (ctx, args) => {
+    const replaced = await ctx.db.get(args.replacedId);
+    if (
+      replaced === null ||
+      replaced.ts === undefined ||
+      replaced.requestText === undefined ||
+      replaced.editClaimedAt !== undefined ||
+      replaced.editedAt !== undefined ||
+      replaced.editFailure !== undefined
+    ) {
+      return { prepared: false as const };
+    }
+    const [agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(replaced.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', replaced.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', replaced.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate.slug === replaced.surfaceSlug &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        candidate.managerDmChannelId === replaced.channel &&
+        canEditManagerMessage(toSurfaceRecord(candidate)),
+    );
+    if (agent === null || surface === undefined) {
+      await ctx.db.patch(replaced._id, { editFailure: REPLACED_EDIT_UNAVAILABLE });
+      return { prepared: false as const };
+    }
+    const claimedAt = Date.now();
+    const requestRunId = await appendEvent(ctx, {
+      agentId: replaced.agentId,
+      type: 'work.decision-request-replacing',
+      payload: { workItemId: replaced.workItemId, decisionId: replaced.decisionId },
+      createdAt: claimedAt,
+    });
+    await ctx.db.patch(replaced._id, { editClaimedAt: claimedAt });
+    return {
+      prepared: true as const,
+      claimedAt,
+      workItemId: replaced.workItemId,
+      agentId: replaced.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      channel: replaced.channel,
+      ts: replaced.ts,
+      withButtons: replaced.withButtons === true,
+      text: `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
+    };
+  },
+});
+
+/**
+ * Record the result of a replaced request's one edit (wave 12, 12-M; N-3): when it landed, or why
+ * not. Internal; the replaced edit's action, once. Fenced as the close's record is, on the claim
+ * the edit was made under and on no result yet: the five-minute sweep (12-W) settles a claim that
+ * lapsed with no result under the same fence.
+ *
+ * @returns Whether the result was written.
+ */
+export const recordReplacedEdit = internalMutation({
+  args: {
+    replacedId: v.id('replacedDecisionRequests'),
+    claimedAt: v.number(),
+    editedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if ((args.editedAt === undefined) === (args.failure === undefined)) {
+      throw new Error('an edit records exactly one of editedAt and failure');
+    }
+    const replaced = await ctx.db.get(args.replacedId);
+    if (
+      replaced === null ||
+      replaced.editClaimedAt !== args.claimedAt ||
+      replaced.editedAt !== undefined ||
+      replaced.editFailure !== undefined
+    ) {
+      return false;
+    }
+    await ctx.db.patch(
+      replaced._id,
+      args.editedAt !== undefined
+        ? { editedAt: args.editedAt }
+        : { editFailure: redactTokenShapes(args.failure ?? '').slice(0, CLOSE_FAILURE_KEPT) },
+    );
+    return true;
+  },
+});
+
+/**
+ * Record the result of the one edit that marks a decided request: when it landed, or why it did
+ * not (wave 12, 12-M; N-3). Internal; the close action's, once, after its provider call. Fenced
+ * on the request's code, on the claim the edit was made under and on no result yet: the
+ * five-minute sweep (12-W) settles a claim that lapsed with no result by writing
+ * `closeFailure` under the same fence, so a result that arrives after it, or after a newer
+ * request took the row's `decision`, writes nothing.
+ *
+ * @returns Whether the result was written.
+ */
+export const recordRequestClose = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    claimedAt: v.number(),
+    closedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if ((args.closedAt === undefined) === (args.failure === undefined)) {
+      throw new Error('a close records exactly one of closedAt and failure');
+    }
+    const decision = (await ctx.db.get(args.workItemId))?.decision;
+    if (
+      decision?.id !== args.decisionId ||
+      decision.closeClaimedAt !== args.claimedAt ||
+      decision.closedAt !== undefined ||
+      decision.closeFailure !== undefined
+    ) {
+      return false;
+    }
+    await ctx.db.patch(args.workItemId, {
+      decision: {
+        ...decision,
+        ...(args.closedAt !== undefined
+          ? { closedAt: args.closedAt }
+          : { closeFailure: redactTokenShapes(args.failure ?? '').slice(0, CLOSE_FAILURE_KEPT) }),
+      },
+    });
+    return true;
   },
 });
 
 /** Claim the one acknowledgement for late or duplicate manager replies. */
 export const prepareDecisionNotice = internalMutation({
-  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    /** Send now, whether or not the acknowledgement it follows was sent (its wait ran out). */
+    afterWait: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (
@@ -4105,6 +4672,14 @@ export const prepareDecisionNotice = internalMutation({
       row.decision.duplicateNoticeClaimedAt
     ) {
       return { prepared: false as const };
+    }
+    // The notice says the request was already decided, so it follows the acknowledgement of that
+    // decision; two presses a few milliseconds apart otherwise race (W12V-10).
+    if (
+      args.afterWait !== true &&
+      (await acknowledgementUnsent(ctx, row.agentId, args.decisionId))
+    ) {
+      return { prepared: false as const, waiting: true as const };
     }
     const [agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(row.agentId),
@@ -4144,7 +4719,7 @@ export const prepareDecisionNotice = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
-      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${slackEscaped(origin)}.`,
       // The notice answers the request, so it goes in the request's thread.
       ...(row.decision.ts ? { threadTs: row.decision.ts } : {}),
     };
@@ -4241,6 +4816,16 @@ async function requestThreadOf(
   decisionId: string,
 ): Promise<string | undefined> {
   const decision = workItem.decision;
+  if (decision?.id !== decisionId) {
+    // A replaced request's answer goes in the replaced message's own thread.
+    const replaced = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', workItem.agentId).eq('decisionId', decisionId),
+      )
+      .first();
+    if (replaced !== null) return replaced.ts;
+  }
   if (!decision?.ts) return undefined;
   if (decision.id === decisionId) return decision.ts;
   const batch = await ctx.db
@@ -4321,6 +4906,7 @@ async function resolveChannelBatch(
   }
   const decided: string[] = [];
   const skipped: Array<{ decisionId: string; reason: string }> = [];
+  const leftForCard: string[] = [];
   for (const member of batch.members) {
     const item = await ctx.db.get(member.workItemId);
     const decision = item?.decision;
@@ -4344,14 +4930,25 @@ async function resolveChannelBatch(
       continue;
     }
     if (args.reply.verb === 'approve') {
-      const actionCount = actionsOf(item.output).length;
-      const heldIndexes = indexesWith(verdictList(item.actionVerdicts, actionCount), 'held');
+      // As a single approval in Slack: a close the tripwire held is left for its card (12-H).
+      const approval = wholeSetApproval(
+        verdictList(item.actionVerdicts, actionsOf(item.output).length),
+        ledgerOf(item.output),
+      );
+      if (approval.approve.length === 0 && approval.leftForCard.length > 0) {
+        skipped.push({ decisionId: member.decisionId, reason: CLOSE_ONLY_ON_CARD_REASON });
+        continue;
+      }
+      if (approval.leftForCard.length > 0) leftForCard.push(member.decisionId);
       await approveActionsInTransaction(
         ctx,
         item,
-        { workItemId: item._id, pendingRunId: member.pendingRunId, approvedIndexes: heldIndexes },
-        'channel',
-        args.messageTs,
+        {
+          workItemId: item._id,
+          pendingRunId: member.pendingRunId,
+          approvedIndexes: [...approval.approve],
+        },
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
       );
     } else {
       await rejectActionsInTransaction(
@@ -4383,7 +4980,15 @@ async function resolveChannelBatch(
       decisionId: batch.id,
       messageTs: args.messageTs,
       kind: 'received',
-      text: batchDecisionNoticeText({ id: batch.id, verb: args.reply.verb, decided, skipped }),
+      text: batchDecisionNoticeText({
+        id: batch.id,
+        verb: args.reply.verb,
+        decided,
+        skipped,
+        ...(args.reply.verb === 'approve'
+          ? { hold: await stepHoldOf(ctx.db, surface.agentId), leftForCard }
+          : {}),
+      }),
     });
   }
   return { status: 'decided' as const, outcome: args.reply.verb, decided, skipped };
@@ -4396,7 +5001,7 @@ async function queueManagerReplyNotice(
     workItemId: Id<'workItems'>;
     decisionId: string;
     messageTs: string;
-    kind: 'received' | 'unknown';
+    kind: 'received' | 'unknown' | 'replaced';
     text: string;
   },
 ): Promise<boolean> {
@@ -4657,218 +5262,6 @@ export const resendDecisionRequest = mutation({
   },
 });
 
-/** Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as feedback for the next run. */
-export const retryFailed = mutation({
-  args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    // A note given with Retry is the manager's answer to what the last run
-    // asked, or a direction for the next one; it reaches the retried run the
-    // way a rejection reason does.
-    const feedback = managerText(args.feedback);
-    const recoverable = ['failed', 'skipped', 'cancelled', 'completed'];
-    // A row parked because its evaluations kept dying waits for this Retry.
-    const spentEvaluation =
-      row.state === 'deferred' &&
-      (row.verdict as { reason?: unknown } | undefined)?.reason === EVALUATION_ATTEMPTS_SPENT;
-    if (!recoverable.includes(row.state) && !spentEvaluation) {
-      throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
-    }
-    // Finished work is sent back only with a direction: a retry that changes
-    // nothing would repeat what already landed.
-    if (row.state === 'completed' && !feedback) {
-      throw new Error('a completed item is sent back with a note saying what to change');
-    }
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
-      throw new Error(
-        'retry refused because an external effect may already have landed; reconcile the provider first',
-      );
-    }
-    const verdict = row.verdict as { decision?: string; reason?: unknown } | undefined;
-    // A cancelled plan is one the manager turned down: Retry drafts a new plan
-    // that goes back to them, and never runs the rejected one.
-    const redraft = row.state === 'cancelled' && row.plan !== undefined;
-    const next: Doc<'workItems'>['state'] =
-      row.plan && !redraft
-        ? 'plan-approved'
-        : verdict?.decision === 'claim'
-          ? 'claimed'
-          : 'discovered';
-    if (next !== 'discovered') await retakeExternalClaim(ctx, row);
-    // Retrying a skip is the manager overruling the agent's judgement: a
-    // quality-fit skip says the work is worth doing, an out-of-scope skip says
-    // the work is theirs to give. The re-evaluation leaves that one rule out.
-    const skipReason =
-      row.state === 'skipped' && typeof verdict?.reason === 'string' ? verdict.reason : '';
-    const waived: 'quality-fit' | 'scope' | undefined = skipReason.startsWith(
-      QUALITY_FIT_SKIP_PREFIX,
-    )
-      ? 'quality-fit'
-      : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
-        ? 'scope'
-        : undefined;
-    const resume =
-      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
-        ? closingResume(
-            row.output,
-            row.plan as ExecutionPlan,
-            row.skipReason && stopDetail(row.skipReason),
-            (
-              await ctx.db
-                .query('surfaces')
-                .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
-                .take(100)
-            )
-              .map(toSurfaceRecord)
-              .filter((surface) => verdictFor(surface, Date.now()) === 'connected'),
-          )
-        : undefined;
-    await ctx.db.patch(args.workItemId, {
-      state: next,
-      // A retried item begins a new run, which the queue orders by (x4); one sent back to
-      // evaluation holds no run.
-      claimedAt: next === 'discovered' ? undefined : Date.now(),
-      ...(resume ? { output: resume } : {}),
-      ...(redraft
-        ? {
-            plan: undefined,
-            decision: undefined,
-            planPendingAt: undefined,
-            managerAnswers: undefined,
-          }
-        : {}),
-      skipReason: undefined,
-      executionRunId: undefined,
-      applyPhase: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      providerReconciliation: undefined,
-      // A dismissal was of the failure; the item Retry sends back is live again.
-      ...(row.dismissedAt !== undefined ? { dismissedAt: undefined } : {}),
-      ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
-      ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
-      ...(feedback
-        ? {
-            managerFeedback: {
-              reason: feedback,
-              at: Date.now(),
-              kind: 'retry-note' as const,
-              // Only a note on a question stop answers the question (review D2).
-              ...(row.state === 'failed' &&
-              row.skipReason !== undefined &&
-              isOpenQuestionStop(stopDetail(row.skipReason))
-                ? { answersQuestion: true }
-                : {}),
-            },
-          }
-        : {}),
-      // A retry starts every step afresh; no claim from an earlier attempt holds it back.
-      ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
-      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
-      evaluationAttempts: undefined,
-      evaluationUnavailableAt: undefined,
-      evaluationUnavailableCause: undefined,
-    });
-    // The note is also kept for the employee's later work of the same kind.
-    if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.retry',
-      payload: {
-        workItemId: args.workItemId,
-        resumeState: next,
-        fromState: row.state,
-        ...(waived ? { waived } : {}),
-        ...(feedback ? { feedback } : {}),
-      },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...row, state: next, ...(redraft ? { plan: undefined } : {}) });
-    return { ok: true, resumeState: next };
-  },
-});
-
-/** Public, owner-guarded: records whether the manager confirmed the provider state before a retry. */
-export const reconcileFailed = mutation({
-  args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'failed' && row.state !== 'completed') {
-      throw new Error(`workItem state is ${row.state}; expected failed or completed`);
-    }
-    if (!args.confirmed) throw new Error('explicit provider verification is required');
-    if (row.providerReconciliation) {
-      return { ok: true, reconciledEntries: row.providerReconciliation.entries.length };
-    }
-    const entries = providerReconciliationEntries(row.output);
-    if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) {
-      throw new Error('no provider effects require reconciliation');
-    }
-    if (entries.length === 0) {
-      throw new Error('the applied ledger does not identify provider effects to reconcile');
-    }
-    const identity = await getCallerOrThrow(ctx);
-    const confirmedAt = Date.now();
-    // `actor` is the owner key, one per owner, not the person; U13 D2 adds the session.
-    const providerReconciliation = { actor: identity.ownerKey, confirmedAt, entries };
-    await ctx.db.patch(args.workItemId, { providerReconciliation });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.provider-reconciled',
-      payload: {
-        workItemId: args.workItemId,
-        actor: identity.ownerKey,
-        confirmedAt,
-        entries,
-      },
-      createdAt: confirmedAt,
-    });
-    return { ok: true, reconciledEntries: entries.length };
-  },
-});
-
-/**
- * Public, owner-guarded (`assertOwnsWorkItem`): the manager dismisses a failed item (N7), which
- * takes it out of the needs-you inbox and the roster's needs-you figure while it stays in the
- * record and on the Work tab, where Retry still sends it back. Writes `dismissedAt` and a
- * `work.dismissed` event once; a second dismissal changes nothing. Refuses, as a `ConvexError` the card says, an item no longer failed
- * and one whose write may have landed before the provider is reconciled.
- */
-export const dismissFailed = mutation({
-  args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'failed') {
-      throw new ConvexError(
-        'Only a stopped or rejected item can be dismissed; this one has moved on.',
-      );
-    }
-    if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
-    // The inbox's entry is the one prompt that a write may have landed; it
-    // stays until the manager has checked the provider.
-    if (
-      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
-      !row.providerReconciliation
-    ) {
-      throw new ConvexError(
-        'A write on this item may have landed: confirm it against the provider before you dismiss it.',
-      );
-    }
-    const dismissedAt = Date.now();
-    await ctx.db.patch(args.workItemId, { dismissedAt });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.dismissed',
-      payload: { workItemId: args.workItemId },
-      createdAt: dismissedAt,
-    });
-    return { ok: true, dismissedAt };
-  },
-});
-
 /** Why a work item is `cancelled` after the manager turned its plan down. */
 export const PLAN_CANCELLED_REASON = 'plan cancelled by the manager';
 
@@ -4953,6 +5346,9 @@ export const claimLoopStep = internalMutation({
     const now = Date.now();
     if (args.step === 'evaluation') {
       const row = await ctx.db.get(args.workItemId);
+      // A paused employee writes no verdict either, the held-elsewhere skip included (12-P).
+      const permission = row ? await stepMayRun(ctx.db, row.agentId) : { mayRun: true as const };
+      if (!permission.mayRun) return { claimed: false, reason: permission.reason };
       const held =
         row?.state === 'discovered' ? await externalClaimHeldElsewhere(ctx, row, now) : undefined;
       if (row && held) {
@@ -4976,91 +5372,6 @@ export const resumeStalledSteps = internalMutation({
   args: {},
   handler: async (ctx): Promise<{ rescheduled: number }> =>
     await resumeStalledStepsInTransaction(ctx, Date.now()),
-});
-
-/**
- * Take exclusive ownership of an approved work item, or report that somebody
- * else already has it.
- *
- * This is the whole of the concurrency control for execution. A mutation is a
- * transaction, so the state check and the move to `executing` cannot be split
- * by a second caller; an action that reads `plan-approved` and writes
- * `executing` as two calls can be, and both callers then run the skill and
- * apply every action. React Strict Mode plus the dashboard's auto-progress
- * effect supplies that second caller for free in development.
- *
- * The winner gets a `runId` - the id of the claim event, which is durable,
- * unique per claim and derived from nothing the caller controls. Adapter
- * calls key their idempotency off it, so an external effect can be recognised
- * as already-applied if the run is interrupted before its completion lands.
- * The event records the skill's registration time, the hash of its body and
- * the library version it holds, with whether that version was adopted, so the
- * ledger says which body the run used; a skill sent back for revision, retired
- * or replaced by its revision is refused, and every claim counts a use on the
- * skill ("used N times").
- */
-export const claimForExecution = internalMutation({
-  args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
-    const { item, skill } = await assertSameAgent(ctx, args.workItemId, args.skillId);
-    if (item.state !== 'plan-approved') {
-      return {
-        claimed: false,
-        reason:
-          item.state === 'executing'
-            ? 'another execution already claimed this work item'
-            : `workItem state is ${item.state}; expected plan-approved`,
-      };
-    }
-    // The executor picked from the registered list before this transaction;
-    // a Retire or a revision registering in between took the row out of use,
-    // and a Revise cleared the body the run would otherwise use (P8-8).
-    if (skill.state === 'retired' || skill.state === 'superseded') {
-      return { claimed: false, reason: SKILL_OUT_OF_USE_REASONS[skill.state] };
-    }
-    if (skill.state !== 'registered' || skill.body === '') {
-      return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
-    }
-    // A handover the new manager accepted waits for the runs in flight and starts
-    // none (D18): the plan returns to them at the move (D13).
-    if (await isBeingHandedOver(ctx.db, item.agentId)) {
-      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
-    }
-    const now = Date.now();
-    const version = skill.versionId === undefined ? null : await ctx.db.get(skill.versionId);
-    const runId = await appendEvent(ctx, {
-      agentId: item.agentId,
-      type: 'work.execution-claimed',
-      payload: {
-        workItemId: args.workItemId,
-        skillId: args.skillId,
-        ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
-        skillBodyHash: skillBodyHash(skill.body),
-        ...(version !== null ? { skillVersionId: version._id, skillVersion: version.version } : {}),
-        ...(skill.adoptedAt !== undefined ? { skillAdopted: true as const } : {}),
-        // The item the skill was made for: a run for any other item is a reuse (A9).
-        ...(skill.proposedFor !== undefined ? { proposedFor: skill.proposedFor } : {}),
-      },
-      createdAt: now,
-    });
-    // "used N times": every claim is a use, counted in the claim's own transaction.
-    await ctx.db.patch(args.skillId, { useCount: (skill.useCount ?? 0) + 1, lastUsedAt: now });
-    await ctx.db.patch(args.workItemId, {
-      state: 'executing',
-      skillId: args.skillId,
-      executionRunId: runId,
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-    });
-    return { claimed: true, runId };
-  },
 });
 
 /** Atomically claim one discovered comparison task for the ordinary-agent arm. */
@@ -5334,148 +5645,10 @@ export const resumeExecution = internalMutation({
       payload: { workItemId: row._id, runId: args.runId, attempt, reason: args.reason },
       createdAt: now,
     });
-    await ctx.scheduler.runAfter(
-      EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1),
-      internal.workActions.executeApprovedPlanInternal,
-      { workItemId: row._id },
-    );
+    await queueStep(ctx, row._id, 'execute', EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1));
     // The run is out of flight until it claims again, which a finishing handover refuses.
     await settleHandoverAfterRun(ctx, row.agentId);
     return { outcome: 'resumed' };
-  },
-});
-
-/**
- * Mark a run done, and refuse to when nothing is behind it.
- *
- * The rule - every action the run emitted changed the work environment - was
- * enforced by the caller that happens to run the skill today. That leaves it
- * one caller away from being lost, and it reads as satisfied by a run that
- * emitted no actions at all: vacuously, every action succeeded. `completed`
- * then means "the model finished a turn", which is precisely the state a
- * person cannot tell apart from work that happened.
- *
- * So the rule lives with the write instead. An empty ledger is a bug in the
- * caller rather than an outcome of the work, hence a throw: the action's own
- * error path turns it into a visible `failed` row rather than a silent one.
- */
-export const setCompleted = internalMutation({
-  args: { workItemId: v.id('workItems'), runId: v.optional(v.id('events')), output: v.any() },
-  handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-    if (
-      row.state !== 'executing' ||
-      (args.runId !== undefined && row.executionRunId !== args.runId)
-    ) {
-      throw new Error('execution run changed before completion');
-    }
-    const applied = (
-      (args.output ?? {}) as { applied?: Array<{ tool: string; ok: boolean; held?: boolean }> }
-    ).applied;
-    if (!applied || applied.length === 0) {
-      throw new Error(
-        'cannot complete a work item whose run applied nothing to the work environment',
-      );
-    }
-    // A held row is accounted for: the manager chose not to send it, or the
-    // gate held a public post for them, and the ledger says so. It is neither
-    // a landed change nor a failure.
-    const failed = applied.filter((a) => !a.ok && !a.held);
-    if (failed.length > 0) {
-      throw new Error(
-        `cannot complete a work item with ${failed.length} action(s) that did not change the work environment`,
-      );
-    }
-    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
-    await ctx.db.patch(args.workItemId, {
-      state: 'completed',
-      output: args.output,
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      executionRunId: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      // The feedback this run answered stays on the item as its record; the
-      // mark keeps a later run from reading it as a live direction.
-      ...(row.managerFeedback && row.managerFeedback.addressedAt === undefined
-        ? { managerFeedback: { ...row.managerFeedback, addressedAt: Date.now() } }
-        : {}),
-      managerAnswers: undefined,
-    });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.completed',
-      payload: { workItemId: args.workItemId, output: args.output },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...row, state: 'completed' });
-    await settleHandoverAfterRun(ctx, row.agentId);
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
-        .collect()
-    ).map(toSurfaceRecord);
-    const landed = landedWork(args.output, surfaces);
-    if (landed.length > 0) {
-      await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({
-          agentName,
-          title: row.title,
-          rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
-          outcome: 'completed',
-        }),
-      );
-    }
-  },
-});
-
-/** Internal: ends a run as failed or stopped with its reason, writes the terminal event and releases the item's claims. */
-export const setFailed = internalMutation({
-  args: {
-    workItemId: v.id('workItems'),
-    reason: v.string(),
-    // Kept when the skill produced a draft the run then failed to apply, so
-    // the boss can read what was written before deciding whether to retry.
-    output: v.optional(v.any()),
-    runId: v.optional(v.id('events')),
-    /**
-     * Whether the run stopped: nothing landed and nothing is left to decide.
-     * Read from the ledger when absent; the comparison arm passes false, since
-     * it has no gate and no manager loop for a stop to mean anything to.
-     */
-    stopped: v.optional(v.boolean()),
-    onlyIfStalled: v.optional(v.boolean()),
-  },
-  handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-    if (args.runId && row.executionRunId !== args.runId) return;
-    // A pre-claim failure (such as no matching skill) cannot stop a run
-    // another scheduled caller claimed after the failing caller read the row.
-    if (!args.runId && row.executionRunId) return;
-    if (args.onlyIfStalled) {
-      if (
-        row.state !== 'executing' ||
-        !args.runId ||
-        row.pendingRunId ||
-        row.applyAttemptId ||
-        row.applyClaimedAt ||
-        row.applyPhase
-      )
-        return;
-      const claim = await ctx.db.get(args.runId);
-      if (!claim || Date.now() - claim.createdAt < EXECUTION_STALL_MS) return;
-    }
-    // A row that already reached an end state keeps it. Nothing legitimately
-    // fails a completed run, and a losing caller must not add a second failure
-    // record for a failure the winner already wrote.
-    const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
-    if (terminal.includes(row.state)) return;
-    await failInTransaction(ctx, row, args);
   },
 });
 
@@ -5486,7 +5659,7 @@ export const setFailed = internalMutation({
  * says so, Retry stands, and nothing pages the manager for it. `setFailed`
  * and the recoveries that end a row whose step died share it.
  */
-async function failInTransaction(
+export async function failInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   args: { reason: string; output?: unknown; stopped?: boolean },
@@ -5503,6 +5676,7 @@ async function failInTransaction(
   await settleWriteTargetClaims(ctx, row._id, Date.now());
   await ctx.db.patch(row._id, {
     state: 'failed',
+    waitingSince: Date.now(),
     skipReason: reason,
     pendingRunId: undefined,
     approvedIndexes: undefined,
@@ -5545,68 +5719,6 @@ async function failInTransaction(
 }
 
 /**
- * Stop every run of the employee still executing when its handover's deadline passes (decision
- * D18), through the stop every run's end shares ({@link failInTransaction}) with
- * {@link HANDOVER_STOP_REASON}: the run id and the apply attempt are cleared, so the run's own
- * next mutation is refused and writes nothing. A run whose apply was claimed may have sent its
- * approved rows, so its ledger records their outcome as unknown, as the apply's dead-man switch
- * would ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a
- * stop when nothing it ran landed.
- *
- * @param ctx - The settle's mutation context.
- * @param agentId - The employee being handed over.
- * @returns How many runs were stopped.
- */
-export async function stopRunsForHandover(
-  ctx: MutationCtx,
-  agentId: Id<'agents'>,
-): Promise<number> {
-  const running = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
-    .collect();
-  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
-  return running.length;
-}
-
-/**
- * Stop runs under way, in the caller's transaction, through the stop every run's end shares
- * ({@link failInTransaction}): the run id and the apply attempt are cleared, so the run's own
- * next mutation is refused and writes nothing, and the item fails with the reason and the Retry
- * a stopped run offers. A run whose apply was claimed may have sent its approved rows, so its
- * ledger records their outcome as unknown, as the apply's dead-man switch would
- * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
- * nothing it ran landed. A handover's deadline stops an employee's runs this way
- * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
- * (`skillControls.withdraw`; the wave 10 review, M4).
- *
- * @param ctx - The caller's mutation context.
- * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
- * @param reason - Why, in the words the item and the record carry after `stopped: `.
- */
-export async function stopRunsInTransaction(
-  ctx: MutationCtx,
-  rows: readonly Doc<'workItems'>[],
-  reason: string,
-): Promise<void> {
-  for (const row of rows) {
-    if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
-      const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
-      await failInTransaction(ctx, row, {
-        reason,
-        output: { ...output, applied },
-        stopped: false,
-      });
-    } else {
-      await failInTransaction(ctx, row, {
-        reason,
-        ...(row.output !== undefined ? { output: row.output } : {}),
-      });
-    }
-  }
-}
-
-/**
  * Keep a note for the manager about a finished run, and send it when the
  * mode says so.
  *
@@ -5615,7 +5727,7 @@ export async function stopRunsInTransaction(
  * digest mode both are kept for the hourly send. Without a manager channel
  * there is nowhere to send, so nothing is kept.
  */
-async function queueManagerNote(
+export async function queueManagerNote(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   kind: ManagerNoteKind,
@@ -5667,6 +5779,8 @@ async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
   return {
     agentId,
     agentName: agent.name,
+    // Whether a typed code reaches the app these messages come from (W12V-7).
+    typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
     surface: toSurfaceRecord(chat),
     surfaces: surfaceRows.map(toSurfaceRecord),
     grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
@@ -5922,6 +6036,7 @@ export const prepareManagerDigest = internalMutation({
         zone: agentZone(agent),
         notes,
         owed: await owedDecisions(ctx, args.agentId),
+        typedCode: delivery.typedCode,
       }),
     };
   },
@@ -5969,15 +6084,19 @@ export const recordManagerDigest = internalMutation({
  *   ctx: Mutation context.
  *   row: The work item being held.
  *   actions: The actions the skill emitted.
+ *   planStepOutcomes: The closing set's step accounting, for a retry note that directs the state change.
+ *   closeAgainstWords: Whether the tripwire sent this set's close to the manager (12-D): its
+ *     state change is then held whatever the switch says.
  *
  * Returns:
  *   The verdicts, one per action, and the toggle they were decided under.
  */
-async function reviewHeldActions(
+export async function reviewHeldActions(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   actions: MockAction[],
   planStepOutcomes: readonly PlanStepOutcome[] | undefined,
+  closeAgainstWords = false,
 ): Promise<{
   verdicts: ActionVerdict[];
   autonomousActions: boolean;
@@ -5996,8 +6115,15 @@ async function reviewHeldActions(
   ]);
   if (!agent) throw new Error('agent not found');
   if (SURFACE_MODE === 'mock') {
+    // Every mock write waits for the manager; a close the tripwire sent there says why it does.
+    const closes = new Set(
+      closeAgainstWords ? closingChanges(actions).map((change) => change.index) : [],
+    );
     return {
-      verdicts: actions.map(() => ({ disposition: 'held', reason: HELD_WRITE })),
+      verdicts: actions.map((_, index) => ({
+        disposition: 'held',
+        reason: closes.has(index) ? HELD_CLOSE_AGAINST_WORDS : HELD_WRITE,
+      })),
       autonomousActions: false,
       transitionDirectedByNote: false,
     };
@@ -6023,6 +6149,7 @@ async function reviewHeldActions(
         autonomousActions,
         replyTarget: replyTargetFor(row),
         transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
+        closeAgainstWords,
       },
     ),
     autonomousActions,
@@ -6048,7 +6175,8 @@ export function verdictList(
   );
 }
 
-function indexesWith(
+/** The indexes of a run's actions whose verdict has the given disposition, in order. */
+export function indexesWith(
   verdicts: readonly ActionVerdict[],
   disposition: ActionVerdict['disposition'],
 ): number[] {
@@ -6065,7 +6193,7 @@ function indexesWith(
  * Returns:
  *   `[index, reason]` pairs for every refused row.
  */
-function refusedReasonEntries(
+export function refusedReasonEntries(
   verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
   count: number,
 ): Array<[number, string]> {
@@ -6075,189 +6203,14 @@ function refusedReasonEntries(
   );
 }
 
-function actionsOf(output: unknown): unknown[] {
+/** A run's literal actions as its output holds them; none when the output has no list. */
+export function actionsOf(output: unknown): unknown[] {
   return ((output ?? {}) as { actions?: unknown[] }).actions ?? [];
 }
 
 function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
   return ((output ?? {}) as { applied?: Array<AppliedAction | undefined> }).applied ?? [];
 }
-
-/**
- * Schedule the apply for the row's current approved set, with its recovery timer.
- *
- * This timer reschedules an apply that never started. An apply that started
- * is covered by the timer its claim arms (`armApplySwitch`), so a start that
- * comes late is measured from the claim, not from here.
- *
- * Args:
- *   ctx: Mutation context.
- *   workItemId: The work item.
- *   pendingRunId: The run the approval belongs to.
- */
-async function scheduleApply(
-  ctx: MutationCtx,
-  workItemId: Id<'workItems'>,
-  pendingRunId: Id<'events'>,
-  phase: 'auto' | 'approved',
-): Promise<void> {
-  await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, { workItemId });
-  await armApplySwitch(ctx, workItemId, pendingRunId, phase);
-}
-
-/**
- * Arm the apply's dead-man switch: `recoverInterruptedApply` after `APPLY_RECOVERY_MS`.
- *
- * Args:
- *   ctx: Mutation context.
- *   workItemId: The work item.
- *   pendingRunId: The run the approval belongs to.
- *   phase: Which apply phase the switch guards.
- */
-async function armApplySwitch(
-  ctx: MutationCtx,
-  workItemId: Id<'workItems'>,
-  pendingRunId: Id<'events'>,
-  phase: 'auto' | 'approved',
-): Promise<void> {
-  await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
-    workItemId,
-    pendingRunId,
-    phase,
-    fromTimer: true,
-  });
-}
-
-/**
- * Hold an executing run at the exact-action gate and apply what the gate allows.
- *
- * Called by the action that ran the day0 skill instead of applying anything
- * itself. The draft, notes and literal `actions` are persisted with
- * the run id and one verdict per row. Rows the gate classifies `auto` are
- * approved here and applied by the same scheduled path a manager's approval
- * uses, while the row stays `executing`; when nothing is `auto` the row moves
- * to `actions-pending` at once. The hold event records whether autonomous
- * actions were on, so the audit trail shows the mode the verdicts were
- * decided under. Guarded on `executing` so a late caller cannot reopen a run
- * the manager has already decided.
- */
-export const setActionsPending = internalMutation({
-  args: {
-    workItemId: v.id('workItems'),
-    runId: v.id('events'),
-    output: v.any(),
-    authoringAttemptId: v.optional(v.id('events')),
-  },
-  handler: async (ctx, args): Promise<{ pending: boolean; phase?: 'auto' | 'manager' }> => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-    if (row.state !== 'executing') return { pending: false };
-    if (row.executionRunId !== args.runId || row.pendingRunId !== undefined) {
-      return { pending: false };
-    }
-    const dependent = args.authoringAttemptId !== undefined;
-    // A closing set must not accept a delayed approval of phase one's indexes.
-    const pendingId = args.authoringAttemptId ?? args.runId;
-    if (
-      dependent
-        ? row.applyAttemptId !== args.authoringAttemptId ||
-          (args.output as { phase?: unknown }).phase !== 'dependent'
-        : row.applyAttemptId !== undefined
-    ) {
-      return { pending: false };
-    }
-    const actions = (args.output as { actions?: unknown[] }).actions;
-    if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
-    const {
-      verdicts: actionVerdicts,
-      autonomousActions,
-      transitionDirectedByNote,
-    } = await reviewHeldActions(
-      ctx,
-      row,
-      actions as MockAction[],
-      (args.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes,
-    );
-    const autoIndexes = indexesWith(actionVerdicts, 'auto');
-    const heldIndexes = indexesWith(actionVerdicts, 'held');
-    const refusedIndexes = indexesWith(actionVerdicts, 'refused');
-    const refusals = refusedReasonEntries(actionVerdicts, actions.length).map(
-      ([index, reason]) => ({ index, reason }),
-    );
-    const payload: WorkActionsAutoApplyingPayload = {
-      workItemId: args.workItemId,
-      runId: args.runId,
-      actionCount: actions.length,
-      autoIndexes,
-      heldIndexes,
-      refusedIndexes,
-      ...(refusals.length > 0 ? { refusals } : {}),
-      autonomousActions,
-      ...(dependent ? { dependentPhase: true } : {}),
-      ...(transitionDirectedByNote ? { transitionDirectedByNote: true } : {}),
-    };
-    if (autoIndexes.length > 0) {
-      await ctx.db.patch(args.workItemId, {
-        output: args.output,
-        pendingRunId: pendingId,
-        approvedIndexes: autoIndexes,
-        applyPhase: 'auto',
-        actionVerdicts,
-        applyAttemptId: undefined,
-        applyClaimedAt: undefined,
-      });
-      await appendEvent(ctx, {
-        agentId: row.agentId,
-        type: 'work.actions-auto-applying',
-        payload,
-        createdAt: Date.now(),
-      });
-      await scheduleApply(ctx, args.workItemId, pendingId, 'auto');
-      return { pending: true, phase: 'auto' };
-    }
-    // A phase-one run that holds nothing for the manager (no actions, or every
-    // one refused by the gate) has nothing to decide: parked, it would hold
-    // the slot with both approve controls disabled and no request sent (P5-3).
-    if (!dependent && heldIndexes.length === 0) {
-      await appendEvent(ctx, {
-        agentId: row.agentId,
-        type: 'work.actions-pending',
-        payload,
-        createdAt: Date.now(),
-      });
-      await failInTransaction(ctx, row, {
-        reason:
-          refusals.length > 0
-            ? `${NOTHING_TO_DECIDE_REASON}: Day0's gate refused every action (${refusals[0].reason}), so nothing was sent`
-            : `${NOTHING_TO_DECIDE_REASON}: it emitted no actions`,
-        output: args.output,
-      });
-      return { pending: false };
-    }
-    await ctx.db.patch(args.workItemId, {
-      state: 'actions-pending',
-      output: args.output,
-      pendingRunId: pendingId,
-      approvedIndexes: undefined,
-      applyPhase: undefined,
-      actionVerdicts,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      // Whatever decision the row carries answered an earlier park (the plan,
-      // or phase one's set); this set has not been asked about (review M5).
-      decision: undefined,
-    });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.actions-pending',
-      payload,
-      createdAt: Date.now(),
-    });
-    await scheduleDecisionRequest(ctx, row, 'actions');
-    await settleHandoverAfterRun(ctx, row.agentId);
-    return { pending: true, phase: 'manager' };
-  },
-});
 
 /**
  * Park a run whose auto rows have landed until the manager decides the rest.
@@ -6267,6 +6220,13 @@ export const setActionsPending = internalMutation({
  * awaiting approval; the manager's approval replaces the placeholders. Fenced
  * on the run and on the apply attempt, so a late caller cannot park a run
  * that has moved on.
+ *
+ * Called too after an approved phase whose approval, from Slack or the Needs
+ * you batch, left a close the tripwire held for its card (12-H, R-12D-1): the
+ * approved rows have landed and the close waits alone, asked about again on
+ * its own. The decided request leaves the row as in the auto phase, so the
+ * close reads as not yet asked (review M5): the stall sweep and the card's
+ * ask control see it, and the card's head stamps no decision over it.
  */
 export const setAwaitingApproval = internalMutation({
   args: {
@@ -6282,10 +6242,11 @@ export const setAwaitingApproval = internalMutation({
       row.state !== 'executing' ||
       row.executionRunId !== args.runId ||
       row.applyAttemptId !== args.applyAttemptId ||
-      row.applyPhase !== 'auto'
+      row.applyPhase === undefined
     ) {
       return { parked: false };
     }
+    const afterApproval = row.applyPhase === 'approved';
     const actions = actionsOf(args.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
     const refusals = refusedReasonEntries(verdicts, actions.length).map(([index, reason]) => ({
@@ -6294,6 +6255,7 @@ export const setAwaitingApproval = internalMutation({
     }));
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
+      waitingSince: Date.now(),
       output: args.output,
       approvedIndexes: undefined,
       applyPhase: undefined,
@@ -6310,10 +6272,12 @@ export const setAwaitingApproval = internalMutation({
         runId: args.runId,
         actionCount: actions.length,
         autoIndexes: indexesWith(verdicts, 'auto'),
-        heldIndexes: indexesWith(verdicts, 'held'),
+        heldIndexes: afterApproval
+          ? awaitingIndexes(verdicts, ledgerOf(args.output))
+          : indexesWith(verdicts, 'held'),
         refusedIndexes: indexesWith(verdicts, 'refused'),
         ...(refusals.length > 0 ? { refusals } : {}),
-        autoApplied: true,
+        ...(afterApproval ? { leftForCard: true as const } : { autoApplied: true as const }),
       },
       createdAt: Date.now(),
     });
@@ -6342,7 +6306,7 @@ export const approveActions = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    return await approveActionsInTransaction(ctx, row, args, 'dashboard');
+    return await approveActionsInTransaction(ctx, row, args, { via: 'dashboard' });
   },
 });
 
@@ -6372,6 +6336,7 @@ export const approveActionsBatch = mutation({
     ok: true;
     approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }>;
   }> => {
+    await getCallerOrThrow(ctx);
     if (args.members.length === 0) throw new Error('a batch approves at least one item');
     const seen = new Set<string>();
     const approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> = [];
@@ -6379,7 +6344,11 @@ export const approveActionsBatch = mutation({
       if (seen.has(member.workItemId)) throw new Error('an item appears twice in the batch');
       seen.add(member.workItemId);
       const row = await assertOwnsWorkItem(ctx, member.workItemId);
-      const result = await approveActionsInTransaction(ctx, row, member, 'dashboard');
+      // The batch shows no tripped close's sentence: such a close is left for its card (12-H).
+      const result = await approveActionsInTransaction(ctx, row, member, {
+        via: 'dashboard',
+        scope: 'whole-set',
+      });
       approved.push({ workItemId: member.workItemId, approvedIndexes: result.approvedIndexes });
     }
     return { ok: true, approved };
@@ -6438,6 +6407,40 @@ export const prepareDecisionBatch = internalMutation({
   },
 });
 
+/**
+ * How much of a held set an approval decides (wave 12, 12-H; R-12D-1): `card` is the card's own
+ * choice, row by row, beside the sentence a tripped close carries; `whole-set` is an approval made
+ * without that sentence (a Slack approval by the typed code, a button or the batch code, and the
+ * Needs you batch), which never sends a close the tripwire held and leaves it for its card.
+ */
+type ApprovalScope = 'card' | 'whole-set';
+
+/** How an approval of held actions was made: where, by which reply or press, and how much of the set. */
+interface ApprovalMade {
+  readonly via: DecisionVia;
+  /** The channel reply or press that decided, when one did. */
+  readonly messageTs?: string;
+  /** Absent: the card's own choice, row by row. */
+  readonly scope?: ApprovalScope;
+}
+
+/** Why a whole-set approval refuses a close the tripwire held: it is decided on its card. */
+export const CLOSE_DECIDED_ON_CARD = 'is a ticket close Day0 held, so it is decided on its card';
+
+/**
+ * Approve held actions of one parked set and schedule their apply, inside the caller's transaction.
+ *
+ * Only a held row still waiting can be approved: one an earlier approval of this set already sent
+ * or withheld is decided. A whole-set approval ({@link ApprovalScope}) leaves every waiting close the
+ * tripwire held for its card: recorded on the output (`leftForCard`) for the apply to park it again,
+ * and on the approval's event, never among the rows the manager left out.
+ *
+ * @param ctx - The decision's transaction.
+ * @param row - The parked item.
+ * @param args - The run the approval was shown and the rows it approves.
+ * @param decision - Where the decision was made, the channel reply or press that made it, and how
+ *   much of the set it decides.
+ */
 async function approveActionsInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
@@ -6446,9 +6449,9 @@ async function approveActionsInTransaction(
     pendingRunId: Id<'events'>;
     approvedIndexes: number[];
   },
-  via: DecisionVia,
-  messageTs?: string,
+  decision: ApprovalMade,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
+  const { via, messageTs, scope = 'card' } = decision;
   if (row.state !== 'actions-pending') {
     throw new Error(`workItem state is ${row.state}; expected actions-pending`);
   }
@@ -6461,6 +6464,7 @@ async function approveActionsInTransaction(
   }
   const actions = actionsOf(row.output);
   const verdicts = verdictList(row.actionVerdicts, actions.length);
+  const awaiting = awaitingIndexes(verdicts, ledgerOf(row.output));
   const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
   for (const index of approvedIndexes) {
     if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
@@ -6475,12 +6479,36 @@ async function approveActionsInTransaction(
     if (verdict.disposition === 'auto') {
       throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
     }
+    if (!awaiting.includes(index)) {
+      throw new Error(`action ${index + 1} was already decided by an earlier approval`);
+    }
+    if (scope === 'whole-set' && isCloseHeldAgainstWords(verdict)) {
+      throw new Error(`action ${index + 1} ${CLOSE_DECIDED_ON_CARD}`);
+    }
   }
-  const heldIndexes = indexesWith(verdicts, 'held');
-  const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
+  const leftForCard =
+    scope === 'whole-set' ? wholeSetApproval(verdicts, ledgerOf(row.output)).leftForCard : [];
+  if (approvedIndexes.length === 0 && leftForCard.length > 0) {
+    throw new Error('only a ticket close Day0 held is waiting, and it is decided on its card');
+  }
+  const rejectedIndexes = awaiting.filter(
+    (index) => !approvedIndexes.includes(index) && !leftForCard.includes(index),
+  );
   await ctx.db.patch(args.workItemId, {
     approvedIndexes,
     applyPhase: 'approved',
+    // The mark is this approval's alone: an earlier one's, on a set a handover returned to held,
+    // never decides what this apply parks.
+    ...(leftForCard.length > 0
+      ? {
+          output: {
+            ...withoutLeftForCard(row.output as Record<string, unknown>),
+            [LEFT_FOR_CARD_KEY]: [...leftForCard],
+          },
+        }
+      : leftForCardOf(row.output).length > 0
+        ? { output: withoutLeftForCard(row.output as Record<string, unknown>) }
+        : {}),
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
   const approved = await ctx.db.get(args.workItemId);
@@ -6496,6 +6524,7 @@ async function approveActionsInTransaction(
       rejectedIndexes,
       refusedIndexes: indexesWith(verdicts, 'refused'),
       autoIndexes: indexesWith(verdicts, 'auto'),
+      ...(leftForCard.length > 0 ? { leftForCard: [...leftForCard] } : {}),
       decidedVia: via,
     },
     createdAt: Date.now(),
@@ -6582,6 +6611,7 @@ async function rejectActionsInTransaction(
   await settleWriteTargetClaims(ctx, args.workItemId, now);
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
+    waitingSince: Date.now(),
     skipReason,
     ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now } : {}),
     ...(output !== undefined ? { output } : {}),
@@ -6641,171 +6671,233 @@ export function providerTsToMs(ts: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-/** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
-export const resolveChannelDecision = internalMutation({
-  args: {
-    surfaceId: v.id('surfaces'),
-    userId: v.string(),
-    messageTs: v.string(),
-    reply: v.object({
-      verb: v.union(v.literal('approve'), v.literal('reject')),
-      id: v.string(),
-      reason: v.optional(v.string()),
-    }),
-  },
-  handler: async (ctx, args) => {
-    const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || surface.class !== 'chat') {
-      return { status: 'ignored' as const, reason: 'not a chat surface' };
-    }
-    // The first poll of a manager DM has no checkpoint and reads the channel's
-    // history, which on a reused workspace holds the codes of every earlier
-    // agent. A reply written before this agent was deployed cannot answer one
-    // of its requests, so it is neither logged nor answered.
-    const agent = await ctx.db.get(surface.agentId);
-    const messageAt = providerTsToMs(args.messageTs);
-    if (agent && messageAt !== null && messageAt < agent.createdAt) {
-      return { status: 'ignored' as const, reason: 'predates the agent' };
-    }
-    const ignored = async (reason: string) => {
-      await appendEvent(ctx, {
-        agentId: surface.agentId,
-        type: 'work.decision-ignored',
-        payload: {
+/** Why a reply naming a replaced request decided nothing, on its ignored event. */
+export const REPLACED_DECISION_REASON = 'the request was replaced by a newer one';
+
+/** The arguments of a manager's reply or press, as the channel resolves it. */
+const managerReplyArgs = {
+  surfaceId: v.id('surfaces'),
+  userId: v.string(),
+  messageTs: v.string(),
+  reply: v.object({
+    verb: v.union(v.literal('approve'), v.literal('reject')),
+    id: v.string(),
+    reason: v.optional(v.string()),
+  }),
+};
+
+/** A manager's reply in the DM, or a press of a request's button, read as a decision. */
+export type ManagerReply = ObjectType<typeof managerReplyArgs>;
+
+/**
+ * Apply one manager decision from the chat surface, a typed reply's or a button press's, inside
+ * the same transaction as the dashboard's controls: the sender checked against the card's
+ * manager, the code against the requests on this DM, a repeat answered once, a replaced code
+ * answered with the request that replaced it. A press reaches here exactly as a typed reply does
+ * (wave 12, 12-M), its `messageTs` the press's own timestamp.
+ *
+ * @param ctx - The decision's transaction.
+ * @param args - Who replied or pressed, on which card, when, and the decision read from it.
+ */
+export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) {
+  const surface = await ctx.db.get(args.surfaceId);
+  if (!surface || surface.class !== 'chat') {
+    return { status: 'ignored' as const, reason: 'not a chat surface' };
+  }
+  // The first poll of a manager DM has no checkpoint and reads the channel's
+  // history, which on a reused workspace holds the codes of every earlier
+  // agent. A reply written before this agent was deployed cannot answer one
+  // of its requests, so it is neither logged nor answered.
+  const agent = await ctx.db.get(surface.agentId);
+  const messageAt = providerTsToMs(args.messageTs);
+  if (agent && messageAt !== null && messageAt < agent.createdAt) {
+    return { status: 'ignored' as const, reason: 'predates the agent' };
+  }
+  const ignored = async (reason: string) => {
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'work.decision-ignored',
+      payload: {
+        surfaceId: surface._id,
+        messageTs: args.messageTs,
+        userId: args.userId,
+        reason,
+      },
+      createdAt: Date.now(),
+    });
+    return { status: 'ignored' as const, reason };
+  };
+  if (args.userId === surface.providerIdentityId) return await ignored('bot message');
+  if (!surface.managerUserId || args.userId !== surface.managerUserId) {
+    return await ignored('manager identity mismatch');
+  }
+  const unknown = async (reason: string) => {
+    const anchor = await managerReplyNoticeAnchor(ctx, surface);
+    const notified = anchor
+      ? await queueManagerReplyNotice(ctx, {
           surfaceId: surface._id,
+          workItemId: anchor._id,
+          decisionId: args.reply.id,
           messageTs: args.messageTs,
-          userId: args.userId,
-          reason,
+          kind: 'unknown',
+          text: `I couldn’t find decision ${args.reply.id}. Check the six-character code and try again.`,
+        })
+      : false;
+    return { ...(await ignored(reason)), notified };
+  };
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
+    )
+    .first();
+  if (!row?.decision) {
+    const batch = await ctx.db
+      .query('decisionBatches')
+      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+      .first();
+    if (batch) return await resolveChannelBatch(ctx, surface, batch, args);
+    const replaced = await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
+      )
+      .first();
+    if (!replaced) return await unknown('unknown decision id');
+    if (replaced.surfaceSlug !== surface.slug || replaced.channel !== surface.managerDmChannelId) {
+      return await unknown('decision belongs to another manager channel');
+    }
+    const answer = await replacedRequestAnswer(ctx, replaced);
+    const notified = await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: replaced.workItemId,
+      decisionId: replaced.decisionId,
+      messageTs: args.messageTs,
+      kind: 'replaced',
+      text: answer.text,
+    });
+    await ignored(REPLACED_DECISION_REASON);
+    return {
+      status: 'replaced' as const,
+      ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
+      notified,
+    };
+  }
+  if (
+    row.decision.surfaceSlug !== surface.slug ||
+    row.decision.channel !== surface.managerDmChannelId
+  ) {
+    return await unknown('decision belongs to another manager channel');
+  }
+
+  const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+  if (row.decision.decidedAt || row.state !== expectedState) {
+    // The intake reads its checkpoint boundary inclusively and re-reads anything that
+    // arrived during a sweep, so the very message that decided comes back on a later
+    // poll. That is the manager's one reply, not a duplicate: nothing to say.
+    if (row.decision.decidedTs === args.messageTs) {
+      return { status: 'already-decided' as const, notified: false };
+    }
+    if (!row.decision.duplicateNotifiedAt) {
+      await ctx.db.patch(row._id, {
+        decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
+      });
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.decision-duplicate',
+        payload: {
+          workItemId: row._id,
+          decisionId: row.decision.id,
+          messageTs: args.messageTs,
         },
         createdAt: Date.now(),
       });
-      return { status: 'ignored' as const, reason };
-    };
-    if (args.userId === surface.providerIdentityId) return await ignored('bot message');
-    if (!surface.managerUserId || args.userId !== surface.managerUserId) {
-      return await ignored('manager identity mismatch');
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendDecisionNotice, {
+        workItemId: row._id,
+        decisionId: row.decision.id,
+      });
+      return { status: 'already-decided' as const, notified: true };
     }
-    const unknown = async (reason: string) => {
-      const anchor = await managerReplyNoticeAnchor(ctx, surface);
-      const notified = anchor
-        ? await queueManagerReplyNotice(ctx, {
-            surfaceId: surface._id,
-            workItemId: anchor._id,
-            decisionId: args.reply.id,
-            messageTs: args.messageTs,
-            kind: 'unknown',
-            text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
-          })
-        : false;
-      return { ...(await ignored(reason)), notified };
-    };
-    const row = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_decision', (q) =>
-        q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
-      )
-      .first();
-    if (!row?.decision) {
-      const batch = await ctx.db
-        .query('decisionBatches')
-        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
-        .first();
-      if (!batch) return await unknown('unknown decision id');
-      return await resolveChannelBatch(ctx, surface, batch, args);
-    }
-    if (
-      row.decision.surfaceSlug !== surface.slug ||
-      row.decision.channel !== surface.managerDmChannelId
-    ) {
-      return await unknown('decision belongs to another manager channel');
-    }
+    return { status: 'already-decided' as const, notified: false };
+  }
 
-    const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
-    if (row.decision.decidedAt || row.state !== expectedState) {
-      // The intake reads its checkpoint boundary inclusively and re-reads anything that
-      // arrived during a sweep, so the very message that decided comes back on a later
-      // poll. That is the manager's one reply, not a duplicate: nothing to say.
-      if (row.decision.decidedTs === args.messageTs) {
-        return { status: 'already-decided' as const, notified: false };
-      }
-      if (!row.decision.duplicateNotifiedAt) {
-        await ctx.db.patch(row._id, {
-          decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
-        });
-        await appendEvent(ctx, {
-          agentId: row.agentId,
-          type: 'work.decision-duplicate',
-          payload: {
-            workItemId: row._id,
-            decisionId: row.decision.id,
-            messageTs: args.messageTs,
-          },
-          createdAt: Date.now(),
-        });
-        await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendDecisionNotice, {
+  let closesHeld = 0;
+  if (row.decision.kind === 'plan') {
+    if (args.reply.verb === 'approve') {
+      await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
+    } else {
+      await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
+    }
+  } else {
+    if (!row.pendingRunId) return await ignored('actions decision has no pending run');
+    // A Slack approval never shows the sentence a tripped close carries, so it decides every
+    // other held write and leaves that close for its card; a rejection takes it too (12-H).
+    const approval = wholeSetApproval(
+      verdictList(row.actionVerdicts, actionsOf(row.output).length),
+      ledgerOf(row.output),
+    );
+    closesHeld = approval.leftForCard.length;
+    if (args.reply.verb === 'approve') {
+      if (approval.approve.length === 0 && approval.leftForCard.length > 0) {
+        const notified = await queueManagerReplyNotice(ctx, {
+          surfaceId: surface._id,
           workItemId: row._id,
           decisionId: row.decision.id,
+          messageTs: args.messageTs,
+          kind: 'received',
+          text: closeOnCardNoticeText(row.decision.id),
         });
-        return { status: 'already-decided' as const, notified: true };
+        return { ...(await ignored(CLOSE_ONLY_ON_CARD_REASON)), notified };
       }
-      return { status: 'already-decided' as const, notified: false };
-    }
-
-    if (row.decision.kind === 'plan') {
-      if (args.reply.verb === 'approve') {
-        await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
-      } else {
-        await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
-      }
+      await approveActionsInTransaction(
+        ctx,
+        row,
+        {
+          workItemId: row._id,
+          pendingRunId: row.pendingRunId,
+          approvedIndexes: [...approval.approve],
+        },
+        { via: 'channel', messageTs: args.messageTs, scope: 'whole-set' },
+      );
     } else {
-      if (!row.pendingRunId) return await ignored('actions decision has no pending run');
-      if (args.reply.verb === 'approve') {
-        const actionCount = actionsOf(row.output).length;
-        const heldIndexes = indexesWith(verdictList(row.actionVerdicts, actionCount), 'held');
-        await approveActionsInTransaction(
-          ctx,
-          row,
-          {
-            workItemId: row._id,
-            pendingRunId: row.pendingRunId,
-            approvedIndexes: heldIndexes,
-          },
-          'channel',
-          args.messageTs,
-        );
-      } else {
-        await rejectActionsInTransaction(
-          ctx,
-          {
-            ...row,
-          },
-          {
-            workItemId: row._id,
-            pendingRunId: row.pendingRunId,
-            reason: args.reply.reason ?? '',
-          },
-          'channel',
-          args.messageTs,
-        );
-      }
+      await rejectActionsInTransaction(
+        ctx,
+        {
+          ...row,
+        },
+        {
+          workItemId: row._id,
+          pendingRunId: row.pendingRunId,
+          reason: args.reply.reason ?? '',
+        },
+        'channel',
+        args.messageTs,
+      );
     }
-    const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
-    const text =
-      args.reply.verb === 'approve'
-        ? row.decision.kind === 'plan'
-          ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
-          : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
-        : `${noun} ${row.decision.id} received. I won’t apply it.`;
-    await queueManagerReplyNotice(ctx, {
-      surfaceId: surface._id,
-      workItemId: row._id,
-      decisionId: row.decision.id,
-      messageTs: args.messageTs,
-      kind: 'received',
-      text,
-    });
-    return { status: 'decided' as const, outcome: args.reply.verb };
-  },
+  }
+  // A pause holds the step the approval queues at its claim: the notice says when it starts (W12-R15).
+  const text = decisionNoticeText({
+    id: row.decision.id,
+    verb: args.reply.verb,
+    kind: row.decision.kind,
+    hold: args.reply.verb === 'approve' ? await stepHoldOf(ctx.db, row.agentId) : undefined,
+    closesHeld,
+  });
+  await queueManagerReplyNotice(ctx, {
+    surfaceId: surface._id,
+    workItemId: row._id,
+    decisionId: row.decision.id,
+    messageTs: args.messageTs,
+    kind: 'received',
+    text,
+  });
+  return { status: 'decided' as const, outcome: args.reply.verb };
+}
+
+/** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
+export const resolveChannelDecision = internalMutation({
+  args: managerReplyArgs,
+  handler: async (ctx, args) => await resolveManagerReply(ctx, args),
 });
 
 /** Why a request whose message the DM no longer holds is sent again. */
@@ -6925,7 +7017,7 @@ const AWAITING_CONNECTION_VERDICTS: Readonly<Record<ReturnType<typeof verdictFor
  * @returns The surface's slug, or undefined when every approved write's surface is connected,
  *   ended or unknown (the gate decides those).
  */
-async function surfaceAwaitingConnection(
+export async function surfaceAwaitingConnection(
   db: QueryCtx['db'],
   row: Doc<'workItems'>,
   now: number,
@@ -6959,7 +7051,7 @@ async function surfaceAwaitingConnection(
  * @param row - The work item, `actions-pending` with its set approved.
  * @param missingSurface - The surface the write waits on.
  */
-async function parkOnConnection(
+export async function parkOnConnection(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   missingSurface: string,
@@ -6971,6 +7063,7 @@ async function parkOnConnection(
   };
   await ctx.db.patch(row._id, {
     state: 'deferred',
+    waitingSince: Date.now(),
     verdict,
     // Returned to evaluation, the item is planned again, as a send-back to drafting plans it.
     plan: undefined,
@@ -6995,107 +7088,8 @@ async function parkOnConnection(
   await scheduleNextStep(ctx, { ...row, state: 'deferred' });
 }
 
-/**
- * Take the approved actions for application, exactly once.
- *
- * The apply action is scheduled by `setActionsPending` (the auto phase) and
- * by `approveActions` (the manager's), and may be scheduled again after a
- * restart; whichever caller records the apply attempt on the row is the one
- * that applies. In the auto phase the row is still `executing` and the fence
- * is the absent attempt id; in the approved phase it moves the row from
- * `actions-pending` back to `executing`. The caller gets everything it needs
- * from the row so it never re-reads state that may have moved. The toggle is
- * read here, in the claim's transaction, so the apply backstop sees the
- * manager's latest word rather than the one the hold was decided under.
- */
-export const claimApprovedActions = internalMutation({
-  args: { workItemId: v.id('workItems') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<
-    | {
-        claimed: true;
-        agentId: Id<'agents'>;
-        runId: Id<'events'>;
-        pendingRunId: Id<'events'>;
-        applyAttemptId: Id<'events'>;
-        phase: 'auto' | 'approved';
-        approvedIndexes: number[];
-        heldIndexes: number[];
-        heldReasons: Array<[number, string]>;
-        autonomousActions: boolean;
-        replyTarget?: ReplyTarget;
-        output: unknown;
-      }
-    | { claimed: false; reason: string }
-  > => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-    const autoPhase =
-      row.state === 'executing' && row.applyPhase === 'auto' && row.applyAttemptId === undefined;
-    if (row.state !== 'actions-pending' && !autoPhase) {
-      return { claimed: false, reason: `workItem state is ${row.state}; expected actions-pending` };
-    }
-    if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
-    if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
-    // A manager's approval does not start its apply while the employee is being handed over
-    // (D18): the set returns to held at the move (D13). The auto phase belongs to a run already
-    // executing, which the move waits for.
-    if (!autoPhase && (await isBeingHandedOver(ctx.db, row.agentId))) {
-      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
-    }
-    // An approved write on a surface that waits for its connection (one a handover cut, for
-    // one) parks on it rather than meeting the gate's refusal: connecting it returns the item
-    // (U-3). The auto phase's rows were judged connected at the hold, so the gate keeps them.
-    const missingSurface = autoPhase
-      ? undefined
-      : await surfaceAwaitingConnection(ctx.db, row, Date.now());
-    if (missingSurface !== undefined) {
-      await parkOnConnection(ctx, row, missingSurface);
-      return { claimed: false, reason: `parked until ${missingSurface} is connected` };
-    }
-    // A missing agent row is the apply action's failure to report (it fences
-    // the run as outcome-unknown); the claim only needs the switch's value.
-    const agent = await ctx.db.get(row.agentId);
-    const applyAttemptId = await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.actions-applying',
-      payload: {
-        workItemId: args.workItemId,
-        runId: row.executionRunId ?? row.pendingRunId,
-        phase: autoPhase ? 'auto' : 'approved',
-      },
-      createdAt: Date.now(),
-    });
-    await ctx.db.patch(args.workItemId, {
-      state: 'executing',
-      applyAttemptId,
-      applyClaimedAt: Date.now(),
-    });
-    // The switch counts from the claim: an apply that started late still has
-    // its whole window before its outcomes are recorded as unknown (P9-1).
-    await armApplySwitch(ctx, args.workItemId, row.pendingRunId, autoPhase ? 'auto' : 'approved');
-    const count = actionsOf(row.output).length;
-    return {
-      claimed: true,
-      agentId: row.agentId,
-      runId: row.executionRunId ?? row.pendingRunId,
-      pendingRunId: row.pendingRunId,
-      applyAttemptId,
-      phase: autoPhase ? 'auto' : 'approved',
-      approvedIndexes: row.approvedIndexes,
-      heldIndexes: indexesWith(verdictList(row.actionVerdicts, count), 'held'),
-      heldReasons: refusedReasonEntries(row.actionVerdicts, count),
-      autonomousActions: agent ? autonomousActionsOn(agent) : false,
-      replyTarget: replyTargetFor(row),
-      output: row.output,
-    };
-  },
-});
-
 /** The output of an apply whose outcome is unknown, with its ledger as recovery records it. */
-interface InterruptedApplyLedger {
+export interface InterruptedApplyLedger {
   readonly output: {
     actions?: Array<{ tool?: unknown }>;
     actionIndexOffset?: unknown;
@@ -7105,16 +7099,20 @@ interface InterruptedApplyLedger {
 }
 
 /**
- * The ledger of an apply that was claimed and did not finish: every row this phase approved is
- * recorded with its outcome unknown, a row an earlier phase recorded keeps its entry, and every
- * other row keeps why it was not applied, as the apply's dead-man switch records it.
+ * The ledger of an apply that was claimed and did not finish: a row this phase approved keeps the
+ * outcome the apply reported for it before it stopped (P4-2) and is recorded with its outcome
+ * unknown when it reported none, a row an earlier phase recorded keeps its entry, and every other
+ * row keeps why it was not applied, as the apply's dead-man switch records it.
  *
  * @param row - The work item, `executing` with an apply claimed.
  * @param pendingRunId - The run the approval belongs to.
+ * @param end - What ended the apply: an interruption the recovery found, or a stop; the unreported
+ *   rows' reason says which (`outcomeUnknownReasonFor`).
  */
-function interruptedApplyLedger(
+export function interruptedApplyLedger(
   row: Doc<'workItems'>,
   pendingRunId: Id<'events'>,
+  end: ApplyEnd,
 ): InterruptedApplyLedger {
   const output = (row.output ?? {}) as {
     actions?: Array<{ tool?: unknown }>;
@@ -7132,22 +7130,32 @@ function interruptedApplyLedger(
       ? output.actionIndexOffset
       : 0;
   // In the auto phase a held row was never offered to the manager, so it
-  // keeps the reason the gate held it for; in the approved phase an
-  // unapproved held row is one the manager left out.
+  // keeps the reason the gate held it for; so does a close an approval left
+  // for its card (12-H), which the manager has not decided. In the approved
+  // phase any other unapproved held row is one the manager left out.
+  const leftForCard = new Set(leftForCardOf(row.output));
   const heldReasonFor = (index: number): string => {
     const verdict = verdicts[index];
     if (verdict.disposition === 'refused') return verdict.reason;
-    if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
+    if (verdict.disposition === 'held' && (row.applyPhase === 'auto' || leftForCard.has(index))) {
+      return verdict.reason;
+    }
     return HELD_NOT_APPROVED;
   };
+  // A row the apply reported before it stopped is kept as it reported (P4-2).
+  const reported = row.applyAttemptId
+    ? reportedRows(row.output, row.applyAttemptId)
+    : new Map<number, AppliedAction>();
   const applied = (output.actions ?? []).map((action, index): AppliedAction => {
     const earlier = prior[index];
     if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
+    const kept = approved.has(index) ? reported.get(index) : undefined;
+    if (kept) return kept;
     return {
       tool: typeof action.tool === 'string' ? action.tool : 'unknown',
       ok: !approved.has(index),
       ...(approved.has(index)
-        ? { reason: OUTCOME_UNKNOWN_REASON }
+        ? { reason: outcomeUnknownReasonFor(end) }
         : { held: true, reason: heldReasonFor(index) }),
       idempotencyKey: actionIdempotencyKey({
         workItemId: row._id,
@@ -7156,14 +7164,15 @@ function interruptedApplyLedger(
       }),
     };
   });
-  return { output, applied };
+  return { output: withoutLeftForCard(withoutApplyProgress(output)), applied };
 }
 
 /**
  * Recover an apply action that disappeared across a backend interruption.
  *
  * An unclaimed approved set - the manager's, or the gate's auto rows - is
- * safe to reschedule. Once an apply claim exists, the provider may already
+ * safe to reschedule, unless the employee or the deployment is paused, when it
+ * is held and the timer's chain ends there (12-P). Once an apply claim exists, the provider may already
  * have accepted a request, so recovery records every outcome of this phase
  * as unknown, keeps what an earlier phase already recorded, and refuses
  * automatic replay. A timer that fires on a claim younger than
@@ -7181,7 +7190,7 @@ export const recoverInterruptedApply = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
+  ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'held' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row || row.pendingRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
       return { recovered: 'ignored' };
@@ -7189,8 +7198,11 @@ export const recoverInterruptedApply = internalMutation({
     const unclaimedAuto =
       row.state === 'executing' && row.applyPhase === 'auto' && row.applyAttemptId === undefined;
     if ((row.state === 'actions-pending' && row.approvedIndexes !== undefined) || unclaimedAuto) {
-      await scheduleApply(ctx, args.workItemId, args.pendingRunId, args.phase);
-      return { recovered: 'rescheduled' };
+      // A pause schedules nothing, this timer's next round included: the resume's pass, or the
+      // sweep's, schedules the held set (12-P).
+      return (await scheduleApply(ctx, args.workItemId, args.pendingRunId, args.phase))
+        ? { recovered: 'rescheduled' }
+        : { recovered: 'held' };
     }
     if (row.state !== 'executing' || !row.applyAttemptId || !row.applyClaimedAt) {
       return { recovered: 'ignored' };
@@ -7198,10 +7210,11 @@ export const recoverInterruptedApply = internalMutation({
     if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
-    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId);
+    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId, 'interrupted');
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
+      waitingSince: Date.now(),
       skipReason: INTERRUPTED_APPLY_REASON,
       output: { ...output, applied },
       applyPhase: undefined,
@@ -7714,7 +7727,7 @@ async function waitingRowsOf(
           ]
         : [],
     ),
-    stopped: failedRows.filter((row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row)),
+    stopped: failedRows.filter(stoppedRowNeedsManager),
     proposed: surfaces.filter((surface) => surface.verdict === 'proposed'),
     connectable,
   };
@@ -7749,6 +7762,8 @@ export async function needsYouOfEmployee(
   now: number,
 ): Promise<NeedsYouEntry[]> {
   const waiting = await waitingRowsOf(ctx, agent._id, now);
+  // Only a row that entered its wait before the stamp existed is dated by reading events.
+  const unstamped = (row: Doc<'workItems'>): boolean => row.waitingSince === undefined;
   const [
     oneToOneSince,
     questions,
@@ -7774,16 +7789,21 @@ export async function needsYouOfEmployee(
       ctx,
       agent._id,
       ['work.plan-drafted'],
-      waiting.plans.filter((row) => row.planPendingAt === undefined),
+      waiting.plans.filter((row) => row.planPendingAt === undefined && unstamped(row)),
     ),
-    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
+    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held.filter(unstamped)),
     enteredAtByRow(
       ctx,
       agent._id,
       ['work.evaluated', 'work.evaluation-parked'],
-      waiting.parked.map(({ row }) => row),
+      waiting.parked.map(({ row }) => row).filter(unstamped),
     ),
-    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.failed', 'work.actions-interrupted'],
+      waiting.stopped.filter(unstamped),
+    ),
     enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
   ]);
 
@@ -7798,8 +7818,15 @@ export async function needsYouOfEmployee(
     waitingAtLeast: entered.atLeast,
   });
   const exact = (at: number): EnteredAt => ({ at, atLeast: false });
-  const enteredOf = (dates: Map<string, EnteredAt>, row: DatedRow): EnteredAt =>
-    dates.get(row._id) ?? exact(row._creationTime);
+  // A row stamped as it entered its wait is dated by the stamp; one that entered before the
+  // stamp existed, by its entering event as before.
+  const enteredOf = (
+    dates: Map<string, EnteredAt>,
+    row: DatedRow & Pick<Doc<'workItems'>, 'waitingSince'>,
+  ): EnteredAt =>
+    row.waitingSince !== undefined
+      ? exact(row.waitingSince)
+      : (dates.get(row._id) ?? exact(row._creationTime));
 
   return [
     ...(oneToOneSince !== null
@@ -7823,7 +7850,9 @@ export async function needsYouOfEmployee(
       ...base(
         `plan:${row._id}`,
         row.title,
-        row.planPendingAt !== undefined ? exact(row.planPendingAt) : enteredOf(planEntered, row),
+        row.waitingSince === undefined && row.planPendingAt !== undefined
+          ? exact(row.planPendingAt)
+          : enteredOf(planEntered, row),
       ),
       workItemId: row._id,
       questions: questions[index] ?? 0,
@@ -7900,7 +7929,7 @@ function transferEntryOf(transfer: IncomingTransfer): NeedsYouEntry {
  * first, for the needs-you inbox on the signed-in home (N7). Evaluation agents
  * and the baseline arm are left out, as on the roster. A handover is counted
  * in `total` and on no employee in `waitingByEmployee`, since its employee is
- * not the caller's yet. An anonymous caller gets an empty inbox. Writes
+ * not the caller's yet. A caller with no identity is refused (12-G). Writes
  * nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
@@ -7910,8 +7939,9 @@ export const needsYou = query({
   args: {},
   returns: needsYouValidator,
   handler: async (ctx): Promise<Infer<typeof needsYouValidator>> => {
-    const caller = await getCaller(ctx);
-    if (!caller?.ownerKey) return { entries: [], total: 0, waitingByEmployee: [] };
+    const caller = await getCallerOrThrow(ctx);
+    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
+    if (caller.ownerKey === '') return { entries: [], total: 0, waitingByEmployee: [] };
     const employees = (
       await ctx.db
         .query('agents')

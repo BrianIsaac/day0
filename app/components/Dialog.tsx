@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { keepTabInside, useModal } from './use-modal';
+import { useOverflows } from './use-overflows';
 
 /**
  * A modal dialog: centred over a dimmed page, focus moved into it when it opens and kept there
@@ -23,7 +25,10 @@ import { keepTabInside, useModal } from './use-modal';
  *
  * The body scrolls inside the panel, under the dimmed page's height; what a caller draws in a
  * {@link DialogFooter} sits in a strip below the body that never scrolls, so a long dialog's
- * answers stay in view at a phone's height (11-AC's item 13).
+ * answers stay in view at a phone's height (11-AC's item 13). While its content runs past its
+ * height the body is a keyboard stop of its own, a group named by the title, so a keyboard can
+ * scroll it when every control sits in the footer (the v0.15.0 walk's finding 3); one that fits
+ * adds no stop, and focus on it moves to the panel.
  *
  * @param title - The dialog's heading, which names it.
  * @param description - The sentence that says what the dialog is about, drawn under the heading
@@ -54,6 +59,17 @@ export function Dialog({
   const headingId = useId();
   const descriptionId = useId();
   const panel = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const scrolls = useOverflows(body, content);
+
+  // A body that held focus as a keyboard stop and then stops scrolling (a section folds, the
+  // phone turns) loses its stop: focus goes to the panel, never out of the modal to the page.
+  useEffect(() => {
+    if (!scrolls && body.current !== null && document.activeElement === body.current) {
+      panel.current?.focus();
+    }
+  }, [scrolls]);
   // The strip a DialogFooter draws into, once it is on the page.
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
 
@@ -94,16 +110,29 @@ export function Dialog({
         onKeyDown={onKeyDown}
         className="flex w-[min(560px,100%)] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-[14px] bg-[var(--color-card)] text-[var(--color-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)]"
       >
-        <div data-dialog-body="" className="grid min-h-0 gap-4 overflow-y-auto p-6">
-          <h2 id={headingId} className="text-lg font-semibold">
-            {title}
-          </h2>
-          {description !== undefined ? (
-            <p id={descriptionId} className="text-[15px] leading-relaxed text-[var(--color-fg-2)]">
-              {description}
-            </p>
-          ) : null}
-          <FooterSlot.Provider value={footer}>{children}</FooterSlot.Provider>
+        <div
+          ref={body}
+          data-dialog-body=""
+          // A body that scrolls takes keyboard focus, so its arrow keys reach what runs past the
+          // fold when every control sits in the footer: a group named by the title, quieter than
+          // a landmark of the dialog's own name. Its ring is drawn inside the panel's curve.
+          {...(scrolls ? { tabIndex: 0, role: 'group', 'aria-labelledby': headingId } : {})}
+          className="min-h-0 overflow-y-auto focus-visible:rounded-[12px] focus-visible:outline-offset-[-4px]"
+        >
+          <div ref={content} className="grid gap-4 p-6">
+            <h2 id={headingId} className="text-lg font-semibold">
+              {title}
+            </h2>
+            {description !== undefined ? (
+              <p
+                id={descriptionId}
+                className="text-[15px] leading-relaxed text-[var(--color-fg-2)]"
+              >
+                {description}
+              </p>
+            ) : null}
+            <FooterSlot.Provider value={footer}>{children}</FooterSlot.Provider>
+          </div>
         </div>
         <div
           ref={setFooter}

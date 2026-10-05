@@ -95,6 +95,18 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a pause and a resume, with the reason the manager gave (12-P)', (): void => {
+    expect([
+      eventLabel({ type: 'agent.paused', payload: { reason: 'Quarter close.' } }),
+      eventLabel({ type: 'agent.paused', payload: {} }),
+      eventLabel({ type: 'agent.resumed', payload: { pausedAt: 1 } }),
+    ]).toEqual([
+      'paused by the manager: Quarter close',
+      'paused by the manager',
+      'resumed by the manager',
+    ]);
+  });
+
   it('labels the eleven wave 3 types the review found printed raw (m37)', (): void => {
     const labels = [
       eventLabel({
@@ -227,6 +239,25 @@ describe('the live feed labels', (): void => {
     expect(eventLabel({ type: 'organisation.connection-rotated', payload: named })).toBe(
       "Slack: the organisation connection's secret rotated",
     );
+    expect(
+      eventLabel({
+        type: 'organisation.connection-corrected',
+        payload: { ...named, via: 'setup-cli', redirectCorrected: true, scopes: ['chat:write'] },
+      }),
+    ).toBe("Slack: the organisation connection's recorded redirect and scopes corrected");
+    // The round review's m13: an MCP connection landed with no issuer has it recorded in place.
+    expect(
+      eventLabel({
+        type: 'organisation.connection-corrected',
+        payload: {
+          organisationConnectionId: 'c2',
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          via: 'setup-cli',
+          issuerRecorded: true,
+        },
+      }),
+    ).toBe("auth.acme.test: the organisation connection's issuer recorded");
     expect(
       eventLabel({
         type: 'organisation.connection-revoked',
@@ -368,6 +399,19 @@ describe('the live feed labels', (): void => {
     ).toBe('Linear shared app token revoked at Linear');
   });
 
+  it('labels each answer to a decision reply by what it said, a replaced request included (12-S3)', (): void => {
+    const answered = (kind: string): string =>
+      eventLabel({
+        type: 'work.decision-acknowledging',
+        payload: { workItemId: 'w1', decisionId: 'abc234', messageTs: '1.2', kind },
+      });
+    expect(answered('received')).toBe('a decision reply acknowledged');
+    expect(answered('unknown')).toBe('a reply with no open request answered');
+    expect(answered('replaced')).toBe(
+      'a reply to a replaced request answered with the request that replaced it',
+    );
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({
@@ -382,6 +426,24 @@ describe('the live feed labels', (): void => {
       }),
     ).toBe(
       'credential "linear service token" no longer in the documentation (runbooks/linear.md); land one again on 2 cards',
+    );
+  });
+
+  it('says a page swap bound the new value on the cards the old one held (N23; 12-S3)', (): void => {
+    expect(
+      eventLabel({
+        type: 'credential.superseded',
+        payload: {
+          credentialId: 'c1',
+          label: 'linear service token',
+          sourceId: 'd1',
+          page: 'runbooks/linear.md',
+          surfaceIds: [],
+          reboundSurfaceIds: ['s1'],
+        },
+      }),
+    ).toBe(
+      'credential "linear service token" replaced in the documentation (runbooks/linear.md); the new value bound on 1 card',
     );
   });
 
@@ -680,5 +742,22 @@ describe('the labels of an end of access at the vendor (11-AR)', (): void => {
         payload: { by: 'organisation', reason: 'revoked by IT' },
       }),
     ).toBe("disconnected: the organisation's connection was revoked (revoked by IT)");
+  });
+});
+
+describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-1)', (): void => {
+  it('says the approval left the close for its card, and that the close waits there', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.actions-approved',
+        payload: { approvedIndexes: [0, 3], leftForCard: [1], decidedVia: 'channel' },
+      }),
+    ).toBe('2 actions approved from the chat surface; the ticket close left for its card');
+    expect(
+      eventLabel({
+        type: 'work.actions-pending',
+        payload: { heldIndexes: [1], leftForCard: true },
+      }),
+    ).toBe('ticket close held, waiting on its card');
   });
 });

@@ -7,7 +7,7 @@ import type { FunctionReference } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import {
   actsAsLinearApp,
   linearProbeIdentity,
@@ -17,6 +17,7 @@ import {
 import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import type { KeptSweepPage } from './keptIdentities';
 import { relevantSystemText } from './orientationActions';
+import { runOpenMessagesTab } from './slackMessagesTabActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
@@ -83,6 +84,9 @@ const SLACK_METHOD_DEFAULTS = [
   // Marks Day0's own decision request decided in the manager DM; optional,
   // so a policy that does not name it leaves the request as sent.
   'chat.update',
+  // Names the asker of an ask intake takes; optional, so a policy that does
+  // not name it leaves the ask under the asker's id.
+  'users.info',
 ] as const;
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
@@ -138,6 +142,11 @@ interface ProbeDependencies {
   wait?(milliseconds: number): Promise<void>;
   /** Linear's issuer for a card acting as a Linear app; the probe's own unless a test replaces it. */
   linearIdentity?: LinearProbeIdentity;
+  /**
+   * Opens the messages tab of a Slack card's own app Day0 created before this release (W12V-7);
+   * the network one unless a test replaces it.
+   */
+  openMessagesTab?: (ctx: ActionCtx, surfaceId: Id<'surfaces'>) => Promise<unknown>;
 }
 
 export interface ProbeOutcome {
@@ -1625,6 +1634,9 @@ export async function runSurfaceProbe(
       if (!recorded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (surface.path === 'documented-api' && surface.provisioning !== undefined) {
+        await openMessagesTabOf(ctx, surfaceId, dependencies);
+      }
       return {
         verdict: 'connected',
         toolAllowlist,
@@ -1648,10 +1660,31 @@ export async function runSurfaceProbe(
   return { verdict: 'skipped', reason: 'The approved surface ladder was exhausted.' };
 }
 
+/**
+ * Bring a connected Slack card's own app over to taking messages, when Day0 created it before this
+ * release with a connection still active (W12V-7). A refusal is logged and leaves the probe's
+ * verdict alone: the card's typed-code row then still says what a person can turn on.
+ */
+async function openMessagesTabOf(
+  ctx: ActionCtx,
+  surfaceId: Id<'surfaces'>,
+  dependencies: ProbeDependencies,
+): Promise<void> {
+  try {
+    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId);
+  } catch (error: unknown) {
+    log.warn('slack app messages tab not opened', {
+      surfaceId,
+      reason: safeFailureMessage(error, '', 'Slack refused the update.'),
+    });
+  }
+}
+
 /** Owner-checked shell and UI entry point for a deliberate probe. */
 export const probe = action({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<ProbeOutcome> => {
+    await getCallerOrThrow(ctx);
     const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, args);
     if (!context) throw new Error('Surface not found.');
     await assertOwnsAgentAction(ctx, context.surface.agentId);
@@ -1730,6 +1763,7 @@ export function credentialLandingRefusal(
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
   handler: async (ctx, args): Promise<{ landed: true; probeScheduled: boolean }> => {
+    await getCallerOrThrow(ctx);
     const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
       surfaceId: args.surfaceId,
     });

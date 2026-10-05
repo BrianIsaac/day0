@@ -3,8 +3,11 @@ import { createRequire } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// The gate stands open here: these tests read the header a signed-in manager sees, and what a
+// signed-out visitor's closed gate hides is the gate's own test (`Providers.signed-out.test.tsx`).
 vi.mock('../../app/Providers', () => ({
   Providers: ({ children }: { children: React.ReactNode }) => children,
+  SessionGate: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
 vi.mock('@clerk/nextjs', () => ({

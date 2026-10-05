@@ -12,8 +12,10 @@ import {
 } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
+
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -3973,5 +3975,155 @@ describe('the re-check triggers on a surface (10-C, A13)', (): void => {
       recheckDueAt: undefined,
       recheckReason: undefined,
     });
+  });
+});
+
+describe('surfaces.installRedirectConfigured', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('tells a signed-in caller whether the deployment has a public address, and refuses an anonymous one (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('DAY0_PUBLIC_URL', 'https://day0.example.test');
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.surfaces.installRedirectConfigured, {}),
+    ).resolves.toBe(true);
+    await expect(harness.query(api.surfaces.installRedirectConfigured, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+});
+
+describe('the anonymous-caller guard before the mode and the card (12-G)', (): void => {
+  it.each(['mock', 'real'] as const)(
+    'refuses a caller with no identity before it says the mode or whether the card exists (%s)',
+    async (mode): Promise<void> => {
+      useSurfaceMode(mode);
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await goneRowOf(harness, 'surfaces');
+      const refusal = await guardRefusal();
+      await expect(harness.mutation(api.surfaces.approve, { surfaceId })).rejects.toMatchObject(
+        refusal,
+      );
+      await expect(
+        harness.mutation(api.surfaces.approveTools, { surfaceId, tools: ['read'] }),
+      ).rejects.toMatchObject(refusal);
+      await expect(harness.mutation(api.surfaces.disconnect, { surfaceId })).rejects.toMatchObject(
+        refusal,
+      );
+      await expect(
+        harness.mutation(api.surfaces.reject, { surfaceId, reason: 'no' }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.mutation(api.surfaces.requestProposal, { surfaceId }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        harness.mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
+});
+
+describe('listForAgent: whether a manager channel’s requests carry buttons (wave 12, 12-M; RM3)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function seedSlackCard(
+    harness: TestConvex<typeof schema>,
+    withToken: boolean,
+  ): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const row = async (label: string): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: 1,
+        });
+      const secret = await row('Mateo (Day0) client secret');
+      const appLevel = withToken ? await row('Mateo (Day0) app-level token') : undefined;
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialLanded: true,
+        provisioning: {
+          appId: 'A0MATEO',
+          appName: 'Mateo (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.example/api/oauth/slack',
+          scopes: [],
+          createdAt: 1,
+          installedAt: 2,
+          ...(appLevel === undefined ? {} : { appLevelTokenCredentialId: appLevel }),
+        },
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'declared',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      });
+      return agentId;
+    });
+  }
+
+  it('says buttons are on for an app with its token where the bridge runs, and why not otherwise', async (): Promise<void> => {
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const withToken = await seedSlackCard(harness, true);
+    const without = await seedSlackCard(harness, false);
+    const buttonsOf = async (agentId: Id<'agents'>): Promise<unknown[]> =>
+      (await owner.query(api.surfaces.listForAgent, { agentId })).map((card) => [
+        card.slug,
+        card.decisionButtons,
+      ]);
+    expect(await buttonsOf(withToken)).toEqual(
+      expect.arrayContaining([
+        ['slack', { available: true }],
+        ['linear', undefined],
+      ]),
+    );
+    expect(await buttonsOf(without)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-app-level-token' },
+    ]);
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
+    // Re-pinned for W12-R18: the bridge is read before the token and says whether one is stored.
+    expect(await buttonsOf(withToken)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-bridge', tokenStored: true },
+    ]);
+    expect(await buttonsOf(without)).toContainEqual([
+      'slack',
+      { available: false, why: 'no-bridge', tokenStored: false },
+    ]);
   });
 });

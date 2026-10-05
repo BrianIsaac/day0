@@ -7,11 +7,17 @@ import {
   justLanded,
   landedPlaces,
   TICKET_REREAD_STOP,
+  notDoneOnCard,
+  unfinishedInOwnWords,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   ticketRereadStopReason,
   withheldBeforeFirstWrite,
 } from '../../../../../src/work/ticket-ownership';
+import {
+  INTERRUPTED_APPLY_REASON,
+  type ReconciliationEntry,
+} from '../../../../../src/work/reconciliation';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -128,5 +134,120 @@ describe('the landing moment’s key (M7)', (): void => {
     expect([...justLanded('0', [0, 2, 3])]).toEqual([2, 3]);
     expect([...justLanded('', [0])]).toEqual([0]);
     expect([...justLanded(undefined, [0, 1])]).toEqual([]);
+  });
+});
+
+describe('a stop the manager made, in the card’s words (wave 12)', (): void => {
+  const unknownWrite = {
+    actions: [
+      {
+        tool: 'http.request',
+        args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', body: '{}' },
+      },
+    ],
+    applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+  };
+  const unknownEntry: ReconciliationEntry = {
+    phase: 'single',
+    actionIndex: 0,
+    tool: 'http.request',
+    outcome: 'outcome-unknown',
+  };
+
+  it('says you stopped it, with your reason quoted once, and what is left to check', (): void => {
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager: The variance note is wrong.',
+        output: unknownWrite,
+      }),
+    ).toBe(
+      'You stopped the run: “The variance note is wrong.” A write landed or may have; confirm the provider below before Retry.',
+    );
+  });
+
+  it('says an interrupted apply in a manager’s words, not the engine’s (W12-R9, from the bed)', (): void => {
+    expect(failedItemReason({ skipReason: INTERRUPTED_APPLY_REASON, output: unknownWrite })).toBe(
+      'Day0 was interrupted while sending the writes you approved, so some may have landed: confirm each one below before Retry.',
+    );
+    expect(
+      failedItemReason({
+        skipReason: INTERRUPTED_APPLY_REASON,
+        output: { actions: [], applied: [] },
+      }),
+    ).toBe(
+      'Day0 was interrupted while sending the writes you approved and cannot say which went out: check them where they were going, then close this item.',
+    );
+  });
+
+  it('ends the quoted reason with a full stop when the manager gave none (W12-R9)', (): void => {
+    expect(
+      failedItemReason({
+        skipReason:
+          'stopped: stopped by the manager: Wrong quarter, stopping before anything is sent',
+      }),
+    ).toBe(
+      'You stopped the run: “Wrong quarter, stopping before anything is sent”. Nothing landed, so there is nothing to check.',
+    );
+  });
+
+  it('says nothing landed when nothing did, and gives no reason you did not give', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: stopped by the manager' })).toBe(
+      'You stopped the run. Nothing landed, so there is nothing to check.',
+    );
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager',
+        output: unknownWrite,
+        providerReconciliation: { entries: [{ ...unknownEntry, answer: 'landed' }] },
+      }),
+    ).toBe(
+      'You stopped the run. A write landed before it stopped; a retry does not send it again.',
+    );
+    // A reconciliation recorded before the per-entry answers is asked again (W12-R3, D-9 (a)).
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: stopped by the manager',
+        output: unknownWrite,
+        providerReconciliation: { entries: [unknownEntry] },
+      }),
+    ).toBe(
+      'You stopped the run. A write landed or may have; confirm the provider below before Retry.',
+    );
+  });
+});
+
+describe('what a finished run says it did not do (the 4 October demo)', (): void => {
+  it('quotes at most three clauses, the first ones the run wrote', (): void => {
+    expect(
+      unfinishedInOwnWords({
+        draft:
+          "I could not reconcile the deals. I can't find them. Nothing was reconciled. The list is not yet identified.",
+        notes: '',
+      }),
+    ).toEqual([
+      'I could not reconcile the deals.',
+      "I can't find them.",
+      'Nothing was reconciled.',
+    ]);
+  });
+});
+
+describe('what the card says was not done follows the run’s answer (12-D)', (): void => {
+  it('says nothing for a run that answered done, the why for partial and not-done, and the old reading with no answer', (): void => {
+    const words = 'I could not find a mismatch between the tracker and the export.';
+    expect(
+      notDoneOnCard({ draft: words, notes: '', workDone: 'done', workDoneWhy: 'All match.' }),
+    ).toBeUndefined();
+    expect(
+      notDoneOnCard({ draft: words, notes: '', workDone: 'partial', workDoneWhy: 'Two remain.' }),
+    ).toEqual({ answer: 'partial', statements: ['Two remain.'] });
+    expect(
+      notDoneOnCard({ draft: 'Done.', notes: '', workDone: 'not-done', workDoneWhy: 'No list.' }),
+    ).toEqual({ answer: 'not-done', statements: ['No list.'] });
+    expect(notDoneOnCard({ draft: words, notes: '' })).toEqual({
+      answer: 'not-done',
+      statements: [words],
+    });
+    expect(notDoneOnCard({ draft: 'Reconciled all three.', notes: '' })).toBeUndefined();
   });
 });

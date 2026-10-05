@@ -1,6 +1,6 @@
 {
   "name": "day0",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -30,6 +30,7 @@
     "check:setup": "tsx scripts/check-setup.ts",
     "check:sign-in": "tsx scripts/check-sign-in.ts",
     "check:access": "tsx scripts/check-access.ts",
+    "check:anonymous": "tsx scripts/check-anonymous.ts",
     "fixtures:substitute": "tsx scripts/fixture-substitution.ts",
     "demo:bed": "tsx scripts/demo-bed.ts",
     "test": "vitest run",

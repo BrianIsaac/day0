@@ -12,7 +12,7 @@ import type { SurfaceRecord } from '../src/surfaces/types';
 import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
 import type { MockAction } from '../src/work/types';
-import { assertOwnsAgent, getCaller } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
@@ -1371,16 +1371,15 @@ async function heldEmployees(
 }
 
 /**
- * Public, any caller; reads only the caller's own: the supervision figures of
+ * Public, any signed-in caller; reads only the caller's own: the supervision figures of
  * the caller's company, each employee's own figures and the company row, each
  * employee counted within the spans the caller held it (D12 (a)). Writes
- * nothing. An anonymous caller gets `null`.
+ * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwner = query({
   args: {},
-  handler: async (ctx): Promise<OwnerMetrics | null> => {
-    const identity = await getCaller(ctx);
-    if (!identity) return null;
+  handler: async (ctx): Promise<OwnerMetrics> => {
+    const identity = await getCallerOrThrow(ctx);
     const { agents, handovers } = await heldEmployees(ctx, identity.ownerKey);
     const selection = selectCompanyEmployees(
       agents,

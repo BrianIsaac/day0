@@ -16,8 +16,14 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
-import type { ReconciliationEntry } from '@/work/reconciliation';
-import { type ReactNode, useState } from 'react';
+import {
+  outcomeUnknownDetail,
+  type GivenAnswer,
+  type ReconciliationAnswer,
+  type ReconciliationEntry,
+  type Reconciler,
+} from '@/work/reconciliation';
+import { type ReactNode, useId, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
@@ -560,43 +566,112 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
   );
 }
 
+/** How many of the entries the manager has answered so far. */
+function answeredCount(
+  entries: readonly ReconciliationEntry[],
+  answers: ReadonlyMap<string, ReconciliationAnswer>,
+): number {
+  return entries.filter((entry) => answers.has(entryKey(entry))).length;
+}
+
+/** A reconciliation once recorded: when, and who recorded it in the card's words (`reconcilerOf`). */
+export interface RecordedReconciliation {
+  readonly confirmedAt: number;
+  /** Who recorded it; absent when the page does not know the employee's manager. */
+  readonly by?: Reconciler;
+}
+
+/** The words before the reconciliation's time: who verified it, when the card knows. */
+function verifiedBy(by: Reconciler | undefined): string {
+  switch (by) {
+    case undefined:
+      return 'Verified at';
+    case 'you':
+      return 'Verified by you at';
+    case 'previous-manager':
+      return 'Verified by a previous manager at';
+  }
+}
+
+/** One entry the checklist shows: the ledger's entry, and what its action does in the manager's words. */
+export interface ReconciliationRow extends ReconciliationEntry {
+  /** The action's summary (`summariseAction`), when the card can read the action. */
+  readonly summary?: string;
+}
+
+/** Where an entry sits in a run of two phases, said plainly; nothing for a run of one. */
+function phaseWords(phase: ReconciliationEntry['phase']): string {
+  switch (phase) {
+    case 'single':
+      return '';
+    case 'prerequisite':
+      return ' · prerequisites';
+    case 'closing':
+      return ' · closing actions';
+  }
+}
+
 /** An entry's place in the run, the checklist's key for it. */
 function entryKey(entry: ReconciliationEntry): string {
   return `${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`;
 }
 
+/** Whether the manager is asked about an entry: only a write whose outcome is unknown (W12V-14). */
+function asked(entry: ReconciliationEntry): boolean {
+  return entry.outcome === 'outcome-unknown';
+}
+
 /**
- * The checklist a run shows before a retry when a write landed or may have (U17 D1): each entry
- * the provider must be checked for, what the ledger recorded of it, and a tick per entry once the
- * manager has looked; the confirmation is recorded once, for all of them, and only then does
- * Retry open. A retry never sends a write the manager has not accounted for.
+ * What a reconciled entry came to, and whose word it is: the manager's answer where they gave one,
+ * and Day0's own record for a write it recorded as landed and never asked about (W12X-3), however
+ * an earlier build stored that entry.
+ */
+function reconciledWords(entry: ReconciliationEntry): string | undefined {
+  if (entry.answer === 'not-sent') return 'You said it was not sent.';
+  if (!asked(entry)) return 'Day0 recorded it as landed.';
+  return entry.answer === 'landed' ? 'You said it landed.' : undefined;
+}
+
+/**
+ * The checklist a run shows before a retry when a write landed or may have (U17 D1, answered per
+ * entry since wave 12): each entry the provider must be checked for, what the ledger recorded of
+ * it, and, for a write whose outcome is unknown, the manager's answer, that it landed or that it
+ * was not sent. A write the ledger records as landed, with the provider's own id where it gave one,
+ * is shown as landed and asked nothing (W12V-14; the server owes it no answer either), and once
+ * reconciled reads as Day0's record, never as the manager's answer (W12X-3). Every
+ * unknown entry is answered before the confirmation is recorded, and only then does Retry open; a
+ * retry never sends again a write that landed or was answered landed, and sends afresh one
+ * answered not sent.
  *
  * @param entries - The entries to check, from the run's ledger.
- * @param reconciliation - Who confirmed the check and when, once they did.
+ * @param reconciliation - When the check was confirmed and who confirmed it, once they did.
+ * @param askedAgain - The run was confirmed as a whole before Day0 asked about each write, so it
+ *   is asked again (W12-R3, D-9 (a)).
  * @param busy - A decision on the card is in flight; the confirmation waits for it.
- * @param onConfirm - Record the manager's check; the card says what it came to.
+ * @param onConfirm - Record the answers; the card says what it came to.
  */
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
+  askedAgain = false,
   busy = false,
   onConfirm,
 }: {
-  entries: readonly ReconciliationEntry[];
-  reconciliation?: { actor: string; confirmedAt: number };
+  entries: readonly ReconciliationRow[];
+  reconciliation?: RecordedReconciliation;
+  askedAgain?: boolean;
   busy?: boolean;
-  onConfirm: () => void;
+  onConfirm: (answers: readonly GivenAnswer[]) => void;
 }) {
   const zone = useAgentZone();
-  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
-  const all = entries.length > 0 && entries.every((entry) => checked.has(entryKey(entry)));
-  const toggle = (key: string, on: boolean): void =>
-    setChecked((current) => {
-      const next = new Set(current);
-      if (on) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+  const group = useId();
+  const [answers, setAnswers] = useState<ReadonlyMap<string, ReconciliationAnswer>>(
+    () => new Map(),
+  );
+  const questions = entries.filter(asked);
+  const all = entries.length > 0 && questions.every((entry) => answers.has(entryKey(entry)));
+  const answer = (key: string, value: ReconciliationAnswer): void =>
+    setAnswers((current) => new Map(current).set(key, value));
   return (
     <div className="grid gap-2 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-3.5 py-3">
       <p className="text-[15px] font-medium text-[var(--color-warn)]">
@@ -604,52 +679,92 @@ export function ProviderReconciliationControl({
       </p>
       {reconciliation ? null : (
         <p className="text-[13px] text-[var(--color-fg-2)]">
-          Check each entry on the provider before a retry, so nothing that landed is sent twice.
-          Tick each once you have looked; the check is recorded for all of them.
+          {askedAgain
+            ? 'You confirmed this run as a whole before Day0 asked about each write, so each is asked again. '
+            : null}
+          {questions.length > 0
+            ? 'Check each write whose outcome is unknown on the provider before a retry, and say whether it landed or was not sent: a retry never sends again a write you say landed, nor one Day0 recorded as landed.'
+            : 'Each write below landed, as Day0 recorded it from the provider: a retry never sends one again. Confirm to open Retry.'}
         </p>
       )}
       {entries.length > 0 ? (
-        <ul className="grid gap-1.5 text-sm text-[var(--color-fg)]">
-          {entries.map((entry) => {
+        <ul className="grid text-sm text-[var(--color-fg)] [&>li+li]:mt-2 [&>li+li]:border-t [&>li+li]:border-[var(--color-warn-line)] [&>li+li]:pt-2">
+          {entries.map((entry, index) => {
             const key = entryKey(entry);
+            const verdict = reconciliation ? reconciledWords(entry) : undefined;
             const words = (
               <span className="grid min-w-0 gap-0.5 break-words">
-                <span className="font-mono text-[13px]">
-                  {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
-                  {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
+                {/* Named by what it does (W12-R9); the ledger's place and key stay to hand. */}
+                <span className="font-medium">
+                  {entry.summary ?? (entry.effect ? clipLedgerRow(entry.effect) : 'A write')}
                 </span>
-                {entry.effect ? <span>{clipLedgerRow(entry.effect)}</span> : null}
-                {entry.reason ? <span>{entry.reason}</span> : null}
+                <span className="text-[13px] text-[var(--color-fg-2)]">
+                  {entry.outcome === 'outcome-unknown' ? 'Outcome unknown' : 'Landed'}
+                  {phaseWords(entry.phase)}
+                </span>
+                {entry.effect && entry.summary && clipLedgerRow(entry.effect) !== entry.summary ? (
+                  <span>{clipLedgerRow(entry.effect)}</span>
+                ) : null}
+                {entry.reason ? (
+                  <span>{outcomeUnknownDetail(entry.reason) ?? entry.reason}</span>
+                ) : null}
                 {entry.providerId ? (
                   <span className="font-mono text-[13px] text-[var(--color-muted)]">
                     provider id {entry.providerId}
                   </span>
                 ) : null}
-                {entry.idempotencyKey ? (
-                  <span className="font-mono text-[13px] text-[var(--color-muted)]">
-                    idempotency key {entry.idempotencyKey}
-                  </span>
+
+                {verdict ? (
+                  <span className="text-[13px] text-[var(--color-fg)]">{verdict}</span>
                 ) : null}
               </span>
             );
+            // Outside the legend, which takes phrasing content only.
+            const ledgerKey = entry.idempotencyKey ? (
+              <Disclosure summary="Ledger key (for support)">
+                <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
+                  {entry.idempotencyKey}
+                </span>
+              </Disclosure>
+            ) : null;
+            if (reconciliation || !asked(entry)) {
+              return (
+                <li key={key} className="min-w-0">
+                  {words}
+                  {ledgerKey}
+                </li>
+              );
+            }
+            const name = `${group}-${index}`;
             return (
-              <li key={key}>
-                {reconciliation ? (
-                  words
-                ) : (
-                  <label className="grid min-h-11 cursor-pointer grid-cols-[44px_minmax(0,1fr)] items-start">
-                    <span className="flex min-h-11 items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={checked.has(key)}
-                        disabled={busy}
-                        onChange={(event) => toggle(key, event.target.checked)}
-                        className="size-[18px] accent-[var(--color-accent)]"
-                      />
-                    </span>
-                    <span className="py-2.5">{words}</span>
-                  </label>
-                )}
+              <li key={key} className="min-w-0">
+                <fieldset className="grid min-w-0 gap-1.5" disabled={busy}>
+                  <legend className="min-w-0">{words}</legend>
+                  <span className="flex flex-wrap gap-x-4">
+                    {(
+                      [
+                        ['landed', 'It landed'],
+                        ['not-sent', 'It was not sent'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <label
+                        key={value}
+                        className="inline-flex min-h-11 cursor-pointer items-center gap-2.5"
+                      >
+                        <input
+                          type="radio"
+                          name={name}
+                          value={value}
+                          checked={answers.get(key) === value}
+                          onChange={() => answer(key, value)}
+                          className="size-[18px] accent-[var(--color-accent)]"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </span>
+                </fieldset>
+                {ledgerKey}
               </li>
             );
           })}
@@ -661,7 +776,7 @@ export function ProviderReconciliationControl({
       )}
       {reconciliation ? (
         <p className="text-[13px] text-[var(--color-muted)]">
-          Verified by <span className="font-mono">{reconciliation.actor}</span> at{' '}
+          {verifiedBy(reconciliation.by)}{' '}
           <time
             dateTime={new Date(reconciliation.confirmedAt).toISOString()}
             title={clockTimeWithSeconds(reconciliation.confirmedAt, zone)}
@@ -671,10 +786,31 @@ export function ProviderReconciliationControl({
           . Retry is enabled.
         </p>
       ) : (
-        <div>
-          <Button size="small" disabled={!all || busy || entries.length === 0} onClick={onConfirm}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="small"
+            aria-describedby={questions.length > 0 ? `${group}-answered` : undefined}
+            disabled={!all || busy || entries.length === 0}
+            onClick={() =>
+              // Only the writes asked about carry an answer (W12X-3): one Day0 recorded as
+              // landed stays as it recorded it, and the retry never sends it again.
+              onConfirm(
+                questions.flatMap((entry): GivenAnswer[] => {
+                  const answer = answers.get(entryKey(entry));
+                  return answer === undefined
+                    ? []
+                    : [{ phase: entry.phase, actionIndex: entry.actionIndex, answer }];
+                }),
+              )
+            }
+          >
             Confirm reconciliation
           </Button>
+          {questions.length > 0 ? (
+            <span id={`${group}-answered`} className="text-[13px] text-[var(--color-fg-2)]">
+              {answeredCount(questions, answers)} of {questions.length} answered
+            </span>
+          ) : null}
         </div>
       )}
     </div>

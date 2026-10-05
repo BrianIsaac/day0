@@ -4,6 +4,7 @@ import { parseSetupArguments } from '../../../scripts/setup';
 import { ACCESS_KIT, type AccessKitSystem } from '../../../src/surfaces/access-kit';
 import { linearKitManifest } from '../../../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../../../src/surfaces/access-kit/slack';
+import { decisionButtonsWords } from '../../../app/agent/[agentId]/surfaces/card-words';
 
 /**
  * The access recipes are what we run with a customer's IT, so each is pinned to the kit
@@ -159,6 +160,10 @@ describe('the access recipes', (): void => {
     expect(row('`scopes` GAP, landed without')).toContain('land it again');
     expect(row('`scopes` GAP, landed without')).not.toContain('--correct');
     expect(row('`identity` GAP, no issuer')).toContain('land it again');
+    // The round review's m13: a public client's issuer is recorded in place, ending no card.
+    expect(row('`identity` GAP, no issuer')).toContain(
+      '`./setup.sh access --correct <system>` records the issuer',
+    );
     expect(row('`reach` GAP')).toContain('SSL_CERT_FILE');
     expect(row('`reach` WARN')).toContain('./setup.sh resume');
   });
@@ -170,5 +175,30 @@ describe('the access recipes', (): void => {
     ]) {
       expect(page(path), path).not.toContain('\u2014');
     }
+  });
+});
+
+describe('the Slack recipe and the card it describes', (): void => {
+  it('quotes the title the card shows once the buttons are on (W12-R17)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    const { title } = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
+    expect(text).toContain(`The card then says "${title}"`);
+  });
+
+  it('gives the App Home toggle only for the cases a live card is in (W12X-4)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    // A revoke ends every card on the connection and Day0 never installs such an app again, so
+    // no live card has an app whose creating connection was revoked.
+    expect(text).not.toContain('the connection that created it was revoked');
+    expect(text).toContain(
+      'Where Day0 cannot (the app was created with a configuration token pasted on its card, the connection that created it is marked **Needs IT** on the organisation page, or Slack refused the update), a collaborator on the app opens it',
+    );
+  });
+
+  it('says a tab turned off refuses the bot too, and what turns it off (the re-walk on real Slack)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).toContain('`messages_tab_disabled`');
+    expect(text).toContain('`apps.manifest.update`');
+    expect(text).toContain('`app_home`');
   });
 });

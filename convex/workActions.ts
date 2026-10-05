@@ -71,6 +71,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { logEvent } from './eventLog';
 import { asAgentId } from '../src/lib/ids';
 import {
+  ApplyClaimLostError,
   applySurfaceActions,
   readSurfaceSnapshot,
   type ClaimHold,
@@ -98,6 +99,15 @@ import {
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { readSurfaceBearer } from './mcpOauthActions';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
+import { reportedRow } from '../src/work/apply-progress';
+import { isClosingState, notDoneStatements, runOwnWords } from '../src/work/not-done';
+import {
+  answerFieldsOf,
+  closingAgainstFact,
+  closingAgainstFactReason,
+  type WorkDoneFact,
+  workDoneFactOf,
+} from '../src/work/work-done';
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
@@ -112,7 +122,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { browserComponent } from '../src/surfaces/browser';
-import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
+import type { ExecutionOutput, LandedWrite, SkillShape, UnsentWrite } from '../src/work/types';
 import {
   sameSkillShape,
   skillOperationLabel,
@@ -138,6 +148,7 @@ import {
   isReusedRow,
   reusedFrom,
   reusedLedger,
+  unsentWritesOf,
   withReusedRunNumbers,
 } from '../src/work/landed-writes';
 import {
@@ -158,7 +169,11 @@ import {
   noteReleasesRead,
 } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
-import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
+import {
+  ledgerPhases,
+  NOT_SENT_AFTER_STOP_REASON,
+  providerReconciliationEntries,
+} from '../src/work/reconciliation';
 import { redactSecret, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
@@ -169,6 +184,7 @@ import {
   isGateRefusal,
   isManagerDm,
   isStatusChange,
+  statusChangeTarget,
   needsStandingGrant,
   NOT_AUTOMATIC,
   mcpEndpointRefusal,
@@ -710,6 +726,7 @@ async function draftPlanHandler(
   if (item.state !== 'claimed') {
     return { ok: false, reason: `state is ${item.state}; expected claimed` };
   }
+  let draftClaimedAt: number | undefined;
   if (SURFACE_MODE === 'real') {
     const claim = await ctx.runMutation(internal.work.claimLoopStep, {
       workItemId: args.workItemId,
@@ -724,6 +741,7 @@ async function draftPlanHandler(
             : `${claim.reason}; expected claimed`,
       };
     }
+    draftClaimedAt = claim.claimedAt;
   }
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
@@ -752,7 +770,7 @@ async function draftPlanHandler(
   const corrections =
     SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
-  const plan = await draftOrFail(ctx, args.workItemId, () =>
+  const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
       draftExecutionPlan({
         candidate,
@@ -777,11 +795,22 @@ async function draftPlanHandler(
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
+    ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
   });
   // Its system connected while it was drafting, so it is being drafted again.
   if (stored.redrafting) return { ok: true };
+  if (stored.superseded) {
+    return { ok: false, reason: 'this draft no longer holds the work item; a later draft does' };
+  }
   if (!stored.stored) {
-    return { ok: false, reason: 'another draft stored a plan for this work item first' };
+    return {
+      ok: false,
+      // A plan pending is another draft's, stored first; any other state is the manager's move.
+      reason:
+        stored.movedOn === undefined || stored.movedOn === 'plan-pending'
+          ? 'another draft stored a plan for this work item first'
+          : `the work item moved on to ${stored.movedOn}; this draft's plan is not stored`,
+    };
   }
   const decision = await ctx.runMutation(internal.work.decidePlan, {
     workItemId: args.workItemId,
@@ -803,17 +832,24 @@ async function draftPlanHandler(
  * with the reason on its card and Retry drafts again. A rate limit, an outage
  * or a bad key is left to the sweep, since the item is not what failed.
  *
+ * A real-mode draft fails the row only while it still holds the claim it
+ * took (`draftClaimedAt`), as only that draft stores its plan (`setPlan`): a
+ * draft the manager stopped, whose row Retry sent back with a new draft
+ * queued, fails nothing.
+ *
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The row being drafted.
+ *   draftClaimedAt: The claim the draft took, in real mode; undefined for the page's mock draft.
  *   draft: The drafting call.
  *
  * Returns:
- *   The plan, or undefined when the row was failed.
+ *   The plan, or undefined when the row was failed or the failure was not this draft's to write.
  */
 async function draftOrFail<T>(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
+  draftClaimedAt: number | undefined,
   draft: () => Promise<T>,
 ): Promise<T | undefined> {
   try {
@@ -821,9 +857,10 @@ async function draftOrFail<T>(
   } catch (err) {
     const failure = itemBoundModelFailure(err);
     if (failure === undefined) throw err;
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: `plan draft failed: ${failure}`,
+      ...(draftClaimedAt !== undefined ? { draftClaimedAt } : {}),
     });
     return undefined;
   }
@@ -907,6 +944,10 @@ async function executeApprovedPlanHandler(
   if (item.state !== 'plan-approved') {
     return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
   }
+  // A paused employee, or a paused deployment, starts nothing (12-P): read before the skill is
+  // picked, since a missing one parks the row and proposes a skill before the claim refuses.
+  const permission = await ctx.runQuery(internal.workLoop.stepPermission, { agentId });
+  if (!permission.mayRun) return { ok: false, reason: permission.reason };
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
     : await ctx.runQuery(api.charters.latest, { agentId });
@@ -931,7 +972,7 @@ async function executeApprovedPlanHandler(
   }
   // Nothing above this line touches a model or an adapter, so a caller that
   // loses the claim costs a handful of reads and stops here.
-  const claim = await ctx.runMutation(internal.work.claimForExecution, {
+  const claim = await ctx.runMutation(internal.workRuns.claimForExecution, {
     workItemId: args.workItemId,
     skillId: pickedSkill._id,
   });
@@ -940,7 +981,12 @@ async function executeApprovedPlanHandler(
   // What earlier runs of this item put on a provider, read from the row's
   // output before this run replaces it: the retry's prompts list these and
   // a comment on a target one of them carries is reused, never sent again.
-  const landedWrites = SURFACE_MODE === 'real' ? landedWritesOf(item.output) : [];
+  // The writes the manager answered not sent ride beside them: the prompts
+  // list them to send again, and their targets reuse only an identical write.
+  const carriedWrites: CarriedWrites =
+    SURFACE_MODE === 'real'
+      ? { landedWrites: landedWritesOf(item.output), unsentWrites: unsentWritesOf(item.output) }
+      : { landedWrites: [], unsentWrites: [] };
   if (SURFACE_MODE === 'real' && resume?.resumedClosing && resume.phase === 'dependent-authoring') {
     // The carried reads were taken before the retry; the closing set is
     // authored from what they read now, or not at all.
@@ -951,7 +997,7 @@ async function executeApprovedPlanHandler(
       resume,
     });
     if (!reread.ok) {
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: claim.runId,
         reason: reread.failed.reason,
@@ -963,7 +1009,7 @@ async function executeApprovedPlanHandler(
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId: args.workItemId,
       runId: claim.runId,
-      output: withLandedWrites(reread.output, landedWrites),
+      output: withCarriedWrites(reread.output, carriedWrites),
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
@@ -981,7 +1027,7 @@ async function executeApprovedPlanHandler(
       internalCaller,
       managerFeedback: liveManagerFeedback(item.managerFeedback),
       managerAnswers: managerAnswersOf(item),
-      landedWrites,
+      ...carriedWrites,
     }),
   );
 }
@@ -1112,12 +1158,22 @@ export function rereadFailure(
   };
 }
 
-/** An output with the writes earlier runs landed on it, when there are any. */
-function withLandedWrites<T extends object>(
+/** What a retried run carries from the runs before it: the writes they landed, and those not sent. */
+interface CarriedWrites {
+  readonly landedWrites: readonly LandedWrite[];
+  readonly unsentWrites: readonly UnsentWrite[];
+}
+
+/** An output with the writes earlier runs landed, and those the manager answered not sent, when there are any. */
+function withCarriedWrites<T extends object>(
   output: T,
-  landedWrites: readonly LandedWrite[],
-): T & { landedWrites?: LandedWrite[] } {
-  return landedWrites.length > 0 ? { ...output, landedWrites: [...landedWrites] } : output;
+  carried: CarriedWrites,
+): T & { landedWrites?: LandedWrite[]; unsentWrites?: UnsentWrite[] } {
+  return {
+    ...output,
+    ...(carried.landedWrites.length > 0 ? { landedWrites: [...carried.landedWrites] } : {}),
+    ...(carried.unsentWrites.length > 0 ? { unsentWrites: [...carried.unsentWrites] } : {}),
+  };
 }
 
 /** The manager's answers at approval, as the executor reads them. */
@@ -1173,6 +1229,8 @@ async function holdDay0Actions(
     managerAnswers?: readonly ManagerAnswer[];
     /** Writes earlier runs of this item landed, for the prompts and the reuse at apply. */
     landedWrites?: readonly LandedWrite[];
+    /** Writes the earlier run attempted that the manager answered were not sent. */
+    unsentWrites?: readonly UnsentWrite[];
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -1219,6 +1277,7 @@ async function holdDay0Actions(
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
+      unsentWrites: args.unsentWrites,
       heldElsewhere,
       appliedCorrections,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
@@ -1233,11 +1292,11 @@ async function holdDay0Actions(
         });
       },
     });
-    const staged = withLandedWrites(
+    const staged = withCarriedWrites(
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
         : { ...output, needsDependentPhase: false },
-      args.landedWrites ?? [],
+      { landedWrites: args.landedWrites ?? [], unsentWrites: args.unsentWrites ?? [] },
     );
     // A write whose argument names the probed schema refuses is re-authored
     // once here, so the payload the manager approves is one the provider
@@ -1285,7 +1344,7 @@ async function holdDay0Actions(
       // Every action waited on the answer to a question an earlier run asked:
       // nothing is left to apply, and the run ends on the question.
       const reason = openQuestionStopReason(stagedOutput.openQuestion);
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
@@ -1317,7 +1376,7 @@ async function holdDay0Actions(
         reason: 'no prerequisite action to apply; dependent actions authoring',
       });
     }
-    const pending = await ctx.runMutation(internal.work.setActionsPending, {
+    const pending = await ctx.runMutation(internal.workRuns.setActionsPending, {
       workItemId: args.workItemId,
       runId: args.runId,
       output: stagedOutput,
@@ -1354,7 +1413,7 @@ async function holdDay0Actions(
       }
       if (resumed.outcome === 'stopped') return result({ ok: false, reason });
     }
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId: args.workItemId,
       reason,
       runId: args.runId,
@@ -1983,6 +2042,10 @@ export function dependentTransitionRefusal(args: {
   actions: readonly ExecutionOutput['actions'][number][];
   planStepOutcomes: readonly PlanStepOutcome[];
   initialFailure?: string;
+  /** The closing set's draft, read with its messages as the run's own words. */
+  draft?: string;
+  /** The run's answer on whether the work was done; absent on a set authored before v0.16.0. */
+  workDone?: WorkDoneFact;
 }): string | undefined {
   const statusChange = args.actions.some((action): boolean => {
     const parsed = parseSurfaceAction(action);
@@ -1993,6 +2056,23 @@ export function dependentTransitionRefusal(args: {
       ? 'dependent phase cannot change ticket state after a prerequisite failure'
       : undefined;
   }
+  // A set whose run answers that the work was not all done never closes the ticket, and leaving
+  // the state alone is its account of why (decision D-1 (b)). Its words never refuse a set whose
+  // run answered done: that is the tripwire's, which sends the set back once
+  // (`runDependentSkill`).
+  if (args.workDone !== undefined) {
+    if (args.workDone.workDone !== 'done') {
+      const closing = closingAgainstFact(args.workDone, args.actions);
+      return closing !== undefined
+        ? `dependent phase ${closingAgainstFactReason(args.workDone, closing)}: a run that did not do all of the work leaves the ticket's state as it is and records the step it could not finish as blocked`
+        : undefined;
+    }
+  } else {
+    // A set authored before the answer existed is read by its words, as the release before did
+    // (the 4 October live demo; wave 12, 12-W).
+    const refusal = unfinishedWordsRefusal(args);
+    if (refusal !== null) return refusal;
+  }
   if (
     args.plan.expectedOutputType !== 'ticket-update' ||
     !transitionPromised(args.plan) ||
@@ -2002,6 +2082,31 @@ export function dependentTransitionRefusal(args: {
     return undefined;
   }
   return 'dependent phase omitted the approved ticket state transition without a blocked plan step';
+}
+
+/**
+ * The release before's reading of a closing set with no answer: a set whose own words say the
+ * work was not done never closes the ticket, and leaving the state alone is its account of why.
+ *
+ * @returns The refusal, undefined when such a set leaves the state alone, or null when its words
+ *   say nothing of the kind and the plan's own check decides.
+ */
+function unfinishedWordsRefusal(args: {
+  actions: readonly ExecutionOutput['actions'][number][];
+  draft?: string;
+}): string | undefined | null {
+  const unfinished = notDoneStatements(runOwnWords({ draft: args.draft, actions: args.actions }));
+  if (unfinished.length > 0) {
+    const closing = args.actions.flatMap((action): string[] => {
+      const parsed = parseSurfaceAction(action);
+      const state = parsed.ok ? statusChangeTarget(parsed.action) : undefined;
+      return state !== undefined && isClosingState(state) ? [state] : [];
+    });
+    return closing.length > 0
+      ? `dependent phase sets the ticket to ${closing[0]} while its own words say the work was not done ("${unfinished[0]}"): leave the ticket's state as it is and record the step as blocked`
+      : undefined;
+  }
+  return null;
 }
 
 function flattenedDependentOutput(
@@ -2046,7 +2151,10 @@ function flattenedDependentOutput(
     prerequisiteCount:
       output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
+    ...(output.initial.unsentWrites ? { unsentWrites: output.initial.unsentWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    // The closing set's answer is the run's, the first phase's a prediction made before anything landed.
+    ...answerFieldsOf(output),
     ...((output.openQuestion ?? output.initial.openQuestion)
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
       : {}),
@@ -2584,6 +2692,8 @@ export const authorDependentActions = internalAction({
           actions: candidateOutput.actions,
           planStepOutcomes: candidateOutput.planStepOutcomes,
           initialFailure,
+          draft: candidateOutput.draft,
+          workDone: workDoneFactOf(candidateOutput),
         });
         if (transitionRefusal) issues.push(transitionRefusal);
         return issues;
@@ -2628,6 +2738,7 @@ export const authorDependentActions = internalAction({
             resumedClosing: prerequisites.resumedClosing,
             refusedClosing: prerequisites.refusedClosing,
             landedWrites: prerequisites.landedWrites,
+            unsentWrites: prerequisites.unsentWrites,
             heldElsewhere: held,
             closingGate,
             onAuditCorrection: async (removedIndices, reason) => {
@@ -2742,6 +2853,8 @@ export const authorDependentActions = internalAction({
         actions: held.actions,
         planStepOutcomes: held.planStepOutcomes,
         initialFailure,
+        draft: held.draft,
+        workDone: workDoneFactOf(held),
       });
       if (repairedTransitionRefusal)
         throw new ClosingGateRefusal([repairedTransitionRefusal], held);
@@ -2797,7 +2910,7 @@ export const authorDependentActions = internalAction({
             actionIndex: offset + index,
           }),
         }));
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: args.workItemId,
           runId: args.runId,
           reason: stop,
@@ -2846,7 +2959,7 @@ export const authorDependentActions = internalAction({
           ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure)
           : undefined;
         if (reason) {
-          await ctx.runMutation(internal.work.setFailed, {
+          await ctx.runMutation(internal.workRuns.setFailed, {
             workItemId: args.workItemId,
             runId: args.runId,
             reason,
@@ -2854,14 +2967,14 @@ export const authorDependentActions = internalAction({
           });
           return { ok: false, reason };
         }
-        await ctx.runMutation(internal.work.setCompleted, {
+        await ctx.runMutation(internal.workRuns.setCompleted, {
           workItemId: args.workItemId,
           runId: args.runId,
           output: finalOutput,
         });
         return { ok: true };
       }
-      const pending = await ctx.runMutation(internal.work.setActionsPending, {
+      const pending = await ctx.runMutation(internal.workRuns.setActionsPending, {
         workItemId: args.workItemId,
         runId: args.runId,
         authoringAttemptId: claim.authoringAttemptId,
@@ -2888,7 +3001,7 @@ export const authorDependentActions = internalAction({
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
       const refused = gateRefusal ? error.output : authored;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
@@ -2981,7 +3094,11 @@ async function reusedRows(
   const resumed = dependent && output.initial.resumedClosing;
   if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
-  const options = { surfaces, managerFeedback: liveManagerFeedback(item?.managerFeedback) };
+  const options = {
+    surfaces,
+    managerFeedback: liveManagerFeedback(item?.managerFeedback),
+    unsent: (dependent ? output.initial.unsentWrites : output.unsentWrites) ?? [],
+  };
   const fromResume = resumed
     ? resumedClosingLedger(
         output.actions,
@@ -3223,7 +3340,10 @@ async function ticketReread(
     runId: Id<'events'>;
     output: LedgerOutput | DependentPendingOutput;
     phase: 'auto' | 'approved';
-    /** The rows this auto phase parks for the manager: asked about, never sent here. */
+    /**
+     * The rows this apply parks for the manager: asked about, never sent here. Every held row in
+     * the auto phase; in the approved phase, a close an approval left for its card (12-H).
+     */
     deferredIndexes: readonly number[];
     surfaces: readonly SurfaceRecord[];
     knownValues: readonly string[];
@@ -3238,12 +3358,10 @@ async function ticketReread(
   // The registry asks about a parked row too; parking sends nothing, so it
   // is not the first write. Rows are matched by their parsed payload.
   const parked = new Set(
-    args.phase === 'auto'
-      ? args.deferredIndexes.flatMap((index) => {
-          const parsed = parseSurfaceAction(args.output.actions?.[index] ?? { tool: '', args: {} });
-          return parsed.ok ? [JSON.stringify(parsed.action)] : [];
-        })
-      : [],
+    args.deferredIndexes.flatMap((index) => {
+      const parsed = parseSurfaceAction(args.output.actions?.[index] ?? { tool: '', args: {} });
+      return parsed.ok ? [JSON.stringify(parsed.action)] : [];
+    }),
   );
   let found: Promise<string | undefined> | undefined;
   let refusal: string | undefined;
@@ -3329,7 +3447,7 @@ async function stopForChangedTicket(
     ticketRereadStopReason(held, sentThisRun(output, args)),
     args.knownValues,
   );
-  await ctx.runMutation(internal.work.setFailed, {
+  await ctx.runMutation(internal.workRuns.setFailed, {
     workItemId: args.workItemId,
     runId: args.runId,
     reason,
@@ -3341,7 +3459,7 @@ async function stopForChangedTicket(
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
- * Scheduled by `work.setActionsPending` for the gate's auto rows and by
+ * Scheduled by `workRuns.setActionsPending` for the gate's auto rows and by
  * `work.approveActions` for the manager's. The claim records the apply
  * attempt exactly once, so a second schedule after a restart re-applies with
  * the same idempotency keys rather than alongside a first apply that is
@@ -3357,7 +3475,7 @@ async function stopForChangedTicket(
 export const applyApprovedActions = internalAction({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const claim = await ctx.runMutation(internal.work.claimApprovedActions, {
+    const claim = await ctx.runMutation(internal.workRuns.claimApprovedActions, {
       workItemId: args.workItemId,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
@@ -3395,7 +3513,7 @@ export const applyApprovedActions = internalAction({
         runId: claim.runId,
         output,
         phase: claim.phase,
-        deferredIndexes: claim.heldIndexes,
+        deferredIndexes: claim.deferredIndexes,
         surfaces,
         knownValues,
       });
@@ -3406,18 +3524,30 @@ export const applyApprovedActions = internalAction({
         runId: claim.runId,
       };
       const deps = realAdapterDeps(
-        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
+        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl, {
+          workItemId: args.workItemId,
+          applyAttemptId: claim.applyAttemptId,
+        }),
         browserMcpUrl,
         knownValues,
       );
       const grants = new Set(grantRows.map((grant) => grant.scope));
+      // Each row is kept the moment it is decided, scrubbed as the finished ledger is (P4-2).
+      const report = async (index: number, row: AppliedAction): Promise<boolean> =>
+        await ctx.runMutation(internal.workRuns.recordApplyOutcome, {
+          workItemId: args.workItemId,
+          applyAttemptId: claim.applyAttemptId,
+          index,
+          row: reportedRow(scrubKnownValues(row, knownValues)),
+        });
       const applied = withArgumentRepairs(
         await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
           deps,
           grants,
+          onOutcome: report,
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
-          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          deferredIndexes: new Set(claim.deferredIndexes),
           priorLedger,
           ...(priorPhasesLedger(output) ? { prerequisiteLedger: priorPhasesLedger(output) } : {}),
           ...(isDependentPendingOutput(output) && output.initial.resumedClosing
@@ -3497,6 +3627,7 @@ export const applyApprovedActions = internalAction({
                 autoPhase: true,
                 autonomousActions: claim.autonomousActions,
                 replyTarget: claim.replyTarget,
+                onOutcome: async (_, row): Promise<boolean> => await report(index, row),
               });
               actionsSoFar[index] = action;
               appliedSoFar[index] = row!;
@@ -3517,6 +3648,14 @@ export const applyApprovedActions = internalAction({
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
       const reason = safeFailureMessage(err, '', 'the apply failed', 300, knownValues);
+      if (err instanceof ApplyClaimLostError) {
+        // A Stop took the claim: the rows from the first this apply did not send were not sent.
+        await ctx.runMutation(internal.workRuns.recordUnsentAfterStop, {
+          workItemId: args.workItemId,
+          runId: claim.runId,
+          firstUnsent: err.firstUnsent,
+        });
+      }
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,
@@ -3760,7 +3899,8 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
 }
 
 /**
- * Re-read every mutable authority input immediately before provider transport.
+ * Re-read every mutable authority input immediately before provider transport, and, for an
+ * apply, the claim it sends under: a row whose claim a Stop took is refused as not sent.
  *
  * A replayed browser call (a sign-in repeated in a new invocation) is judged
  * under the authority its original row landed with, not this phase's rule:
@@ -3771,6 +3911,7 @@ function authorityBeforeTransport(
   agentId: Id<'agents'>,
   phase: 'auto' | 'approved',
   browserMcpUrl: string | undefined,
+  applyClaim?: { readonly workItemId: Id<'workItems'>; readonly applyAttemptId: Id<'events'> },
 ): BeforeSurfaceTransport {
   return async (action, claimedSurface, replay): Promise<string | undefined> => {
     const parsed = parseSurfaceAction(action);
@@ -3778,8 +3919,11 @@ function authorityBeforeTransport(
     const authority = await ctx.runQuery(internal.work.transportAuthority, {
       agentId,
       surfaceSlug: parsed.action.surface,
+      ...(applyClaim ? { applyClaim } : {}),
     });
     if (!authority.agentExists) return 'agent not found';
+    // A Stop took the claim since the last row: nothing more goes out (W12-R11).
+    if (authority.applyClaimHeld === false) return NOT_SENT_AFTER_STOP_REASON;
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
     if (authority.accessEnded) return authority.accessEnded;
@@ -4150,6 +4294,10 @@ interface FinishClaim {
 /** Why a deferred row stays unapplied when the auto phase fails. */
 export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic action failed';
 
+/** Why a close left for its card stays unapplied when the approved writes beside it fail (12-H). */
+export const NOT_APPLIED_AFTER_APPROVED_FAILURE =
+  'not sent: a write you approved beside it failed and the run stopped, so the close never reached its card';
+
 /**
  * Record the outcome of an applied phase.
  *
@@ -4160,6 +4308,9 @@ export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic actio
  * when only the claim about it landed. After the auto phase a run that still
  * has rows awaiting the manager is parked rather than completed; a failure in
  * the auto phase fails the run and the deferred rows never reach the manager.
+ * An approval from Slack or the Needs you batch that left a close the tripwire
+ * held for its card parks the run the same way once its approved rows land
+ * (12-H), and a failure among them fails the run with the close unsent.
  *
  * Args:
  *   ctx: Convex action context.
@@ -4210,12 +4361,19 @@ async function finishRun(
   const settled = reason
     ? applied.map((entry) =>
         entry.awaitingApproval
-          ? { ...entry, awaitingApproval: undefined, reason: NOT_APPLIED_AFTER_FAILURE }
+          ? {
+              ...entry,
+              awaitingApproval: undefined,
+              reason:
+                claim.phase === 'auto'
+                  ? NOT_APPLIED_AFTER_FAILURE
+                  : NOT_APPLIED_AFTER_APPROVED_FAILURE,
+            }
           : entry,
       )
     : applied;
   if (isDependentPendingOutput(output)) {
-    if (!reason && claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    if (!reason && applied.some((entry) => entry.awaitingApproval)) {
       const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
         workItemId,
         runId: claim.runId,
@@ -4293,7 +4451,7 @@ async function finishRun(
       });
     if (finalReason) {
       const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId,
         reason: ended,
         runId: claim.runId,
@@ -4301,7 +4459,7 @@ async function finishRun(
       });
       return { ok: false, reason: ended };
     }
-    await ctx.runMutation(internal.work.setCompleted, {
+    await ctx.runMutation(internal.workRuns.setCompleted, {
       workItemId,
       runId: claim.runId,
       output: finalOutput,
@@ -4309,7 +4467,7 @@ async function finishRun(
     return { ok: true };
   }
   if (output.needsDependentPhase === true) {
-    if (!reason && claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    if (!reason && applied.some((entry) => entry.awaitingApproval)) {
       const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
         workItemId,
         runId: claim.runId,
@@ -4331,7 +4489,7 @@ async function finishRun(
     // nothing to audit and the manager nothing to decide: the run stops here.
     if (reason && landedWork({ ...output, applied: settled }, surfaces).length === 0) {
       const ended = gateRefusalStop(output.actions, settled) ?? reason;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId,
         reason: ended,
         runId: claim.runId,
@@ -4362,7 +4520,7 @@ async function finishRun(
   }
   if (reason) {
     const ended = gateRefusalStop(output.actions, settled) ?? reason;
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: ended,
       runId: claim.runId,
@@ -4370,7 +4528,7 @@ async function finishRun(
     });
     return { ok: false, reason: ended };
   }
-  if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+  if (applied.some((entry) => entry.awaitingApproval)) {
     const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
       workItemId,
       runId: claim.runId,
@@ -4386,7 +4544,7 @@ async function finishRun(
   // withheld: the run ends on the question, and Retry with a note answers it.
   const openQuestion = openQuestionStop(output);
   if (openQuestion) {
-    await ctx.runMutation(internal.work.setFailed, {
+    await ctx.runMutation(internal.workRuns.setFailed, {
       workItemId,
       reason: openQuestion,
       runId: claim.runId,
@@ -4394,7 +4552,7 @@ async function finishRun(
     });
     return { ok: false, reason: openQuestion };
   }
-  await ctx.runMutation(internal.work.setCompleted, {
+  await ctx.runMutation(internal.workRuns.setCompleted, {
     workItemId,
     runId: claim.runId,
     output: { ...output, applied },

@@ -91,6 +91,13 @@ describe('the structural grammar', (): void => {
     }
   });
 
+  it('names a Slack app-level token by its prefix, so a pasted socket token never stays in stored text (12-M)', (): void => {
+    const token = 'xapp-1-A0OPS-1234567890-abcdefghij';
+    expect(found(`App-level token: ${token}`)).toEqual([['slack app-level token', token]]);
+    expect(providerPrefix(token)).toBe('xapp-');
+    expect(found('Socket Mode tokens start with xapp- and need connections:write.')).toEqual([]);
+  });
+
   it('does not read a prefix named as a word, a variable name or a page id as a token', (): void => {
     for (const kept of [
       'Notion tokens start with ntn_ and the ntn_prefix convention is documented.',

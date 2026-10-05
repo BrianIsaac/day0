@@ -1,3 +1,8 @@
+import {
+  decisionButtonsFor,
+  socketBridgeConfigured,
+  type DecisionButtons,
+} from '../src/surfaces/slack-socket';
 import { ConvexError, v } from 'convex/values';
 import {
   action,
@@ -8,7 +13,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgent, assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
@@ -42,6 +47,9 @@ import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { latestRejoins, type LastRejoin } from './channelRejoins';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endAccessAtSource } from './sourceRevocation';
+import { purgeAppLevelToken } from './credentials';
+import { typedCodeReachOf } from './slackMessagesTab';
+import type { TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import type { AccessEnd, ActsAs } from '../src/surfaces/access-identity';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
@@ -277,6 +285,23 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    * renewing it brings nothing back until IT connects the system again (the pre-tag second pass).
    */
   readonly connectionRevoked?: true;
+  /**
+   * True on a chat card holding no credential whose employee's own app was created through an
+   * organisation connection IT revoked: Day0 never installs that app again, even once IT connects
+   * Slack again (`KEPT_APP_CONNECTION_REVOKED`), so the card offers no reinstall (W12X-4).
+   */
+  readonly keptAppNotReinstalled?: true;
+  /**
+   * On a chat card that carries the manager's decision requests: whether they carry Approve and
+   * Reject buttons, and why not (wave 12, 12-M; RM3 (a)). Read against this deployment's Socket
+   * Mode bridge, which only the server knows of.
+   */
+  readonly decisionButtons?: DecisionButtons;
+  /**
+   * On a chat card that carries the manager's decision requests: whether the manager's typed code
+   * reaches its app (W12V-7; `typedCodeReachOf`).
+   */
+  readonly typedCode?: TypedCodeReach;
 }
 
 /**
@@ -414,10 +439,14 @@ export const listForAgent = query({
       .take(CARD_SURFACE_LIMIT);
     const identities = await identitiesOf(ctx, surfaces);
     const rejoins = await latestRejoins(ctx, args.agentId);
+    // The connections the cards are linked to, and those their employees' own apps were created
+    // through (W12X-4): an app created but never installed is linked to no connection yet.
     const revoked = await revokedConnectionsAmong(
       ctx,
       surfaces.flatMap((surface) =>
-        surface.organisationConnectionId === undefined ? [] : [surface.organisationConnectionId],
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
+          (id): id is Id<'organisationConnections'> => id !== undefined,
+        ),
       ),
     );
     // A system IT has connected again since a revoke is not one the revoke left ended (m2).
@@ -437,6 +466,19 @@ export const listForAgent = query({
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    const bridgeConfigured = socketBridgeConfigured();
+    const typedCodes = new Map(
+      await Promise.all(
+        surfaces
+          .filter(carriesDecisions)
+          .map(
+            async (surface): Promise<[Id<'surfaces'>, TypedCodeReach]> => [
+              surface._id,
+              await typedCodeReachOf(ctx, surface),
+            ],
+          ),
+      ),
+    );
     return orderSurfaceWaterfall(surfaces, documented).map((surface): ListedSurface => {
       const listed = withBrowserComponentState(surface, refusal);
       const drift = listed.intakeScope ? restatedScope(listed.intakeScope, pages).drift : [];
@@ -458,6 +500,11 @@ export const listForAgent = query({
         surface.organisationConnectionId !== undefined &&
         revoked.has(surface.organisationConnectionId) &&
         !activeSystems.has(organisationSystemOf(surface) ?? '');
+      const keptAppNotReinstalled =
+        surface.class === 'chat' &&
+        surface.credentialId === undefined &&
+        surface.provisioning?.organisationConnectionId !== undefined &&
+        revoked.has(surface.provisioning.organisationConnectionId);
       const { pendingAuthorisation, ...card } = listed;
       return {
         ...card,
@@ -474,10 +521,23 @@ export const listForAgent = query({
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
+        ...(keptAppNotReinstalled ? { keptAppNotReinstalled: true as const } : {}),
+        ...(carriesDecisions(surface)
+          ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
+          : {}),
+        ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };
     });
   },
 });
+
+/** A chat card the manager's decision requests go through, or will once it connects. */
+function carriesDecisions(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    (surface.managerDmChannelId !== undefined || surface.provisioning?.installedAt !== undefined)
+  );
+}
 
 /**
  * Seed one declared row per work system named in the approved charter.
@@ -1050,6 +1110,7 @@ export async function scheduleOrientationFor(
 export const requestProposal = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<null> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface proposal');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2375,6 +2436,7 @@ async function renewalOf(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<Re
 export const setAccessDays = mutation({
   args: { surfaceId: v.id('surfaces'), days: v.number() },
   handler: async (ctx, args): Promise<AccessDaysSet> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Setting surface access');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2620,63 +2682,6 @@ export async function backfillWithheldToolsPage(
   };
 }
 
-/**
- * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
- * approval is gone, so a proposed card an older release left with the
- * manager's stamp alone is approved, as the manager's approval now does it,
- * its access running from the upgrade (`accessSetBy: 'upgrade'`); and no card
- * keeps an IT stamp, so the release after this one can remove the
- * declaration. A card whose approval would now be refused (a documented queue
- * it reads changed, or its browser component is absent) stays proposed
- * without the stamp and says why, so the manager approves it once it can be.
- * Run by `migrations:runPending`.
- *
- * @param cursor - Where the previous page stopped, or null for the first.
- * @param now - The upgrade's moment, from which an approved card's access runs.
- * @returns What the page read and changed, and where the next one starts.
- */
-export async function singleApprovalPage(
-  ctx: MutationCtx,
-  cursor: string | null,
-  now: number,
-): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
-  let changed = 0;
-  for (const surface of page.page) {
-    const approvedAt = surface.verdict === 'proposed' ? surface.managerApprovedAt : undefined;
-    if (approvedAt === undefined && surface.itApprovedAt === undefined) continue;
-    if (surface.itApprovedAt !== undefined) {
-      await ctx.db.patch(surface._id, { itApprovedAt: undefined });
-    }
-    if (approvedAt !== undefined) {
-      const check = await approvalCheck(ctx, surface);
-      if (check.refusal === undefined) {
-        await approveInTransaction(ctx, surface, {
-          approvedAt,
-          now,
-          by: 'upgrade',
-          intakeScope: check.intakeScope,
-        });
-      } else {
-        // A browser card refused for its absent driver stores nothing: the card
-        // reads the component live, so it offers Approve again once the driver
-        // runs. A stored absence would block it for good (wave 3.5 review M12).
-        await ctx.db.patch(surface._id, {
-          managerApprovedAt: undefined,
-          ...(check.refusal === INTAKE_QUEUE_CHANGED ? { reason: check.refusal } : {}),
-        });
-      }
-    }
-    changed += 1;
-  }
-  return {
-    read: page.page.length,
-    changed,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
 /** Who set a surface's end date last, by its newest `surface.access-set` event. */
 async function latestAccessSetter(
   ctx: MutationCtx,
@@ -2778,6 +2783,8 @@ async function approveInTransaction(
   await ctx.db.patch(surface._id, {
     verdict: 'approved',
     managerApprovedAt: approval.approvedAt,
+    // An approved card's identity is the new manager's own decision, no longer a kept one.
+    keptIdentitySince: undefined,
     expiresAt,
     accessSetBy: approval.by,
     ...(approval.intakeScope === undefined ? {} : { intakeScope: approval.intakeScope }),
@@ -2815,6 +2822,7 @@ async function approveInTransaction(
 export const approve = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface approval');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2840,7 +2848,9 @@ export const approve = mutation({
  * End at the vendor what a rejected card bound (11-AR; D4): every credential it binds that no
  * other card binds, its app's client secret and its token's pair included, so an app Day0 created
  * is deleted (S4) and its tokens revoked. A pasted key is never sent to a vendor and stays in the
- * owner's store, as the rejection always left it; its line says so.
+ * owner's store, as the rejection always left it; its line says so. The app-level token the app
+ * was given is ended in Day0 with the app the card forgets (`purgeAppLevelToken`, W12-R2), and
+ * writes no line of its own.
  *
  * @param ctx - The rejection's transaction.
  * @param surface - The card as it stood before the rejection.
@@ -2870,9 +2880,13 @@ async function endRejectedAtSource(
       provisioning: surface.provisioning,
     },
   ]);
-  const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
-    (row): row is Doc<'credentials'> => row !== null,
-  );
+  const appLevelToken = surface.provisioning?.appLevelTokenCredentialId;
+  await purgeAppLevelToken(ctx, appLevelToken, now);
+  const rows = (
+    await Promise.all(
+      [...bound].filter((id) => id !== appLevelToken).map(async (id) => await ctx.db.get(id)),
+    )
+  ).filter((row): row is Doc<'credentials'> => row !== null);
   if (rows.length === 0) return;
   await endAccessAtSource(ctx, {
     agentId: surface.agentId,
@@ -2894,6 +2908,7 @@ async function endRejectedAtSource(
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Surface rejection');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -2913,6 +2928,7 @@ export const reject = mutation({
       probeStartedAt: undefined,
       request: undefined,
       managerApprovedAt: undefined,
+      keptIdentitySince: undefined,
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,
@@ -3014,6 +3030,7 @@ async function disconnectInTransaction(
 export const disconnect = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Disconnecting a connection');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -3109,6 +3126,7 @@ const APPROVED_TOOLS_LIMIT = 200;
 export const approveTools = mutation({
   args: { surfaceId: v.id('surfaces'), tools: v.array(v.string()) },
   handler: async (ctx, args): Promise<{ approved: string[] }> => {
+    await getCallerOrThrow(ctx);
     assertRealMode('Approving surface tools');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
@@ -3174,11 +3192,15 @@ export const approveTools = mutation({
  * belongs to the deployment that would call the provider rather than to the
  * browser or the Next process. It is a boolean by design: the address itself
  * says where this machine is reachable and is nobody's business but the
- * operator's until an install link carries it.
+ * operator's until an install link carries it. Public, guarded by `getCallerOrThrow` (12-G);
+ * writes nothing.
  */
 export const installRedirectConfigured = query({
   args: {},
-  handler: async (): Promise<boolean> => publicUrlConfigured(),
+  handler: async (ctx): Promise<boolean> => {
+    await getCallerOrThrow(ctx);
+    return publicUrlConfigured();
+  },
 });
 
 /** Whether this deployment has a public address for a dedicated app's install to return to. */
@@ -3208,8 +3230,8 @@ export const reorient = action({
 // ---------- The handover's cut (transfer plan 6.3; D5 (a), A25) ----------
 
 /**
- * The credentials surfaces bind: each connection credential and each Slack app's client secret,
- * and, through each bound row, the refresh token paired with it and the client secret of the app
+ * The credentials surfaces bind: each connection credential, each Slack app's client secret and
+ * app-level token, and, through each bound row, the refresh token paired with it and the client secret of the app
  * it was issued to (11-AK item 1), so a retire or a handover that ends a token ends its pair and
  * its app's secret with it. A pointer whose row is gone is still named, as the card's own are.
  *
@@ -3230,6 +3252,8 @@ export async function credentialsBoundBy(
   for (const surface of surfaces) {
     add(surface.credentialId);
     add(surface.provisioning?.clientSecretCredentialId);
+    // The app-level token a person landed for the app's Socket Mode connection (12-M) ends with it.
+    add(surface.provisioning?.appLevelTokenCredentialId);
   }
   for (let id = unread.pop(); id !== undefined; id = unread.pop()) {
     const row = await db.get(id);
@@ -3292,6 +3316,7 @@ export async function endKeptIdentity(
   await endOwnCredentialAtSource(ctx, surface, 'transfer', now);
   await ctx.db.patch(surface._id, {
     reason: KEPT_IDENTITY_ENDED_REASON,
+    keptIdentitySince: undefined,
     credentialId: undefined,
     credentialKind: undefined,
     credentialLocation: undefined,
@@ -3554,6 +3579,7 @@ function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
     managerApprovedAt: undefined,
+    keptIdentitySince: undefined,
     credentialId: undefined,
     credentialKind: undefined,
     credentialLocation: undefined,
@@ -3585,14 +3611,18 @@ function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
 /**
  * The fields a handover's re-approval clears (A25): everything {@link cutPatch} clears save the
  * employee's own identity, which stays on the card: its credential, the provider's identities, its
- * app and the channels its bot is in. A card whose address went says so, as a cut one does.
+ * app and the channels its bot is in. A card whose address went says so, as a cut one does. The
+ * card is marked with the move's time (`keptIdentitySince`), which the kept-identity sweep reads
+ * rather than the reason's words (the round review's m16).
  *
  * @param surface - The surface before the move.
+ * @param now - When the move kept the identity.
  */
-function reapprovePatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+function reapprovePatch(surface: Doc<'surfaces'>, now: number): Partial<Doc<'surfaces'>> {
   const patch = cutPatch(surface);
   return {
     ...patch,
+    keptIdentitySince: now,
     reason: patch.reason === HANDOVER_CUT_REASON ? HANDOVER_REAPPROVE_REASON : patch.reason,
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
@@ -3638,6 +3668,8 @@ export interface CutSurface {
   readonly displayName: string;
   /** The credentials it bound, which the move sorts by the retire's rule. */
   readonly boundCredentials: readonly Id<'credentials'>[];
+  /** The app-level token its app was given, which the cut ends with the app it forgets (W12-R2). */
+  readonly appLevelTokenCredentialId?: Id<'credentials'>;
 }
 
 /** One surface a handover returned for re-approval with the employee's own identity kept (A25). */
@@ -3727,11 +3759,14 @@ export async function handOverSurfaces(
           slug: surface.slug,
           displayName: surface.displayName,
           boundCredentials: [...(await credentialsBoundBy(ctx.db, [surface]))],
+          ...(surface.provisioning?.appLevelTokenCredentialId === undefined
+            ? {}
+            : { appLevelTokenCredentialId: surface.provisioning.appLevelTokenCredentialId }),
         });
         break;
       }
       case 'reapprove': {
-        const patch = reapprovePatch(surface);
+        const patch = reapprovePatch(surface, input.now);
         await ctx.db.patch(surface._id, {
           ...patch,
           ...quotes,

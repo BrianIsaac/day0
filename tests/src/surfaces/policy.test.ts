@@ -48,6 +48,7 @@ import {
   USERNAME_REFUSED,
   type ParsedSurfaceAction,
   type ReviewScope,
+  HELD_CLOSE_AGAINST_WORDS,
 } from '../../../src/surfaces/policy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
@@ -549,6 +550,39 @@ describe('the manager DM grant', (): void => {
     expect(
       applyProvenance(parsed(update('D0MANAGER', { username: 'Someone' })), slack, run, 'value'),
     ).toMatchObject({ ok: false });
+  });
+
+  it('signs a post or an edit that renders with blocks in its blocks too, so the trailer is seen', (): void => {
+    const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: 'Decide this.' } }];
+    const trailer = provenanceTrailer('Priya', 'wi_1', 'run_1');
+    const withBlocks = (path: string, extra: Record<string, unknown>): MockAction => ({
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path,
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Decide this.', blocks, ...extra }),
+      },
+    });
+    for (const action of [
+      withBlocks('/chat.postMessage', {}),
+      withBlocks('/chat.update', { ts: '1787738163.314789' }),
+    ]) {
+      const signed = applyProvenance(parsed(action), slack, run, 'value');
+      const body = (signed as { ok: true; action: { bodyJson?: Record<string, unknown> } }).action
+        .bodyJson;
+      expect(body?.text).toBe(`Decide this.\n\n${trailer}`);
+      expect(body?.blocks).toEqual([
+        ...blocks,
+        { type: 'context', elements: [{ type: 'mrkdwn', text: trailer }] },
+      ]);
+    }
+    // The employee's own app posts as itself: nothing is added.
+    const own = applyProvenance(parsed(withBlocks('/chat.postMessage', {})), slack, run, 'oauth');
+    expect(
+      (own as { ok: true; action: { bodyJson?: Record<string, unknown> } }).action.bodyJson?.blocks,
+    ).toEqual(blocks);
   });
 
   it('refuses every chat message edit but the one decided request its caller names', (): void => {
@@ -1814,6 +1848,33 @@ describe('a ticket state transition the approved plan withholds', (): void => {
       disposition: 'held',
       reason: HELD_WITHHELD_TRANSITION,
     });
+  });
+});
+
+describe('a ticket close the tripwire sent to the manager (12-D)', (): void => {
+  const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:write']);
+  const done: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }),
+    },
+  };
+
+  it('says why in a sentence the card can lead with', (): void => {
+    expect(HELD_CLOSE_AGAINST_WORDS).toBe(
+      'ticket close held for the manager: the run answered that the work is done, but its own words say otherwise',
+    );
+  });
+
+  it('is held for the manager under the switch, with its own reason, while the comment still applies on its own', (): void => {
+    expect(
+      reviewActions([comment('Audit note.', 'REVOPS-5'), done], [linear, slack], grants, now, {
+        autonomousActions: true,
+        closeAgainstWords: true,
+      }),
+    ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS }]);
   });
 });
 

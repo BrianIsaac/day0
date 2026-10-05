@@ -34,6 +34,8 @@ const actions: SurfaceCardActions = {
   probe: (): void => undefined,
   land: (): void => undefined,
   provision: (): void => undefined,
+  landSocketToken: (): void => undefined,
+  confirmMessagesTab: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,
@@ -375,6 +377,29 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).not.toContain('Once you approve, the card asks for');
   });
 
+  it("says a card still on a pasted key does not use IT's connection yet (the wave 11 review's m19)", (): void => {
+    const pasted = render(
+      listed({
+        ...LINEAR_APPROVED,
+        verdict: 'connected',
+        credentialId: 'credential-1' as ListedSurface['credentialId'],
+        credentialLanded: true,
+        actsAs: { kind: 'shared-key', label: 'Linear API key' },
+      }),
+      {
+        organisation: organisation({ system: 'linear', mode: 'shared' }),
+        credentials: new Map([
+          ['credential-1', { _id: 'credential-1', label: 'Linear API key', source: 'entered' }],
+        ]),
+      },
+      { connect: (): void => undefined },
+    );
+    expect(pasted).toContain('a key someone pasted');
+    expect(fact(pasted, 'Connection')).toBe(
+      'Connected for your organisation by IT on 1 October. This card does not use it yet.',
+    );
+  });
+
   it('keeps the credential field where no organisation connection covers the system', (): void => {
     const markup = render(listed(LINEAR_APPROVED));
     expect(markup).toMatch(/<input id="credential-[^"\s]+" type="password"/);
@@ -388,6 +413,34 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).not.toContain('type="password"');
     expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
+  });
+
+  it('says what a covered Slack card is missing when its documentation describes no install of the app (W12V-1)', (): void => {
+    // The walk's Vela: the company bed's page says "The shared bot token is landed on your Slack
+    // card by the messaging administrator", so the card had no way on and said nothing of why.
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'ungranted',
+        reason: 'Skipped: credential not in the docs; location not documented',
+        managerApprovedAt: NOW - DAY,
+        request: {
+          credential: {
+            found: 'none',
+            method: 'value',
+            label: 'shared bot token',
+          },
+        },
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).toContain(
+      'Day0 cannot create Maya’s own Slack app from this card: the linked documentation describes no install procedure for it.',
+    );
+    expect(markup).toContain(
+      'A Slack page saying Maya’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
   });
 
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {
@@ -527,6 +580,31 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(chip(ready)).toBe('Ready to connect');
     expect(chip(render(listed(LINEAR_APPROVED)))).toBe('Needs its credential');
+  });
+
+  it("keeps a card its approval's own probe found with no credential waiting, never Not granted with the docs' gap (the wave 11 review's m23)", (): void => {
+    const probed = {
+      ...LINEAR_APPROVED,
+      verdict: 'ungranted',
+      reason: 'credential not in the docs; Access',
+    } as Partial<ListedSurface>;
+    const waiting = render(listed(probed), {}, { accessRequest: REQUEST });
+    expect(chip(waiting)).toBe('Waiting on IT');
+    expect(waiting).not.toContain('credential not in the docs');
+    expect(waiting).toContain('Maya reads nothing from Linear until IT gives it access.');
+    const ready = render(
+      listed(probed),
+      { organisation: organisation({ system: 'linear', mode: 'shared' }) },
+      { connect: (): void => undefined },
+    );
+    expect(chip(ready)).toBe('Ready to connect');
+    expect(ready).not.toContain('credential not in the docs');
+    expect(ready).toContain('Maya reads nothing from Linear until you connect it.');
+    const refused = render(
+      listed({ ...probed, credentialId: 'credential-1' as ListedSurface['credentialId'] }),
+    );
+    expect(chip(refused)).toBe('Not granted');
+    expect(refused).toContain('Skipped: credential not in the docs; Access');
   });
 
   it("draws no credential lines on a covered card, whose identity the Acts as row names, unless the manager's own key is stored there (bed, 2 Oct)", (): void => {
@@ -670,6 +748,47 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(ended).not.toContain('Ask IT to connect Linear');
   });
 
+  it('says on a Slack card whose app takes no messages that no typed code reaches it, the toggle by name, and its control (W12V-7)', (): void => {
+    const card = (typedCode: ListedSurface['typedCode']): string =>
+      render(
+        listed({
+          ...SLACK_CARD,
+          verdict: 'connected',
+          credentialLanded: true,
+          credentialId: 'cred-bot' as ListedSurface['credentialId'],
+          managerApprovedAt: NOW - DAY,
+          expiresAt: NOW + 80 * DAY,
+          managerDmChannelId: 'D0MANAGER',
+          actsAs: { kind: 'own-app', label: 'Iris (Day0)' },
+          provisioning: {
+            appId: 'A1',
+            appName: 'Iris (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: 'cred-secret',
+            installUrl: 'https://slack.test/install',
+            redirectUrl: 'https://day0.test/api/slack/oauth',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          } as ListedSurface['provisioning'],
+          decisionButtons: { available: false, why: 'no-app-level-token' },
+          typedCode,
+        }),
+        { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+      );
+    const closed = card({ state: 'needs-toggle', appName: 'Iris (Day0)' });
+    expect(closed).toContain('Typed code: off until this app takes messages');
+    expect(closed).toContain(
+      '“Allow users to send Slash commands and messages from the messages tab”',
+    );
+    expect(closed).toContain('It is on in Slack');
+    expect(closed).toContain('Requests reach you with no buttons and no typed code');
+    expect(closed).not.toContain('typed code only');
+    const open = card({ state: 'open' });
+    expect(open).not.toContain('Typed code: off');
+    expect(open).toContain('Requests reach you with a typed code only.');
+  });
+
   it("says on a renewed Slack card what its bot re-joined and what needs a person (11-AC's item 5)", (): void => {
     const renewed = {
       ...SLACK_CARD,
@@ -730,6 +849,72 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
   });
 
+  it("offers no reinstall on a Slack card whose own app's creating connection IT revoked, and says what is true before and after IT connects Slack again (W12X-4)", (): void => {
+    // The re-walk on real Slack: Dara's ended card offered "Install Dara's own app again", which
+    // the server refuses (`KEPT_APP_CONNECTION_REVOKED`), and promised "then Dara, through IT's
+    // connection", which the server rules out for that app.
+    const ended = {
+      ...SLACK_CARD,
+      verdict: 'approved',
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 80 * DAY,
+      reason: 'The re-walk ends the bed connection.',
+      keptAppNotReinstalled: true,
+      // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
+      // install), as the bed showed once IT connected Slack again.
+      decisionButtons: { available: true },
+      typedCode: { state: 'day0-opens', appName: 'Maya (Day0)' },
+      provisioning: {
+        appId: 'A1',
+        appName: 'Maya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: 'cred-secret',
+        installUrl: 'https://slack.test/install',
+        redirectUrl: 'https://day0.test/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      } as ListedSurface['provisioning'],
+    } as Partial<ListedSurface>;
+    // While no Slack connection is active the card's access request is drafted (the bed's).
+    const slackRequest: AccessRequestView = {
+      ...REQUEST,
+      system: 'slack',
+      subject: 'Day0 access request: Slack for Maya',
+      text: 'Maya, a Day0 employee, needs access to Slack.',
+    };
+    const revoked = render(
+      listed({ ...ended, connectionRevoked: true }),
+      { installRedirectConfigured: true },
+      { accessRequest: slackRequest },
+    );
+    const reconnected = render(listed(ended), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).not.toContain("Install Maya's own app again");
+      expect(markup).not.toContain("through IT's connection");
+      expect(fact(markup, 'Acts as')).toBe('nobody');
+      expect(markup).toContain("Maya's own app is not installed again");
+      expect(markup).toContain(
+        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Maya a new app.",
+      );
+      expect(markup).toContain('Nothing is read or sent through this card.');
+      expect(markup).not.toMatch(/Renew for/);
+      expect(chip(markup)).toBe('Ended');
+      // IT connecting Slack again does not bring the card back, so it asks IT for nothing.
+      expect(markup).not.toContain('Ask IT to connect Slack');
+      expect(markup).not.toContain('until IT gives it access');
+      expect(markup).not.toContain('the control above');
+      // Nothing goes through the card, so it says nothing of requests, buttons or typed codes.
+      expect(markup).not.toContain('Decisions in Slack');
+      expect(markup).not.toContain('Typed code');
+      expect(markup).not.toContain('app-level token');
+    }
+    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);
@@ -777,6 +962,13 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).toMatch(/>Connect<\/button>/);
     expect(chip(markup)).toBe('Not granted');
+    // Its lead says what Connect does for this card, not the first connection's generic words
+    // (the second pre-tag's recorded item).
+    expect(markup).toContain('Connect Linear again');
+    expect(markup).toContain(
+      "Maya's own app no longer has access to Linear: Connect installs it again through IT's connection, with nothing to paste.",
+    );
+    expect(markup).not.toContain('Nothing to paste: Connect gives');
     // Only an employee's own app installs again: through a shared connection Connect is not it.
     expect(
       render(

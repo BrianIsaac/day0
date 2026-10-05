@@ -28,13 +28,86 @@ import { summariseAction } from '../surfaces/summary';
 import type { LandedNoteRow } from './manager-notes';
 import type { MockAction, ReplyTarget } from './types';
 import {
+  isOutcomeUnknownReason,
   ledgerPhases,
-  OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   type ReconciliationEntry,
 } from './reconciliation';
 
 export const STOPPED_PREFIX = 'stopped: ';
+
+/** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
+export const MANAGER_STOP = 'stopped by the manager';
+
+/** The states of a work item the manager can stop: the employee is working it and nothing waits on them. */
+export const STOPPABLE_STATES = ['claimed', 'plan-approved', 'executing'] as const;
+
+/** A state `STOPPABLE_STATES` holds. */
+export type StoppableState = (typeof STOPPABLE_STATES)[number];
+
+/**
+ * Whether the manager can stop an item in this state.
+ *
+ * @param state - The item's state.
+ */
+export function isStoppable(state: string): state is StoppableState {
+  return (STOPPABLE_STATES as readonly string[]).includes(state);
+}
+
+/** What a work item carries that says whether the manager can stop it. */
+export interface StopCandidate {
+  readonly state: string;
+  readonly approvedIndexes?: readonly number[];
+  readonly applyAttemptId?: unknown;
+}
+
+/**
+ * Whether the manager approved a held set whose apply has not claimed it yet: the writes wait, for
+ * a moment or for as long as a pause holds them, and none of them has been sent.
+ *
+ * @param item - The work item.
+ */
+export function approvedNotStarted(item: StopCandidate): boolean {
+  return (
+    item.state === 'actions-pending' &&
+    item.approvedIndexes !== undefined &&
+    item.applyAttemptId === undefined
+  );
+}
+
+/**
+ * Whether the manager can stop a work item as it stands: the employee is working it
+ * ({@link isStoppable}), or it holds an approval whose apply has not started
+ * ({@link approvedNotStarted}). Stopping that takes the approval back; nothing of it was sent, so
+ * no reconciliation is owed (the wave 12 review's W12-R14, decision D-7 (b), a product call).
+ *
+ * @param item - The work item.
+ */
+export function isStoppableItem(item: StopCandidate): boolean {
+  return isStoppable(item.state) || approvedNotStarted(item);
+}
+
+/**
+ * The manager's own words on a stop they made: their reason, the empty string when they gave
+ * none, or undefined when the stop was not theirs.
+ *
+ * @param skipReason - The item's recorded reason.
+ */
+export function managerStopNote(skipReason: string | undefined): string | undefined {
+  if (!isStopped(skipReason)) return undefined;
+  const detail = stopDetail(skipReason ?? '');
+  if (detail === MANAGER_STOP) return '';
+  return detail.startsWith(`${MANAGER_STOP}: `) ? detail.slice(MANAGER_STOP.length + 2) : undefined;
+}
+
+/**
+ * The recorded reason of a stop the manager made, with their words when they gave any.
+ *
+ * @param note - The manager's reason, already trimmed and capped; empty when they gave none.
+ */
+export function managerStopReason(note: string): string {
+  return stoppedReason(note === '' ? MANAGER_STOP : `${MANAGER_STOP}: ${note}`);
+}
 
 /** The ledger reason on a closing action the run never put to the manager. */
 export const WITHHELD_ON_STOP =
@@ -256,8 +329,7 @@ export function landedNoteRows(
 ): LandedNoteRow[] {
   return ledgerPhases(output).flatMap(({ actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {
-      const outcomeUnknown =
-        entry.outcomeUnknown === true || entry.reason === OUTCOME_UNKNOWN_REASON;
+      const outcomeUnknown = entry.outcomeUnknown === true || isOutcomeUnknownReason(entry.reason);
       if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
       const action = actions[index];
       const parsed = action ? parseSurfaceAction(action) : undefined;

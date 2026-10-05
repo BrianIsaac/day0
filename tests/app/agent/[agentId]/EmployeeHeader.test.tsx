@@ -71,6 +71,20 @@ describe('header state pill', (): void => {
     expect(markup).not.toContain('posture');
   });
 
+  it('says Paused in the pill of a paused employee, in the warn hue, and the face says it too (12-P)', (): void => {
+    const markup = renderToStaticMarkup(
+      <EmployeeHeader agent={{ ...agent, pausedAt: 5 }} charter={charter} />,
+    );
+    expect(markup).toMatch(/text-\[var\(--color-warn\)\][^>]*>Paused</);
+    expect(markup).toContain('title="Day0, paused"');
+    expect(markup).not.toContain('Active · Supervised');
+    // Every tab carries the header, so the hold is said where the held work is listed too.
+    expect(markup).toContain('Nothing new starts until you resume Day0 on Manage.');
+    expect(renderToStaticMarkup(<EmployeeHeader agent={agent} charter={charter} />)).not.toContain(
+      'Nothing new starts',
+    );
+  });
+
   it("makes the employee's name the page's one heading, and the manager a line beneath it", (): void => {
     const markup = renderToStaticMarkup(
       <EmployeeHeader agent={{ ...agent, name: 'Mira' }} charter={charter} />,
@@ -137,7 +151,7 @@ describe("the employee's day on the page (N12, review M8)", (): void => {
       <AgentZoneContext value="Asia/Singapore">
         <ProviderReconciliationControl
           entries={[]}
-          reconciliation={{ actor: 'boss@day0.local', confirmedAt: AT }}
+          reconciliation={{ by: 'you', confirmedAt: AT }}
           onConfirm={async () => undefined}
         />
       </AgentZoneContext>,

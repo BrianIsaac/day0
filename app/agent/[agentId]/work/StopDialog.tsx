@@ -1,0 +1,151 @@
+'use client';
+
+import { useRef, useState } from 'react';
+import { MANAGER_FEEDBACK_MAX_CHARS } from '@/work/manager-channel';
+import { Button } from '../../../components/Button';
+import { Dialog } from '../../../components/Dialog';
+import { Field, INPUT_CLASS } from '../../../components/Field';
+import { StatusRegion } from '../../../components/StatusRegion';
+import { useChange } from '../../../components/use-change';
+
+/** A name that starts a sentence: the default "the employee" takes a capital there. */
+function capitalised(name: string): string {
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}
+
+/**
+ * Where the item is when the manager stops it: being worked, sending the writes they approved, or
+ * holding an approval whose writes have not started (the wave 12 review's W12-R14, D-7 (b)).
+ */
+export type StopMoment = 'working' | 'applying' | 'approved';
+
+/**
+ * What stopping does, said before the manager decides (wave 12, 12-W; wording drafts).
+ *
+ * @param employeeName - Who is working the item.
+ * @param moment - Where the item is; a write may land only while it is applying.
+ */
+export function stopDialogDescription(employeeName: string, moment: StopMoment): string {
+  const name = capitalised(employeeName);
+  switch (moment) {
+    case 'applying':
+      return `${name} is sending the writes you approved. Stopping sends nothing more, but a write in flight may still land: the item lists each one for you to check before any retry.`;
+    case 'approved':
+      return `${name} has not started sending the writes you approved. Stopping takes your approval back: none of them is sent, and the item waits for you, stopped, with Retry.`;
+    case 'working':
+      return `${name} stops now and sends nothing more. Anything already sent stays sent; the item waits for you, stopped, with Retry.`;
+  }
+}
+
+/**
+ * What the Stop control of a card does, said under it.
+ *
+ * @param employeeName - Who is working the item.
+ * @param moment - Where the item is.
+ */
+export function stopWhy(employeeName: string, moment: StopMoment = 'working'): string {
+  const name = capitalised(employeeName);
+  return moment === 'approved'
+    ? `${name} has not sent the writes you approved yet. Stop takes your approval back and sends none of them.`
+    : `${name}, once stopped, sends nothing more, and the item waits for you with Retry.`;
+}
+
+/**
+ * The words a stop the manager made comes to, for the card's live region.
+ *
+ * @param title - The item's title.
+ * @param moment - Where the item was; taking an approval back says so.
+ */
+export function stoppedOutcome(title: string, moment: StopMoment = 'working'): string {
+  return moment === 'approved'
+    ? `Approval taken back: ${title}. It waits for you with Retry.`
+    : `Stopped: ${title}. It waits for you with Retry.`;
+}
+
+/**
+ * The Stop dialog of a working card (wave 12, 12-W, over the shared `Dialog`): it asks before a
+ * run under way is stopped, says what stopping does and what it cannot undo, and takes an optional
+ * reason kept with the item. Keep working holds focus; a refusal is said inside the dialog and
+ * leaves it open; once the stop lands the dialog closes and the card says it.
+ *
+ * @param title - The item's title, which the heading names.
+ * @param employeeName - Who is working it.
+ * @param moment - Where the item is: being worked, applying, or holding an approval not started.
+ * @param onStop - Stop the run with the reason as typed (empty when none).
+ * @param onClose - Close the dialog without stopping.
+ * @param onDone - The stop landed, with what the card's live region says.
+ */
+export function StopDialog({
+  title,
+  employeeName,
+  moment,
+  onStop,
+  onClose,
+  onDone,
+}: {
+  title: string;
+  employeeName: string;
+  moment: StopMoment;
+  onStop: (reason: string) => Promise<unknown> | void;
+  onClose: () => void;
+  onDone: (words: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const keep = useRef<HTMLButtonElement>(null);
+  const change = useChange(keep);
+  return (
+    <Dialog
+      role="alertdialog"
+      title={
+        moment === 'approved'
+          ? `Take back your approval for “${title}”?`
+          : `Stop work on “${title}”?`
+      }
+      description={stopDialogDescription(employeeName, moment)}
+      onClose={onClose}
+      initialFocus={keep}
+      busy={change.busy}
+    >
+      <form
+        className="grid gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (change.busy) return;
+          change.run(() => onStop(reason.trim()), {
+            done: stoppedOutcome(title, moment),
+            refused: 'The run was not stopped.',
+            after: () => onDone(stoppedOutcome(title, moment)),
+          });
+        }}
+      >
+        <Field label="Reason (optional)" hint="Shown on the item and kept in the record.">
+          {(control) => (
+            <input
+              {...control}
+              name="reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              maxLength={MANAGER_FEEDBACK_MAX_CHARS}
+              autoComplete="off"
+              disabled={change.busy}
+              className={`${INPUT_CLASS} w-full`}
+            />
+          )}
+        </Field>
+        <StatusRegion outcome={change.outcome} />
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button ref={keep} size="large" disabled={change.busy} onClick={onClose}>
+            {moment === 'approved' ? 'Keep the approval' : 'Keep working'}
+          </Button>
+          <Button type="submit" variant="danger" size="large" disabled={change.busy}>
+            {change.busy
+              ? 'Stopping…'
+              : moment === 'approved'
+                ? 'Take the approval back'
+                : 'Stop the run'}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}

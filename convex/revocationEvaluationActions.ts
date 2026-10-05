@@ -4,7 +4,7 @@ import { v } from 'convex/values';
 import { action, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { requireEvaluationAgent } from './revocationEvaluation';
 import { applySurfaceActions } from '../src/surfaces/registry';
 import { readSurfaceBearer } from './mcpOauthActions';
@@ -143,6 +143,7 @@ export const setupSurfaceCards = action({
 export const runTrialAction = action({
   args: { workItemId: v.id('workItems'), checkpoint },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+    await getCallerOrThrow(ctx);
     const context: {
       row: Doc<'workItems'>;
       agent: Doc<'agents'>;

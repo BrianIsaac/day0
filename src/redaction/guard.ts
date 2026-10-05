@@ -130,7 +130,7 @@ function shapeRejects(shape: NeverASecret, value: string, context: GuardContext)
  * module; a test holds the two lists together.
  */
 const PROVIDER_PREFIX =
-  /^(?:lin_api_|xoxe\.xox[abps]-|xox[abpes]-|ntn_|secret_|AKIA|ghp_|github_pat_|sk_live_|whsec_|AIza|sk-ant-|sk-(?:proj-|svcacct-)?)/;
+  /^(?:lin_api_|xoxe\.xox[abps]-|xox[abpes]-|xapp-|ntn_|secret_|AKIA|ghp_|github_pat_|sk_live_|whsec_|AIza|sk-ant-|sk-(?:proj-|svcacct-)?)/;
 /** The provider prefix a token-shaped value starts with, or undefined. */
 export function providerPrefix(value: string): string | undefined {
   return PROVIDER_PREFIX.exec(value)?.[0];

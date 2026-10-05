@@ -13,6 +13,7 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organ
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 import { throughTimers } from './fakes/fake-clock';
 import { vendorTransport } from './fakes/vendor-revocation';
 import { privateHostAllowlist } from '../../src/lib/private-hosts';
@@ -1344,5 +1345,17 @@ describe('the deployment token store and Nango (11-AT)', (): void => {
     await expect(
       harness.action(internal.mcpOauthActions.currentBearer, { credentialId }),
     ).rejects.toThrow('Nango is not configured on this deployment');
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the card exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const surfaceId = await goneRowOf(harness, 'surfaces');
+    await expect(
+      harness.action(api.mcpOauthActions.startAuthorisation, { surfaceId }),
+    ).rejects.toMatchObject(refusal);
   });
 });

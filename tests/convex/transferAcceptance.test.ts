@@ -392,8 +392,8 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(preview?.takesOn.scopes.map((grant) => grant.scope)).not.toContain('linear:read');
     expect(preview?.leavesBehind.surfaces).toEqual(
       expect.arrayContaining([
-        { slug: 'linear', displayName: 'Linear' },
-        { slug: 'slack', displayName: 'Slack' },
+        { slug: 'linear', displayName: 'Linear', throughConnection: false },
+        { slug: 'slack', displayName: 'Slack', throughConnection: false },
       ]),
     );
     expect(JSON.stringify(preview)).not.toContain('Owner handbook');
@@ -445,9 +445,64 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(preview?.leavesBehind.reapprove).toEqual([
       { slug: 'linear', displayName: 'Linear', identity: 'Day0 Maya', kind: 'own-app' },
     ]);
-    expect(preview?.leavesBehind.surfaces).toEqual([{ slug: 'slack', displayName: 'Slack' }]);
+    expect(preview?.leavesBehind.surfaces).toEqual([
+      { slug: 'slack', displayName: 'Slack', throughConnection: false },
+    ]);
     expect(preview?.leavesBehind.scopesRevoked).toEqual(['linear:read']);
     expect(preview?.takesOn.scopes.map((grant) => grant.scope)).not.toContain('linear:read');
+  });
+
+  it("says which cut card connects again through IT's connection, with nothing to paste (the wave 11 review's m23)", async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write', 'app:assignable'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.patch(office.linear, { endpoint: 'https://api.linear.app/graphql' });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.leavesBehind.surfaces).toEqual(
+      expect.arrayContaining([
+        { slug: 'linear', displayName: 'Linear', throughConnection: true },
+        { slug: 'slack', displayName: 'Slack', throughConnection: false },
+      ]),
+    );
+  });
+
+  it("never says a cut Linear card connects through a per-employee connection, whose Connect waits for IT to record the new manager's app (the second pass's code reader)", async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write', 'app:assignable'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.patch(office.linear, { endpoint: 'https://api.linear.app/graphql' });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.leavesBehind.surfaces).toEqual(
+      expect.arrayContaining([{ slug: 'linear', displayName: 'Linear', throughConnection: false }]),
+    );
   });
 
   it('counts the record at most to the retire preview’s bound, and says when the count is a floor', async (): Promise<void> => {

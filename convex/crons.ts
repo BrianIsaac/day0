@@ -33,6 +33,8 @@ const SCHEDULED_JOBS = {
     await ctx.runAction(intakeInternal.intakeActions.pollAll, {}),
   'work:resumeStalledSteps': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runMutation(internal.work.resumeStalledSteps, {}),
+  'workLoop:settleLapsedClaims': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.workLoop.settleLapsedClaims, {}),
   'intakeActions:pollDecisions': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runAction(intakeInternal.intakeActions.pollDecisions, {}),
   'managerChannelActions:sendManagerDigests': async (ctx: ActionCtx): Promise<unknown> =>
@@ -56,8 +58,14 @@ const scheduledJobNames = Object.keys(SCHEDULED_JOBS) as ScheduledJob[];
  * Internal: only the cron table below calls it. Paused (`DAY0_CRONS_PAUSED`
  * set, by `./setup.sh pause` or an upgrade), it logs one line and returns
  * before the job reads or writes anything, so the polls' cursors stay where
- * they were and the next run after the pause picks up from them. Work a job
- * scheduled before the pause is not held: it runs to its end.
+ * they were and the next run after the pause picks up from them. A work-loop
+ * step a job queued before the pause is held too (12-P): every step reads the
+ * same switch at its claim (`stepMayRun`), so a queued evaluation, draft,
+ * execution or apply starts nothing and its row waits, ready, for the stalled-
+ * step sweep's first run after the pause. A step that had already claimed runs
+ * to its next claim. The documentation sync's own chain reads it too, at each
+ * batch (`docSyncActions.syncBatch`): the run ends short at its cursor, and
+ * this job's first sync after the pause goes on from there.
  */
 export const runScheduledJob = internalAction({
   args: { job: v.union(...scheduledJobNames.map((job) => v.literal(job))) },
@@ -106,6 +114,12 @@ crons.interval('poll connected surfaces for work', { minutes: 5 }, gate, {
 // that died (real mode only; the mutation returns at once in mock mode).
 crons.interval('resume stalled work steps', { minutes: 5 }, gate, {
   job: 'work:resumeStalledSteps',
+});
+
+// The lease on the manager channel's sends and edits (N-3, either mode): a claim an action died
+// holding is settled as its own failure would have settled it.
+crons.interval('settle lapsed manager-channel claims', { minutes: 5 }, gate, {
+  job: 'workLoop:settleLapsedClaims',
 });
 
 crons.interval('poll manager decision replies', { seconds: 60 }, gate, {

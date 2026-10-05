@@ -66,6 +66,7 @@ const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 const FLAG_VAR = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const CREDENTIAL_KEY_VAR = 'DAY0_CREDENTIAL_KEY';
 const NOTION_MCP_AUTH_TOKEN_VAR = 'DAY0_NOTION_MCP_AUTH_TOKEN';
+const SOCKET_BRIDGE_SECRET_VAR = 'DAY0_SOCKET_BRIDGE_SECRET';
 const NANGO_SECRET_KEY_VAR = 'DAY0_NANGO_SECRET_KEY';
 const NANGO_ENCRYPTION_KEY_VAR = 'DAY0_NANGO_ENCRYPTION_KEY';
 const NANGO_DB_PASSWORD_VAR = 'DAY0_NANGO_DB_PASSWORD';
@@ -108,13 +109,23 @@ const NANGO_KEYS = [
   { name: NANGO_DB_PASSWORD_VAR, mint: (): string => randomBytes(32).toString('base64url') },
 ] as const;
 
-/** The Nango keys the file lacks, minted. */
+/**
+ * The Slack socket bridge's secret (12-M; RM7), minted once and never adopted, as the Nango keys
+ * are: the bridge and the deployment both take it from the file (the compose file and
+ * `sync-convex-env.sh`), so a new one reaches both at the next start and nothing is asked of the
+ * deployment for it.
+ */
+const SOCKET_BRIDGE_KEY = {
+  name: SOCKET_BRIDGE_SECRET_VAR,
+  mint: (): string => randomBytes(32).toString('base64url'),
+} as const;
+
+/** The Nango keys and the bridge secret the file lacks, minted. */
 function nangoKeyUpdates(existing: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(
-    NANGO_KEYS.filter((key): boolean => !existing[key.name]).map((key): [string, string] => [
-      key.name,
-      key.mint(),
-    ]),
+    [...NANGO_KEYS, SOCKET_BRIDGE_KEY]
+      .filter((key): boolean => !existing[key.name])
+      .map((key): [string, string] => [key.name, key.mint()]),
   );
 }
 

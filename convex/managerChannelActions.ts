@@ -32,6 +32,8 @@ import {
   managerMessageUpdateAction,
   type DecisionKind,
 } from '../src/work/manager-channel';
+import { decisionRequestBlocks, settledRequestBlocks } from '../src/work/decision-blocks';
+import type { SlackBlock } from '../src/work/slack-blocks';
 import type { MockAction } from '../src/work/types';
 import { log } from '../src/lib/logger';
 
@@ -79,22 +81,29 @@ interface ManagerDelivery {
  * Deliver one message to the manager DM through the gate.
  *
  * @param options - The decision request it sends, when it is one, which the
- *   gate checks is still current; and the request it answers, whose thread it
- *   goes in.
+ *   gate checks is still current; the request it answers, whose thread it
+ *   goes in; and the blocks a request with buttons renders with.
  */
 async function deliverManagerMessage(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   text: string,
-  options: { readonly decisionId?: string; readonly threadTs?: string } = {},
+  options: {
+    readonly decisionId?: string;
+    readonly threadTs?: string;
+    readonly blocks?: readonly SlackBlock[];
+  } = {},
 ) {
-  const { decisionId, threadTs } = options;
+  const { decisionId, threadTs, blocks } = options;
   return await applyManagerAction(
     ctx,
     workItemId,
     delivery,
-    managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {}),
+    managerMessageAction(delivery.surface, text, {
+      ...(threadTs ? { threadTs } : {}),
+      ...(blocks ? { blocks } : {}),
+    }),
     decisionId ? { decisionId } : {},
   );
 }
@@ -216,17 +225,23 @@ export const requestDecision = internalAction({
       ...(prepared.draftedWithout ? { draftedWithout: prepared.draftedWithout } : {}),
       actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
       heldIndexes: prepared.heldIndexes,
+      ...(prepared.leftForCard ? { leftForCard: prepared.leftForCard } : {}),
       refused: prepared.refused,
       item: prepared.item,
       surfaces: prepared.surfaces,
       closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       slackMarkup:
         prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
+      buttons: prepared.withButtons,
+      typedCode: prepared.typedCode,
     });
     // Other held action sets are already waiting on this channel: offer one
-    // code that decides them all, each named with its own.
+    // code that decides them all, each named with its own; only where a typed
+    // code reaches the app (W12V-7), since the batch has no button.
     if (
+      prepared.typedCode &&
       args.kind === 'actions' &&
+      prepared.heldIndexes.length > 0 &&
       prepared.openActionDecisions.length > 0 &&
       prepared.pendingRunId
     ) {
@@ -237,6 +252,7 @@ export const requestDecision = internalAction({
           decisionId: prepared.decisionId,
           pendingRunId: prepared.pendingRunId,
           title: prepared.title,
+          ...(prepared.leftForCard ? { leavesCloseForCard: true } : {}),
         },
         ...prepared.openActionDecisions,
       ];
@@ -258,12 +274,23 @@ export const requestDecision = internalAction({
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, {
         decisionId: prepared.decisionId,
+        ...(prepared.withButtons
+          ? {
+              blocks: decisionRequestBlocks({
+                id: prepared.decisionId,
+                text,
+                buttons: true,
+                typedCode: prepared.typedCode,
+              }),
+            }
+          : {}),
       });
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
         ts: result.providerId,
         text,
+        ...(prepared.withButtons ? { withButtons: true } : {}),
       });
       return { sent: true };
     } catch (error) {
@@ -278,54 +305,149 @@ export const requestDecision = internalAction({
   },
 });
 
+/** Why a claimed edit was not made: the card no longer allows `chat.update` on the manager DM. */
+const CANNOT_EDIT_REASON = 'the chat card no longer allows the edit (chat.update)';
+
 /**
  * Mark a decided request so in its own message in the manager DM, once, by
  * editing it to end with how it was decided (M finding 3). Internal; the
  * decide paths schedule it. A card that does not allow `chat.update` leaves
  * the request as it was sent; a failed edit is logged and not tried again,
- * since the decision itself already stands.
+ * since the decision itself already stands. The edit's result is recorded on
+ * the decision (`closedAt` or `closeFailure`) under the claim it was made
+ * with, so the lease sweep (12-W) reads only a claim that died unrecorded.
  */
 export const closeDecisionRequest = internalAction({
   args: { workItemId: v.id('workItems'), decisionId: v.string() },
   handler: async (ctx, args): Promise<{ closed: boolean }> => {
     const prepared = await ctx.runMutation(internal.work.prepareRequestClose, args);
     if (!prepared.prepared) return { closed: false };
-    const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
-    if (!action) return { closed: false };
+    const claim = { ...args, claimedAt: prepared.claimedAt };
+    const action = managerMessageUpdateAction(
+      prepared.surface,
+      prepared.ts,
+      prepared.text,
+      prepared.withButtons ? settledRequestBlocks(prepared.text) : undefined,
+    );
+    if (!action) {
+      await ctx.runMutation(internal.work.recordRequestClose, {
+        ...claim,
+        failure: CANNOT_EDIT_REASON,
+      });
+      return { closed: false };
+    }
     try {
       await applyManagerAction(ctx, args.workItemId, prepared, action, {
         requestEdit: { channel: prepared.channel, ts: prepared.ts },
       });
-      return { closed: true };
     } catch (error) {
+      const reason = safeFailureMessage(error, '', 'the edit did not land');
       log.warn('the decided request could not be marked in the manager DM; the decision stands', {
         workItemId: args.workItemId,
         decisionId: args.decisionId,
-        reason: safeFailureMessage(error, '', 'the edit did not land'),
+        reason,
       });
+      await ctx.runMutation(internal.work.recordRequestClose, { ...claim, failure: reason });
       return { closed: false };
     }
+    await ctx.runMutation(internal.work.recordRequestClose, { ...claim, closedAt: Date.now() });
+    return { closed: true };
   },
 });
 
-/** Send the sole acknowledgement claimed for a late or duplicate reply. */
+/**
+ * Mark a replaced request so in its own message in the manager DM, once, by editing it to end
+ * with the code that no longer decides anything and without its buttons (wave 12, 12-M; F2 D14).
+ * Internal; scheduled where a request is replaced or taken back. The edit's result is recorded
+ * under the claim it was made with (`work.recordReplacedEdit`), and a failed edit is not tried
+ * again: the replaced code is still answered with the request that replaced it.
+ */
+export const markRequestReplaced = internalAction({
+  args: { replacedId: v.id('replacedDecisionRequests') },
+  handler: async (ctx, args): Promise<{ edited: boolean }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareReplacedEdit, args);
+    if (!prepared.prepared) return { edited: false };
+    const claim = { replacedId: args.replacedId, claimedAt: prepared.claimedAt };
+    const action = managerMessageUpdateAction(
+      prepared.surface,
+      prepared.ts,
+      prepared.text,
+      prepared.withButtons ? settledRequestBlocks(prepared.text) : undefined,
+    );
+    if (!action) {
+      await ctx.runMutation(internal.work.recordReplacedEdit, {
+        ...claim,
+        failure: CANNOT_EDIT_REASON,
+      });
+      return { edited: false };
+    }
+    try {
+      await applyManagerAction(ctx, prepared.workItemId, prepared, action, {
+        requestEdit: { channel: prepared.channel, ts: prepared.ts },
+      });
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'the edit did not land');
+      log.warn('the replaced request could not be marked in the manager DM', {
+        replacedId: args.replacedId,
+        reason,
+      });
+      await ctx.runMutation(internal.work.recordReplacedEdit, { ...claim, failure: reason });
+      return { edited: false };
+    }
+    await ctx.runMutation(internal.work.recordReplacedEdit, { ...claim, editedAt: Date.now() });
+    return { edited: true };
+  },
+});
+
+/** How long the already-decided notice waits between looks for the acknowledgement it follows. */
+const NOTICE_WAIT_MS = 1_000;
+
+/** How many looks it makes before it is sent anyway, so a lost acknowledgement never holds it. */
+const NOTICE_WAITS = 15;
+
+/**
+ * Tell the manager a request they decided again was already decided, once, after the
+ * acknowledgement of that decision (W12V-10): while the acknowledgement is queued and not yet sent,
+ * the notice looks again a second later, up to {@link NOTICE_WAITS} times, and is then sent anyway.
+ */
 export const sendDecisionNotice = internalAction({
-  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    /** How many times this notice already waited for the acknowledgement it follows. */
+    waited: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
-    const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, args);
-    if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
+    const waited = args.waited ?? 0;
+    const target = { workItemId: args.workItemId, decisionId: args.decisionId };
+    const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, {
+      ...target,
+      ...(waited >= NOTICE_WAITS ? { afterWait: true } : {}),
+    });
+    if (!prepared.prepared) {
+      if (!('waiting' in prepared)) return { sent: false, reason: 'notice already claimed' };
+      await ctx.scheduler.runAfter(
+        NOTICE_WAIT_MS,
+        internal.managerChannelActions.sendDecisionNotice,
+        {
+          ...target,
+          waited: waited + 1,
+        },
+      );
+      return { sent: false, reason: 'waits for the acknowledgement it follows' };
+    }
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, prepared.text, {
         threadTs: prepared.threadTs,
       });
       await ctx.runMutation(internal.work.recordDecisionNotice, {
-        ...args,
+        ...target,
         ts: result.providerId,
       });
       return { sent: true };
     } catch (error) {
       const reason = safeFailureMessage(error, '', 'Decision notice failed.');
-      await ctx.runMutation(internal.work.recordDecisionNotice, { ...args, failure: reason });
+      await ctx.runMutation(internal.work.recordDecisionNotice, { ...target, failure: reason });
       return { sent: false, reason };
     }
   },

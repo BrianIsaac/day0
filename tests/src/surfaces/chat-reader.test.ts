@@ -189,6 +189,65 @@ describe('the Slack chat reader', (): void => {
   });
 });
 
+describe("the Slack reader's name for a member (the second pre-tag's recorded item)", (): void => {
+  const named = { ...slack, toolAllowlist: [...SLACK_METHODS, 'users.info'] };
+
+  it('gives the name Slack shows: the display name, else the full name, else the handle', async (): Promise<void> => {
+    const double = slackDouble({
+      'users.info': (url) =>
+        url.searchParams.get('user') === 'UPRIYA'
+          ? ok({
+              user: { name: 'priya', real_name: 'Priya Shah', profile: { display_name: 'Priya' } },
+            })
+          : ok({ user: { name: 'sam', real_name: 'Sam Lee', profile: { display_name: ' ' } } }),
+    });
+    const reader = slackChatReader(named, { credential: TOKEN, fetch: double.fetch });
+    expect(await reader.memberName('UPRIYA')).toBe('Priya');
+    expect(await reader.memberName('USAM')).toBe('Sam Lee');
+  });
+
+  it("asks nothing where the card's policy names no users.info, and gives no name for Slack's refusal", async (): Promise<void> => {
+    const double = slackDouble({
+      'users.info': () => Response.json({ ok: false, error: 'user_not_found' }),
+    });
+    expect(
+      await slackChatReader(slack, { credential: TOKEN, fetch: double.fetch }).memberName('UGONE'),
+    ).toBeUndefined();
+    expect(double.requests).toHaveLength(0);
+    expect(
+      await slackChatReader(named, { credential: TOKEN, fetch: double.fetch }).memberName('UGONE'),
+    ).toBeUndefined();
+  });
+
+  it("passes on a refusal that is a misconfiguration, for intake to note, and keeps a name to one short line (the second pass's code reader)", async (): Promise<void> => {
+    const refusing = slackDouble({
+      'users.info': () => Response.json({ ok: false, error: 'missing_scope' }),
+    });
+    await expect(
+      slackChatReader(named, { credential: TOKEN, fetch: refusing.fetch }).memberName('UPRIYA'),
+    ).rejects.toBeInstanceOf(ChatReadRefused);
+    const long = slackDouble({
+      'users.info': () =>
+        ok({ user: { profile: { display_name: `Priya\n  ${'Shah '.repeat(40)}` } } }),
+    });
+    const name = await slackChatReader(named, { credential: TOKEN, fetch: long.fetch }).memberName(
+      'UPRIYA',
+    );
+    expect(name?.length).toBeLessThanOrEqual(80);
+    expect(name).not.toMatch(/\s{2,}|\n/);
+    expect(name?.startsWith('Priya Shah Shah')).toBe(true);
+  });
+
+  it('answers a rate limit as a transient for the caller to note', async (): Promise<void> => {
+    const double = slackDouble({
+      'users.info': () => Response.json({ ok: false, error: 'ratelimited' }, { status: 429 }),
+    });
+    await expect(
+      slackChatReader(named, { credential: TOKEN, fetch: double.fetch }).memberName('UPRIYA'),
+    ).rejects.toBeInstanceOf(TransientProviderError);
+  });
+});
+
 describe('choosing a chat reader by rung', (): void => {
   const fetch = slackDouble({}).fetch;
 

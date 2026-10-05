@@ -2,16 +2,23 @@ import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
+  batchDecisionNoticeText,
+  batchRequestLines,
+  CLOSE_ONLY_ON_CARD_REASON,
+  closeOnCardNoticeText,
   canEditManagerMessage,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
+  decisionNoticeText,
   decisionRequestText,
   MANAGER_FEEDBACK_MAX_CHARS,
   MANAGER_MESSAGE_MAX_CHARS,
   managerMessageAction,
   managerMessageUpdateAction,
   parseDecisionReply,
+  readsManagerDm,
 } from '../../../src/work/manager-channel';
+import { decisionRequestBlocks, settledRequestBlocks } from '../../../src/work/decision-blocks';
 import type { MockAction } from '../../../src/work/types';
 
 const slack: SurfaceRecord = {
@@ -315,6 +322,92 @@ describe('manager channel decision requests', (): void => {
     ).toBeUndefined();
   });
 
+  it('sends the blocks of a request beside its text on the documented API, and refuses them over MCP', (): void => {
+    const blocks = decisionRequestBlocks({ id: 'ab3xyz', text: 'Decide this.', buttons: true });
+    const action = managerMessageAction(slack, 'Decide this.', { blocks });
+    expect(JSON.parse((action.args as { body: string }).body)).toEqual({
+      channel: 'D0MANAGER',
+      text: 'Decide this.',
+      blocks,
+    });
+    expect(() =>
+      managerMessageAction(
+        {
+          ...slack,
+          path: 'mcp',
+          toolAllowlist: ['send_message'],
+          toolArguments: [{ tool: 'send_message', arguments: ['channel', 'text'] }],
+        },
+        'Decide this.',
+        { blocks },
+      ),
+    ).toThrow(/blocks/);
+  });
+
+  it('edits a request with the blocks it is given, so its buttons go with the edit', (): void => {
+    const updating = { ...slack, toolAllowlist: [...slack.toolAllowlist!, 'chat.update'] };
+    const blocks = settledRequestBlocks('Decided.');
+    const action = managerMessageUpdateAction(updating, '1.100', 'Decided.', blocks);
+    expect(JSON.parse((action!.args as { body: string }).body)).toEqual({
+      channel: 'D0MANAGER',
+      ts: '1.100',
+      text: 'Decided.',
+      blocks,
+    });
+  });
+
+  it('names the buttons in the reply line when the request carries them, keeping the typed code', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Comment, then close the issue.' },
+      buttons: true,
+    });
+    expect(text.split('\n').at(-1)).toBe(
+      'Press Approve or Reject below, or reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+    );
+  });
+
+  it('never asks for a typed reply from an app that takes no messages, buttons or not (W12V-7)', (): void => {
+    // The walk on real Slack: under the DM with the kit's app Slack said "Sending messages to this
+    // app has been turned off." and offered no composer, while the request ended "... or reply
+    // “approve uacgcm” or “reject uacgcm <reason>”."
+    const held: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const request = (buttons: boolean, heldIndexes: number[]): string =>
+      decisionRequestText({
+        agentName: 'Iris',
+        title: '[w12 walk] Post the Q3 close queue count',
+        id: 'uacgcm',
+        kind: 'actions',
+        actions: [held, held, held],
+        heldIndexes,
+        surfaces: [slack],
+        buttons,
+        typedCode: false,
+      });
+    const withButtons = request(true, [0, 1, 2]);
+    expect(withButtons).not.toMatch(/reply “|“approve|“reject/i);
+    expect(withButtons.split('\n').slice(-2)).toEqual([
+      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Approve applies all 3 actions listed; to approve only some, decide in day0.',
+    ]);
+    const without = request(false, [0]);
+    expect(without).not.toMatch(/reply “|“approve|“reject/i);
+    expect(without.split('\n').at(-1)).toBe(
+      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+  });
+
   it('can edit a manager DM message only where the gate would allow chat.update', (): void => {
     const withEdit = { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'] };
     expect(canEditManagerMessage(withEdit)).toBe(true);
@@ -390,6 +483,15 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('readsManagerDm (M10)', (): void => {
+  it('reads the DM for the threads of Day0’s other recent messages too', (): void => {
+    expect(readsManagerDm({ requests: [], batches: [], noticeOwed: false })).toBe(false);
+    expect(
+      readsManagerDm({ requests: [], batches: [], noticeOwed: false, threads: ['1.000100'] }),
+    ).toBe(true);
   });
 });
 
@@ -551,5 +653,201 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
     const line = text.split('\n').find((entry) => entry.startsWith('- Post to Slack'))!;
     expect(line.endsWith('… (reply outside the source channel)')).toBe(true);
     expect(line.length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('the acknowledgement of a decision while a pause holds the step (W12-R15)', (): void => {
+  it('says the approved step runs now, or when the pause that holds it ends', (): void => {
+    const employee = { by: 'employee', employeeName: 'Priya' } as const;
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'approve', kind: 'actions', hold: undefined }),
+    ).toBe('Approval ab12cd received. I’m applying the approved actions now.');
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'approve', kind: 'actions', hold: employee }),
+    ).toBe(
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me.',
+    );
+    expect(decisionNoticeText({ id: 'ab12cd', verb: 'reject', kind: 'plan', hold: employee })).toBe(
+      'Rejection ab12cd received. I won’t apply it.',
+    );
+    expect(
+      batchDecisionNoticeText({
+        id: 'b1',
+        verb: 'approve',
+        decided: ['ab12cd'],
+        skipped: [],
+        hold: { by: 'deployment' },
+      }),
+    ).toBe(
+      'Approval b1 received for 1 of 1 decisions (ab12cd). Scheduled work on this deployment is paused: I’ll apply the approved actions once it runs again.',
+    );
+  });
+});
+
+describe('the acknowledgement of an approval that left a ticket close for its card (12-H)', (): void => {
+  const employee = { by: 'employee', employeeName: 'Priya' } as const;
+
+  it('says what it applies and that the close waits on its card, under a pause too', (): void => {
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'approve',
+        kind: 'actions',
+        hold: undefined,
+        closesHeld: 1,
+      }),
+    ).toBe(
+      'Approval ab12cd received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+    );
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'approve',
+        kind: 'actions',
+        hold: employee,
+        closesHeld: 2,
+      }),
+    ).toBe(
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. I won’t send the 2 ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.',
+    );
+    // A rejection takes the whole set, the close with it: nothing is left for the card.
+    expect(
+      decisionNoticeText({
+        id: 'ab12cd',
+        verb: 'reject',
+        kind: 'actions',
+        hold: undefined,
+        closesHeld: 1,
+      }),
+    ).toBe('Rejection ab12cd received. I won’t apply any of it, the ticket close included.');
+    expect(
+      decisionNoticeText({ id: 'ab12cd', verb: 'reject', kind: 'actions', hold: undefined }),
+    ).toBe('Rejection ab12cd received. I won’t apply it.');
+  });
+
+  it('names in a batch acknowledgement each request whose close waits, and one whose close was all it had', (): void => {
+    expect(
+      batchDecisionNoticeText({
+        id: 'b1',
+        verb: 'approve',
+        decided: ['ab12cd', 'ef34gh'],
+        skipped: [{ decisionId: 'jk56mn', reason: CLOSE_ONLY_ON_CARD_REASON }],
+        leftForCard: ['ab12cd', 'ef34gh'],
+      }),
+    ).toBe(
+      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. I won’t send the ticket closes of ab12cd and ef34gh with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0. Left as they were: jk56mn: nothing to send: its only write is a ticket close, which waits on its card.',
+    );
+  });
+
+  it('answers an approval of a request whose only waiting write is the close with where it is decided', (): void => {
+    expect(closeOnCardNoticeText('ab12cd')).toBe(
+      'Approval ab12cd received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
+    );
+  });
+});
+
+describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', (): void => {
+  const comment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-12","body":"Audit note posted."}',
+    },
+  };
+  const post: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-13","body":"Finance follow-up."}',
+    },
+  };
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-12","state":"Done"}',
+    },
+  };
+  const base = {
+    agentName: 'Priya',
+    title: 'Post the close-summary audit note',
+    id: 'gh6npq',
+    kind: 'actions' as const,
+    actions: [comment, close, post],
+    surfaces: [slack],
+    item: { sourceCategory: 'ticket-queue', externalId: 'REVOPS-12' },
+  };
+
+  it('lists the writes an approval sends, and names the close it leaves out, why, and where it is decided', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [0, 2],
+      leftForCard: { indexes: [1], clause: 'I could not find the close summary.' },
+      buttons: true,
+    });
+    const lines = text.split('\n');
+    expect(lines.filter((line) => /^\d+\. /.test(line))).toHaveLength(2);
+    expect(text).toContain('Not sent by approving here, as it waits on its card in day0:');
+    expect(text).toContain(
+      'Priya answered that the work is done, but wrote “I could not find the close summary”. Day0 held this close for that reason, so approving here does not send it, and rejecting here rejects everything, the close included. Decide it on its card, where you can read the run first.',
+    );
+    expect(text).toContain('“approve gh6npq” applies both actions listed');
+    expect(text.indexOf('Not sent by approving here')).toBeLessThan(text.indexOf('Press Approve'));
+    expect(text.length).toBeLessThanOrEqual(3_000);
+    expect(text).not.toContain('—');
+  });
+
+  it('asks nothing a press could decide when the close is the only write waiting', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [],
+      leftForCard: { indexes: [1], clause: 'Did the deals sync?' },
+      buttons: false,
+    });
+    expect(text.split('\n')[0]).toBe(
+      'Priya’s ticket close on “Post the close-summary audit note” waits for you on its card in day0.',
+    );
+    expect(text).toContain(
+      'Priya answered that the work is done, but wrote “Did the deals sync?” Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done, or finish without it.',
+    );
+    expect(text).not.toContain('approve gh6npq');
+    expect(text).not.toContain('Press Approve');
+    expect(text).not.toContain('Reply');
+  });
+
+  it('keeps a very long sentence inside one section of a Slack message', (): void => {
+    const text = decisionRequestText({
+      ...base,
+      heldIndexes: [0, 2],
+      leftForCard: { indexes: [1], clause: `${'The deals were not found. '.repeat(200)}` },
+    });
+    expect(text.length).toBeLessThanOrEqual(3_000);
+    const sentence = text.split('\n').find((line) => line.startsWith('Priya answered'))!;
+    // The quotation is cut at 400 characters; the line around it says why and where it is decided.
+    expect(sentence.length).toBeLessThanOrEqual(800);
+    expect(sentence).toContain('…”');
+  });
+});
+
+describe('the batch lines when a member leaves a ticket close for its card (12-H)', (): void => {
+  it('marks the member and says the batch code leaves its close for the card', (): void => {
+    expect(
+      batchRequestLines({
+        id: 'bq2wxy',
+        members: [
+          { title: 'Post the audit note', decisionId: 'gh6npq', leavesCloseForCard: true },
+          { title: 'Post the second note', decisionId: 'hk7rst' },
+        ],
+      }),
+    ).toEqual([
+      '',
+      '2 held action sets are waiting, each shown in its own request:',
+      '1. Post the audit note (gh6npq; its ticket close waits on its card)',
+      '2. Post the second note (hk7rst)',
+      'Reply “approve bq2wxy” to approve every held action in all 2 but any ticket close Day0 held, which is decided on its card in day0, or “reject bq2wxy <reason>” to reject them all, any such close included. A request decided since is left as decided.',
+    ]);
   });
 });

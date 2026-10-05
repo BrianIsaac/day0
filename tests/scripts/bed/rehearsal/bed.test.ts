@@ -236,7 +236,9 @@ describe('bringing the bed up', (): void => {
     const never = (async (): Promise<Response> => {
       throw new Error('refused');
     }) as typeof fetch;
-    await expect(startApp(startServer, bed, never, 1)).rejects.toThrow(
+    // A deadline already passed, so the first refused probe ends the wait: a deadline of 1 ms
+    // left the real 2 s interval between probes to the race of a millisecond.
+    await expect(startApp(startServer, bed, never, 0)).rejects.toThrow(
       'the app on localhost:45213',
     );
     expect(stopped).toBe(1);

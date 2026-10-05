@@ -24,6 +24,7 @@ import {
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   ACTION_TOOLS,
   CLOSING_SET_CAP,
@@ -32,7 +33,16 @@ import {
   type ExecutionOutput,
   type MockAction,
   type MockActionArgs,
+  type WorkCandidate,
 } from '../../../src/work/types';
+import { workDoneFactOf } from '../../../src/work/work-done';
+import {
+  FINISHED_WORDS,
+  PIP_DRAFT,
+  RECORDED_UNFINISHED,
+  ROOK_COMMENT,
+  UNFINISHED_WORDS,
+} from '../../fixtures/work/work-done-corpora';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -139,6 +149,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [],
@@ -147,6 +159,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [],
@@ -158,6 +172,8 @@ describe('executor output contract', (): void => {
     expect(
       dependentExecuteSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         actions: [],
         planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No prerequisite result.' }],
@@ -169,6 +185,8 @@ describe('executor output contract', (): void => {
     const schema = executeSchemaForProcedureContract(ticketProcedureContract);
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       actions: [],
@@ -202,6 +220,8 @@ describe('executor output contract', (): void => {
     );
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: true,
       actions: [],
@@ -276,6 +296,8 @@ describe('executor output contract', (): void => {
     const schema = executeSchemaForProcedureContract(contract, candidate, plan);
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
@@ -349,6 +371,8 @@ describe('executor output contract', (): void => {
         draft: 'Escalated safely.',
         notes: 'The candidate supplied no structured destination.',
         needsDependentPhase: false,
+        workDone: 'done',
+        workDoneWhy: 'The request is escalated by the documented route.',
         actions: [
           {
             tool: 'slack.postMessage',
@@ -709,6 +733,223 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([
       'the loaded procedure prescribes an originating-reference trail; none is present',
     ]);
+  });
+
+  /** The 4 October demo's ticket: an approved plan to reconcile and close, with no deals to find. */
+  const demoTicket: WorkCandidate = {
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'ticket',
+    externalId: 'REVOPS-204',
+    title: 'Reconcile the three October closed-won deals',
+    contentSummary:
+      'Reconcile the three October closed-won deals against the closed-won tracker and close REVOPS-204.',
+    contentRefs: ['ticket://REVOPS-204'],
+    observedAt: new Date(0),
+  };
+  const demoPlan = {
+    summary: 'Reconcile the three deals and close the ticket.',
+    steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: 'reversible' as const,
+    estimatedMinutes: 10,
+  };
+  /** The run's own words as the demo recorded them, with the status it set. */
+  function demoRun(status: 'done' | 'in-progress') {
+    return {
+      draft:
+        "I could not reconcile the three October closed-won deals: I can't find them in the tracker.",
+      notes: '',
+      needsDependentPhase: false,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      actions: [
+        {
+          tool: 'ticket.update' as const,
+          args: {
+            slug: 'REVOPS-204',
+            status,
+            comment:
+              'Reconciliation of the three October closed-won deals is pending manager confirmation: the deal list is not yet identified in the tracker.',
+          },
+        },
+      ],
+    };
+  }
+
+  it('never takes a ticket to done when the run’s own words say the work was not done (the 4 October demo)', (): void => {
+    expect(
+      mockActionContractIssues(demoRun('done'), demoTicket, demoPlan, ticketProcedureContract),
+    ).toEqual([
+      'prescribed originating-reference transition does not match the work its own words say was not done ("I could not reconcile the three October closed-won deals"): set status "in-progress"',
+    ]);
+  });
+
+  it('accepts the partial status a run whose own words say it was not done sets itself, rather than sending it back to done', (): void => {
+    expect(
+      mockActionContractIssues(
+        demoRun('in-progress'),
+        demoTicket,
+        demoPlan,
+        ticketProcedureContract,
+      ),
+    ).toEqual([]);
+  });
+
+  /** The why as the output keeps it: one line, cut at the limit (a recorded statement is longer). */
+  function storedWhy(text: string): string {
+    return workDoneFactOf({ workDone: 'partial', workDoneWhy: text })!.workDoneWhy;
+  }
+
+  /** A first ticket run on the demo's ticket that answers `workDone` and sets a status. */
+  function answeredRun(
+    workDone: 'done' | 'partial' | 'not-done',
+    words: string,
+    status: 'done' | 'in-progress',
+  ) {
+    return {
+      draft: words,
+      notes: '',
+      needsDependentPhase: false,
+      workDone,
+      workDoneWhy: words,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      actions: [
+        {
+          tool: 'ticket.update' as const,
+          args: { slug: 'REVOPS-204', status, comment: words },
+        },
+      ],
+    };
+  }
+
+  it('closes the ticket of a run answering done over finished words, whatever the detector reads in them (the review corpus, Quill and Rook)', (): void => {
+    for (const { label, text } of FINISHED_WORDS) {
+      expect(
+        mockActionContractIssues(
+          answeredRun('done', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([]);
+    }
+  });
+
+  it('never closes the ticket of a run answering partial or not-done, in any wording (the review corpus, Moss, Nell, Pip and nine recorded runs)', (): void => {
+    for (const { label, text } of [...UNFINISHED_WORDS, ...RECORDED_UNFINISHED]) {
+      expect(
+        mockActionContractIssues(
+          answeredRun('partial', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([
+        `prescribed originating-reference transition does not match the work it says was only partly done ("${storedWhy(text)}"): set status "in-progress"`,
+      ]);
+      expect(
+        mockActionContractIssues(
+          answeredRun('not-done', text, 'done'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([
+        `prescribed originating-reference transition does not match the work it says was not done ("${storedWhy(text)}"): set status "in-progress"`,
+      ]);
+      expect(
+        mockActionContractIssues(
+          answeredRun('not-done', text, 'in-progress'),
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        label,
+      ).toEqual([]);
+    }
+  });
+
+  it('refuses any close from a run answering partial or not-done, beside the status its trail asks for (the second pass)', (): void => {
+    const partly = answeredRun('partial', PIP_DRAFT, 'in-progress');
+    // A second change to the same ticket, and a cross-linked ticket set to done.
+    for (const extra of [
+      { tool: 'ticket.update' as const, args: { slug: 'REVOPS-204', status: 'done' as const } },
+      {
+        tool: 'ticket.update' as const,
+        args: { slug: 'REVOPS-202', status: 'done' as const, comment: 'Cross-link.' },
+      },
+    ]) {
+      expect(
+        mockActionContractIssues(
+          { ...partly, actions: [...partly.actions, extra] },
+          demoTicket,
+          demoPlan,
+          ticketProcedureContract,
+        ),
+        extra.args.slug,
+      ).toContain(
+        `sets the ticket to done while workDone is "partial" ("${PIP_DRAFT}"): a run that did not do all of the work leaves the ticket open, so leave the state change out and say in the comment what is left`,
+      );
+    }
+  });
+
+  it('holds a run answering done to the plan only where the plan keeps the ticket open in so many words, not where it says "remaining"', (): void => {
+    const remaining = {
+      ...demoPlan,
+      steps: [
+        'Match the three deals in the tracker.',
+        'Comment any remaining gaps and close REVOPS-204.',
+      ],
+    };
+    expect(
+      mockActionContractIssues(
+        answeredRun('done', ROOK_COMMENT, 'done'),
+        demoTicket,
+        remaining,
+        ticketProcedureContract,
+      ),
+    ).toEqual([]);
+    const keptOpen = {
+      ...demoPlan,
+      steps: [
+        'Match the three deals in the tracker.',
+        'Comment the result and leave the ticket open.',
+      ],
+    };
+    expect(
+      mockActionContractIssues(
+        answeredRun('done', ROOK_COMMENT, 'done'),
+        demoTicket,
+        keptOpen,
+        ticketProcedureContract,
+      ),
+    ).toEqual([
+      'prescribed originating-reference transition does not match the partial work: set status "in-progress"',
+    ]);
+  });
+
+  it('tells the executor to close a ticket only when it answers that the work was done', (): void => {
+    const prompt = executorInstructions({
+      mode: 'mock',
+      autonomousActions: false,
+      skillBody: '# skill',
+      surfaces: [],
+      mockEnv: {
+        howToGuides: ticketGuides,
+        teamDocs: [],
+        spreadsheets: [],
+        slackChannels: [],
+        tweets: [],
+        tickets: [],
+      } as never,
+      now: 0,
+    });
+    expect(prompt).toContain(
+      'Use `done` only when your `workDone` is "done"; when it is "partial" or "not-done", use `in-progress` and say in the comment what is left.',
+    );
   });
 
   it('rejects an in-progress transition when the literal ticket-queue work is fully closed', (): void => {
@@ -1171,6 +1412,8 @@ describe('executor output contract', (): void => {
     for (const action of Object.values(actions)) {
       const parsed = executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [action],
@@ -1183,6 +1426,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1232,6 +1477,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1245,6 +1492,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1264,6 +1513,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [{ tool: 'jira.update', args: {} }],
@@ -1275,6 +1526,8 @@ describe('executor output contract', (): void => {
     expect(
       executeSchema.safeParse({
         draft: 'd',
+        workDone: 'done',
+        workDoneWhy: 'Done.',
         notes: 'n',
         needsDependentPhase: false,
         actions: [
@@ -1290,6 +1543,8 @@ describe('executor output contract', (): void => {
   it('caps the one dependent phase at the closing set plus one deferred sequence', (): void => {
     const base = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
@@ -1361,6 +1616,8 @@ describe('executor output contract', (): void => {
     ).toBe(CLOSING_SET_CAP);
     const closing = (count: number) => ({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       openQuestion: null,
       procedureTrails: [],
@@ -1394,6 +1651,8 @@ describe('executor output contract', (): void => {
   it('uses the same strict tagged branch contract in the dependent phase', (): void => {
     const parsed = dependentExecuteSchema.safeParse({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       actions: [
@@ -1424,6 +1683,8 @@ describe('executor output contract', (): void => {
     };
     const validParsed = dependentExecuteSchema.safeParse({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       procedureTrails: [],
       actions: [valid],
@@ -1686,13 +1947,23 @@ describe('advisory plan steps in the closing phase', (): void => {
     const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
     const mockFirst = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       needsDependentPhase: false,
       actions: [],
       procedureTrails: [],
     };
     const first = { ...mockFirst, deferredActions: null };
-    const last = { draft: 'd', notes: 'n', actions: [], procedureTrails: [], planStepOutcomes: [] };
+    const last = {
+      draft: 'd',
+      notes: 'n',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [],
+    };
     for (const openQuestion of [
       '请确认通知使用哪个模板。',
       'Please confirm which template the notice should use.',
@@ -1717,6 +1988,8 @@ describe('advisory plan steps in the closing phase', (): void => {
     const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
     const reply = (outcome: Record<string, unknown>) => ({
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       openQuestion: null,
       actions: [],
@@ -1747,6 +2020,8 @@ describe('advisory plan steps in the closing phase', (): void => {
   it('accepts not-verifiable only in the real closing schema', (): void => {
     const row = {
       draft: 'd',
+      workDone: 'done',
+      workDoneWhy: 'Done.',
       notes: 'n',
       actions: [],
       procedureTrails: [],
@@ -1798,28 +2073,43 @@ describe('advisory plan steps in the closing phase', (): void => {
 describe('frozen prompt text', (): void => {
   // The hosted demo and the frozen evaluation beds run the mock executor.
   // Its preamble, and the surface list rendered without probed argument
-  // names, are byte-for-byte what they were when those beds were recorded.
+  // names, are pinned byte for byte, and a change re-pins with its cause:
+  // v0.16.0 took the preamble's own dashes out and gave it the punctuation
+  // rule (the v0.15.0 walk's finding 2), after those beds were recorded,
+  // and in the same release added item 5, the run's answer on whether the
+  // work was done (decision D-1 (b)), with the provider schema's two fields.
+  it("asks for plain punctuation in every field and carries no dash to copy, in both modes (the v0.15.0 walk's finding 2)", (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const preamble = executorPreamble(mode);
+      expect(preamble).not.toContain('\u2014');
+      expect(preamble).toContain(`  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`);
+      expect(preamble).toMatch(/^ {2}3\. Actions: typed /m);
+    }
+  });
+
   it('keeps the mock executor preamble byte-identical', (): void => {
     expect(executorPreamble('mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
       A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
       Apply the skill to the candidate. Produce three things:
-        1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.
-        2. Notes — short assumptions or open questions (single sentence).
-        3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
-        4. Procedure trails — one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+        1. A draft (human-readable): the deliverable the manager reads and decides whether to ratify.
+        2. Notes: short assumptions or open questions (single sentence).
+        3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
+        4. Procedure trails: one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+        5. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
         - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a \`slack.postMessage\` in this response says it.
         - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in \`notes\` rather than describing the work as finished.
+        - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
 
       Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
-        - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }
-        - slack.postMessage    — { channelSlug, threadKey: string or null, body }
-        - twitter.reply        — { tweetSlug, body }
-        - ticket.update        — { slug, status: value or null, comment: string or null }
+        - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }
+        - slack.postMessage:    { channelSlug, threadKey: string or null, body }
+        - twitter.reply:        { tweetSlug, body }
+        - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
         - Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.
@@ -2098,6 +2388,6 @@ it('keeps the mock phase-one provider schema byte-identical', () => {
     z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')),
   );
   expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
-    `"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`,
+    `"51b468bba40b43bab5184557185981354603c6f854599746100e42628f3ea0c2"`,
   );
 });

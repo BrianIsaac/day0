@@ -11,13 +11,17 @@ import {
 } from './_generated/server';
 import {
   assertOwnsAgent,
-  getCaller,
   getCallerOrThrow,
   ownedAgentOrNull,
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
-import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import {
+  holdsPurgeableCredential,
+  purgeAppLevelToken,
+  purgeCredential,
+  purgeOwnedCredentials,
+} from './credentials';
 import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
 import type { AccessEnd } from '../src/surfaces/access-identity';
 import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
@@ -57,6 +61,7 @@ export const AGENT_KEYED_TABLES = [
   'externalClaims',
   'managerQuestions',
   'managerDecisionNotices',
+  'replacedDecisionRequests',
   'managerNotes',
   'corrections',
   'decisionBatches',
@@ -186,6 +191,13 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   managerDecisionNotices: (db, { agentId }, limit) =>
     upTo(
       db.query('managerDecisionNotices').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  replacedDecisionRequests: (db, { agentId }, limit) =>
+    upTo(
+      db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   managerNotes: (db, { agentId }, limit) =>
@@ -344,16 +356,25 @@ const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'completed',
 ]);
 
+/** The states whose item holds nothing it wrote: the manager turned it down, or it was never taken. */
+const NEVER_WROTE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'cancelled',
+  'skipped',
+]);
+
 /**
  * Whether a leaving employee's item may have written its provider item: it is writing or wrote,
- * or it failed with a landed write, or with a write whose outcome is unknown (an apply stopped
- * part way, by the dead-man switch or a handover's deadline), which may have landed.
+ * or its output carries a landed write, or a write whose outcome is unknown (an apply stopped
+ * part way, by the dead-man switch, a handover's deadline or the manager's Stop), which may have
+ * landed. The output is read in every state but the two that never wrote: a Retry moves a row
+ * that landed writes back to `plan-approved`, `claimed` or `plan-pending` with them carried (the
+ * wave 3.5 review's M2).
  *
  * @param item - The holding work item.
  */
 function mayHaveWritten(item: Doc<'workItems'>): boolean {
   if (WRITING_HOLDER_STATES.has(item.state)) return true;
-  if (item.state !== 'failed') return false;
+  if (NEVER_WROTE_STATES.has(item.state)) return false;
   return (
     landedWritesOf(item.output).length > 0 ||
     providerReconciliationEntries(item.output).some((entry) => entry.outcome === 'outcome-unknown')
@@ -392,6 +413,8 @@ export interface RetiredCard {
   readonly surfaceId: Id<'surfaces'>;
   readonly displayName: string;
   readonly bound: ReadonlySet<Id<'credentials'>>;
+  /** The app-level token the card's app was given, which ends with the card (W12-R2). */
+  readonly appLevelToken?: Id<'credentials'>;
 }
 
 /** What one employee's retire deleted and revoked, for its tombstone. */
@@ -409,7 +432,7 @@ interface Retired {
  * The backend keeps finished records for a week beside the pending ones, so
  * this is far past a team deployment's queue. A pending job older than the
  * window still runs against a missing row: most steps end as a no-op, and a
- * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
+ * few (`workRuns.setFailed`, `work.decidePlan`) throw into the backend log.
  */
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 
@@ -569,6 +592,7 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
       surfaceId: surface._id,
       displayName: surface.displayName,
       bound: await credentialsBoundBy(ctx.db, [surface]),
+      appLevelToken: surface.provisioning?.appLevelTokenCredentialId,
     })),
   );
   return {
@@ -692,10 +716,27 @@ export async function stillBound(
 }
 
 /**
+ * Whether a credential is the own identity of the employee whose card binds it, whoever's key it
+ * is held under: a per-employee identity the organisation holds (the wave 11 common rules), or
+ * one a release before v0.14.0 stored under the old owner's key through an organisation
+ * connection, which a handover keeps for the new manager (the wave 11 review's m6). A token the
+ * organisation shares between employees is none.
+ *
+ * @param credential - A credential a leaving employee's card binds.
+ */
+function employeeIdentityOf(credential: Doc<'credentials'>): boolean {
+  if (credential.holder !== undefined) return !sharedByOrganisation(credential);
+  return (
+    credential.issuedBy?.organisationConnectionId !== undefined &&
+    credential.issuedBy.grant !== 'client-credentials'
+  );
+}
+
+/**
  * Which of a leaving employee's credentials a retire or a handover would revoke and which it
- * would keep for what still binds them; a credential that is gone, or neither the owner's nor a
- * per-employee identity the organisation holds for the owner's employee (the wave 11 common
- * rules), is in neither, so the organisation's own rows never are.
+ * would keep for what still binds them; a credential that is gone, or neither the owner's nor the
+ * employee's own identity ({@link employeeIdentityOf}), is in neither, so the organisation's own
+ * rows never are.
  *
  * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
@@ -713,8 +754,7 @@ export async function sortCredentials(
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
     if (!credential) continue;
-    const employeeIdentity = credential.holder !== undefined && !sharedByOrganisation(credential);
-    if (credential.userId !== userId && !employeeIdentity) continue;
+    if (credential.userId !== userId && !employeeIdentityOf(credential)) continue;
     if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }
@@ -726,8 +766,10 @@ export async function sortCredentials(
  * the access plan, section 4.4): what Day0 obtained is revoked at once and held for its vendor
  * call (`endAccessAtSource`), its ciphertext kept until the call is final; a pasted key that
  * nothing else binds is revoked with its ciphertext deleted, and never sent to a vendor (D5,
- * AC4); a pasted key a colleague or a documentation source still binds is kept. Each card's end
- * writes its system's ledger line on the retired employee's record, which real mode keeps.
+ * AC4); a pasted key a colleague or a documentation source still binds is kept. The app-level
+ * token a card's app was given ends in Day0 with the card (`purgeAppLevelToken`, W12-R2), whoever
+ * holds it. Each card's end writes its system's ledger line on the retired employee's record,
+ * which real mode keeps.
  *
  * @param ctx - The reset's mutation context.
  * @param userId - The owner.
@@ -751,7 +793,13 @@ export async function revokeUnbound(
   const bound = new Set(retired.flatMap(({ cards }) => cards.flatMap((card) => [...card.bound])));
   const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, leaving);
   const revoking = new Map(revoke.map((credential) => [credential._id, credential]));
-  const ended = new Set<Id<'credentials'>>();
+  // Ended in Day0 below, never at the vendor, and never a line of its own.
+  const appLevelTokens = new Set(
+    retired.flatMap(({ cards }) =>
+      cards.flatMap((card) => (card.appLevelToken === undefined ? [] : [card.appLevelToken])),
+    ),
+  );
+  const ended = new Set<Id<'credentials'>>(appLevelTokens);
   for (const { agentId, cards } of retired) {
     for (const card of cards) {
       const rows: Doc<'credentials'>[] = [];
@@ -779,7 +827,11 @@ export async function revokeUnbound(
   for (const credential of revoke) {
     if (credential.issuedBy === undefined) await purgeCredential(ctx, credential, now);
   }
-  return { revoked: new Set(revoking.keys()), kept };
+  const revoked = new Set(revoking.keys());
+  for (const token of appLevelTokens) {
+    if (await purgeAppLevelToken(ctx, token, now)) revoked.add(token);
+  }
+  return { revoked, kept: new Set([...kept].filter((id) => !revoked.has(id))) };
 }
 
 /**
@@ -1123,6 +1175,8 @@ const holdingsValidator = v.object({
   handoverWords: v.boolean(),
   retiredBoundaries: v.boolean(),
   documentation: v.boolean(),
+  /** A credential the owner stored that the unlink choice's purge would take. */
+  credentials: v.boolean(),
 });
 
 /**
@@ -1130,7 +1184,9 @@ const holdingsValidator = v.object({
  * employee (evaluation agents included), a version in the owner's skill library, a handover
  * request carrying words the scrub clears (one the owner asked, or one naming their verified
  * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
- * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * releases; and the documentation and the stored credentials only the unlink choice takes (the
+ * wave 11 review's m15: an owner holding only a credential read "Nothing of yours is stored now",
+ * and no control could reach it). Each read stops at its first
  * match, the handover reads scanning the party's requests of one state until one carries words,
  * and the retirements read stops at their cap, so the home page can subscribe to it.
  *
@@ -1142,7 +1198,7 @@ async function deletionHoldings(
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<Infer<typeof holdingsValidator>> {
   const { ownerKey, address } = party;
-  const [employee, version, source, requests, retirements] = await Promise.all([
+  const [employee, version, source, credential, requests, retirements] = await Promise.all([
     db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
@@ -1155,6 +1211,7 @@ async function deletionHoldings(
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', ownerKey))
       .first(),
+    holdsPurgeableCredential({ db }, ownerKey),
     Promise.all(
       MANAGER_TRANSFER_STATES.flatMap((state) => [
         db
@@ -1193,21 +1250,21 @@ async function deletionHoldings(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
     ),
     documentation: source !== null,
+    credentials: credential,
   };
 }
 
 /**
- * Public, any caller; reads only the caller's own: whether each kind of row a deletion of their
- * data would remove is held ({@link deletionHoldings}), so the deletion's control is live
- * whenever the deletion has something to take, an employee or not (the v0.13.0 walk). Writes
- * nothing. An anonymous caller gets `null`.
+ * Public, any signed-in caller; reads only the caller's own: whether each kind of row a
+ * deletion of their data would remove is held ({@link deletionHoldings}), so the deletion's
+ * control is live whenever the deletion has something to take, an employee or not (the v0.13.0
+ * walk). Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const holdings = query({
   args: {},
-  returns: v.union(v.null(), holdingsValidator),
-  handler: async (ctx): Promise<Infer<typeof holdingsValidator> | null> => {
-    const identity = await getCaller(ctx);
-    if (!identity) return null;
+  returns: holdingsValidator,
+  handler: async (ctx): Promise<Infer<typeof holdingsValidator>> => {
+    const identity = await getCallerOrThrow(ctx);
     const address = verifiedAddressOf(identity);
     return await deletionHoldings(ctx.db, {
       ownerKey: identity.ownerKey,
@@ -1330,9 +1387,13 @@ export const retirePreview = query({
         .map(({ surface }) => ({ slug: surface.slug, displayName: surface.displayName }));
     const outcomes: Infer<typeof previewOutcome>[] = [];
     for (const { surface, bound } of cards) {
-      const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
-        (row): row is Doc<'credentials'> => row !== null,
-      );
+      // The app's app-level token ends in Day0 with the card and is no line of its own (W12-R2).
+      const appLevelToken = surface.provisioning?.appLevelTokenCredentialId;
+      const rows = (
+        await Promise.all(
+          [...bound].filter((id) => id !== appLevelToken).map(async (id) => await ctx.db.get(id)),
+        )
+      ).filter((row): row is Doc<'credentials'> => row !== null);
       const planned = await plannedAtSource(
         ctx.db,
         {

@@ -14,6 +14,10 @@ import {
   landedWork,
   STOPPED_PREFIX,
   stopDetail,
+  isStoppable,
+  isStoppableItem,
+  managerStopNote,
+  managerStopReason,
   stoppedReason,
   withRefusedReadsDropped,
 } from '../../../src/work/stop';
@@ -332,5 +336,38 @@ describe('a gate refusal stop, scrubbed like every failure path (step 42)', (): 
     expect(reason).toContain("Day0's gate refused 1 of 1 actions");
     expect(reason).toContain('POST /chat.postMessage?token=');
     expect(reason).not.toContain(token);
+  });
+});
+
+describe('a stop the manager made (wave 12)', () => {
+  it('stops an approval whose apply has not started, and never a set still waiting or one sending (W12-R14)', () => {
+    const held = { state: 'actions-pending' };
+    expect(isStoppableItem({ ...held, approvedIndexes: [0] })).toBe(true);
+    expect(isStoppableItem(held)).toBe(false);
+    expect(
+      isStoppableItem({ state: 'executing', approvedIndexes: [0], applyAttemptId: 'apply-1' }),
+    ).toBe(true);
+    expect(isStoppableItem({ ...held, approvedIndexes: [0], applyAttemptId: 'apply-1' })).toBe(
+      false,
+    );
+    expect(isStoppableItem({ state: 'failed', approvedIndexes: [0] })).toBe(false);
+  });
+
+  it('stops only work under way', () => {
+    expect(['claimed', 'plan-approved', 'executing'].every(isStoppable)).toBe(true);
+    expect(['plan-pending', 'actions-pending', 'failed', 'completed'].some(isStoppable)).toBe(
+      false,
+    );
+  });
+
+  it('records the manager’s reason under the stopped prefix, and reads it back', () => {
+    expect(managerStopReason('')).toBe(`${STOPPED_PREFIX}stopped by the manager`);
+    expect(managerStopReason('Wrong ticket.')).toBe(
+      `${STOPPED_PREFIX}stopped by the manager: Wrong ticket.`,
+    );
+    expect(managerStopNote(managerStopReason(''))).toBe('');
+    expect(managerStopNote(managerStopReason('Wrong ticket.'))).toBe('Wrong ticket.');
+    expect(managerStopNote(`${STOPPED_PREFIX}the read did not land`)).toBeUndefined();
+    expect(managerStopNote('rejected by the manager: no')).toBeUndefined();
   });
 });

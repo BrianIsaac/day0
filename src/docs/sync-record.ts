@@ -10,8 +10,8 @@
  * so a rewrite of the reason never touches the record (D D1 (a)).
  *
  * Releases before 0.6.0 wrote the record as text below the reason; the
- * `sync-runs-unread` migration moves each onto the field, and until it has
- * run `unreadRecordIn` still reads the text.
+ * `sync-runs-unread` migration moved each onto the field at 0.6.0, and from
+ * 0.16.0 only that migration reads the text.
  */
 
 import type { UnreadPage } from './readers/batch';
@@ -99,13 +99,14 @@ export function endedShort(ending: string): string {
 }
 
 /**
- * A run's record of its unread pages: its `unread` field, or the text an
- * earlier release wrote below its reason while the migration has not moved it.
+ * A run's record of its unread pages: its `unread` field. The text a release
+ * before 0.6.0 wrote below the reason was moved onto the field by the
+ * `sync-runs-unread` migration, which every deployment has run.
  *
  * @param run - The run's record fields.
  */
 export function unreadRecordIn(run: RunRecordFields | undefined): UnreadRecord | undefined {
-  return run?.unread ?? legacyUnreadRecord(run?.reason);
+  return run?.unread;
 }
 
 const LEGACY_HEADER = /^(\d+) pages? could not be read this sync/;
@@ -120,8 +121,8 @@ function legacyRecordStart(lines: readonly string[]): number {
 /**
  * The unread-pages record a release before 0.6.0 wrote as text in a run's
  * reason: a header counting the pages, then one `- <ref>: <reason>` line per
- * named page and a `- and <n> more` line. Read by `unreadRecordIn` and the
- * `sync-runs-unread` migration only; the release after it removes both reads.
+ * named page and a `- and <n> more` line. Read by the `sync-runs-unread`
+ * migration only, which still runs over a new volume's empty table.
  *
  * @param reason - A run's reason, or nothing.
  * @returns The record, or undefined when the reason holds none.
@@ -144,7 +145,8 @@ export function legacyUnreadRecord(reason: string | undefined): UnreadRecord | u
 /**
  * A run's reason without the record a release before 0.6.0 wrote below it:
  * the line saying why the run ended short, or nothing when the record was
- * all it held (a completed run's).
+ * all it held (a completed run's). Read by the `sync-runs-unread` migration
+ * only.
  *
  * @param reason - A run's reason, or nothing.
  */

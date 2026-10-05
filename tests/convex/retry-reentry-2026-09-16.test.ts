@@ -79,13 +79,15 @@ vi.mock('../../src/lib/mastra', () => ({
   }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name.endsWith('-dependent') && recorded.closingReply) {
-      return args.schema.parse(
-        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.closingReply),
+      return (await import('./fakes/executor-reply')).parseRecordedReply(
+        args.schema,
+        recorded.closingReply,
       ) as T;
     }
     if (args.agent.name.endsWith('-initial') && recorded.initialReply) {
-      return args.schema.parse(
-        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.initialReply),
+      return (await import('./fakes/executor-reply')).parseRecordedReply(
+        args.schema,
+        recorded.initialReply,
       ) as T;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
@@ -427,13 +429,15 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     // The retry resumes at plan-approved and the server runs the plan again.
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     // The note directs the Done in so many words, so the hold the plan puts on it is the manager's word already given.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
@@ -539,12 +543,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
       });
     });
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     await landedOnNote(t, workItemId);
 
     expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
@@ -567,12 +573,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3ObedientClosing(FIRST_COMMENT_ID);
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
 
@@ -611,12 +619,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3CorrectionClosing(FIRST_COMMENT_ID);
     await t
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
     // The note asks for the correction and then directs the Done in so many words, so both land on the note.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
@@ -628,5 +638,54 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toHaveLength(1);
     const rows = ledger(done);
     expect(rows[rows.length - 2]!.reason ?? '').not.toContain('reused landed comment');
+  });
+
+  it('sends again, on the ticket that carries the landed comment, the comment the manager answered not sent, and still never repeats the landed one (W12-R13, W12-R4)', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    // Phase one lands a starting comment and the audit comment on REVOPS-5; the closing phase blocks the Done.
+    const { workItemId } = await seedAtFirstApply(t, {
+      ...run3FirstPhaseOne,
+      actions: [...run3TwoCommentPhaseOne.actions, ...run3FirstPhaseOne.actions.slice(-1)],
+    });
+    recorded.commentIds.push('comment-start', FIRST_COMMENT_ID);
+    recorded.closingReply = run3FirstClosing;
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const failed = await settle(t, workItemId, ['failed', 'completed']);
+    expect(failed.state).toBe('failed');
+    expect(savedComments()).toHaveLength(2);
+    recorded.model.length = 0;
+
+    // The audit comment was deleted on Linear: the manager answers it not sent, the starting comment landed.
+    const answers = providerReconciliationEntries(failed.output).map((entry) => ({
+      phase: entry.phase,
+      actionIndex: entry.actionIndex,
+      answer: entry.providerId === FIRST_COMMENT_ID ? ('not-sent' as const) : ('landed' as const),
+    }));
+    expect(answers.filter((answer) => answer.answer === 'not-sent')).toHaveLength(1);
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true, answers });
+    recorded.initialReply = run3RetryPhaseOne;
+    recorded.closingReply = run3RetryClosing;
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    const done = await landedOnNote(t, workItemId);
+
+    // The retry's audit comment reached Linear; the starting comment was never posted twice.
+    expect(savedComments().map((comment) => comment.body.split('\n')[0])).toEqual([
+      RUN_3_STARTING_COMMENT,
+      RUN_3_FIRST_COMMENT.split('\n')[0],
+      RUN_3_RETRY_COMMENT_CORRECTED.split('\n')[0],
+    ]);
+    const rows = ledger(done);
+    expect(rows[rows.length - 2]).toMatchObject({ ok: true, providerId: SECOND_COMMENT_ID });
+    expect(rows[rows.length - 2]!.reason ?? '').not.toContain('reused');
+    // Both prompts told the retry which comment was not sent.
+    for (const call of recorded.model) {
+      expect(call.user).toContain(
+        'Writes the manager says earlier runs of this item did not send (1)',
+      );
+    }
   });
 });

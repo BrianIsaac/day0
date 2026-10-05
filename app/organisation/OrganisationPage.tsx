@@ -27,6 +27,7 @@ import {
   secretWords,
   type ConnectionView,
   type LedgerLine,
+  zoneLine,
 } from './organisation-words';
 
 /** The page's width and gutters, as the documentation page sets its own. */
@@ -106,6 +107,7 @@ export function OrganisationPage({ cardId, zone, navigate }: OrganisationPagePro
           The systems IT connected once for every employee. Each employee&apos;s access still needs
           its manager&apos;s approval, on its card.
         </p>
+        <p className="max-w-2xl text-sm text-[var(--color-muted)]">{zoneLine(shownZone)}</p>
       </div>
       <section aria-labelledby="organisation-connections" className="grid gap-4">
         <h2 id="organisation-connections" className="text-lg font-semibold">

@@ -3,10 +3,12 @@ import {
   isEventType,
   type EventPayloads,
   type EventType,
+  type WorkDecisionAcknowledgingPayload,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
+import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
 import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
@@ -80,6 +82,13 @@ function decisionNoun(kind: unknown): string {
   return kind === 'actions' ? 'held actions' : 'plan';
 }
 
+/** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
+const ACKNOWLEDGEMENT_LABELS: Readonly<Record<WorkDecisionAcknowledgingPayload['kind'], string>> = {
+  received: 'a decision reply acknowledged',
+  unknown: 'a reply with no open request answered',
+  replaced: 'a reply to a replaced request answered with the request that replaced it',
+};
+
 /** Why a row was sent back to be evaluated again, in words. */
 const REQUEUE_TRIGGER_WORDS: Readonly<Record<string, string>> = {
   charter: 'the charter changed',
@@ -136,12 +145,40 @@ function planHeldWords(reason: unknown): string {
     : 'it waits for your decision';
 }
 
-/** What a correction of an organisation connection changed: its redirect, its scopes, or both. */
+/**
+ * What a correction of an organisation connection changed: its redirect, its scopes, an MCP
+ * connection's missing issuer (the round review's m13), or more than one.
+ */
 function correctedWhat(payload: Read<'organisation.connection-corrected'>): string {
-  const redirect = payload.redirectCorrected === true;
-  const scopes = Array.isArray(payload.scopes);
-  if (redirect && scopes) return 'redirect and scopes';
-  return redirect ? 'redirect' : 'scopes';
+  const parts = [
+    ...(payload.redirectCorrected === true ? ['redirect'] : []),
+    ...(Array.isArray(payload.scopes) ? ['scopes'] : []),
+  ];
+  // An issuer recorded where none was is recorded, never corrected (the round review's m13).
+  const issuer = payload.issuerRecorded === true;
+  if (parts.length === 0 && issuer) return 'issuer recorded';
+  const corrected = `recorded ${parts.length === 0 ? 'scopes' : parts.join(' and ')} corrected`;
+  return issuer ? `${corrected} and its issuer recorded` : corrected;
+}
+
+/** How an employee's own Slack app came to take messages, as the feed says it (W12V-7). */
+function messagesOpenLabel(how: MessagesTabOpenHow | undefined): string {
+  switch (how) {
+    case 'created':
+      return 'app takes messages';
+    case 'opened':
+      return 'app messages tab opened';
+    case 'found-open':
+      return 'app messages tab found open';
+    case 'confirmed':
+      return 'app messages tab confirmed by the manager';
+    case undefined:
+      return 'app takes messages';
+    default: {
+      const unknown: never = how;
+      return `app takes messages (${String(unknown)})`;
+    }
+  }
 }
 
 /** One call Day0 made with the organisation's Slack configuration token or its refresh token (11-AS). */
@@ -151,6 +188,17 @@ function configurationUsedLabel(payload: Read<'organisation.configuration-used'>
     return payload.outcome === 'done'
       ? `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''} created with the configuration token`
       : `an employee's ${name} app not created${because(payload.reason)}`;
+  }
+  if (payload.method === 'apps.manifest.export' || payload.method === 'apps.manifest.update') {
+    const app = `an employee's ${name} app${text(payload.appId) ? ` ${text(payload.appId)}` : ''}`;
+    if (payload.method === 'apps.manifest.export') {
+      return payload.outcome === 'done'
+        ? `${app} read with the configuration token`
+        : `${app} not read${because(payload.reason)}`;
+    }
+    return payload.outcome === 'done'
+      ? `${app}: messages tab opened with the configuration token`
+      : `${app}: messages tab not opened${because(payload.reason)}`;
   }
   if (payload.method === 'auth.revoke') {
     const notChecked = payload.unchecked === true ? ', not confirmed afterwards' : '';
@@ -270,6 +318,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'agent.autonomy-changed': (payload) =>
     payload.to === true ? 'autonomous actions turned on' : 'autonomous actions turned off',
+  'agent.paused': (payload) => {
+    const reason = text(payload.reason);
+    return `paused by the manager${reason ? `: ${reason.replace(/[.!?]+$/, '')}` : ''}`;
+  },
+  'agent.resumed': 'resumed by the manager',
   'agent.retired': 'employee retired',
   'permission.granted': (payload) =>
     `${text(payload.scope) ?? 'a permission'} granted${text(payload.source) ? ` (${payload.source})` : ''}`,
@@ -360,6 +413,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'voice.finalisation-failed': (payload) =>
     `1:1 wrap-up failed${because(payload.reason)}${payload.retryScheduled === true ? ' · trying again' : ''}`,
   'voice.finalisation-abandoned': (payload) => `1:1 wrap-up given up${because(payload.reason)}`,
+  'voice.restarted': '1:1 held again',
   'skill.authoring-refused': (payload) =>
     `skill ${text(payload.name) ?? 'unnamed'} not moved on: it is ${text(payload.state) ?? 'elsewhere'} now`,
   'skill.builtin-installed': (payload) =>
@@ -449,14 +503,23 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
+  'surface.socket-token-landed': (payload) =>
+    `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
+  'surface.app-messages-open': (payload) => `${messagesOpenLabel(payload.how)}: typed code on`,
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
   'credential.superseded': (payload) => {
     const label = text(payload.label);
     const page = text(payload.page);
-    const cards = counted(payload.surfaceIds?.length, 'card');
-    return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
+    const rebound = payload.reboundSurfaceIds?.length
+      ? counted(payload.reboundSurfaceIds.length, 'card')
+      : undefined;
+    const unbound = payload.surfaceIds?.length
+      ? counted(payload.surfaceIds.length, 'card')
+      : undefined;
+    const what = rebound ? 'replaced in the documentation' : 'no longer in the documentation';
+    return `credential${label ? ` "${label}"` : ''} ${what}${page ? ` (${page})` : ''}${rebound ? `; the new value bound on ${rebound}` : ''}${unbound ? `; land one again on ${unbound}` : ''}`;
   },
   'surface.reoriented': 'orientation run again at the manager’s request',
   'surface.app-installed': 'app installed by the administrator',
@@ -504,7 +567,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'organisation.connection-rotated': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection's secret rotated`,
   'organisation.connection-corrected': (payload) =>
-    `${text(payload.displayName) ?? 'a system'}: the organisation connection's recorded ${correctedWhat(payload)} corrected`,
+    `${text(payload.displayName) ?? 'a system'}: the organisation connection's ${correctedWhat(payload)}`,
   'organisation.connection-revoked': (payload) =>
     `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
   'surface.authorised': 'authorised at its authorisation server',
@@ -592,10 +655,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${decisionNoun(payload.kind)} request asked on the chat surface`,
   'work.decision-notifying': 'telling the manager what was decided',
   'work.decision-request-closing': 'marking the decided request in the manager DM',
+  'work.decision-request-replacing': 'marking the replaced request in the manager DM',
   'work.decision-acknowledging': (payload) =>
-    payload.kind === 'unknown'
-      ? 'a reply with no open request answered'
-      : 'a decision reply acknowledged',
+    ACKNOWLEDGEMENT_LABELS[payload.kind ?? 'received'] ?? ACKNOWLEDGEMENT_LABELS.received,
   'work.decision-ignored': (payload) => `a chat reply ignored${because(payload.reason)}`,
   'work.decision-duplicate': 'a repeated decision reply ignored',
   'work.decision-batch-issued': (payload) =>
@@ -611,6 +673,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.cancelled': (payload) =>
     `cancelled${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.dismissed': 'dismissed by the manager',
+  'work.closed-without-retry': 'closed by the manager without a retry',
+  'work.actions-withheld': (payload) =>
+    `${counted(payload.withheld?.length, 'action') ?? 'actions'} held and never sent`,
+  'work.stopped': (payload) => `stopped by the manager${because(payload.reason)}`,
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',
@@ -622,9 +688,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       payload.autonomousActions === true ? 'autonomously' : 'automatically'
     }`,
   'work.actions-pending': (payload) =>
-    `${counted(payload.heldIndexes?.length, 'action') ?? 'actions'} held for your approval`,
+    payload.leftForCard === true
+      ? 'ticket close held, waiting on its card'
+      : `${counted(payload.heldIndexes?.length, 'action') ?? 'actions'} held for your approval`,
   'work.actions-approved': (payload) =>
-    `${counted(payload.approvedIndexes?.length, 'action') ?? 'actions'} approved${decidedFrom(payload.decidedVia)}`,
+    `${counted(payload.approvedIndexes?.length, 'action') ?? 'actions'} approved${decidedFrom(payload.decidedVia)}${
+      (payload.leftForCard?.length ?? 0) > 0 ? '; the ticket close left for its card' : ''
+    }`,
   'work.actions-rejected': (payload) =>
     `held actions rejected${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
   'work.actions-applying': (payload) =>
@@ -724,6 +794,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.decision-ignored': 'refused',
   'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
+  'work.actions-withheld': 'withheld',
   'work.skipped': 'withheld',
   'work.withdrawn': 'withheld',
   'work.cancelled': 'withheld',

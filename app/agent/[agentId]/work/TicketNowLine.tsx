@@ -28,7 +28,7 @@ export function TicketNowLine({
   return (
     <ItemSection title="The ticket now">
       <p className="text-sm text-[var(--color-fg-2)]">
-        {ticketNowSentence(listing.tracker, listing.refused)}{' '}
+        {ticketNowSentence(listing.tracker, listing.refused, listing.holder)}{' '}
         <span className="text-[13px] text-[var(--color-muted)]">
           As intake last listed it at{' '}
           <time

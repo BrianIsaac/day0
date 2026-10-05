@@ -403,6 +403,17 @@ function howLine(input: AccessRequestInput, system: string, name: string): strin
 }
 
 /**
+ * For an employee's own Slack app, the person's step that turns on decision buttons (wave 12,
+ * 12-M; RM3 (a)): Slack issues no app-level token by API (K2), so the request names it. It never
+ * says the typed code always works, which an app that takes no messages refuses (W12V-7). Nothing
+ * for any other system.
+ */
+function buttonsLine(system: string, employee: string): string | undefined {
+  if (system !== 'slack') return undefined;
+  return `For Approve and Reject buttons in the manager’s decision requests (optional; without them the manager decides each request in day0, or by its typed code where the app takes messages): a collaborator on ${employee}’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on ${employee}’s Slack card.`;
+}
+
+/**
  * The access request's words (the access plan, section 4.5): what system, which scopes and why
  * (the documentation quotes the card carries), for how long, and how IT connects it; the same on
  * the card, in the manager's DM and in the export, since all three build them here from the same
@@ -428,6 +439,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     evidenceLine(input.card, employee),
     lengthLine(input.card, input.zone),
     howLine(input, system, name),
+    buttonsLine(system, employee),
     `Nothing changes until IT connects it; then Connect appears on ${employee}’s card.`,
   ].filter((line): line is string => line !== undefined);
   const text = lines.join('\n');

@@ -1,6 +1,7 @@
-import { v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import { query } from './_generated/server';
-import { callerRefusal, getCaller, verifiedAddressOf } from './ownership';
+import { notAuthenticatedMessage } from './devAuth';
+import { callerRefusal, getCaller, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { CALLER_REFUSALS } from '../src/lib/customer-oidc';
 import {
   resolveDeploymentProfile,
@@ -10,20 +11,36 @@ import {
 import { modelName } from '../src/lib/model-name';
 import { browserComponent } from '../src/surfaces/browser';
 import { evaluationBedName } from '../src/evaluation/bed-flag';
+import { cronsPauseReason } from '../src/lib/crons-pause';
 
 /**
  * Return the non-secret surface mode for consistent UI labels, and the deployment profile, so
  * People can say which installation it is without guessing from the mode (the transfer plan,
  * section 8): under `local-dev` with the local sign-in every browser is one manager, and a
- * handover has nobody to go to. Public with no guard; both are the same for every caller.
+ * handover has nobody to go to. It says too whether the deployment's scheduled work is paused
+ * (`DAY0_CRONS_PAUSED`), which holds every work step at its claim, so the Work tab's cards say a
+ * held step is held (wave 12, 12-J); the switch's reason is the operator's and is not returned.
+ * Public, guarded by `getCallerOrThrow` (12-G): all three are the same for every caller, and
+ * nobody but a signed-in caller is told them. Writes nothing.
  */
 export const surfaceMode = query({
   args: {},
-  handler: (): { mode: 'mock' | 'real'; label: string; deploymentProfile: DeploymentProfile } => ({
-    mode: SURFACE_MODE,
-    label: SURFACE_MODE === 'real' ? 'real (local)' : 'mock',
-    deploymentProfile: resolveDeploymentProfile(),
-  }),
+  handler: async (
+    ctx,
+  ): Promise<{
+    mode: 'mock' | 'real';
+    label: string;
+    deploymentProfile: DeploymentProfile;
+    scheduledWorkPaused: boolean;
+  }> => {
+    await getCallerOrThrow(ctx);
+    return {
+      mode: SURFACE_MODE,
+      label: SURFACE_MODE === 'real' ? 'real (local)' : 'mock',
+      deploymentProfile: resolveDeploymentProfile(),
+      scheduledWorkPaused: cronsPauseReason() !== undefined,
+    };
+  },
 });
 
 /**
@@ -34,19 +51,25 @@ export const surfaceMode = query({
  * arms rather than whatever the operator's shell happened to say. It also
  * names the evaluation bed the deployment is, if any, so a harness refuses
  * before it spends anything (N9). Nothing about the provider - key, base URL
- * - is returned.
+ * - is returned. Public, guarded by `getCallerOrThrow` (12-G): the harness asks as the
+ * deployment's signed-in operator. Writes nothing.
  */
 export const modelSettings = query({
   args: {},
-  handler: (): {
+  handler: async (
+    ctx,
+  ): Promise<{
     model: string;
     skillSandboxBackend: 'daytona' | 'local';
     evaluationBed: string | null;
-  } => ({
-    model: modelName(),
-    skillSandboxBackend: process.env.DAYTONA_API_KEY?.trim() ? 'daytona' : 'local',
-    evaluationBed: evaluationBedName() ?? null,
-  }),
+  }> => {
+    await getCallerOrThrow(ctx);
+    return {
+      model: modelName(),
+      skillSandboxBackend: process.env.DAYTONA_API_KEY?.trim() ? 'daytona' : 'local',
+      evaluationBed: evaluationBedName() ?? null,
+    };
+  },
 });
 
 /** How many stamps `release` reads back to find when the newest release was first stamped. */
@@ -93,11 +116,13 @@ export interface ComponentStatus {
  * *configured*, not what is answering. Reachability is decided where a
  * connection is actually made, and reaches the card through the reason the
  * probe recorded on the row. No address is returned: which components exist is
- * not a secret, but their internal addresses are nobody's business in a page.
+ * not a secret, but their internal addresses are nobody's business in a page. Public, guarded by
+ * `getCallerOrThrow` (12-G). Writes nothing.
  */
 export const components = query({
   args: {},
-  handler: (): ComponentStatus => {
+  handler: async (ctx): Promise<ComponentStatus> => {
+    await getCallerOrThrow(ctx);
     let browser = false;
     try {
       browser = browserComponent(process.env.DAY0_BROWSER_MCP_URL).present;
@@ -131,16 +156,18 @@ const whoAmIValidator = v.union(
  * and, under the generic preset, the address rule (decision 7 (b)).
  *
  * Public and guarded to the caller: it answers only about the caller's own
- * token: null for an anonymous caller or a token on a reserved key, and for one
- * the customer's rules refuse only which rule refused it (`callerRefusal`),
- * never anything of the token. Writes nothing.
+ * token. A request with no token is refused as every guarded function refuses
+ * it (12-G); a token on a reserved key gets null, and one the customer's rules
+ * refuse only which rule refused it (`callerRefusal`), never anything of the
+ * token: the live check reads that before the token is known to be a caller
+ * (`src/lib/anonymous-access.ts`). Writes nothing.
  */
 export const whoAmI = query({
   args: {},
   returns: whoAmIValidator,
   handler: async (ctx): Promise<Infer<typeof whoAmIValidator>> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    if (!identity) throw new ConvexError(notAuthenticatedMessage());
     const refused = callerRefusal(identity);
     if (refused !== undefined) return { refused };
     const caller = await getCaller(ctx);

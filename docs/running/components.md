@@ -12,13 +12,13 @@ says on the card which component is missing.
 
 Components are compose profiles. `real` is day0 itself and is always on.
 `./setup.sh --route <route>` starts what a real-mode installation needs without
-your naming any of them: `real`, `docs-notion`, `browser` and `demo` in one
-`pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
+your naming any of them: `real`, `docs-notion`, `browser`, `demo` and
+`slack-socket` in one `pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
 each of those two has a first start that has something to report. By hand, that
 is:
 
 ```bash
-pnpm convex:up --profile docs-notion --profile browser --profile demo
+pnpm convex:up --profile docs-notion --profile browser --profile demo --profile slack-socket
 pnpm sandbox:up
 pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
@@ -53,12 +53,14 @@ nothing else on your machine can dial them.
 | `model` | `model` | `MODEL_PORT` 11434 | `http://model:11434/v1` |
 | `fake-slack` | `test` | `FAKE_SLACK_HOST_PORT` 8090 | `http://fake-slack:8090/api/` |
 | `fake-oidc` | `test` | none | `http://fake-oidc:8443` (a fixed address on a review bed) |
+| `fake-linear` | `test` | none (`FAKE_LINEAR_HOST_PORT` on a bed, through its overlay) | `https://api.linear.app`, `https://linear.app`, `https://mcp.linear.app` on a bed |
 | `docs-notion-mcp` | `docs-notion` | none | `http://docs-notion-mcp:3000/mcp` |
 | `playwright-mcp` | `browser` | none | `http://playwright-mcp:8931/mcp` |
 | `looker-tile` | `demo` | none | `http://looker-tile:8080` |
 | `redactor` | `redactor` | none | `http://redactor:8000` |
 | `sandbox` | `sandbox` | none | a unix socket on the `sandbox_socket` volume |
 | `nango-server` | `token-store` | none | `http://nango-server:3003`, on the `nango` network only the backend shares |
+| `slack-socket` | `slack-socket` | none | dials the backend's `http://backend:3211` on the `slack-socket` network, and Slack outbound |
 
 `pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
 `--app-port`), outside Docker.
@@ -247,6 +249,32 @@ people and codes in memory and forgets them when the container stops.
 
 ---
 
+## `fake-linear` - the Linear double
+
+**What it is.** A stand-in for Linear: its OAuth token, revoke and authorise
+endpoints, its GraphQL API and its MCP server, answering as real Linear
+answered the real-vendor walks of 3 October 2026, with the controls a Linear
+administrator has in Linear's settings (revoke an app's access, expire a
+token). On a bed it answers under Linear's own names through
+`fake-linear/compose.bed.yml`, so a Linear path is proved without calling
+Linear.
+
+**What day0 uses it for.** Nothing in production. Anyone who reaches it acts as
+anyone it lists, which is why it is never a Linear a real installation points
+at.
+
+**When you need it.** Proving a Linear path on a bed: the shared connection,
+an employee's own app, a revoke, an expiry, intake and a landed write.
+
+**When you do not.** Every real installation, which reaches Linear at its own
+addresses.
+
+**What it never sees.** A real workspace, a real token or a real ticket. It
+holds its tokens and issues in memory and forgets them when the container
+stops.
+
+---
+
 ## `dashboard` - the database dashboard
 
 **What it is.** The Convex dashboard: a web view of the backend's tables,
@@ -395,6 +423,46 @@ endpoints. It is never
 on the default network, where the browser component a model drives lives,
 because its own dashboard runs without a sign-in. The self-hosted edition sends
 nothing to Nango.
+
+---
+
+## `slack-socket` - the Slack socket bridge
+
+**What it is.** A small Node service (`slack-socket/`, on the pinned
+`node:22-alpine` image, no dependencies) that holds Slack's Socket Mode
+connections: one WebSocket per employee Slack app that has an app-level token,
+dialled out from your network, so Slack can deliver a press of a decision
+request's **Approve** or **Reject** button without day0 opening anything to the
+internet. Slack allows ten connections per app; the bridge holds one, and two
+for a moment while Slack refreshes it.
+
+**What day0 uses it for.** Decision buttons in the manager's Slack DM. The
+bridge acknowledges each press at once and hands it to the backend's internal
+route, `/slack-socket/press` on the site port, presenting
+`DAY0_SOCKET_BRIDGE_SECRET`; the backend decides it exactly as it decides a
+typed `approve <code>` reply, with the same checks and the same record. Without
+the bridge the requests carry no buttons: each is decided by its typed code
+where the employee's app takes messages (`access-slack.md`, "Typed codes"), or
+in Day0, and the employee's Slack card says why there are no buttons.
+
+**When you need it.** When decisions should be one press in Slack. Real-mode
+setup starts it and mints the secret (`pnpm dev:no-auth-key`, which every setup
+runs, writes it to `.env.local`, and `pnpm sync:env` pushes it). Each employee's
+app then needs its app-level token, which a person generates in the app's
+settings (Slack offers no API for it): see `access-slack.md`.
+
+**When you do not.** When the typed code is enough, or Slack is not one of your
+systems. Stop it with `pnpm convex:down --profile slack-socket`; requests then
+carry no buttons.
+
+**What it never sees.** The app-level tokens: the backend opens each
+connection with the app's token and hands the bridge only the short-lived URL,
+which the bridge never logs. It publishes no host port and runs read-only as an
+unprivileged user. It reaches the backend on `slack-socket`, an internal
+network with no route out that only the two of them join, and Slack on
+`slack-socket-egress`, which nothing else joins (fake Slack does, on a review
+bed). The egress it needs is outbound WebSocket (`wss://`) to Slack's Socket
+Mode hosts.
 
 ---
 

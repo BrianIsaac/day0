@@ -24,7 +24,9 @@ import {
 } from '../../src/agent/employee-access';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import type { MutationCtx } from '../../convex/_generated/server';
 import { allConvexModules } from './all-modules';
+import { insertMinimalRow } from './schema-fixtures';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
 const CUSTOMER_ISSUER = 'https://sso.example.com/realms/ops';
@@ -170,6 +172,41 @@ describe('the per-agent guards (the cockpit’s item, FW-m5)', (): void => {
       (error: unknown): unknown => error,
     );
     expect(refusal).toBeInstanceOf(ConvexError);
+  });
+});
+
+describe('the row guards (the anonymous-caller guard, 12-G)', (): void => {
+  it('refuse an anonymous caller before they read the row, so an id that is gone answers as a live one does', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const { notAuthenticatedMessage } = await import('../../convex/devAuth');
+    const ownership = await import('../../convex/ownership');
+    const gone = await harness.run(async (ctx) => {
+      const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+      const ids = {
+        workItem: await insertMinimalRow(fixtureCtx, 'workItems', agentId),
+        charter: await insertMinimalRow(fixtureCtx, 'charters', agentId),
+        skill: await insertMinimalRow(fixtureCtx, 'skills', agentId),
+        voiceSession: await insertMinimalRow(fixtureCtx, 'voiceSessions', agentId),
+      };
+      for (const id of Object.values(ids)) await ctx.db.delete(id as Id<'workItems'>);
+      return ids;
+    });
+    const guards = [
+      (ctx: MutationCtx) => ownership.assertOwnsWorkItem(ctx, gone.workItem as Id<'workItems'>),
+      (ctx: MutationCtx) => ownership.assertOwnsCharter(ctx, gone.charter as Id<'charters'>),
+      (ctx: MutationCtx) => ownership.assertOwnsSkill(ctx, gone.skill as Id<'skills'>),
+      (ctx: MutationCtx) =>
+        ownership.assertOwnsVoiceSession(ctx, gone.voiceSession as Id<'voiceSessions'>),
+    ];
+    for (const guard of guards) {
+      await expect(
+        harness.run(async (ctx) => {
+          await guard(ctx as unknown as MutationCtx);
+        }),
+      ).rejects.toMatchObject({ data: notAuthenticatedMessage() });
+    }
   });
 });
 

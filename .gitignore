@@ -70,3 +70,5 @@ phase*.txt
 
 # the test issuer's throwaway TLS material (fake-oidc/make-tls.sh)
 /fake-oidc/tls/
+# the fake Linear's throwaway TLS material (fake-linear/make-tls.sh)
+/fake-linear/tls/

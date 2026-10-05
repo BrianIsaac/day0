@@ -468,6 +468,62 @@ interface RecordedRegistration {
   readonly redirectUrl?: string;
   readonly scopes?: readonly string[];
   readonly clientCredentialsScopes?: readonly string[];
+  /** An MCP client's authorisation server, absent on one landed before the issuer rule. */
+  readonly issuer?: string;
+  /** The MCP server an MCP client asks tokens for. */
+  readonly resource?: string;
+  /** A confidential client's secret row: its issuer is IT's to give, never read from a server. */
+  readonly secretCredentialId?: string;
+}
+
+/** What a correction does about an MCP connection's issuer: records one, or says why it cannot. */
+type IssuerCorrection =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'record'; readonly issuer: string }
+  | { readonly kind: 'refused'; readonly lines: readonly string[] };
+
+/**
+ * The issuer a correction records on an MCP connection landed with none (the round review's m13):
+ * for a public client, the authorisation server the MCP server's own metadata names, as a landing
+ * finds it ({@link withIssuer}); a confidential client's is IT's to give, never read from a server,
+ * since its secret goes to that server alone (M12 f), so the correction says the cure instead; a
+ * server whose metadata cannot be read leaves the issuer unrecorded and says so, and the redirect
+ * and the scopes are corrected all the same.
+ *
+ * @param system - The connection's system key.
+ * @param row - The connection as recorded.
+ * @param io - The setup's io, whose vendor fetch reads the metadata.
+ */
+async function issuerCorrection(
+  system: string,
+  row: RecordedRegistration,
+  io: AccessIo,
+): Promise<IssuerCorrection> {
+  if (!system.startsWith('mcp:') || row.issuer !== undefined || row.resource === undefined) {
+    return { kind: 'none' };
+  }
+  if (row.secretCredentialId !== undefined) {
+    return {
+      kind: 'refused',
+      lines: [
+        `${system}: no issuer is recorded, and a client with a secret takes the issuer IT registered it with, never one read from the server.`,
+        'Revoke the connection on the organisation page, then land it again with ./setup.sh access and that issuer. Every card on it ends. pnpm check:access reports the gap until then.',
+      ],
+    };
+  }
+  try {
+    const target = await discoverAuthorisation(io.vendorFetch ?? fetch, new URL(row.resource));
+    return { kind: 'record', issuer: target.server.issuer };
+  } catch (err) {
+    // The redirect and the scopes are still corrected; only the issuer waits for the server.
+    return {
+      kind: 'refused',
+      lines: [
+        `${system}: no issuer is recorded, and ${row.resource} names no authorisation server Day0 could read (${errorMessage(err)}).`,
+        'Run the correction again once the server answers. pnpm check:access reports the gap until then.',
+      ],
+    };
+  }
 }
 
 /**
@@ -475,7 +531,8 @@ interface RecordedRegistration {
  * the redirect Day0 returns to now (`${DAY0_PUBLIC_URL}` and the recipe's path), and the kit's
  * scopes for the connection's mode where the kit names any. `check:access` compares exactly these,
  * so a redirect IT registered again at the vendor, or scopes it granted there, pass once recorded.
- * No secret changes and no card ends.
+ * An MCP public client landed with no issuer has the one its server names recorded (the round
+ * review's m13); a confidential one is told its cure. No secret changes and no card ends.
  *
  * @param raw - The system: `slack`, `linear`, `mcp:<host>` or an MCP server's https address.
  * @param values - The installation's env file.
@@ -520,15 +577,26 @@ async function correctConnection(
     const redirectUrl = `${originOf(values)}${recipe.redirectPath}`;
     const mode = recipe.modes.find((candidate) => candidate.mode === row.mode);
     const scopes = mode !== undefined && mode.scopes.length > 0 ? [...mode.scopes] : undefined;
+    const issuer = await issuerCorrection(named.system, row, io);
     await admin.run('mutation', 'organisationCorrections:correctFromSetup', {
       system: named.system,
       redirectUrl,
       ...(scopes !== undefined ? { scopes } : {}),
+      ...(issuer.kind === 'record' ? { issuer: issuer.issuer } : {}),
     });
     const was = row.redirectUrl === undefined ? 'none was recorded' : `it was ${row.redirectUrl}`;
     io.log(`${name}: the recorded redirect is now ${redirectUrl} (${was}).`);
     if (scopes !== undefined) {
       io.log(`${name}: the recorded scopes are now ${scopes.join(', ')}.`);
+    }
+    if (issuer.kind === 'record') {
+      io.log(
+        `${name}: the recorded issuer is now ${issuer.issuer}, the authorisation server named in the server's metadata (none was recorded).`,
+      );
+    }
+    if (issuer.kind === 'refused') {
+      for (const line of issuer.lines) io.log(line);
+      return 0;
     }
     const lacking = (mode?.clientCredentialsScopes ?? []).filter(
       (scope) => !(row.clientCredentialsScopes ?? []).includes(scope),

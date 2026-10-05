@@ -70,7 +70,12 @@ interface Seeded {
  */
 async function seedKept(
   harness: TestConvex<Schema>,
-  card: { readonly heldKey?: 'issued' | 'pasted'; readonly reason?: string } = {},
+  card: {
+    readonly heldKey?: 'issued' | 'pasted';
+    readonly reason?: string;
+    /** The mark the handover's keep leaves on the card (`keptIdentitySince`), when it left one. */
+    readonly marked?: number;
+  } = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const agentId = await ctx.db.insert('agents', {
@@ -125,6 +130,7 @@ async function seedKept(
       credentialLanded: false,
       // The handover's re-approval says why the card is back at proposed (A25).
       reason: card.reason ?? HANDOVER_REAPPROVE_REASON,
+      ...(card.marked === undefined ? {} : { keptIdentitySince: card.marked }),
       credentialId: accessId,
       credentialKind: issued ? 'oauth' : 'value',
       ...(issued ? { actsAs: { kind: 'delegated' as const, label: MANAGER_ADDRESS } } : {}),
@@ -245,6 +251,33 @@ describe('a kept identity its new manager has not approved again (the review’s
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the mark a handover's keep leaves on the card (the round review's m16)", (): void => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('knows a kept card by its mark whatever its reason says, and dates the wait from the mark', async (): Promise<void> => {
+    const harness = await realHarness();
+    const seeded = await seedKept(harness, {
+      reason: 'Words a later release wrote for the same keep.',
+      marked: MOVED_AT + DAY,
+    });
+
+    expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS)).toBe(0);
+    expect(await sweep(harness, MOVED_AT + DAY + KEPT_IDENTITY_WAIT_MS)).toBe(1);
+
+    const { surface, access } = await rows(harness, seeded);
+    expect(surface?.credentialId).toBeUndefined();
+    expect(surface?.keptIdentitySince).toBeUndefined();
+    expect(access?.revokedAt).toBe(MOVED_AT + DAY + KEPT_IDENTITY_WAIT_MS);
+  });
+
+  it('still knows a card kept before the mark by its words, until a later release backfills it', async (): Promise<void> => {
+    const harness = await realHarness();
+    await seedKept(harness);
+
+    expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS)).toBe(1);
   });
 });
 

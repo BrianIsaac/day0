@@ -3,7 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
-import { serveSpanModel } from '../fixtures/redaction-double';
+import { spanModelFetch } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -24,6 +24,8 @@ import {
 } from '../../convex/workActions';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
+import { CLOSE_ONLY_ON_CARD_REASON } from '../../src/work/manager-channel';
+import { NOT_APPLIED_AFTER_APPROVED_FAILURE } from '../../convex/workActions';
 import {
   LOG_1_RETRY_NOTE as SITTING_4_RETRY_NOTE,
   LOG_1_SECOND_SITTING_STOP,
@@ -43,6 +45,7 @@ import { createIssuer } from '../../fake-oidc/issuer.js';
 import type { FakeIssuer } from '../../fake-oidc/issuer';
 import {
   AWAITING_APPROVAL,
+  HELD_CLOSE_AGAINST_WORDS,
   HELD_MUTATION,
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
@@ -65,6 +68,12 @@ import {
   type MockAction,
   type PlanStepOutcome,
 } from '../../src/work/types';
+import {
+  FINISHED_WORDS,
+  MOSS_DRAFT,
+  RECORDED_UNFINISHED,
+  UNFINISHED_WORDS,
+} from '../fixtures/work/work-done-corpora';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { versionBodyHash } from '../../src/work/skill-library';
@@ -137,17 +146,22 @@ import {
   log1RefusedClosing,
 } from '../fixtures/work/full-run-3-2026-09-19-log-1';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+// Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
-// The redaction component the actions reach through DAY0_REDACTOR_URL, served
-// in-process from the recorded span model.
-let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
-beforeAll(async (): Promise<void> => {
-  redactorDouble = await serveSpanModel();
-  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+// The redaction component the actions reach through DAY0_REDACTOR_URL, answered
+// in-process from the recorded span model by the fetch stub below, never over a
+// socket: from undici 6.28 (Node 22.23, the release CI pins) a pooled socket is
+// reused only after a zero-delay setTimeout fires, which the many tests here
+// that fake setTimeout would hold until the test timed out (two of 12-H's, on
+// CI run 37225855013, 4 October 2026).
+const REDACTOR_URL = 'http://redactor.test:8000';
+const answerRedactor = spanModelFetch();
+beforeAll((): void => {
+  process.env.DAY0_REDACTOR_URL = REDACTOR_URL;
 });
-afterAll(async (): Promise<void> => {
+afterAll((): void => {
   delete process.env.DAY0_REDACTOR_URL;
-  await redactorDouble?.close();
 });
 
 const recorded = vi.hoisted(() => ({
@@ -810,10 +824,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   };
 });
 
-const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<Response> => {
   // The redaction component is reached over the same global; its calls are its own.
-  if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
+  if (String(input).startsWith(REDACTOR_URL)) return answerRedactor(new Request(input, init));
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
@@ -1321,6 +1334,141 @@ describe('work action completion evidence', (): void => {
     expect(blockedPlanReason(outcomes)).toBeUndefined();
   });
 
+  it('never closes a ticket the closing set’s own words say was not done, and lets it leave the state alone (the 4 October demo)', (): void => {
+    const plan = {
+      summary: 'Reconcile the three deals, then close.',
+      steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+      obligations: obligations(
+        [
+          { kind: 'read', reads: ['linear'] },
+          { kind: 'write', writes: ['linear'] },
+        ],
+        'promised',
+        2,
+      ),
+    };
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-204',
+          body: "I can't find the three October deals named anywhere in the tracker.",
+        }),
+      },
+    };
+    const done = skillOutput.actions[1];
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment, done], planStepOutcomes: satisfied }),
+    ).toBe(
+      'dependent phase sets the ticket to Done while its own words say the work was not done ("I can\'t find the three October deals named anywhere in the tracker."): leave the ticket\'s state as it is and record the step as blocked',
+    );
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
+    ).toBeUndefined();
+    // A draft that says so counts as the run's own words too.
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [skillOutput.actions[0], done],
+        planStepOutcomes: satisfied,
+        draft: 'Nothing was reconciled: the deal list is not in the tracker.',
+      }),
+    ).toContain('its own words say the work was not done');
+  });
+
+  it('holds a closing set to the run’s answer: partial or not-done never lands Done, in any wording, and done is not refused for its words', (): void => {
+    const plan = {
+      summary: 'Reconcile the three deals, then close.',
+      steps: ['Match the three deals in the tracker.', 'Comment the result and close REVOPS-204.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+      obligations: obligations(
+        [
+          { kind: 'read', reads: ['linear'] },
+          { kind: 'write', writes: ['linear'] },
+        ],
+        'promised',
+        2,
+      ),
+    };
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    const commentOf = (body: string): MockAction => ({
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-204', body }),
+      },
+    });
+    const done = skillOutput.actions[1];
+    for (const { label, text } of [...UNFINISHED_WORDS, ...RECORDED_UNFINISHED]) {
+      for (const workDone of ['partial', 'not-done'] as const) {
+        const fact = { workDone, workDoneWhy: text };
+        expect(
+          dependentTransitionRefusal({
+            plan,
+            actions: [commentOf(text), done],
+            planStepOutcomes: satisfied,
+            draft: text,
+            workDone: fact,
+          }),
+          label,
+        ).toBe(
+          `dependent phase sets the ticket to Done while workDone is "${workDone}" ("${text}"): a run that did not do all of the work leaves the ticket's state as it is and records the step it could not finish as blocked`,
+        );
+        // Leaving the state alone is the run's account of it, as the words were before.
+        expect(
+          dependentTransitionRefusal({
+            plan,
+            actions: [commentOf(text)],
+            planStepOutcomes: satisfied,
+            draft: text,
+            workDone: fact,
+          }),
+          label,
+        ).toBeUndefined();
+      }
+    }
+    for (const { label, text } of FINISHED_WORDS) {
+      expect(
+        dependentTransitionRefusal({
+          plan,
+          actions: [commentOf(text), done],
+          planStepOutcomes: satisfied,
+          draft: text,
+          workDone: { workDone: 'done', workDoneWhy: text },
+        }),
+        label,
+      ).toBeUndefined();
+    }
+    // The words alone never refuse a set whose run answered done: that is the tripwire's, and it
+    // only sends the set back once (`runDependentSkill`).
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [commentOf(MOSS_DRAFT), done],
+        planStepOutcomes: satisfied,
+        draft: MOSS_DRAFT,
+        workDone: { workDone: 'done', workDoneWhy: 'All three deals are reconciled.' },
+      }),
+    ).toBeUndefined();
+  });
+
   it('reads the transition from the declared fields, never from the wording of a step', (): void => {
     const comment = skillOutput.actions[0];
     const satisfied = [
@@ -1755,10 +1903,10 @@ describe("writes the plan left to the manager's answer stop with the question (1
     };
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
@@ -1796,8 +1944,8 @@ describe("writes the plan left to the manager's answer stop with the question (1
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
 
     // The question the first run landed is still the open one.
     recorded.skillOutput = {
@@ -2871,10 +3019,8 @@ describe('executing an approved plan through the gate', (): void => {
 
     // The batch schedules one apply per member; they start on the faked clock
     // and finish, rather than being raced by hand or waited for on the real one.
-    // The clock is pumped at zero while they run: fetch's zero-delay timers (the
-    // idle-socket check before a pooled connection is reused, from undici 6.28)
-    // are faked too, and the apply's redaction call waits on one. Nothing is
-    // moved forward, so the six-minute dead-man switches stay armed.
+    // The clock is pumped at zero to start them. Nothing is moved forward, so
+    // the six-minute dead-man switches stay armed.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
@@ -4551,7 +4697,7 @@ describe('executing an approved plan through the gate', (): void => {
     });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -4575,7 +4721,7 @@ describe('executing an approved plan through the gate', (): void => {
     });
     expect(ledger(failed)[0]).toMatchObject({
       ok: false,
-      reason: 'outcome unknown after interrupted apply - verify provider before retry',
+      reason: OUTCOME_UNKNOWN_REASON,
     });
   });
 
@@ -4598,7 +4744,7 @@ describe('executing an approved plan through the gate', (): void => {
       reason: 'not yet',
     });
     // The retry resumes at plan-approved, and the server runs the plan again.
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
     const second = (await readItem(harness, workItemId)).pendingRunId;
     expect(second).toBeDefined();
@@ -5079,7 +5225,7 @@ describe('a registered skill serves every later work item of its shape', (): voi
     );
     expect(await proposedSkills(harness)).toEqual([]);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
   });
 
@@ -5291,7 +5437,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
     expect(await events('work.retry')).toEqual([
       { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
@@ -5574,7 +5720,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(recorded.http).toHaveLength(1);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments']);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -5658,11 +5804,14 @@ describe('the autonomous-actions switch through the gate', (): void => {
       }),
     ]);
     const types = (await events(harness, agentId)).map((event) => event.type);
+    // The row the gate refused was held and never sent, so the completion lists it on its own
+    // line under Refused and withheld (wave 12, the wave 6 review's D4 (b)).
     expect(types).toEqual([
       'work.execution-claimed',
       'work.actions-auto-applying',
       'work.actions-applying',
       'work.completed',
+      'work.actions-withheld',
     ]);
     expect(types).not.toContain('work.actions-pending');
     expect(
@@ -7289,6 +7438,17 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
     tool: REFUSED_CREATE_RUN.actions[7].tool,
     args: { ...REFUSED_CREATE_RUN.actions[7].args },
   } as ExecutionOutput['actions'][number];
+  /** The recorded thread reply, saying what a set that files and closes the ticket lands. */
+  const landedThreadReply = {
+    tool: threadReply.tool,
+    args: {
+      ...threadReply.args,
+      body: JSON.stringify({
+        ...JSON.parse(String(threadReply.args.body)),
+        text: "Pipeline tile refreshed to the standup figure: the tile now shows 74%, audit line 'Last updated by revops at 2026-09-18 21:44:11 UTC'. The Linear audit ticket for this ask is filed, commented and closed.",
+      }),
+    },
+  } as ExecutionOutput['actions'][number];
 
   async function seedAsk(harness: Harness): Promise<Seeded> {
     const seeded = await seed(
@@ -7393,7 +7553,10 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
             }),
           },
         },
-        threadReply,
+        // The recorded reply said the closure was pending (its create had failed); this set files
+        // and closes the ticket, so its reply says what it lands, or Day0 refuses the Done its own
+        // words contradict (wave 12, 12-W).
+        landedThreadReply,
         {
           tool: 'mcp.call',
           args: {
@@ -8127,7 +8290,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
     try {
       await harness
         .withIdentity(OWNER)
-        .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+        .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
     } finally {
       vi.useRealTimers();
     }
@@ -8160,7 +8323,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
     };
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 
@@ -8978,7 +9141,7 @@ describe('an execution that fails on the model (P7-18, U9 step 20)', (): void =>
 });
 
 describe('a write to a ticket no work item was discovered from (P8-2)', (): void => {
-  it('leaves the writer holding the ticket, so a colleague’s item for it is refused and told who holds it', async (): Promise<void> => {
+  it('leaves the writer a settling claim on the ticket, so a colleague’s item raised after it finished is not refused (M9)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     recorded.skillOutput = {
@@ -9041,12 +9204,20 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
       contentSummary: 'Follow up.',
       contentRefs: [],
     });
+    // Re-pinned for M9 (wave 12, 12-M; the wave 3.5 review names this assertion as the defect):
+    // the writer finished before the colleague's item was raised, so its claim has settled and the
+    // item is new work, not refused for good. The claim is a write target, settled at the end.
     await expect(
       harness.mutation(internal.work.claimLoopStep, { workItemId: listed, step: 'evaluation' }),
-    ).resolves.toMatchObject({ claimed: false, reason: 'held-elsewhere' });
-    expect((await readItem(harness, listed)).verdict).toMatchObject({
-      decision: 'skip',
-      reason: expect.stringContaining('Priya holds it (Add the close-summary audit note)'),
+    ).resolves.toMatchObject({ claimed: true });
+    expect((await readItem(harness, listed)).verdict).toBeUndefined();
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('externalClaims').collect())).find(
+        (claim) => claim.key === 'linear:REVOPS-9',
+      ),
+    ).toMatchObject({
+      writeTarget: { surface: 'linear', field: 'REVOPS-9' },
+      settledAt: expect.any(Number),
     });
   });
 });
@@ -9315,5 +9486,607 @@ describe('an approved item whose skill is not callable (E-1, 10-C)', (): void =>
     });
     const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
     expect(rows.filter((row) => row.state === 'proposed')).toEqual([]);
+  });
+});
+
+describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void => {
+  // The default set with the run's answer of done over its own contrary words: the comment (0)
+  // and the public post (3) are held as ever, the manager DM (2) lands on its standing grant, and
+  // the Done (1) is the close the tripwire held.
+  const tripped: ExecutionOutput = {
+    ...skillOutput,
+    workDone: 'done',
+    workDoneWhy: 'The close summary is posted.',
+    closeAgainstWords: 'I could not find the close summary.',
+  };
+  const CLOSE = 1;
+
+  // Every job an approval or a park schedules (the apply, the close edit, the acknowledgement, the
+  // close's own ask) runs only when a test drains it, so none outlives its test (standard 11.5).
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** Run every job due now, and every job those schedule. */
+  async function drain(harness: Harness): Promise<void> {
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  }
+
+  interface OnChannel extends Seeded {
+    readonly runId: Id<'events'>;
+    readonly surfaceId: Id<'surfaces'>;
+  }
+
+  /** A held tripped set asked in the manager's DM with buttons, under the code `gh6npq`. */
+  async function heldOnChannel(harness: Harness): Promise<OnChannel> {
+    const seeded = await seed(harness, 'real');
+    const surfaceId = await harness.run(async (ctx) => {
+      const slack = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'slack');
+      if (!slack) throw new Error('slack surface missing');
+      const clientSecretCredentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Priya (Day0) client secret',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'oauth',
+        createdAt: 1,
+      } as never);
+      await ctx.db.patch(slack._id, {
+        managerUserId: 'UMANAGER',
+        providerIdentityId: 'UPRIYA',
+        providerWorkspaceId: 'T0DAY0',
+        provisioning: {
+          appId: 'A0PRIYA',
+          appName: 'Priya (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.example/api/oauth/slack',
+          scopes: ['chat:write'],
+          createdAt: 1,
+          installedAt: 2,
+        },
+      });
+      return slack._id;
+    });
+    recorded.skillOutput = tripped;
+    const { runId } = await park(harness, seeded.workItemId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: seeded.workItemId,
+      kind: 'actions',
+      decisionId: 'gh6npq',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId: seeded.workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+    });
+    return { ...seeded, runId, surfaceId };
+  }
+
+  /** The acknowledgement queued for one reply or press in the manager's DM. */
+  async function acknowledgement(
+    harness: Harness,
+    surfaceId: Id<'surfaces'>,
+    messageTs = '1789000001.000200',
+  ): Promise<string | undefined> {
+    const notice = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .withIndex('by_surface_message', (q) =>
+            q.eq('surfaceId', surfaceId).eq('messageTs', messageTs),
+          )
+          .unique(),
+    );
+    return notice?.text;
+  }
+
+  /** The manager's approval of the request by a typed reply or by its Approve button. */
+  async function approveInSlack(
+    harness: Harness,
+    surfaceId: Id<'surfaces'>,
+    route: 'typed code' | 'button',
+    id = 'gh6npq',
+  ): Promise<unknown> {
+    if (route === 'typed code') {
+      return await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1789000001.000200',
+        reply: { verb: 'approve', id },
+      });
+    }
+    return await harness.mutation(internal.slackSocket.resolvePress, {
+      surfaceId,
+      press: {
+        userId: 'UMANAGER',
+        teamId: 'T0DAY0',
+        appId: 'A0PRIYA',
+        channelId: 'D0MANAGER',
+        messageTs: '1789000000.000100',
+        actionTs: '1789000001.000200',
+        action: { action_id: 'day0.decision.approve', value: id },
+      },
+    });
+  }
+
+  it.each(['typed code', 'button'] as const)(
+    'an approval by the %s decides every held write but the close, which waits on its card',
+    async (route): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId, surfaceId } = await heldOnChannel(harness);
+      expect((await readItem(harness, workItemId)).actionVerdicts?.[CLOSE]).toEqual({
+        disposition: 'held',
+        reason: HELD_CLOSE_AGAINST_WORDS,
+      });
+
+      await approveInSlack(harness, surfaceId, route);
+      expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
+      expect(await acknowledgement(harness, surfaceId)).toBe(
+        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+      );
+
+      // The comment and the post land; the close does not, and waits on its card alone.
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      expect(
+        recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool),
+      ).toEqual(['save_comment']);
+      const parked = await readItem(harness, workItemId);
+      expect(parked.state).toBe('actions-pending');
+      expect(parked.approvedIndexes).toBeUndefined();
+      expect(parked.output).not.toHaveProperty('leftForCard');
+      expect(ledger(parked).map((entry) => [entry.ok, entry.awaitingApproval ?? false])).toEqual([
+        [true, false],
+        [true, true],
+        [true, false],
+        [true, false],
+      ]);
+      expect(ledger(parked)[3].authority).toBe('manager');
+      expect(parked.actionVerdicts?.[CLOSE]).toEqual({
+        disposition: 'held',
+        reason: HELD_CLOSE_AGAINST_WORDS,
+      });
+    },
+  );
+
+  it('then the close approved on its card lands alone, and the item completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId, runId } = await heldOnChannel(harness);
+    await approveInSlack(harness, surfaceId, 'typed code');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    // What the first approval sent is decided: the card cannot send it again.
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, CLOSE],
+      }),
+    ).rejects.toThrow('already decided by an earlier approval');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [CLOSE],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment', 'save_issue'],
+    );
+    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false])).toEqual([
+      [true, false],
+      [true, false],
+      [true, false],
+      [true, false],
+    ]);
+  });
+
+  it('withheld on its card instead, the close is never sent and the item completes with it withheld', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId, runId } = await heldOnChannel(harness);
+    await approveInSlack(harness, surfaceId, 'button');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(recorded.mcp.some((call) => call.tool === 'save_issue')).toBe(false);
+    expect(ledger(row)[CLOSE]).toMatchObject({ held: true, reason: HELD_NOT_APPROVED });
+  });
+
+  it('an approval of a request whose only waiting write is the close decides nothing and says where it is decided', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await approveInSlack(harness, surfaceId, 'typed code');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'jm8uvw',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'jm8uvw',
+      ts: '1789000002.000100',
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1789000003.000100',
+        reply: { verb: 'approve', id: 'jm8uvw' },
+      }),
+    ).resolves.toMatchObject({
+      status: 'ignored',
+      reason: CLOSE_ONLY_ON_CARD_REASON,
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('actions-pending');
+    expect(row.approvedIndexes).toBeUndefined();
+    expect(await acknowledgement(harness, surfaceId, '1789000003.000100')).toBe(
+      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
+    );
+  });
+
+  it('the batch code decides every held write of each member but a close, which waits on its card', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId, surfaceId } = await heldOnChannel(harness);
+    const second = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'iss-2',
+        title: 'Post the second close summary',
+        contentSummary: 'linear ticket work',
+        contentRefs: [],
+        state: 'executing',
+        plan: { summary: 'Comment.', steps: ['comment'] },
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const claim = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId: id },
+        createdAt: 1,
+      });
+      await ctx.db.patch(id, { executionRunId: claim });
+      return { workItemId: id, runId: claim };
+    });
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: second.workItemId,
+      runId: second.runId,
+      output: { ...skillOutput, actions: [skillOutput.actions[0]] },
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: second.workItemId,
+      kind: 'actions',
+      decisionId: 'hk7rst',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId: second.workItemId,
+      decisionId: 'hk7rst',
+      ts: '1789000000.000300',
+    });
+    await harness.mutation(internal.work.prepareDecisionBatch, {
+      agentId,
+      batchId: 'bq2wxy',
+      surfaceSlug: 'slack',
+      channel: 'D0MANAGER',
+      members: [
+        { workItemId, decisionId: 'gh6npq', pendingRunId: runId },
+        { workItemId: second.workItemId, decisionId: 'hk7rst', pendingRunId: second.runId },
+      ],
+    });
+
+    await approveInSlack(harness, surfaceId, 'typed code', 'bq2wxy');
+    expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
+    expect((await readItem(harness, second.workItemId)).approvedIndexes).toEqual([0]);
+    expect(await acknowledgement(harness, surfaceId)).toBe(
+      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+    );
+    const approved = (await events(harness, agentId)).filter(
+      (event) => event.type === 'work.actions-approved',
+    );
+    expect(approved.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId, leftForCard: [CLOSE], decidedVia: 'channel' }),
+      expect.not.objectContaining({ leftForCard: expect.anything() }),
+    ]);
+  });
+
+  it('the Needs you batch leaves a close for its card rather than withholding it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await heldOnChannel(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, {
+      members: [{ workItemId, pendingRunId: runId, approvedIndexes: [0, 3] }],
+    });
+    const approved = (await events(harness, agentId)).find(
+      (event) => event.type === 'work.actions-approved',
+    );
+    expect(approved?.payload).toMatchObject({ rejectedIndexes: [], leftForCard: [CLOSE] });
+  });
+
+  it('the Needs you batch refuses a member that names a close Day0 held', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await heldOnChannel(harness);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, {
+        members: [{ workItemId, pendingRunId: runId, approvedIndexes: [0, CLOSE, 3] }],
+      }),
+    ).rejects.toThrow('decided on its card');
+  });
+
+  /** The text of every request or notice posted to the manager's DM, in order. */
+  function postedToManager(): string[] {
+    return recorded.http.flatMap((call) => {
+      const body = call.body as { channel?: unknown; text?: unknown } | undefined;
+      return call.url.endsWith('/chat.postMessage') &&
+        body?.channel === 'D0MANAGER' &&
+        typeof body.text === 'string'
+        ? [body.text]
+        : [];
+    });
+  }
+
+  it('asks in Slack for the writes an approval sends, names the close it leaves out with the sentence, and asks nothing of the close alone once the rest landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    const first = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'zz9yxw',
+      supersedes: 'gh6npq',
+    });
+    // A delivered code is not replaced; the request the set was asked with is read again.
+    expect(first).toMatchObject({ prepared: false });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { decision: undefined });
+    });
+    const asked = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'gh6npq',
+    });
+    expect(asked).toMatchObject({
+      prepared: true,
+      heldIndexes: [0, 3],
+      leftForCard: { indexes: [CLOSE], clause: 'I could not find the close summary.' },
+    });
+
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The apply, then the close's own ask that its park schedules.
+    await drain(harness);
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked.decision).toMatchObject({ kind: 'actions' });
+    expect(parked.decision?.id).not.toBe('gh6npq');
+    expect(parked.decision?.withButtons).toBeUndefined();
+    const posts = postedToManager();
+    // The acknowledgement of the approval, and then the close's own ask.
+    expect(posts.some((text) => text.startsWith('Approval gh6npq received.'))).toBe(true);
+    const closeOnly = posts.find((text) => text.startsWith('Priya’s ticket close')) ?? '';
+    expect(closeOnly.split('\n')[0]).toBe(
+      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in day0.',
+    );
+    expect(closeOnly).toContain('wrote “I could not find the close summary”.');
+    expect(closeOnly).not.toContain(parked.decision?.id ?? 'no code');
+    // Posted as the request was kept, with the shared app's attribution after it.
+    expect(closeOnly.startsWith(parked.decision?.requestText ?? 'no request')).toBe(true);
+    const request = recorded.http.find(
+      (call) => (call.body as { text?: unknown } | undefined)?.text === closeOnly,
+    )?.body as { blocks?: Array<{ type: string }> } | undefined;
+    expect((request?.blocks ?? []).some((block) => block.type === 'actions')).toBe(false);
+  });
+
+  it('leaves a tripped close in a closing set for its card, and completes the run once the card decides it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Reading the tile back.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'I could not find the refreshed figure.',
+      notes: '',
+      workDone: 'done',
+      workDoneWhy: 'The audit note is posted.',
+      closeAgainstWords: 'I could not find the refreshed figure.',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note posted.' }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_issue',
+            toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }),
+          },
+        },
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The tile was read back.' },
+        { step: 2, status: 'satisfied', evidence: 'Comment and Done await one decision.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'looker:read',
+    ]);
+    const surfaceId = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        externalId: 'REVOPS-7',
+        plan: {
+          summary: 'Read the tile back, then close the ticket.',
+          steps: ['Capture the Looker read-back evidence', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 45,
+          obligations: obligations(
+            [
+              { kind: 'read', reads: ['looker'] },
+              { kind: 'write', writes: ['linear'] },
+            ],
+            'promised',
+            2,
+          ),
+        },
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!slack) throw new Error('Slack fixture missing');
+      await ctx.db.patch(slack._id, { managerUserId: 'UMANAGER' });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      return slack._id;
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.actionVerdicts?.[1]).toEqual({
+      disposition: 'held',
+      reason: HELD_CLOSE_AGAINST_WORDS,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'gh6npq',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+    });
+
+    await approveInSlack(harness, surfaceId, 'typed code');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked.output).toMatchObject({ phase: 'dependent' });
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment'],
+    );
+
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: parked.pendingRunId!,
+      approvedIndexes: [1],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment', 'save_issue'],
+    );
+  });
+
+  it('fails the run with the close unsent when a write the approval sent beside it fails', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await approveInSlack(harness, surfaceId, 'typed code');
+    recorded.failedMcpTool = 'save_comment';
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(recorded.mcp.some((call) => call.tool === 'save_issue')).toBe(false);
+    expect(ledger(row)[CLOSE]).toMatchObject({
+      held: true,
+      reason: NOT_APPLIED_AFTER_APPROVED_FAILURE,
+    });
+  });
+
+  it('never parks a close for its card on the card’s own approval, whatever an earlier approval left on the set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await heldOnChannel(harness);
+    // A mark a set returned to held kept from an approval that was taken back.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        output: { ...(row?.output as Record<string, unknown>), leftForCard: [CLOSE] },
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, CLOSE, 3],
+    });
+    expect((await readItem(harness, workItemId)).output).not.toHaveProperty('leftForCard');
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool.startsWith('save_')).map((c) => c.tool)).toEqual(
+      ['save_comment', 'save_issue'],
+    );
+  });
+
+  it('a rejection in Slack rejects the whole set, the held close with it, and sends nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    const sent = recorded.mcp.length;
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1789000001.000200',
+      reply: { verb: 'reject', id: 'gh6npq', reason: 'not this week' },
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.approvedIndexes).toBeUndefined();
+    expect(recorded.mcp.slice(sent).filter((call) => call.tool.startsWith('save_'))).toEqual([]);
   });
 });

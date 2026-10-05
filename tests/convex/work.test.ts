@@ -29,14 +29,17 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
-  stopRunsForHandover,
   voidDecisionRequestsForHandover,
 } from '../../convex/work';
+import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
+// Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -254,7 +257,7 @@ async function pend(
   harness: Harness,
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   const ids = await seed(harness, 'executing');
-  await harness.mutation(internal.work.setActionsPending, {
+  await harness.mutation(internal.workRuns.setActionsPending, {
     workItemId: ids.workItemId,
     runId: ids.runId,
     output: pendingOutput,
@@ -291,7 +294,7 @@ async function pendAnother(
     await ctx.db.patch(workItemId, { executionRunId: runId });
     return { workItemId, runId };
   });
-  await harness.mutation(internal.work.setActionsPending, { ...ids, output: pendingOutput });
+  await harness.mutation(internal.workRuns.setActionsPending, { ...ids, output: pendingOutput });
   return ids;
 }
 
@@ -377,6 +380,13 @@ describe('batched decisions', (): void => {
     ).rejects.toThrow('This employee is not yours.');
   });
 
+  it('refuses a caller with no identity before it reads the batch, an empty one included (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.mutation(api.work.approveActionsBatch, { members: [] }),
+    ).rejects.toMatchObject(await guardRefusal());
+  });
+
   async function batchOnChannel(harness: Harness): Promise<{
     agentId: Id<'agents'>;
     surfaceId: Id<'surfaces'>;
@@ -384,7 +394,7 @@ describe('batched decisions', (): void => {
     second: { workItemId: Id<'workItems'>; runId: Id<'events'> };
   }> {
     const ids = await seed(harness, 'executing', undefined, { withSlack: true });
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId: ids.workItemId,
       runId: ids.runId,
       output: pendingOutput,
@@ -1057,7 +1067,7 @@ describe('manager channel request claims', (): void => {
       ['boss:message', 'linear:read'],
       { withSlack: true },
     );
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: pendingOutput,
@@ -1347,15 +1357,91 @@ describe('manager channel request claims', (): void => {
     });
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    // Re-pinned for M10 (12-M): the decided request's thread is read for the notice's hour too.
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
       requests: [],
       batches: [],
       noticeOwed: true,
+      threads: ['1787770700.000100'],
     });
     vi.setSystemTime(Date.UTC(2026, 8, 28, 10, 1));
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
       noticeOwed: false,
     });
+    expect(
+      (await harness.query(internal.work.openDecisions, { surfaceId })).threads,
+    ).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('lists the threads of Day0’s other messages in the DM within the notice window: a replaced request and a note (M10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const channel = await harness.run(
+      async (ctx) => (await ctx.db.get(surfaceId))!.managerDmChannelId!,
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      const base = {
+        agentId,
+        workItemId,
+        kind: 'plan' as const,
+        surfaceSlug: 'slack',
+        channel,
+        requestText: 'the request',
+      };
+      await ctx.db.insert('replacedDecisionRequests', {
+        ...base,
+        decisionId: 'ab3xyz',
+        ts: '1787770600.000100',
+        replacedAt: Date.UTC(2026, 8, 28, 8, 30),
+        editClaimedAt: Date.UTC(2026, 8, 28, 8, 30),
+        editedAt: Date.UTC(2026, 8, 28, 8, 30),
+      });
+      // Replaced, and its message edited, over an hour ago: its thread is no longer read.
+      await ctx.db.insert('replacedDecisionRequests', {
+        ...base,
+        decisionId: 'cd4wvu',
+        ts: '1787770500.000100',
+        replacedAt: Date.UTC(2026, 8, 28, 7, 0),
+        editClaimedAt: Date.UTC(2026, 8, 28, 7, 0),
+        editedAt: Date.UTC(2026, 8, 28, 7, 0),
+      });
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Done.',
+        createdAt: Date.UTC(2026, 8, 28, 8, 45),
+        claimedAt: Date.UTC(2026, 8, 28, 8, 45),
+        providerTs: '1787770650.000100',
+      });
+    });
+    // More replaced messages edited in the window than one poll reads: the newest are kept.
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 12; index += 1) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          kind: 'plan',
+          surfaceSlug: 'slack',
+          channel,
+          decisionId: `old${String(index).padStart(3, '0')}`,
+          ts: `1787770${String(100 + index)}.000100`,
+          replacedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+          editClaimedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+          editedAt: Date.UTC(2026, 8, 28, 8, 10) + index,
+        });
+      }
+    });
+    const open = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(open.threads?.slice(0, 2)).toEqual(['1787770650.000100', '1787770600.000100']);
+    expect(open.threads).toHaveLength(10);
     vi.useRealTimers();
   });
 
@@ -1861,6 +1947,50 @@ describe('single-use manager decisions', (): void => {
     ).rejects.toThrow('expected plan-pending');
   });
 
+  it('says, while a pause holds the approved step, that it runs at the resume, not now (W12-R15)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const noticeAfter = async (hold: 'employee' | 'deployment'): Promise<string | undefined> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+        withSlack: true,
+      });
+      const surfaceId = await chatSurfaceId(harness, agentId);
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'pz4qrs',
+      });
+      if (hold === 'employee') {
+        await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+      } else {
+        vi.stubEnv('DAY0_CRONS_PAUSED', 'maintenance');
+      }
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.200',
+        reply: { verb: 'approve', id: 'pz4qrs' },
+      });
+      vi.unstubAllEnvs();
+      const notice = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('managerDecisionNotices')
+            .withIndex('by_surface_message', (q) =>
+              q.eq('surfaceId', surfaceId).eq('messageTs', '1.200'),
+            )
+            .unique(),
+      );
+      return notice?.text;
+    };
+    expect(await noticeAfter('employee')).toBe(
+      'Approval pz4qrs received. I’m paused: I’ll start the approved plan when you resume me.',
+    );
+    expect(await noticeAfter('deployment')).toBe(
+      'Approval pz4qrs received. Scheduled work on this deployment is paused: I’ll start the approved plan once it runs again.',
+    );
+  });
+
   it('keeps the reason of a plan rejected from the manager channel on the item and as a correction', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1954,7 +2084,7 @@ describe('single-use manager decisions', (): void => {
       { withSlack: true },
     );
     const surfaceId = await chatSurfaceId(harness, agentId);
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: pendingOutput,
@@ -2057,7 +2187,8 @@ describe('single-use manager decisions', (): void => {
         decisionId: 'cd4uvw',
         messageTs: '4.100',
         kind: 'unknown',
-        text: 'I couldn’t find decision cd4uvw. Check the six-character token and try again.',
+        // Re-pinned for W12V-16: the manager reads "code" everywhere else, never "token".
+        text: 'I couldn’t find decision cd4uvw. Check the six-character code and try again.',
       }),
     ]);
     expect(
@@ -2170,7 +2301,7 @@ describe('single-use manager decisions', (): void => {
     const actions = await seed(actionsHarness, 'executing', ['boss:message', 'linear:read'], {
       withSlack: true,
     });
-    await actionsHarness.mutation(internal.work.setActionsPending, {
+    await actionsHarness.mutation(internal.workRuns.setActionsPending, {
       workItemId: actions.workItemId,
       runId: actions.runId,
       output: pendingOutput,
@@ -2483,7 +2614,7 @@ describe('approving a plan with answers', (): void => {
         managerAnswers: [{ question: 'Who owns the tile.', answer: 'Priya.', answeredAt: 2 }],
       });
     });
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId,
       runId,
       output: {
@@ -2540,7 +2671,7 @@ describe('when an item’s run began (second review x4)', (): void => {
       });
       const retried = Date.UTC(2026, 8, 30, 12);
       vi.setSystemTime(retried);
-      await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+      await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
       const row = await readItem(harness, workItemId);
       expect(row.state).toBe('plan-approved');
       expect(row.claimedAt).toBe(retried);
@@ -2563,7 +2694,9 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       });
     });
 
-    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId });
 
     expect(result).toEqual({ ok: true, resumeState: 'discovered' });
     const row = await readItem(harness, workItemId);
@@ -2598,7 +2731,9 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       });
     });
 
-    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId });
 
     expect(result).toEqual({ ok: true, resumeState: 'discovered' });
     const row = await readItem(harness, workItemId);
@@ -2629,7 +2764,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       });
     });
 
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
       workItemId,
       feedback: '  The three checks are done;   propose Done.  ',
     });
@@ -2674,7 +2809,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: 'Use delay notice B.' });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Use delay notice B.' });
 
     expect((await readItem(harness, workItemId)).managerFeedback).toMatchObject({
       reason: 'Use delay notice B.',
@@ -2698,7 +2833,9 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       });
     });
 
-    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId });
 
     expect(result).toEqual({ ok: true, resumeState: 'discovered' });
     const row = await readItem(harness, workItemId);
@@ -2727,7 +2864,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       await ctx.db.patch(workItemId, { plan: undefined, skipReason: 'the model returned no plan' });
     });
 
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
 
     const row = await readItem(harness, workItemId);
     expect(row.qualityFitWaivedAt).toBeUndefined();
@@ -2740,7 +2877,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await seed(harness, 'executing');
-    const result = await harness.mutation(internal.work.setActionsPending, {
+    const result = await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: pendingOutput,
@@ -2790,7 +2927,7 @@ describe('the exact-action gate', (): void => {
         },
       ],
     };
-    const result = await harness.mutation(internal.work.setActionsPending, {
+    const result = await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output,
@@ -2859,7 +2996,7 @@ describe('the exact-action gate', (): void => {
     // Refused at hold time, the only action leaves nothing to decide, so the
     // run stops naming the refusal instead of parking with no approve control.
     await expect(
-      harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
+      harness.mutation(internal.workRuns.setActionsPending, { workItemId, runId, output }),
     ).resolves.toEqual({ pending: false });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
@@ -2890,7 +3027,7 @@ describe('the exact-action gate', (): void => {
         },
       ],
     };
-    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
+    await harness.mutation(internal.workRuns.setActionsPending, { workItemId, runId, output });
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -2914,7 +3051,7 @@ describe('the exact-action gate', (): void => {
       .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     expect(result).toEqual({ ok: true, approvedIndexes: [0] });
     expect((await readItem(harness, workItemId)).applyPhase).toBe('approved');
-    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     expect(claim).toMatchObject({
       claimed: true,
       phase: 'approved',
@@ -2937,7 +3074,7 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'completed');
     await expect(
-      harness.mutation(internal.work.setActionsPending, {
+      harness.mutation(internal.workRuns.setActionsPending, {
         workItemId,
         runId,
         output: pendingOutput,
@@ -2946,7 +3083,7 @@ describe('the exact-action gate', (): void => {
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     const executing = await seed(harness, 'executing');
     await expect(
-      harness.mutation(internal.work.setActionsPending, {
+      harness.mutation(internal.workRuns.setActionsPending, {
         workItemId: executing.workItemId,
         runId: executing.runId,
         output: { draft: 'd', notes: '' },
@@ -3160,7 +3297,7 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('expected actions-pending');
     const retried = await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId });
+      .mutation(api.workRuns.retryFailed, { workItemId });
     expect(retried).toEqual({ ok: true, resumeState: 'plan-approved' });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     const blank = await pend(harness);
@@ -3177,7 +3314,7 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await pend(harness);
     await expect(
-      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
     ).resolves.toEqual({
       claimed: false,
       reason: 'no actions have been approved',
@@ -3185,7 +3322,7 @@ describe('the exact-action gate', (): void => {
     await harness
       .withIdentity(OWNER)
       .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
-    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     expect(claim).toMatchObject({
       claimed: true,
       runId,
@@ -3194,7 +3331,7 @@ describe('the exact-action gate', (): void => {
     });
     expect((await readItem(harness, workItemId)).state).toBe('executing');
     await expect(
-      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
     ).resolves.toEqual({
       claimed: false,
       reason: 'workItem state is executing; expected actions-pending',
@@ -3208,8 +3345,8 @@ describe('the exact-action gate', (): void => {
     await harness
       .withIdentity(OWNER)
       .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId,
       runId,
       output: {
@@ -3237,7 +3374,7 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
     await expect(
-      harness.mutation(internal.work.setCompleted, {
+      harness.mutation(internal.workRuns.setCompleted, {
         workItemId,
         runId,
         output: {
@@ -3265,14 +3402,14 @@ describe('the exact-action gate', (): void => {
       return id;
     });
     await expect(
-      harness.mutation(internal.work.setActionsPending, {
+      harness.mutation(internal.workRuns.setActionsPending, {
         workItemId,
         runId,
         output: pendingOutput,
       }),
     ).resolves.toEqual({ pending: false });
     await expect(
-      harness.mutation(internal.work.setCompleted, {
+      harness.mutation(internal.workRuns.setCompleted, {
         workItemId,
         runId,
         output: { applied: [{ tool: 'mcp.call', ok: true }] },
@@ -3293,7 +3430,7 @@ describe('the exact-action gate', (): void => {
       pendingRunId: runId,
       approvedIndexes: [0],
     });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     await expect(
       harness.mutation(internal.work.recoverInterruptedApply, {
         workItemId,
@@ -3308,7 +3445,7 @@ describe('the exact-action gate', (): void => {
       {
         tool: 'mcp.call',
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
         idempotencyKey: `${workItemId}:${runId}:0`,
       },
       {
@@ -3320,7 +3457,7 @@ describe('the exact-action gate', (): void => {
       },
     ]);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -3344,7 +3481,7 @@ describe('the exact-action gate', (): void => {
       pendingRunId: runId,
       approvedIndexes: [0],
     });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     await harness.mutation(internal.work.recoverInterruptedApply, {
       workItemId,
       pendingRunId: runId,
@@ -3394,7 +3531,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'one action failed',
@@ -3406,7 +3543,7 @@ describe('the exact-action gate', (): void => {
       },
     });
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -3414,7 +3551,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await seed(harness, 'executing');
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'provider outcome needs review',
@@ -3441,22 +3578,30 @@ describe('the exact-action gate', (): void => {
     });
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
+      harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
         workItemId,
         confirmed: false,
       }),
     ).rejects.toThrow('explicit provider verification is required');
     await expect(
-      harness.withIdentity(managerIdentity('intruder')).mutation(api.work.reconcileFailed, {
+      harness.withIdentity(managerIdentity('intruder')).mutation(api.workRuns.reconcileFailed, {
         workItemId,
         confirmed: true,
       }),
     ).rejects.toThrow('This employee is not yours.');
 
+    // The write whose response was lost is answered entry by entry (U17 D1, wave 12).
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
+      harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
         workItemId,
         confirmed: true,
+      }),
+    ).rejects.toThrow('Say for each write whose outcome is unknown whether it landed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+        answers: [{ phase: 'single', actionIndex: 2, answer: 'landed' }],
       }),
     ).resolves.toEqual({ ok: true, reconciledEntries: 2 });
 
@@ -3473,6 +3618,8 @@ describe('the exact-action gate', (): void => {
           effect: 'added audit note',
           providerId: 'comment-17',
           idempotencyKey: 'comment',
+          // Re-pinned for W12X-3: a write Day0 recorded as landed carries no answer of the
+          // manager's, who was never asked about it.
         },
         {
           phase: 'single',
@@ -3481,6 +3628,7 @@ describe('the exact-action gate', (): void => {
           outcome: 'outcome-unknown',
           reason: 'provider accepted the request but the response was lost',
           idempotencyKey: 'transition',
+          answer: 'landed',
         },
       ],
     });
@@ -3494,7 +3642,7 @@ describe('the exact-action gate', (): void => {
     });
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
     expect((await readItem(harness, workItemId)).providerReconciliation).toBeUndefined();
   });
@@ -3513,7 +3661,7 @@ describe('the exact-action gate', (): void => {
         },
       ],
     };
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'the revoked read was refused',
@@ -3538,7 +3686,7 @@ describe('the exact-action gate', (): void => {
         toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x' }),
       },
     };
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId,
       runId,
       output: {
@@ -3575,7 +3723,7 @@ describe('the exact-action gate', (): void => {
       undefined,
       { withSlack: true },
     );
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: stoppedItem,
       runId: stoppedRun,
       reason: 'the read did not land',
@@ -3592,7 +3740,7 @@ describe('the exact-action gate', (): void => {
     // Without a manager channel there is nowhere to send, so nothing is kept.
     const bare = convexTest(schema, allConvexModules());
     const { workItemId: bareItem, runId: bareRun } = await seed(bare, 'executing');
-    await bare.mutation(internal.work.setCompleted, {
+    await bare.mutation(internal.workRuns.setCompleted, {
       workItemId: bareItem,
       runId: bareRun,
       output: {
@@ -3614,7 +3762,7 @@ describe('the exact-action gate', (): void => {
     await harness.run(async (ctx) => {
       await ctx.db.patch(agentId, { managerNotifications: 'digest' });
     });
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'the read did not land',
@@ -3642,7 +3790,7 @@ describe('the exact-action gate', (): void => {
       await ctx.db.patch(id, { executionRunId: run });
       return { workItemId: id, runId: run };
     });
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId: landedItem,
       runId: landedRun,
       output: {
@@ -3758,7 +3906,7 @@ describe('the exact-action gate', (): void => {
       },
     };
     // A read and the manager DM landed; neither is work.
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'the closing phase could not settle the owner',
@@ -3792,7 +3940,7 @@ describe('the exact-action gate', (): void => {
       workItemId: landedItem,
       runId: landedRun,
     } = await seed(harness, 'executing');
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: landedItem,
       runId: landedRun,
       reason: 'the status change was refused',
@@ -3817,7 +3965,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       runId,
       reason: 'automatic manager note failed',
@@ -3831,7 +3979,7 @@ describe('the exact-action gate', (): void => {
     });
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
   });
 
@@ -3851,7 +3999,7 @@ describe('the exact-action gate', (): void => {
       notes: '',
       actions: [readIssue, workingComment, managerDm, publicReply, pendingOutput.actions[1]],
     };
-    const result = await harness.mutation(internal.work.setActionsPending, {
+    const result = await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output,
@@ -3898,7 +4046,7 @@ describe('the exact-action gate', (): void => {
       }),
     ).rejects.toThrow('expected actions-pending');
 
-    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     expect(claim).toMatchObject({
       claimed: true,
       phase: 'auto',
@@ -3908,7 +4056,7 @@ describe('the exact-action gate', (): void => {
       autonomousActions: false,
     });
     if (!claim.claimed) throw new Error('unreachable');
-    expect(await harness.mutation(internal.work.claimApprovedActions, { workItemId })).toEqual({
+    expect(await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId })).toEqual({
       claimed: false,
       reason: 'workItem state is executing; expected actions-pending',
     });
@@ -3991,7 +4139,7 @@ describe('the exact-action gate', (): void => {
     await harness
       .withIdentity(OWNER)
       .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [3] });
-    const second = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    const second = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     expect(second).toMatchObject({
       claimed: true,
       phase: 'approved',
@@ -4024,19 +4172,21 @@ describe('the exact-action gate', (): void => {
       { withSlack: true },
     );
     const output = { draft: 'd', notes: '', actions: [readIssue, publicReply] };
-    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
-    const firstClaim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.setActionsPending, { workItemId, runId, output });
+    const firstClaim = await harness.mutation(internal.workRuns.claimApprovedActions, {
+      workItemId,
+    });
     if (!firstClaim.claimed) throw new Error('first apply claim missing');
 
     await expect(
-      harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
+      harness.mutation(internal.workRuns.setActionsPending, { workItemId, runId, output }),
     ).resolves.toEqual({ pending: false });
     expect(await readItem(harness, workItemId)).toMatchObject({
       applyPhase: 'auto',
       applyAttemptId: firstClaim.applyAttemptId,
     });
     await expect(
-      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
     ).resolves.toEqual({
       claimed: false,
       reason: 'workItem state is executing; expected actions-pending',
@@ -4067,7 +4217,7 @@ describe('the exact-action gate', (): void => {
         },
       ],
     };
-    const result = await harness.mutation(internal.work.setActionsPending, {
+    const result = await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output,
@@ -4092,7 +4242,7 @@ describe('the exact-action gate', (): void => {
       refusedIndexes: [5],
       autonomousActions: true,
     });
-    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     expect(claim).toMatchObject({
       claimed: true,
       phase: 'auto',
@@ -4106,7 +4256,7 @@ describe('the exact-action gate', (): void => {
       autonomousActions: true,
       withSlack: true,
     });
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId: ungranted.workItemId,
       runId: ungranted.runId,
       output: { draft: 'd', notes: '', actions: [readIssue, managerDm, publicReply] },
@@ -4122,7 +4272,7 @@ describe('the exact-action gate', (): void => {
       autonomousActions: true,
       withSlack: true,
     });
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId: flipped.workItemId,
       runId: flipped.runId,
       output: { draft: 'd', notes: '', actions: [publicReply] },
@@ -4131,7 +4281,7 @@ describe('the exact-action gate', (): void => {
       async (ctx) => await ctx.db.patch(flipped.agentId, { autonomousActions: false }),
     );
     expect(
-      await harness.mutation(internal.work.claimApprovedActions, {
+      await harness.mutation(internal.workRuns.claimApprovedActions, {
         workItemId: flipped.workItemId,
       }),
     ).toMatchObject({
@@ -4146,7 +4296,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const done = await seed(harness, 'executing');
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId: done.workItemId,
       runId: done.runId,
       output: { ...pendingOutput, applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k0' }] },
@@ -4198,7 +4348,7 @@ describe('the exact-action gate', (): void => {
       },
     ]);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -4258,7 +4408,7 @@ describe('the exact-action gate', (): void => {
     });
     if (!first.claimed) throw new Error('unreachable');
     await expect(
-      harness.mutation(internal.work.setActionsPending, {
+      harness.mutation(internal.workRuns.setActionsPending, {
         workItemId,
         runId,
         authoringAttemptId: first.authoringAttemptId,
@@ -4346,7 +4496,7 @@ describe('the exact-action gate', (): void => {
       .mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'not now' });
     expect((await readItem(harness, workItemId)).state).toBe('failed');
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
   });
 
@@ -4361,7 +4511,7 @@ describe('the exact-action gate', (): void => {
         withSlack: true,
       },
     );
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: { draft: 'd', notes: '', actions: [readIssue, publicReply] },
@@ -4373,7 +4523,7 @@ describe('the exact-action gate', (): void => {
         phase: 'auto',
       }),
     ).resolves.toEqual({ recovered: 'rescheduled' });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     await expect(
       harness.mutation(internal.work.recoverInterruptedApply, {
         workItemId,
@@ -4390,7 +4540,7 @@ describe('the exact-action gate', (): void => {
         entry.reason,
       ]),
     ).toEqual([
-      [false, false, 'outcome unknown after interrupted apply - verify provider before retry'],
+      [false, false, OUTCOME_UNKNOWN_REASON],
       [true, true, HELD_PUBLIC_POST],
     ]);
   });
@@ -4425,7 +4575,7 @@ describe('the exact-action gate', (): void => {
     await harness
       .withIdentity(OWNER)
       .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     await expect(
       harness.mutation(internal.work.recoverInterruptedApply, {
         workItemId,
@@ -4438,7 +4588,7 @@ describe('the exact-action gate', (): void => {
       landed,
       expect.objectContaining({
         ok: false,
-        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        reason: OUTCOME_UNKNOWN_REASON,
       }),
     ]);
   });
@@ -4475,7 +4625,7 @@ describe('the exact-action gate', (): void => {
       pendingRunId: runId,
       approvedIndexes: [1],
     });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
 
     await expect(
       harness.mutation(internal.work.recoverInterruptedApply, {
@@ -4575,7 +4725,7 @@ describe('manager feedback kept for the retry', (): void => {
     const failed = await readItem(harness, workItemId);
     expect(failed.skipReason).toBe(`rejected by the manager: ${reason.slice(0, 200)}`);
     expect(failed.managerFeedback).toMatchObject({ reason, runId, kind: 'rejection' });
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).managerFeedback?.reason).toBe(reason);
   });
 
@@ -4593,7 +4743,7 @@ describe('manager feedback kept for the retry', (): void => {
         },
       });
     });
-    await harness.mutation(internal.work.setCompleted, {
+    await harness.mutation(internal.workRuns.setCompleted, {
       workItemId,
       runId,
       output: {
@@ -4629,7 +4779,7 @@ describe('sending a completed item back with a note', (): void => {
       });
     });
 
-    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+    const result = await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, {
       workItemId,
       feedback: 'Draft the reply for the thread and hold it.',
     });
@@ -4664,7 +4814,9 @@ describe('sending a completed item back with a note', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'completed');
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: '   ' }),
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workRuns.retryFailed, { workItemId, feedback: '   ' }),
     ).rejects.toThrow('a completed item is sent back with a note');
     expect((await readItem(harness, workItemId)).state).toBe('completed');
   });
@@ -4692,18 +4844,18 @@ describe('sending a completed item back with a note', (): void => {
     await expect(
       harness
         .withIdentity(OWNER)
-        .mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+        .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
     ).rejects.toThrow('reconcile the provider first');
 
     const reconciled = await harness
       .withIdentity(OWNER)
-      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
     expect(reconciled).toEqual({ ok: true, reconciledEntries: 1 });
 
     await expect(
       harness
         .withIdentity(OWNER)
-        .mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+        .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
     ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
   });
 });
@@ -5154,6 +5306,39 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual([]);
   });
 
+  it('says a ticket delegated to the identity the employee acts as is held by it (W12V-15)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const delegated = {
+      assigned: true,
+      assigneeId: '64b6c630-449f-4c6c-863a-b4d80c64c12e',
+      state: 'Backlog',
+      stateType: 'backlog',
+      doNotAutomate: false,
+    };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: delegated,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        credentialLanded: true,
+        providerIdentityId: '64b6c630-449f-4c6c-863a-b4d80c64c12e',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+    const latest = await harness.withIdentity(OWNER).query(api.work.latestListing, { workItemId });
+    expect(latest?.holder).toEqual({ employeeName: expect.any(String), holderIsEmployee: true });
+  });
+
   it('shows the owner the newest listing of the ticket, without the assignee address, and no one else', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
@@ -5194,7 +5379,10 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       },
       refused: 'assigned to someone else',
       listedAt: expect.any(Number),
+      // Re-pinned for W12V-15: the card names no raw id. No card on the item's system records
+      // the identity the employee acts as, so the listing cannot say whose it is (second pass).
     });
+    expect(latest?.holder).toBeUndefined();
     await expect(
       harness
         .withIdentity(managerIdentity('stranger'))
@@ -5355,7 +5543,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
         workItemId,
         plan: { summary: 'Reconcile it.', steps: ['reconcile'] },
       }),
-    ).resolves.toEqual({ stored: false });
+    ).resolves.toEqual({ stored: false, movedOn: 'cancelled' });
     expect((await onlyRow(harness)).plan).toBeUndefined();
   });
 
@@ -5640,7 +5828,10 @@ describe('the execution claim and the skill body it runs', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, skillId } = await seedApproved(harness, { state: 'approved', body: '' });
 
-    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    const claim = await harness.mutation(internal.workRuns.claimForExecution, {
+      workItemId,
+      skillId,
+    });
 
     expect(claim).toEqual({
       claimed: false,
@@ -5675,7 +5866,7 @@ describe('the execution claim and the skill body it runs', (): void => {
       return other;
     });
 
-    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    await harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId });
 
     const row = await readItem(harness, workItemId);
     const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
@@ -5691,7 +5882,10 @@ describe('the execution claim and the skill body it runs', (): void => {
       body: 'Comment, then close.',
     });
 
-    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    const claim = await harness.mutation(internal.workRuns.claimForExecution, {
+      workItemId,
+      skillId,
+    });
 
     expect(claim.claimed).toBe(true);
     const row = await readItem(harness, workItemId);
@@ -5715,7 +5909,8 @@ describe('the execution claim and the skill body it runs', (): void => {
     await harness.run(async (ctx) => await ctx.db.patch(skillId, { useCount: 2 }));
 
     expect(
-      (await harness.mutation(internal.work.claimForExecution, { workItemId, skillId })).claimed,
+      (await harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId }))
+        .claimed,
     ).toBe(true);
 
     const used = await harness.run(async (ctx) => await ctx.db.get(skillId));
@@ -5728,7 +5923,7 @@ describe('the execution claim and the skill body it runs', (): void => {
     ] as const) {
       const retired = await seedApproved(harness, { state, body: 'Comment, then close.' });
       expect(
-        await harness.mutation(internal.work.claimForExecution, {
+        await harness.mutation(internal.workRuns.claimForExecution, {
           workItemId: retired.workItemId,
           skillId: retired.skillId,
         }),
@@ -5767,7 +5962,7 @@ describe('the execution claim and the skill body it runs', (): void => {
       return id;
     });
 
-    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    await harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId });
 
     const row = await readItem(harness, workItemId);
     const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
@@ -5849,7 +6044,7 @@ describe('the apply dead-man switch (P9-1)', (): void => {
       }
     });
     vi.advanceTimersByTime(5 * 60_000);
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
 
     vi.advanceTimersByTime(60_000);
     await harness.finishInProgressScheduledFunctions();
@@ -5893,7 +6088,7 @@ describe('what an outage leaves for the manager (P7-18)', (): void => {
         .first();
       if (slack) await ctx.db.patch(slack._id, { verdict: 'listed-dead' });
     });
-    await harness.mutation(internal.work.setActionsPending, {
+    await harness.mutation(internal.workRuns.setActionsPending, {
       workItemId,
       runId,
       output: pendingOutput,
@@ -6024,7 +6219,7 @@ describe('what an outage leaves for the manager (P7-18)', (): void => {
       pendingRunId: runId,
       approvedIndexes: [0, 1],
     });
-    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.workRuns.claimApprovedActions, { workItemId });
     await harness.mutation(internal.work.recoverInterruptedApply, {
       workItemId,
       pendingRunId: runId,
@@ -6347,7 +6542,7 @@ describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
     expect(row.skipReason).toContain('"linear-close"');
     expect(row.skipReason).toContain('Retry evaluates the item again');
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
   });
 
@@ -6426,7 +6621,7 @@ describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
     await expect(
-      harness.mutation(internal.work.setActionsPending, {
+      harness.mutation(internal.workRuns.setActionsPending, {
         workItemId,
         runId,
         output: { draft: 'No surface is connected.', notes: '', actions: [] },
@@ -6860,7 +7055,16 @@ describe('work.needsYou', (): void => {
     ]);
   });
 
-  it('shows the owner only their own employees and an anonymous caller nothing', async (): Promise<void> => {
+  it('shows a token with an empty subject nothing, the rows keyed on an empty owner included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const malformed = await employee(harness, 'Malformed owner', { userId: '' });
+    await item(harness, malformed, 'Keyed on nobody', 'plan-pending', { planPendingAt: 1 });
+    await expect(
+      harness.withIdentity(managerIdentity('')).query(api.work.needsYou, {}),
+    ).resolves.toEqual({ entries: [], total: 0, waitingByEmployee: [] });
+  });
+
+  it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mine = await employee(harness, 'Mira');
     const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
@@ -6874,11 +7078,7 @@ describe('work.needsYou', (): void => {
 
     expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
     expect(stranger.entries.map((entry) => entry.subject)).toEqual(['Theirs']);
-    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({
-      entries: [],
-      total: 0,
-      waitingByEmployee: [],
-    });
+    await expect(harness.query(api.work.needsYou, {})).rejects.toMatchObject(await guardRefusal());
   });
 
   it('leaves evaluation agents out, as the roster does', async (): Promise<void> => {
@@ -7235,7 +7435,7 @@ describe('work.needsYou', (): void => {
   });
 });
 
-describe('work.dismissFailed (N7)', (): void => {
+describe('workRuns.dismissFailed (N7)', (): void => {
   async function stopped(harness: Harness): Promise<{
     agentId: Id<'agents'>;
     workItemId: Id<'workItems'>;
@@ -7258,14 +7458,14 @@ describe('work.dismissFailed (N7)', (): void => {
       );
     expect(await inbox()).toEqual(['stopped']);
 
-    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId });
 
     const dismissed = await readItem(harness, workItemId);
     expect(dismissed.state).toBe('failed');
     expect(dismissed.dismissedAt).toEqual(expect.any(Number));
     expect(await inbox()).toEqual([]);
 
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
   });
 
@@ -7273,8 +7473,8 @@ describe('work.dismissFailed (N7)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await stopped(harness);
 
-    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
-    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId });
 
     const dismissed = await eventsOfType(harness, agentId, 'work.dismissed');
     expect(dismissed.map((event) => event.payload)).toEqual([{ workItemId }]);
@@ -7297,7 +7497,9 @@ describe('work.dismissFailed (N7)', (): void => {
         },
       });
     });
-    const refusal = harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    const refusal = harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.dismissFailed, { workItemId });
     await expect(refusal).rejects.toBeInstanceOf(ConvexError);
     await expect(refusal).rejects.toMatchObject({
       data: 'A write on this item may have landed: confirm it against the provider before you dismiss it.',
@@ -7308,20 +7510,20 @@ describe('work.dismissFailed (N7)', (): void => {
   it('dismisses once, and refuses an item that is not failed or not the caller’s', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await stopped(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId });
     const first = (await readItem(harness, workItemId)).dismissedAt;
-    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.dismissFailed, { workItemId });
     expect((await readItem(harness, workItemId)).dismissedAt).toBe(first);
 
     await expect(
       harness
         .withIdentity(managerIdentity('intruder'))
-        .mutation(api.work.dismissFailed, { workItemId }),
+        .mutation(api.workRuns.dismissFailed, { workItemId }),
     ).rejects.toThrow('This employee is not yours.');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
     const refusal = harness
       .withIdentity(OWNER)
-      .mutation(api.work.dismissFailed, { workItemId: pending });
+      .mutation(api.workRuns.dismissFailed, { workItemId: pending });
     await expect(refusal).rejects.toBeInstanceOf(ConvexError);
     await expect(refusal).rejects.toMatchObject({
       data: 'Only a stopped or rejected item can be dismissed; this one has moved on.',
@@ -7705,7 +7907,7 @@ describe('work while its employee is handed over (transfer plan 6.4, D18)', (): 
     await acceptHandover(harness, agentId);
 
     await expect(
-      harness.mutation(internal.work.claimForExecution, { workItemId, skillId }),
+      harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId }),
     ).resolves.toEqual({ claimed: false, reason: HANDOVER_IN_PROGRESS_REASON });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
   });
@@ -7715,13 +7917,13 @@ describe('work while its employee is handed over (transfer plan 6.4, D18)', (): 
     const { agentId, workItemId, runId } = await seed(harness, 'executing');
     await acceptHandover(harness, agentId);
 
-    await harness.mutation(internal.work.setFailed, { workItemId, runId, reason: 'refused' });
+    await harness.mutation(internal.workRuns.setFailed, { workItemId, runId, reason: 'refused' });
 
     expect(await scheduledFunctionNames(harness)).toContain('transferAcceptance:settle');
 
     const quiet = convexTest(schema, allConvexModules());
     const other = await seed(quiet, 'executing');
-    await quiet.mutation(internal.work.setFailed, {
+    await quiet.mutation(internal.workRuns.setFailed, {
       workItemId: other.workItemId,
       runId: other.runId,
       reason: 'refused',
@@ -7853,7 +8055,7 @@ describe('an approved write whose surface waits for its connection (U-3)', (): v
     const workItemId = await approvedOn(harness, { verdict: 'proposed' });
 
     await expect(
-      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
     ).resolves.toEqual({ claimed: false, reason: 'parked until linear is connected' });
 
     const parked = await readItem(harness, workItemId);
@@ -7871,7 +8073,7 @@ describe('an approved write whose surface waits for its connection (U-3)', (): v
     const workItemId = await approvedOn(harness, { lastVerifiedAt: 1 });
 
     await expect(
-      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+      harness.mutation(internal.workRuns.claimApprovedActions, { workItemId }),
     ).resolves.toMatchObject({ claimed: true });
   });
 });

@@ -898,9 +898,18 @@ describe('the card agrees with the server (P6-6)', (): void => {
     const reason = failedItemReason(stopped);
     expect(reason).not.toContain('nothing landed');
     expect(reason).toContain('confirm the provider below before Retry');
-    expect(failedItemReason({ ...stopped, providerReconciliation: { confirmedAt: 1 } })).toContain(
-      'a write landed before it stopped',
-    );
+    const entry = {
+      phase: 'single' as const,
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'landed' as const,
+    };
+    expect(
+      failedItemReason({
+        ...stopped,
+        providerReconciliation: { entries: [{ ...entry, answer: 'landed' as const }] },
+      }),
+    ).toContain('a write landed before it stopped');
     expect(failedItemReason({ skipReason: 'stopped: the ticket was already closed' })).toContain(
       'stopped, nothing landed and nothing to decide',
     );
@@ -1354,11 +1363,165 @@ describe('every decision on a work item card is said in its live region and give
         ],
       },
     });
-    const box = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    act((): void => box?.click());
+    // Answered per entry since wave 12 (U17 D1): re-pinned from one tick and `true`.
+    const landed = [
+      ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ].find((radio) => radio.closest('label')?.textContent === 'It landed');
+    act((): void => landed?.click());
     await press(view.container, 'Confirm reconciliation');
-    expect(view.calls).toEqual([['reconcile', true]]);
+    expect(view.calls).toEqual([
+      ['reconcile', [{ phase: 'single', actionIndex: 0, answer: 'landed' }]],
+    ]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
+    view.unmount();
+  });
+
+  describe('a write Day0 recorded as landed beside one whose outcome is unknown (W12X-3)', (): void => {
+    // The re-walk's REVOPS-6 on real Slack: phase one's report DM landed with Slack's ts, and the
+    // Stop met the closing set's first post on the wire.
+    const post: MockAction = {
+      tool: 'http.request',
+      args: { ...dmAction.args, body: JSON.stringify({ channel: 'C0REVOPS', text: 'Note 1.' }) },
+    };
+    const stoppedOutput = {
+      draft: 'd',
+      notes: '',
+      initial: {
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: true,
+            providerId: '1791181569.683419',
+            idempotencyKey: 'w-card:run:initial:0',
+          },
+        ],
+      },
+      actions: [post],
+      applied: [
+        {
+          tool: 'http.request',
+          ok: false,
+          outcomeUnknown: true,
+          reason: 'socket closed after the request',
+          idempotencyKey: 'w-card:run:0',
+        },
+      ],
+    };
+    const landedDm = {
+      phase: 'prerequisite',
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'landed',
+      providerId: '1791181569.683419',
+      idempotencyKey: 'w-card:run:initial:0',
+    };
+    const unknownPost = {
+      phase: 'closing',
+      actionIndex: 0,
+      tool: 'http.request',
+      outcome: 'outcome-unknown',
+      reason: 'socket closed after the request',
+      idempotencyKey: 'w-card:run:0',
+    };
+    const occurrences = (text: string, words: string): number => text.split(words).length - 1;
+
+    it('sends the answer for the write asked about and none for the write Day0 recorded as landed', async (): Promise<void> => {
+      const view = card({
+        state: 'failed',
+        plan,
+        skipReason: 'stopped: a write may have landed',
+        output: stoppedOutput,
+      });
+      const landed = [
+        ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+      ].find((radio) => radio.closest('label')?.textContent === 'It landed');
+      act((): void => landed?.click());
+      await press(view.container, 'Confirm reconciliation');
+      expect(view.calls).toEqual([
+        ['reconcile', [{ phase: 'closing', actionIndex: 0, answer: 'landed' }]],
+      ]);
+      view.unmount();
+    });
+
+    it('says once reconciled that Day0 recorded the DM as landed and that you said the post landed', (): void => {
+      const reconciledWith = (dm: Record<string, unknown>) =>
+        card({
+          state: 'failed',
+          plan,
+          skipReason: 'stopped: a write may have landed',
+          output: stoppedOutput,
+          providerReconciliation: {
+            actor: 'owner',
+            confirmedAt: 1,
+            entries: [dm, { ...unknownPost, answer: 'landed' }],
+          },
+        });
+      // As this release records it (no answer on the landed DM), and as a bed before it did.
+      for (const dm of [landedDm, { ...landedDm, answer: 'landed' }]) {
+        const view = reconciledWith(dm);
+        const text = view.container.textContent ?? '';
+        expect(text).toContain('Provider state reconciled');
+        expect(occurrences(text, 'Day0 recorded it as landed.')).toBe(1);
+        expect(occurrences(text, 'You said it landed.')).toBe(1);
+        expect(text.indexOf('Day0 recorded it as landed.')).toBeLessThan(
+          text.indexOf('You said it landed.'),
+        );
+        view.unmount();
+      }
+    });
+  });
+
+  it('asks again, entry by entry, a run confirmed as a whole before the per-entry answers (W12-R3)', async (): Promise<void> => {
+    const view = card({
+      state: 'failed',
+      plan,
+      skipReason: 'a write may have landed',
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            outcomeUnknown: true,
+            reason: 'socket closed after the request',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+      // As v0.15.0 stored it: confirmed whole, no answer on the entry.
+      providerReconciliation: {
+        actor: 'owner',
+        confirmedAt: 1,
+        entries: [
+          {
+            phase: 'single',
+            actionIndex: 0,
+            tool: 'http.request',
+            outcome: 'outcome-unknown',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+    });
+    expect(view.container.textContent).toContain('Provider reconciliation required');
+    expect(view.container.textContent).toContain(
+      'You confirmed this run as a whole before Day0 asked about each write, so each is asked again.',
+    );
+    const retry = [...view.container.querySelectorAll('button')].find(
+      (control) => control.textContent === 'Retry',
+    );
+    expect(retry?.disabled).toBe(true);
+    const notSent = [
+      ...view.container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ].find((radio) => radio.closest('label')?.textContent === 'It was not sent');
+    act((): void => notSent?.click());
+    await press(view.container, 'Confirm reconciliation');
+    expect(view.calls).toEqual([
+      ['reconcile', [{ phase: 'single', actionIndex: 0, answer: 'not-sent' }]],
+    ]);
     view.unmount();
   });
 
@@ -1543,6 +1706,30 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
         (line as HTMLElement).style.getPropertyValue('--i'),
       ),
     ).toEqual(['0', '1', '2', '3', '3', '3']);
+    view.unmount();
+  });
+
+  it("never says nothing has reached a surface beside a read the run already landed (the re-walk's row 8 note)", (): void => {
+    const read = { tool: 'linear.get_issue', ok: true, effect: 'Read REVOPS-5' };
+    const held = {
+      ...executing,
+      state: 'actions-pending',
+      pendingRunId: 'run-1',
+      output: {
+        draft: 'Closing from the ledger.',
+        notes: '',
+        initial: { applied: [read] },
+        actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-5', body: 'Audit' } }],
+        applied: [],
+      },
+      actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(held));
+    expect(view.container.textContent).toContain('Read REVOPS-5');
+    expect(view.container.textContent).not.toContain('nothing has reached a surface');
+    expect(view.container.textContent).toContain(
+      '1 action awaiting your approval · not sent until you approve',
+    );
     view.unmount();
   });
 

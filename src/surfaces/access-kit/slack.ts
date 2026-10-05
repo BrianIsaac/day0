@@ -1,6 +1,7 @@
 import {
   EMPLOYEE_NAME_PLACEHOLDER,
   PUBLIC_URL_PLACEHOLDER,
+  SLACK_APP_HOME,
   SLACK_REDIRECT_PATH,
   buildSlackManifest,
   type BuiltSlackManifest,
@@ -51,15 +52,20 @@ const TEMPLATE: SlackManifest = {
   },
   features: {
     bot_user: { display_name: `${EMPLOYEE_NAME_PLACEHOLDER} (Day0)`, always_online: false },
+    app_home: { ...SLACK_APP_HOME },
   },
   oauth_config: {
     redirect_urls: [`${PUBLIC_URL_PLACEHOLDER}${SLACK_REDIRECT_PATH}`],
     scopes: { bot: [...SLACK_KIT_BOT_SCOPES] },
   },
+  // Socket Mode and interactivity with no request URL (wave 12, 12-M; RM7): Approve and Reject
+  // presses reach Day0 over the bridge's outbound socket once a person has generated the app's
+  // app-level token, and nothing inbound is declared (Q13).
   settings: {
     org_deploy_enabled: false,
-    socket_mode_enabled: false,
+    socket_mode_enabled: true,
     token_rotation_enabled: false,
+    interactivity: { is_enabled: true },
   },
 };
 
@@ -123,10 +129,12 @@ export const SLACK_RECIPE: AccessRecipe = {
       ],
       secretLifetime: {
         words:
-          'The configuration token expires 12 hours after it is generated. Day0 renews it with ' +
-          'its refresh token before any use in its last half hour and, once it has used it, an ' +
-          'hour before it lapses; the refresh token also renews a token that has lapsed. Each ' +
-          "renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends " +
+          'The configuration token expires 12 hours after it is generated. Day0 cannot tell how ' +
+          'old a pair you hand it is, so it renews the pair with its refresh token at its first ' +
+          'use or a quarter of an hour after it lands, whichever comes first (later while the ' +
+          "deployment's scheduled jobs are paused); from then on it renews it before any use in " +
+          'its last half hour and an hour before it lapses, and the refresh token also renews a ' +
+          "token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends " +
           'the access token only. Nothing ends a refresh token but its lapse, so keep the ' +
           "service account's sign-in closed: whoever copies a refresh token while its row is " +
           'listed can mint a token with it until then.',

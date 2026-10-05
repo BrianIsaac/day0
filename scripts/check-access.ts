@@ -11,7 +11,8 @@
  * (`src/surfaces/access-kit/`); whether its secret opens under this deployment's key; and whether
  * the vendor answers an identity call with it (Slack's `apps.manifest.validate` with the kit's
  * manifest, Linear's client-credentials grant and `viewer` as the app, an MCP server's
- * authorisation-server metadata). The secret is opened on this machine through the deployment's
+ * authorisation-server metadata); and, for Slack, whether the socket service carries the decision
+ * buttons' presses. The secret is opened on this machine through the deployment's
  * admin key and sent only to its own vendor; nothing of it is printed. It exits 0 when every line
  * passes or is a note, 1 otherwise. `--report` prints the verdicts (names and statuses, no values)
  * as one JSON document for the support bundle.
@@ -31,6 +32,7 @@ import {
 } from '../src/surfaces/access-identity';
 import { recipeForSystem, type RecipeMode } from '../src/surfaces/access-kit';
 import { slackKitManifest } from '../src/surfaces/access-kit/slack';
+import { MESSAGES_TAB_TOGGLE, type TypedCodeReach } from '../src/surfaces/slack-messages-tab';
 import {
   LINEAR_GRAPHQL_URL,
   LinearIssuerRefusal,
@@ -63,6 +65,8 @@ export const ACCESS_CHECK_NAMES = [
   'secret',
   'identity',
   'reach',
+  'socket',
+  'messages',
 ] as const;
 
 /** One of {@link ACCESS_CHECK_NAMES}. */
@@ -109,7 +113,45 @@ export interface VendorProbes {
    * deployment's own way out to the vendor finds, where every other probe asks from this machine.
    */
   fromBackend(address: URL): Promise<ModelDial>;
+  /**
+   * What the Slack socket service (`slack-socket`, 12-M) says of itself on its health check,
+   * asked inside its container; absent where nothing can ask it.
+   */
+  socketBridge?(): Promise<SocketBridgeReading>;
+  /**
+   * Whether the manager's typed code reaches each installed employee app (W12V-7), as the
+   * deployment's records say; absent where nothing can read the deployment.
+   */
+  messagesTab?(): Promise<MessagesTabReading>;
 }
+
+/** Whether the typed code reaches each installed employee app, or why that could not be read. */
+export type MessagesTabReading =
+  | {
+      readonly state: 'read';
+      readonly apps: ReadonlyArray<{
+        readonly appName: string;
+        readonly reach: TypedCodeReach['state'];
+      }>;
+    }
+  | { readonly state: 'absent'; readonly detail: string };
+
+/** The Slack socket service's own account of itself, or why it could not be asked. */
+export type SocketBridgeReading =
+  | {
+      readonly state: 'running';
+      /** Whether its last read of the backend's app list succeeded. */
+      readonly synced: boolean;
+      readonly apps: ReadonlyArray<{
+        readonly appId: string;
+        /** The app's name, which a line names its card by; absent from a service before v0.16.0. */
+        readonly appName?: string;
+        readonly connected: boolean;
+        /** The app's connection answered for another app: its card holds another app's token. */
+        readonly mismatch?: boolean;
+      }>;
+    }
+  | { readonly state: 'absent'; readonly detail: string };
 
 /** How long one vendor call may take. */
 const VENDOR_TIMEOUT_MS = 20_000;
@@ -518,14 +560,20 @@ function metadataUrls(issuer: string): string[] {
 /** An MCP server: its authorisation server's metadata names it and a token endpoint. */
 async function mcpIdentity(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck[]> {
   if (row.issuer === undefined) {
+    // A public client's issuer is the one its server names, which a correction records in place
+    // (the round review's m13); a confidential client's is IT's to give (M12 f).
+    const cure =
+      row.secretCredentialId === undefined
+        ? `./setup.sh access --correct ${row.system} records the issuer the server's own metadata ` +
+          'names, and ends no card.'
+        : 'a client with a secret takes the issuer IT registered it with, so revoke the ' +
+          'connection and land it again with that issuer.';
     return [
       check(
         row.system,
         'identity',
         'gap',
-        "No issuer is recorded, so every employee's authorisation is refused: revoke the " +
-          "connection and land it again; the setup verb finds the issuer from the server's own " +
-          'metadata.',
+        `No issuer is recorded, so every employee's authorisation is refused: ${cure}`,
       ),
     ];
   }
@@ -736,6 +784,146 @@ async function reachCheck(
   }
 }
 
+/**
+ * The gap for cards that hold another app's app-level token, each named by its app (W12-R32).
+ *
+ * @param names - The apps' names, or `app <id>` where the service gave none.
+ */
+function mismatchedTokenWords(names: readonly string[]): string {
+  if (names.length === 1) {
+    return (
+      `${names[0]}'s card holds the app-level token of another app: generate a token in its own ` +
+      'app and land it on that card again.'
+    );
+  }
+  const listed = `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+  return (
+    `The cards of ${listed} each hold the app-level token of another app: generate a token in ` +
+    "each card's own app and land it on that card again."
+  );
+}
+
+/**
+ * Whether the Slack socket service carries the Approve and Reject presses (12-M; RM7): running,
+ * reading the backend's app list, and holding a connection for each employee app with an
+ * app-level token. Not running is a note, since a request is still decided by its typed code where
+ * the app takes messages, or in day0; a list it cannot read or an app with no connection is a gap.
+ */
+async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
+  if (probes.socketBridge === undefined) {
+    return check(row.system, 'socket', 'warn', 'Not asked: nothing here can ask the service.');
+  }
+  const reading = await probes.socketBridge();
+  if (reading.state === 'absent') {
+    return check(
+      row.system,
+      'socket',
+      'warn',
+      `The Slack socket service is not running (${reading.detail}), so decision requests carry ` +
+        'no buttons: each is decided by its typed code where the employee app takes messages ' +
+        '(the messages row), or in day0. Start it with pnpm convex:up --profile slack-socket for ' +
+        'Approve and Reject buttons.',
+    );
+  }
+  if (!reading.synced) {
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      "The Slack socket service cannot read the backend's list of apps: DAY0_SOCKET_BRIDGE_SECRET " +
+        'must be the same in the env file and on the deployment (pnpm sync:env), then restart ' +
+        'the service.',
+    );
+  }
+  const mismatched = reading.apps
+    .filter((app) => app.mismatch === true)
+    .map((app) => app.appName ?? `app ${app.appId}`);
+  if (mismatched.length > 0) {
+    return check(row.system, 'socket', 'gap', mismatchedTokenWords(mismatched));
+  }
+  const unconnected = reading.apps.filter((app) => !app.connected).map((app) => app.appId);
+  if (unconnected.length > 0) {
+    return check(
+      row.system,
+      'socket',
+      'gap',
+      `No Socket Mode connection for ${unconnected.join(', ')}: the service must reach ` +
+        "Slack's Socket Mode hosts outbound over wss://, and each app needs Socket Mode on with a " +
+        'live app-level token.',
+    );
+  }
+  const count = reading.apps.length;
+  return check(
+    row.system,
+    'socket',
+    'ok',
+    count === 0
+      ? 'The Slack socket service is running; no employee app has an app-level token yet, so ' +
+          'requests carry no buttons.'
+      : `The Slack socket service holds a connection for ${count} employee app${count === 1 ? '' : 's'} with an app-level token.`,
+  );
+}
+
+/** Names in a sentence: "A", "A and B", "A, B and C". */
+function listedNames(names: readonly string[]): string {
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/**
+ * Whether the manager's typed code reaches each installed employee app (W12V-7): an app only a
+ * person can open is a gap, named with Slack's toggle; one Day0 opens at its card's next check is
+ * a note; every app taking messages passes.
+ */
+async function messagesCheck(row: ConnectionRow, probes: VendorProbes): Promise<AccessCheck> {
+  if (probes.messagesTab === undefined) {
+    return check(
+      row.system,
+      'messages',
+      'warn',
+      'Not asked: nothing here can read the deployment.',
+    );
+  }
+  const reading = await probes.messagesTab();
+  if (reading.state === 'absent') {
+    return check(row.system, 'messages', 'warn', `Not read: ${reading.detail.replace(/\.$/, '')}.`);
+  }
+  const named = (reach: TypedCodeReach['state']): string[] =>
+    reading.apps.filter((app) => app.reach === reach).map((app) => app.appName);
+  const byHand = named('needs-toggle');
+  if (byHand.length > 0) {
+    const one = byHand.length === 1;
+    return check(
+      row.system,
+      'messages',
+      'gap',
+      `${listedNames(byHand)} take${one ? 's' : ''} no messages, so no typed code reaches ` +
+        `${one ? 'it' : 'them'}, and Day0 cannot change ${one ? 'its' : 'their'} settings: ` +
+        `someone who manages ${one ? 'it' : 'each'} in Slack turns on App Home, ` +
+        `“${MESSAGES_TAB_TOGGLE}”, and the manager says so on its card (It is on in Slack).`,
+    );
+  }
+  const byDay0 = named('day0-opens');
+  if (byDay0.length > 0) {
+    const one = byDay0.length === 1;
+    return check(
+      row.system,
+      'messages',
+      'warn',
+      `${listedNames(byDay0)} take${one ? 's' : ''} no messages yet, so no typed code reaches ` +
+        `${one ? 'it' : 'them'}: Day0 tries to open ${one ? 'its' : 'their'} messages tab at ` +
+        `${one ? 'its' : 'each'} card's next check (Check the connection on the card tries now).`,
+    );
+  }
+  return check(
+    row.system,
+    'messages',
+    'ok',
+    reading.apps.length === 0
+      ? 'No employee app is installed yet; each app Day0 creates takes messages.'
+      : `The typed code reaches every employee app (${reading.apps.length}).`,
+  );
+}
+
 /** A later verdict on the same check replaces the earlier one (a granted scope after a registered one). */
 function merged(checks: readonly AccessCheck[]): AccessCheck[] {
   const out: AccessCheck[] = [];
@@ -767,6 +955,9 @@ export async function accessChecks(
         ...connectionChecks(row, values),
         ...(await liveChecks(row, values, probes)),
         await reachCheck(row, values, probes, options),
+        ...(row.kind === 'slack-configuration'
+          ? [await socketCheck(row, probes), await messagesCheck(row, probes)]
+          : []),
       ]),
     );
   }
@@ -952,6 +1143,68 @@ function dialFromBackend(project: string, envFile: string, address: URL): ModelD
   });
 }
 
+/** What the bridge's health check answers, as `slack-socket/server.js` writes it. */
+function socketReadingOf(stdout: string): SocketBridgeReading {
+  const parsed: unknown = JSON.parse(stdout);
+  const body =
+    parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  const apps = Array.isArray(body.apps) ? body.apps : [];
+  return {
+    state: 'running',
+    synced: body.synced === true,
+    apps: apps.flatMap((app: unknown) => {
+      const row = app !== null && typeof app === 'object' ? (app as Record<string, unknown>) : {};
+      return typeof row.appId === 'string'
+        ? [
+            {
+              appId: row.appId,
+              ...(typeof row.appName === 'string' ? { appName: row.appName } : {}),
+              connected: row.connected === true,
+              ...(row.mismatch === true ? { mismatch: true } : {}),
+            },
+          ]
+        : [];
+    }),
+  };
+}
+
+/** Ask the Slack socket service of the project the env file names for its health, inside it. */
+function askSocketBridge(project: string, envFile: string): SocketBridgeReading {
+  const run = spawnSync(
+    'docker',
+    [
+      'compose',
+      '-p',
+      project,
+      '--env-file',
+      envFile,
+      '--profile',
+      'slack-socket',
+      'exec',
+      '-T',
+      'slack-socket',
+      'node',
+      '-e',
+      "fetch('http://127.0.0.1:8080/healthz').then(async (r) => process.stdout.write(await r.text()))",
+    ],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  if (run.status !== 0) {
+    return {
+      state: 'absent',
+      detail: firstLine(run.stderr ?? '') || (run.error ? errorMessage(run.error) : 'no answer'),
+    };
+  }
+  try {
+    return socketReadingOf(run.stdout ?? '');
+  } catch (err) {
+    return {
+      state: 'absent',
+      detail: `its health check did not answer JSON: ${errorMessage(err)}`,
+    };
+  }
+}
+
 /** The parsed command line. */
 interface CheckArguments {
   readonly envFile: string;
@@ -1018,6 +1271,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         await admin.run<string>('action', 'credentials:decrypt', { credentialId }),
       fromBackend: async (address: URL): Promise<ModelDial> =>
         dialFromBackend(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile, address),
+      socketBridge: async (): Promise<SocketBridgeReading> =>
+        askSocketBridge(values.COMPOSE_PROJECT_NAME || 'day0', args.envFile),
+      messagesTab: async (): Promise<MessagesTabReading> => await readMessagesTab(admin),
     },
     { install: args.install },
   );
@@ -1041,6 +1297,34 @@ export async function main(argv: readonly string[]): Promise<number> {
   const code = accessExitCode(checks);
   if (args.system !== undefined && rows.length === 0) return 1;
   return code;
+}
+
+/** The most pages of chat cards the messages row reads (40,000 cards), so one check is bounded. */
+const MESSAGES_TAB_PAGES = 200;
+
+/**
+ * Read, page by page, whether the typed code reaches each installed employee app, from the
+ * deployment's `slackMessagesTab:messagesTabReport` (W12V-7).
+ */
+async function readMessagesTab(
+  admin: ReturnType<typeof deploymentAdmin>,
+): Promise<MessagesTabReading> {
+  const apps: Array<{ appName: string; reach: TypedCodeReach['state'] }> = [];
+  let cursor: string | null = null;
+  try {
+    for (let page = 0; page < MESSAGES_TAB_PAGES; page += 1) {
+      const read: {
+        apps: Array<{ appName: string; reach: TypedCodeReach['state'] }>;
+        cursor: string | null;
+      } = await admin.run('query', 'slackMessagesTab:messagesTabReport', { cursor });
+      apps.push(...read.apps);
+      cursor = read.cursor;
+      if (cursor === null) break;
+    }
+  } catch (err) {
+    return { state: 'absent', detail: firstLine(errorMessage(err)) };
+  }
+  return { state: 'read', apps };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -4,7 +4,7 @@ import { ConvexError, v } from 'convex/values';
 import { action } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { applySurfaceActions, readSurfaceSnapshot } from '../src/surfaces/registry';
 import type { AppliedAction } from '../src/surfaces/types';
@@ -49,6 +49,7 @@ const STUB_CHARTER = {
 export const deployBaseline = action({
   args: { evaluationAddress: v.string(), name: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> => {
+    await getCallerOrThrow(ctx);
     requireBaselineBed('baselineActions.deployBaseline');
     const agentId: Id<'agents'> = await ctx.runMutation(api.agents.deploy, {
       evaluationAddress: args.evaluationAddress,
@@ -72,6 +73,11 @@ export const deployBaseline = action({
   },
 });
 
+/**
+ * Run one baseline-arm work item with the ordinary agent. Public, guarded by `getCallerOrThrow`
+ * first and then the item's employee's owner, on an evaluation bed in mock mode only. Writes the
+ * item's claim and its outcome.
+ */
 export const executeTask = action({
   args: { workItemId: v.id('workItems') },
   handler: async (
@@ -83,6 +89,7 @@ export const executeTask = action({
     modelCalls?: number;
     toolCalls?: number;
   }> => {
+    await getCallerOrThrow(ctx);
     requireBaselineBed('baselineActions.executeTask');
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, args);
     if (!item) throw new Error('workItem not found');
@@ -139,7 +146,7 @@ export const executeTask = action({
       };
       if (applied.length === 0) {
         const reason = draft || 'ordinary agent finished without a write-tool call';
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: item._id,
           runId: claim.runId,
           reason,
@@ -153,7 +160,7 @@ export const executeTask = action({
         const reason = failures
           .map((row) => `${row.tool}: ${row.reason ?? 'adapter write failed'}`)
           .join('; ');
-        await ctx.runMutation(internal.work.setFailed, {
+        await ctx.runMutation(internal.workRuns.setFailed, {
           workItemId: item._id,
           runId: claim.runId,
           reason,
@@ -162,7 +169,7 @@ export const executeTask = action({
         });
         return { ok: false, reason, modelCalls: result.modelCalls, toolCalls };
       }
-      await ctx.runMutation(internal.work.setCompleted, {
+      await ctx.runMutation(internal.workRuns.setCompleted, {
         workItemId: item._id,
         runId: claim.runId,
         output,
@@ -170,7 +177,7 @@ export const executeTask = action({
       return { ok: true, modelCalls: result.modelCalls, toolCalls };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.workRuns.setFailed, {
         workItemId: item._id,
         runId: claim.runId,
         reason,

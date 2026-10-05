@@ -239,7 +239,16 @@ describe('the manifest Day0 sends', (): void => {
           'RevOps digital employee. Drafts first, sends to the manager, holds public posts.',
         long_description: 'Drafts first. '.repeat(20),
       },
-      features: { bot_user: { display_name: 'Priya (Day0)', always_online: false } },
+      // Re-pinned for W12V-7: Day0 adds its own App Home, the messages tab open for writing, so
+      // the typed code reaches the app; nothing the page added beside the bot user is kept.
+      features: {
+        bot_user: { display_name: 'Priya (Day0)', always_online: false },
+        app_home: {
+          home_tab_enabled: false,
+          messages_tab_enabled: true,
+          messages_tab_read_only_enabled: false,
+        },
+      },
       oauth_config: {
         redirect_urls: ['https://day0.example.com/api/oauth/slack'],
         scopes: { bot: built.scopes },
@@ -250,6 +259,58 @@ describe('the manifest Day0 sends', (): void => {
         token_rotation_enabled: false,
       },
     });
+  });
+
+  it('keeps interactivity with Socket Mode on and never its request URL, so buttons reach Day0 over the socket (12-M)', (): void => {
+    const parsed = JSON.parse(widened()) as Record<string, Record<string, unknown>>;
+    parsed.settings.socket_mode_enabled = true;
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: JSON.stringify(parsed),
+    });
+    expect(JSON.stringify(built.manifest)).not.toContain('attacker.example');
+    expect(built.manifest.settings).toEqual({
+      org_deploy_enabled: true,
+      socket_mode_enabled: true,
+      token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
+    });
+  });
+
+  it('drops interactivity without Socket Mode, which Slack refuses with no request URL', (): void => {
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: widened(),
+    });
+    expect(built.manifest.settings).not.toHaveProperty('interactivity');
+  });
+
+  it('always opens the app’s messages tab for writing, whatever a page says, so the typed code can reach it (W12V-7)', (): void => {
+    const writable = {
+      home_tab_enabled: false,
+      messages_tab_enabled: true,
+      messages_tab_read_only_enabled: false,
+    };
+    const fromPage = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: template(),
+    });
+    expect(fromPage.manifest.features?.app_home).toEqual(writable);
+    const closed = JSON.parse(widened()) as Record<string, Record<string, unknown>>;
+    closed.features.app_home = {
+      home_tab_enabled: true,
+      messages_tab_enabled: false,
+      messages_tab_read_only_enabled: true,
+    };
+    const overridden = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: JSON.stringify(closed),
+    });
+    expect(overridden.manifest.features?.app_home).toEqual(writable);
   });
 
   it('refuses a bot scope that is not a Slack scope', (): void => {

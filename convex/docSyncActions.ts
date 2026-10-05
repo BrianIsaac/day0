@@ -24,6 +24,8 @@ import {
   type ScopePage,
 } from '../src/surfaces/intake-scope';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { log } from '../src/lib/logger';
 import { FINISHING_CHECKPOINT_EVERY, PAGED_READ, type FinishingPage } from './docSources';
 import {
   FINISHING_CURSOR,
@@ -32,8 +34,12 @@ import {
   finishingStep,
   type FinishingStep,
 } from '../src/docs/finishing';
+import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 
 export const SYNC_BATCH_SIZE = 25;
+
+/** Why a sync stopped short with nothing read (W12V-2's words, in `src/docs/sync-held.ts`). */
+export { SYNC_HELD_REASON };
 
 /**
  * The largest page Day0 stores, in UTF-8 bytes: under Convex's one-mebibyte
@@ -360,6 +366,15 @@ export const syncSource = internalAction({
  *
  * After the last batch the run holds `FINISHING_CURSOR` and the same action
  * finishes it; a batch scheduled at that cursor (a resumed run) only finishes.
+ *
+ * Every link of a sync's chain enters here (the first batch, each
+ * continuation, a restart, the finish), so while the deployment's scheduled
+ * work is paused (`DAY0_CRONS_PAUSED`) a batch reads nothing and schedules
+ * nothing: its run ends short at its cursor with {@link SYNC_HELD_REASON}
+ * (`failSync`), the source is no longer `linking`, and the cron's first run
+ * after the pause lists it and takes the run over from that cursor
+ * (`beginSync`), as a work step queued before the pause holds at its claim
+ * (12-P; the wave file's 4.3).
  */
 export const syncBatch = internalAction({
   args: {
@@ -368,6 +383,20 @@ export const syncBatch = internalAction({
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<SyncResult> => {
+    const paused = cronsPauseReason();
+    if (paused !== undefined) {
+      log.info('documentation sync batch held: crons paused', {
+        sourceId: args.sourceId,
+        reason: paused,
+      });
+      await ctx.runMutation(internal.docSources.failSync, {
+        sourceId: args.sourceId,
+        runId: args.runId,
+        status: 'error',
+        reason: SYNC_HELD_REASON,
+      });
+      return { ok: false, pages: 0, redactions: 0, complete: false, reason: SYNC_HELD_REASON };
+    }
     const context = await ctx.runQuery(internal.docSources.syncContext, {
       sourceId: args.sourceId,
       runId: args.runId,

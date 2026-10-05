@@ -546,10 +546,13 @@ function MessageBubble({ message, arrive }: { message: UIMessage; arrive: boolea
           );
         }
         if (part.type === 'tool-dayOneComplete') {
-          const input = (part as { input?: { closingLine?: string } }).input;
+          // The model's own input, unvalidated while it streams and kept as sent when the call
+          // fails its schema: a closing line that is not text (a model echoing the tool's schema
+          // back) is drawn as the close, never handed to React as a child.
+          const line = (part as { input?: { closingLine?: unknown } }).input?.closingLine;
           return (
             <span key={i} className="mt-1 block text-[var(--color-ok)] italic">
-              {input?.closingLine ?? '(closing)'}
+              {typeof line === 'string' && line.trim() !== '' ? line : '(closing)'}
             </span>
           );
         }

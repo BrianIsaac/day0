@@ -35,7 +35,7 @@ openssl req -newkey rsa:2048 -nodes -subj "/CN=fake-oidc" \
   -keyout "$directory/key.pem" -out "$work/cert.csr" 2>/dev/null
 printf 'subjectAltName=IP:%s,DNS:fake-oidc\nextendedKeyUsage=serverAuth\n' "$address" > "$work/ext.cnf"
 openssl x509 -req -in "$work/cert.csr" -CA "$directory/ca.pem" -CAkey "$work/ca-key.pem" \
-  -CAcreateserial -days 7 -extfile "$work/ext.cnf" -out "$directory/cert.pem" 2>/dev/null
+  -CAcreateserial -CAserial "$work/ca.srl" -days 7 -extfile "$work/ext.cnf" -out "$directory/cert.pem" 2>/dev/null
 cat "$system_bundle" "$directory/ca.pem" > "$directory/bundle.pem"
 # Read by the fake's container user, which is not this one.
 chmod 0644 "$directory/key.pem"

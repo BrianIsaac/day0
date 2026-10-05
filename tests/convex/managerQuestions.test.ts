@@ -13,6 +13,7 @@ import {
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../fixtures/charter-synthesis-notes-2026-09-16';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 type Harness = TestConvex<typeof schema>;
@@ -429,5 +430,17 @@ describe('answering a question', (): void => {
     expect(await answeredEvents(harness, agentId)).toEqual([
       { via: 'dashboard', amended: true, charterId: amended.charterId },
     ]);
+  });
+});
+
+describe('the anonymous-caller guard before the first read (12-G)', (): void => {
+  it('refuses a caller with no identity before it says whether the question exists', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    const questionId = await goneRowOf(harness, 'managerQuestions');
+    await expect(
+      harness.mutation(api.managerQuestions.answer, { questionId, text: 'Yes.' }),
+    ).rejects.toMatchObject(refusal);
   });
 });

@@ -383,15 +383,15 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
-    expect(await scheduledSteps(harness)).toEqual([['work:setFailed', ids.stuck]]);
-    await harness.mutation(internal.work.setFailed, {
+    expect(await scheduledSteps(harness)).toEqual([['workRuns:setFailed', ids.stuck]]);
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: ids.live,
       runId: ids.liveRun,
       reason: 'execution interrupted before the exact-action gate',
       stopped: true,
       onlyIfStalled: true,
     });
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId: ids.stuck,
       runId: ids.oldRun,
       reason: 'execution interrupted before the exact-action gate',
@@ -616,7 +616,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(10);
+    expect(jobs).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -662,7 +662,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(10);
+    expect(lines).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { RepairNote } from '../../../../../app/agent/[agentId]/work/RunDetails';
 import {
+  closeAgainstWordsNote,
   heldActionsWhy,
   heldSentence,
   PendingActions,
@@ -12,7 +13,10 @@ import {
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WITHHELD_TRANSITION_NOTE,
 } from '../../../../../src/work/autonomy';
-import { HELD_WITHHELD_TRANSITION } from '../../../../../src/surfaces/policy';
+import {
+  HELD_CLOSE_AGAINST_WORDS,
+  HELD_WITHHELD_TRANSITION,
+} from '../../../../../src/surfaces/policy';
 
 describe('a write re-authored once before the hold', (): void => {
   const reason =
@@ -100,5 +104,152 @@ describe('a ticket state change the plan withholds', (): void => {
     expect(heldActionsWhy('Mira', true, false, 'real')).toContain(
       'Approving starts the closing phase; when it finishes, reads and messages to you apply on their own',
     );
+  });
+});
+
+describe('a close the tripwire sent to the manager (12-D)', (): void => {
+  const resolved = async (): Promise<void> => undefined;
+  const close = {
+    tool: 'ticket.update' as const,
+    args: { slug: 'REVOPS-204', status: 'done' as const, comment: 'Reconciled all three.' },
+  };
+  const clause = "I could not find a mismatch between the tracker and the ticket's figures.";
+
+  it('names the sentence beside the held close, and the manager decides it', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[close]}
+        verdicts={[{ disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS }]}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('Close held:');
+    expect(markup).toContain(
+      'Quill answered that the work is done, but wrote “I could not find a mismatch between the tracker and the ticket&#x27;s figures”. Approve the close only if the work was done; otherwise withhold it.',
+    );
+  });
+
+  it('leaves the held close unticked, so Approve selected never sends it without a choice', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[
+          close,
+          { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Done.' } },
+        ]}
+        verdicts={[
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+          { disposition: 'held', reason: 'write held for the manager' },
+        ]}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('Approve selected (1)');
+    expect(markup.match(/type="checkbox"[^>]*checked=""/g) ?? []).toHaveLength(1);
+    // Day0 left it unticked, not the manager: the card says so and does not count it as theirs.
+    expect(markup).toContain(
+      'Not ticked: approve it only if the work was done. Until you tick it, it will not be sent.',
+    );
+    expect(markup).toContain('>Include it<');
+    expect(markup).not.toContain('withheld by you');
+    expect(markup).not.toContain('Withheld by you');
+  });
+
+  it('says nothing of the kind on a set the tripwire did not trip', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[close]}
+        verdicts={[{ disposition: 'held', reason: 'write held for the manager' }]}
+        surfaces={[]}
+        employeeName="Rook"
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).not.toContain('answered that the work is done');
+  });
+
+  it('keeps an ellipsis that ends the quoted sentence inside the quotation marks, as Slack does', (): void => {
+    expect(closeAgainstWordsNote('Moss', 'The deals were not found…')).toBe(
+      'Moss answered that the work is done, but wrote “The deals were not found…” Approve the close only if the work was done; otherwise withhold it.',
+    );
+  });
+
+  it('keeps the quoted sentence’s own question or exclamation mark', (): void => {
+    expect(closeAgainstWordsNote('Moss', 'Where are the deals?')).toBe(
+      'Moss answered that the work is done, but wrote “Where are the deals?” Approve the close only if the work was done; otherwise withhold it.',
+    );
+  });
+});
+
+describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void => {
+  const resolved = async (): Promise<void> => undefined;
+  const close = {
+    tool: 'ticket.update' as const,
+    args: { slug: 'REVOPS-204', status: 'done' as const, comment: 'Reconciled all three.' },
+  };
+  const dm = {
+    tool: 'slack.postMessage' as const,
+    args: { channelSlug: 'dm-manager', body: 'Done.' },
+  };
+  const clause = 'I could not find the deals.';
+
+  it('names the held close beside Approve all, so all is never pressed blind', (): void => {
+    expect(heldActionsWhy('Quill', false, false, 'real', { closeHeld: true })).toBe(
+      'Approve selected sends the ticked writes as Quill wrote them; Approve all sends every held write, the ticket close Day0 held among them. Rejecting ends this run with nothing held sent and keeps your reason on the item.',
+    );
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[close, dm]}
+        verdicts={[
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+          { disposition: 'held', reason: 'write held for the manager' },
+        ]}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('the ticket close Day0 held among them');
+  });
+
+  it('shows only the close once an approval in Slack sent the rest, and lets the manager finish without it', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[dm, close]}
+        verdicts={[
+          { disposition: 'held', reason: 'write held for the manager' },
+          { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
+        ]}
+        decidedEarlier={[0]}
+        landed={1}
+        surfaces={[]}
+        employeeName="Quill"
+        closeAgainstWords={clause}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup.match(/type="checkbox"/g) ?? []).toHaveLength(1);
+    expect(markup).toContain('1 action awaiting your approval');
+    expect(markup).toContain('Close held:');
+    expect(markup).toContain('Your earlier approval has been applied; only the close is left.');
+    // Nothing ticked: finishing sends nothing more, the close stays withheld.
+    expect(markup).toMatch(/<button[^>]*>Finish without the close<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Finish without the close<\/button>/);
+    expect(markup).toContain(
+      'Finish without the close ends this item with the ticket close withheld; Approve all sends the close, so use it only if the work was done. Rejecting ends this run and sends nothing more, the ticket close included; what you approved earlier was already sent, and your reason stays on the item.',
+    );
+    // Approve all is described by the sentence the close was held for.
+    expect(markup).toMatch(/aria-describedby="[^"]*-close"[^>]*>Approve all</);
   });
 });

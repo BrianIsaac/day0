@@ -785,6 +785,13 @@ describe('pausing the scheduled jobs', (): void => {
     expect(at('convex env set DAY0_CRONS_PAUSED')).toBeGreaterThanOrEqual(0);
     expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('run convex:restart'));
     expect(h.output.join('\n')).toContain('skip until `./setup.sh unpause`');
+    // Since 12-P a step queued before the pause holds at its claim, and since 12-J so does the sync.
+    // Re-pinned for W12-R31: an operator reads it, so it says what holds without the gate's words.
+    expect(h.output.join('\n')).toContain(
+      'A step already under way finishes the step it is on and holds before the next, and a documentation sync stops once its current batch is read; each goes on from where it stopped once the jobs run again.',
+    );
+    expect(h.output.join('\n')).not.toContain('next gate');
+    expect(h.output.join('\n')).not.toContain('runs to its end');
 
     const again = configured({
       services: ['backend'],

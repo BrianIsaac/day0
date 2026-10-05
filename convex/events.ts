@@ -27,14 +27,15 @@ import {
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
-import {
-  EVENT_TYPES,
-  isConnectionEventType,
-  isEventOf,
-  type ConnectionEventType,
-} from '../src/events/contract';
+import { EVENT_TYPES, isEventOf } from '../src/events/contract';
+import { ledgerLineOf } from './connectionEvents';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
+import {
+  CREDENTIAL_VALUE_REDACTION,
+  isCredentialKey,
+  withEmbeddedCredentialsBlanked,
+} from '../src/lib/credential-keys';
 
 /**
  * Events feed - inserted only through `eventLog.ts` (`appendEvent` in a
@@ -263,9 +264,11 @@ function withoutEmbeddedPersonalValues(text: string): string {
 }
 
 /**
- * Redact one value for export: personal keys are dropped, every string has
- * the personal values it quotes and its recognisable credential shapes
- * replaced, and containers are walked.
+ * Redact one value for export: personal keys are dropped, a value under a
+ * credential-class key is blanked (`src/lib/credential-keys.ts`, the list the
+ * record's payload floor reads), every other string has the personal values
+ * it quotes and its recognisable credential shapes replaced, and containers
+ * are walked.
  *
  * Args:
  *   value: A stored payload, ledger entry or nested part of one.
@@ -274,13 +277,18 @@ function withoutEmbeddedPersonalValues(text: string): string {
  *   The same shape with nothing an export should not carry.
  */
 export function redactForExport(value: unknown): unknown {
-  if (typeof value === 'string') return redactTokenShapes(withoutEmbeddedPersonalValues(value));
+  if (typeof value === 'string') {
+    return redactTokenShapes(withoutEmbeddedPersonalValues(withEmbeddedCredentialsBlanked(value)));
+  }
   if (Array.isArray(value)) return value.map(redactForExport);
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .filter(([key]) => !PERSONAL_KEYS.has(key))
-        .map(([key, entry]) => [key, redactForExport(entry)]),
+        .map(([key, entry]) => [
+          key,
+          isCredentialKey(key) ? CREDENTIAL_VALUE_REDACTION : redactForExport(entry),
+        ]),
     );
   }
   return value;
@@ -419,22 +427,24 @@ async function organisationLedgerOf(
   );
   return ledgers
     .flat()
-    .filter((line) => isConnectionEventType(line.type))
+    .flatMap((row) => {
+      const line = ledgerLineOf(row);
+      return line === undefined ? [] : [line];
+    })
     .filter((line) => {
       if (line.type === 'organisation.configuration-used') {
         // Only the creation of this employee's own app is its: another employee's app, a renewal
         // of the token and its revoke are the organisation's (the wave 11 review's m1).
-        const appId = (line.payload as { readonly appId?: unknown }).appId;
+        const appId = line.payload.appId;
         return typeof appId === 'string' && ownApps.has(appId);
       }
       if (line.type !== 'organisation.revoked-at-source') return true;
-      const credentialId = (line.payload as { readonly credentialId?: unknown }).credentialId;
-      return typeof credentialId === 'string' && own.has(credentialId);
+      return own.has(line.payload.credentialId);
     })
     .toSorted((left, right) => left.createdAt - right.createdAt)
     .map(
       (line): TraceLedgerLine => ({
-        type: line.type as ConnectionEventType,
+        type: line.type,
         organisationConnectionId: line.organisationConnectionId,
         createdAt: line.createdAt,
         payload: redactForExport(line.payload) as TraceLedgerLine['payload'],
@@ -556,6 +566,11 @@ const SECTION_PAGES: Readonly<
     await ctx.db
       .query('managerDecisionNotices')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  replacedRequests: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId))
       .paginate(options),
   events: async (ctx, agentId, options) =>
     await ctx.db

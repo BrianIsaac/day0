@@ -2,7 +2,7 @@ import { v, type Infer } from 'convex/values';
 import { isDepartureListed } from '../src/agent/manager-transfer';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
-import { assertOwnsAgent, getCaller } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 
 /**
  * The most handover requests one employee's reads take. A request is asked at most once at a
@@ -104,16 +104,16 @@ function lastDeparture(
  * `departed` with where it went and what became of it since, for one the caller handed over in
  * the thirty days the home lists it (`isDepartureListed`, the operator's ruling of 2 October,
  * decision 8), and past them as any employee not the caller's; `not-yours` for another account's
- * employee, as the page's own read would refuse it. An
- * anonymous caller is left to the page's own read. Writes nothing.
+ * employee, as the page's own read would refuse it. A
+ * caller with no identity is refused (`getCallerOrThrow`, 12-G). Writes nothing.
  */
 export const employeePage = query({
   args: { agentId: v.string() },
   returns: employeePageValidator,
   handler: async (ctx, args): Promise<EmployeePage> => {
-    const caller = await getCaller(ctx);
+    const caller = await getCallerOrThrow(ctx);
     const agentId = ctx.db.normalizeId('agents', args.agentId);
-    if (!caller || agentId === null) return { page: 'employee' };
+    if (agentId === null) return { page: 'employee' };
     const employee = await ctx.db.get(agentId);
     if (employee !== null && employee.userId === caller.ownerKey) return { page: 'employee' };
     const accepted = await ctx.db

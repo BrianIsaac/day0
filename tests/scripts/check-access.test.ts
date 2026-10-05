@@ -9,6 +9,8 @@ import {
   slackApiBaseForCheck,
   type AccessCheck,
   type ConnectionRow,
+  type SocketBridgeReading,
+  type MessagesTabReading,
   type VendorProbes,
 } from '../../scripts/check-access';
 import type { ModelDial } from '../../scripts/model-reach';
@@ -58,10 +60,19 @@ function vendors(
     readonly opened?: Readonly<Record<string, string | Error>>;
     /** What the backend container's dial of an address finds; reached by default. */
     readonly backend?: (url: URL) => ModelDial | undefined;
+    /** What the Slack socket service says of itself; running, with no app, by default. */
+    readonly socket?: SocketBridgeReading;
+    /** Whether the typed code reaches each employee app; none installed by default (W12V-7). */
+    readonly messages?: MessagesTabReading;
   } = {},
-): VendorProbes & { readonly calls: string[]; readonly fromTheBackend: string[] } {
+): VendorProbes & {
+  readonly calls: string[];
+  readonly fromTheBackend: string[];
+  readonly requestedScopes: (string | null)[];
+} {
   const calls: string[] = [];
   const fromTheBackend: string[] = [];
+  const requestedScopes: (string | null)[] = [];
   const opened: Readonly<Record<string, string | Error>> = overrides.opened ?? {
     'cred-slack': CONFIGURATION_TOKEN,
     'cred-linear': LINEAR_SECRET,
@@ -69,7 +80,12 @@ function vendors(
   return {
     calls,
     fromTheBackend,
+    requestedScopes,
     slackApiBase: new URL('https://slack.com/api/'),
+    socketBridge: async (): Promise<SocketBridgeReading> =>
+      overrides.socket ?? { state: 'running', synced: true, apps: [] },
+    messagesTab: async (): Promise<MessagesTabReading> =>
+      overrides.messages ?? { state: 'read', apps: [] },
     fromBackend: async (url: URL): Promise<ModelDial> => {
       fromTheBackend.push(url.href);
       return overrides.backend?.(url) ?? { reach: 'reached', detail: 'HTTP 200' };
@@ -95,6 +111,7 @@ function vendors(
         const form = new URLSearchParams(await request.text());
         expect(form.get('grant_type')).toBe('client_credentials');
         expect(form.get('client_secret')).toBe(LINEAR_SECRET);
+        requestedScopes.push(form.get('scope'));
         // Linear's own answer to the set, 3 October: `scope: "app:assignable read write"`.
         const answer = overrides.linearToken ?? {
           status: 200,
@@ -141,6 +158,10 @@ describe('check:access', (): void => {
       'slack secret',
       'slack identity',
       'slack reach',
+      // Re-pinned for 12-M: Slack's checks end with whether the socket service carries presses.
+      'slack socket',
+      // Re-pinned for W12V-7: and whether the typed code reaches each employee app.
+      'slack messages',
       'linear status',
       'linear redirect',
       'linear scopes',
@@ -216,11 +237,15 @@ describe('check:access', (): void => {
   });
 
   it('passes a shared Linear connection landed read, write, app:assignable, with no note to remove a scope (R41V-3)', async (): Promise<void> => {
-    const checks = await accessChecks([LINEAR], VALUES, vendors());
+    const probes = vendors();
+    const checks = await accessChecks([LINEAR], VALUES, probes);
     expect(only(checks, 'linear', 'scopes')).toMatchObject({
       status: 'ok',
       detail: 'Holds read, write, app:assignable.',
     });
+    // The token is asked for with the set the connection landed, exactly: Linear revokes every
+    // token of the app when one is asked for with another (L2; the round review's m20).
+    expect(probes.requestedScopes).toEqual(['read,write,app:assignable']);
   });
 
   it('says a shared Linear connection landed without app:assignable takes no delegated ticket, cured by revoke and land again', async (): Promise<void> => {
@@ -374,12 +399,23 @@ describe('check:access', (): void => {
     expect(only(narrower, 'mcp:mcp.acme.com', 'scopes')).toMatchObject({ status: 'gap' });
 
     // Every card refuses a connection with no issuer since the review's m4, so the check calls it a
-    // gap with its cure, where it once noted that the first sign-in would discover one.
+    // gap with its cure, where it once noted that the first sign-in would discover one. Since the
+    // round review's m13 a public client's cure is a correction, which ends no card.
     const undiscovered = await accessChecks([{ ...mcp, issuer: undefined }], VALUES, metadata([]));
     expect(only(undiscovered, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
       status: 'gap',
       detail:
-        "No issuer is recorded, so every employee's authorisation is refused: revoke the connection and land it again; the setup verb finds the issuer from the server's own metadata.",
+        "No issuer is recorded, so every employee's authorisation is refused: ./setup.sh access --correct mcp:mcp.acme.com records the issuer the server's own metadata names, and ends no card.",
+    });
+    const confidential = await accessChecks(
+      [{ ...mcp, issuer: undefined, secretCredentialId: 'secret-1' }],
+      VALUES,
+      { ...metadata([]), openSecret: async (): Promise<string> => 'mcp-test-secret' },
+    );
+    expect(only(confidential, 'mcp:mcp.acme.com', 'identity')).toMatchObject({
+      status: 'gap',
+      detail:
+        "No issuer is recorded, so every employee's authorisation is refused: a client with a secret takes the issuer IT registered it with, so revoke the connection and land it again with that issuer.",
     });
   });
 
@@ -553,5 +589,186 @@ describe('the check with nothing to check', (): void => {
       '  None is connected: `./setup.sh access` connects them with the customer’s IT.',
     );
     expect(noConnectionLine('linear')).toBe('  Nothing is connected for linear.');
+  });
+});
+
+describe('check:access: the Slack socket service (wave 12, 12-M; RM7)', (): void => {
+  it('passes when the service holds a connection for every app with an app-level token', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK, LINEAR],
+      VALUES,
+      vendors({
+        socket: { state: 'running', synced: true, apps: [{ appId: 'A0MATEO', connected: true }] },
+      }),
+    );
+    expect(only(checks, 'slack', 'socket')).toMatchObject({
+      status: 'ok',
+      detail: expect.stringContaining('1 employee app'),
+    });
+    expect(checks.some((one) => one.subject === 'linear' && one.name === 'socket')).toBe(false);
+  });
+
+  it('notes a service that is not running: requests carry no buttons', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ socket: { state: 'absent', detail: 'service "slack-socket" is not running' } }),
+    );
+    const socket = only(checks, 'slack', 'socket');
+    expect(socket.status).toBe('warn');
+    // Re-pinned for W12V-7: the typed code does not always decide; an app that takes no messages
+    // refuses it.
+    expect(socket.detail).toContain('typed code where the employee app takes messages');
+    expect(socket.detail).not.toContain('always decides');
+    expect(socket.detail).toContain('pnpm convex:up --profile slack-socket');
+    expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('names an app that holds no connection, and the way out it needs', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        socket: {
+          state: 'running',
+          synced: true,
+          apps: [
+            { appId: 'A0MATEO', connected: true },
+            { appId: 'A0PRIYA', connected: false },
+          ],
+        },
+      }),
+    );
+    const socket = only(checks, 'slack', 'socket');
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain('A0PRIYA');
+    expect(socket.detail).toContain('wss://');
+  });
+
+  it('names an app whose card holds another app’s token', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({
+          socket: {
+            state: 'running',
+            synced: true,
+            apps: [{ appId: 'A0PRIYA', appName: 'Priya (Day0)', connected: false, mismatch: true }],
+          },
+        }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.status).toBe('gap');
+    // Re-pinned for W12-R32: the card is named, and its verb agrees with it.
+    expect(socket.detail).toContain("Priya (Day0)'s card holds the app-level token of another app");
+  });
+
+  it('names every card that holds another app’s token, with a verb for several, and an app id only where no name came (W12-R32)', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({
+          socket: {
+            state: 'running',
+            synced: true,
+            apps: [
+              { appId: 'A0PRIYA', appName: 'Priya (Day0)', connected: false, mismatch: true },
+              { appId: 'A0MATEO', connected: false, mismatch: true },
+            ],
+          },
+        }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.detail).toContain(
+      'The cards of Priya (Day0) and app A0MATEO each hold the app-level token of another app',
+    );
+  });
+
+  it('names the secret when the service cannot read the backend’s list', async (): Promise<void> => {
+    const socket = only(
+      await accessChecks(
+        [SLACK],
+        VALUES,
+        vendors({ socket: { state: 'running', synced: false, apps: [] } }),
+      ),
+      'slack',
+      'socket',
+    );
+    expect(socket.status).toBe('gap');
+    expect(socket.detail).toContain('DAY0_SOCKET_BRIDGE_SECRET');
+  });
+});
+
+describe('check:access: whether the typed code reaches each employee app (W12V-7)', (): void => {
+  it('passes when every installed app takes messages', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ messages: { state: 'read', apps: [{ appName: 'Iris (Day0)', reach: 'open' }] } }),
+    );
+    expect(only(checks, 'slack', 'messages')).toMatchObject({
+      status: 'ok',
+      detail: 'The typed code reaches every employee app (1).',
+    });
+  });
+
+  it('notes an app Day0 opens at its card’s next check', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        messages: { state: 'read', apps: [{ appName: 'Iris (Day0)', reach: 'day0-opens' }] },
+      }),
+    );
+    expect(only(checks, 'slack', 'messages')).toEqual({
+      subject: 'slack',
+      name: 'messages',
+      status: 'warn',
+      detail:
+        "Iris (Day0) takes no messages yet, so no typed code reaches it: Day0 tries to open its messages tab at its card's next check (Check the connection on the card tries now).",
+    });
+    expect(accessExitCode(checks)).toBe(0);
+  });
+
+  it('names each app only a person can open, and the one toggle, as a gap', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({
+        messages: {
+          state: 'read',
+          apps: [
+            { appName: 'Otto (Day0)', reach: 'needs-toggle' },
+            { appName: 'Vela (Day0)', reach: 'needs-toggle' },
+            { appName: 'Iris (Day0)', reach: 'open' },
+          ],
+        },
+      }),
+    );
+    expect(only(checks, 'slack', 'messages')).toEqual({
+      subject: 'slack',
+      name: 'messages',
+      status: 'gap',
+      detail:
+        'Otto (Day0) and Vela (Day0) take no messages, so no typed code reaches them, and Day0 cannot change their settings: someone who manages each in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and the manager says so on its card (It is on in Slack).',
+    });
+  });
+
+  it('says what could not be read, as a note', async (): Promise<void> => {
+    const checks = await accessChecks(
+      [SLACK],
+      VALUES,
+      vendors({ messages: { state: 'absent', detail: 'the deployment did not answer' } }),
+    );
+    expect(only(checks, 'slack', 'messages')).toMatchObject({
+      status: 'warn',
+      detail: 'Not read: the deployment did not answer.',
+    });
   });
 });

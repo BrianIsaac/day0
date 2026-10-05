@@ -217,10 +217,19 @@ export default defineSchema({
      * on rows from before the stamp; the `agents-zone` migration fills it
      * with the deployment's mode. */
     mode: v.optional(v.union(v.literal('mock'), v.literal('real'))),
+    /**
+     * When the manager paused this one employee (wave 12, 12-P; A15): orthogonal to `state`.
+     * While it is set intake takes nothing for the employee and no step of its runs starts;
+     * a decision already asked stays answerable. Cleared by resume. Absent on every older row,
+     * which reads as running.
+     */
+    pausedAt: v.optional(v.number()),
+    /** The owner key (`ownerKeyOf`) of the manager who paused the employee, set with `pausedAt`. */
+    pausedBy: v.optional(v.string()),
+    /** The reason the manager gave with the pause, if any, set and cleared with `pausedAt`. */
+    pauseReason: v.optional(v.string()),
     createdAt: v.number(),
-  })
-    .index('by_bossEmail', ['bossEmail'])
-    .index('by_userId', ['userId']),
+  }).index('by_userId', ['userId']),
 
   charters: defineTable({
     agentId: v.id('agents'),
@@ -368,9 +377,10 @@ export default defineSchema({
     cursor: v.optional(v.string()),
     /**
      * The page refs a run of a release before 0.6.0 listed, which bounded a
-     * generation at Convex's 8,192-entry array. Nothing writes it from 0.6.0:
-     * a listed page is stamped on its `docPageListings` row instead. Read only
-     * as a pre-0.6.0 run's listing when that run is resumed or finished.
+     * generation at Convex's 8,192-entry array. Nothing writes or reads it from
+     * 0.16.0: a listed page is stamped on its `docPageListings` row instead, and
+     * the `sync-runs-refs` migration clears it, carrying its count into
+     * `pagesListed`. The release after that removes this declaration (N10).
      */
     refs: v.optional(v.array(v.string())),
     /**
@@ -544,12 +554,6 @@ export default defineSchema({
     request: v.optional(v.any()),
     /** The manager's approval of the card, the one approval there is (Q10). */
     managerApprovedAt: v.optional(v.number()),
-    /**
-     * The IT approval of releases before 0.6.0. Nothing writes or reads it;
-     * the `surfaces-single-approval` migration clears it, and the release
-     * after that removes this declaration (N10).
-     */
-    itApprovedAt: v.optional(v.number()),
     /** Phase 2 Lane B connection evidence. Credential contents remain in the
      * lane-A credentials table and are decrypted only inside Node actions. */
     credentialId: v.optional(v.id('credentials')),
@@ -624,6 +628,14 @@ export default defineSchema({
          * retire reads (11-AR).
          */
         organisationConnectionId: v.optional(v.id('organisationConnections')),
+        /**
+         * The app's app-level token (`xapp-`, scope `connections:write`), which a collaborator of
+         * the app generates in its settings since no API issues one (wave 12, 12-M; RM3 (a)):
+         * the Socket Mode bridge opens the app's connection with it, and the app's decision
+         * requests carry Approve and Reject buttons only while it is set. A `credentials` row of
+         * its own; absent until someone lands it, and the requests then carry the typed code only.
+         */
+        appLevelTokenCredentialId: v.optional(v.id('credentials')),
       }),
     ),
     /** Channels the documentation names that the dedicated app has not been
@@ -729,6 +741,14 @@ export default defineSchema({
     accessRequest: v.optional(accessRequestValidator),
     /** The OAuth authorisation in flight for this card on the MCP rung (11-AM). */
     pendingAuthorisation: v.optional(pendingAuthorisationValidator),
+    /**
+     * When a handover kept the employee's own identity on this card for the new manager's
+     * re-approval (A25): the marker the kept-identity sweep is to read in place of the card's
+     * reason words, and the start of its `KEPT_IDENTITY_WAIT_MS` wait (the round's review m16).
+     * Declared ahead of its writer (the handover's keep) and its backfill: nothing writes or
+     * reads it yet, and until something does the sweep reads the reason, as before.
+     */
+    keptIdentitySince: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])
@@ -1026,6 +1046,13 @@ export default defineSchema({
             reason: v.optional(v.string()),
             providerId: v.optional(v.string()),
             idempotencyKey: v.optional(v.string()),
+            /**
+             * The manager's answer for this entry (wave 12, 12-W; wave 5 U17 D1): `landed` is a
+             * write the system shows, which a retry counts as landed and never repeats;
+             * `not-sent` is one it does not show. Absent on entries confirmed before the
+             * per-entry answer, which were confirmed as a whole.
+             */
+            answer: v.optional(v.union(v.literal('landed'), v.literal('not-sent'))),
           }),
         ),
       }),
@@ -1060,6 +1087,18 @@ export default defineSchema({
         requestText: v.optional(v.string()),
         /** When the one edit marking the decided request was claimed; never made twice. */
         closeClaimedAt: v.optional(v.number()),
+        /**
+         * The close edit's result (wave 12, 12-W; N-3): when it was made, or why it failed, so a
+         * claim with neither is one a lease can find. The `work-decision-closed` pass stamps
+         * every edit claimed before them as made.
+         */
+        closedAt: v.optional(v.number()),
+        closeFailure: v.optional(v.string()),
+        /**
+         * Set when the request went out with Approve and Reject buttons (wave 12, 12-M; RM3 (a)),
+         * so the edit that closes or replaces it removes them. Absent: the typed code only.
+         */
+        withButtons: v.optional(v.boolean()),
       }),
     ),
     // ---- Lane C (executors and the gate) ----
@@ -1104,6 +1143,20 @@ export default defineSchema({
      * provider call without replaying an outcome that may already have landed. */
     applyAttemptId: v.optional(v.id('events')),
     applyClaimedAt: v.optional(v.number()),
+    /**
+     * The scheduled function of the latest step the loop queued for the row (wave 12, 12-W;
+     * V12-3): recorded where it schedules a draft, an execution or an apply, so Stop can cancel
+     * it. One id: an earlier step still pending is held off by the fences (`executionRunId`,
+     * `applyAttemptId`), which Stop clears. Absent when no step is queued, and on rows scheduled
+     * before the stamp.
+     */
+    stepJobId: v.optional(v.id('_scheduled_functions')),
+    /**
+     * When the row last entered a state that waits on the manager (wave 12, 12-W; H D11, D12):
+     * stamped at each such transition, so the inbox reads it off the row. Absent on rows that
+     * entered it before the stamp, which the inbox dates by their record as before.
+     */
+    waitingSince: v.optional(v.number()),
     /** The manager's optional "this would have taken me about N minutes",
      * given at plan approval (N11); hours saved is its sum over completed
      * items, an internal gauge only. */
@@ -1129,6 +1182,23 @@ export default defineSchema({
       'decision.surfaceSlug',
       'decision.channel',
       'decision.decidedAt',
+    ])
+    /**
+     * One agent's claimed duplicate notices not yet sent or failed, by claim: the five-minute
+     * sweep's read of a notice whose send died holding its claim (wave 12, 12-W; N-3).
+     */
+    .index('by_agent_duplicate_notice_open', [
+      'agentId',
+      'decision.duplicateNoticeTs',
+      'decision.duplicateNoticeFailure',
+      'decision.duplicateNoticeClaimedAt',
+    ])
+    /** One agent's claimed close edits with no result, by claim: the same sweep's (12-W; N-3). */
+    .index('by_agent_close_open', [
+      'agentId',
+      'decision.closedAt',
+      'decision.closeFailure',
+      'decision.closeClaimedAt',
     ])
     .index('by_skill', ['skillId'])
     /** One employee's row for a provider item: intake's idempotency key. */
@@ -1272,7 +1342,13 @@ export default defineSchema({
   })
     .index('by_agent', ['agentId'])
     /** One agent's notes not sent yet, so the digest never reads the sent history. */
-    .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs']),
+    .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs'])
+    /**
+     * One agent's claimed notes that neither went out, failed nor were set aside, by when they
+     * were claimed: the five-minute sweep's read of a send that died holding its claim (12-W,
+     * N-3), which never reads the sent history.
+     */
+    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt']),
 
   /**
    * The manager's corrections, kept for the employee's later work: a note
@@ -1311,7 +1387,11 @@ export default defineSchema({
     workItemId: v.id('workItems'),
     decisionId: v.string(),
     messageTs: v.string(),
-    kind: v.union(v.literal('received'), v.literal('unknown')),
+    /**
+     * `replaced` answers a reply or a press naming a request a newer one replaced, with the code
+     * that replaced it (wave 12, 12-M; F2 D14).
+     */
+    kind: v.union(v.literal('received'), v.literal('unknown'), v.literal('replaced')),
     text: v.string(),
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),
@@ -1320,7 +1400,45 @@ export default defineSchema({
   })
     .index('by_surface_message', ['surfaceId', 'messageTs'])
     /** One agent's acknowledgements in creation order, for the export's delivery records. */
-    .index('by_agent', ['agentId']),
+    .index('by_agent', ['agentId'])
+    /** One agent's claimed notices not yet sent or failed, by claim: the N-3 sweep's read (12-W). */
+    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'claimedAt']),
+
+  /**
+   * A decision request a newer one replaced, kept by its code (wave 12, 12-M; F2 D14): a
+   * re-drafted plan or a re-held action set asks again under a new code, and overwrites or clears
+   * the item's `decision`. The old code stays answerable ("that request was replaced by ..."),
+   * and its delivered message is edited once to say so. Written by the paths that replace or
+   * clear a delivered or undelivered request; real mode only.
+   */
+  replacedDecisionRequests: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    /** The replaced request's code. */
+    decisionId: v.string(),
+    /** The code of the request that replaced it; absent until the new request is asked. */
+    replacedBy: v.optional(v.string()),
+    kind: v.union(v.literal('plan'), v.literal('actions')),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    /** The replaced message's provider ts, when it was delivered. */
+    ts: v.optional(v.string()),
+    /** The replaced message's text as the DM received it, for the edit. */
+    requestText: v.optional(v.string()),
+    /** Whether the replaced message carried Approve and Reject buttons, which the edit removes. */
+    withButtons: v.optional(v.boolean()),
+    replacedAt: v.number(),
+    /** The one edit marking the old message replaced: its claim, then its result. */
+    editClaimedAt: v.optional(v.number()),
+    editedAt: v.optional(v.number()),
+    editFailure: v.optional(v.string()),
+  })
+    /** A reply's or a press's code, looked up when no live request carries it. */
+    .index('by_agent_decision', ['agentId', 'decisionId'])
+    /** One item's replaced requests: the new request names itself on each. */
+    .index('by_work_item', ['workItemId'])
+    /** One agent's edits claimed and not finished, by claim: the N-3 sweep's read (12-W, 12-M). */
+    .index('by_agent_edit_open', ['agentId', 'editedAt', 'editFailure', 'editClaimedAt']),
 
   skills: defineTable({
     agentId: v.id('agents'),
@@ -1401,6 +1519,12 @@ export default defineSchema({
     /** When the row registered as a version another employee wrote: an adopted skill, which the
      * reuse figure splits out (K7). */
     adoptedAt: v.optional(v.number()),
+    /**
+     * When the row last entered a state that waits on the manager (wave 12, 12-W; H D11, D12),
+     * stamped at each such transition so the inbox reads it off the row. Absent on rows that
+     * entered it before the stamp, which the inbox dates by their record as before.
+     */
+    waitingSince: v.optional(v.number()),
     /** The row a revision replaces at its registration; the replaced row runs until then. */
     revisionOf: v.optional(v.id('skills')),
     /**
@@ -1413,9 +1537,10 @@ export default defineSchema({
   })
     .index('by_agent_name', ['agentId', 'name'])
     .index('by_agent_state', ['agentId', 'state'])
-    /** Every holder of a version: a withdrawal, a newer version's re-check stamp, a transfer. */
-    .index('by_version', ['versionId'])
-    /** A version's holders among one owner's employees, the owner first (`holdersOf`, K-m3). */
+    /**
+     * A version's holders among one owner's employees, the owner first (`holdersOf`, K-m3); an
+     * owner-less employee's rows are read under an absent key.
+     */
     .index('by_owner_version', ['ownerKey', 'versionId']),
 
   /**
@@ -1749,7 +1874,9 @@ export default defineSchema({
     .index('by_agent', ['agentId'])
     .index('by_agent_type', ['agentId', 'type'])
     /** Events of one type across agents: the `retirements` migration reads the older retire tombstones here. */
-    .index('by_type', ['type']),
+    .index('by_type', ['type'])
+    /** One agent's events by when they happened, which a record's window reads (wave 12, 12-S3). */
+    .index('by_agent_created', ['agentId', 'createdAt']),
 
   /**
    * Each intake listing of a ticket that changed it, one row per change, so

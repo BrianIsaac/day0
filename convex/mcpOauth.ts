@@ -8,7 +8,7 @@ import {
   pendingAuthorisationValidator,
 } from './schema';
 import { appendEvent } from './eventLog';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { endAccessAtSource } from './sourceRevocation';
 import type { HeldTokenRows, RotationOutcome } from '../src/surfaces/token-store';
 import { MCP_REDIRECT_PATH } from '../src/surfaces/access-kit/mcp';
@@ -182,6 +182,7 @@ export const expirePendingAuthorisation = internalMutation({
 export const cancelAuthorisation = mutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<boolean> => {
+    await getCallerOrThrow(ctx);
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);

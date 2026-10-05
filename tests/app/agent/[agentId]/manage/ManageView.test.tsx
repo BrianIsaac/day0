@@ -75,6 +75,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
           agent: { ...agent, state: options.state ?? agent.state },
           charter: options.charter === undefined ? approved : options.charter,
           surfaceMode: options.mode === 'loading' ? undefined : (options.mode ?? 'real'),
+          scheduledWorkPaused: false,
           surfaces,
           arriving: false,
           reportSentBack: () => undefined,
@@ -135,26 +136,111 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     expect(html).not.toContain('hosted office');
   });
 
-  it('says there is no pause for one employee, and what holds every write instead', (): void => {
-    expect(manage([])).toContain(
-      'There is no pause for one employee: while Priya is employed it keeps reading its queue and working. To hold every write for your approval, leave autonomous actions off.',
+  // Re-pinned for 12-P: the card said there was no pause for one employee; there is one now, in
+  // real mode, and the hosted office says it has none, as its autonomy card says it has no switch.
+  it('offers Pause by name to an active employee in real mode, and says the hosted office has none', (): void => {
+    const real = manage([]);
+    expect(real).toContain(
+      'Stops intake and holds every run at its next gate. Nothing is deleted; resume any time.',
     );
-    expect(manage([], { mode: 'mock' })).toContain(
-      'There is no pause for one employee: Priya keeps working through the hosted office&#x27;s queue, and every write waits for your decision.',
+    expect(real).toMatch(/<button[^>]*>Pause Priya<\/button>/);
+    expect(real).not.toContain('There is no pause for one employee');
+    const mock = manage([], { mode: 'mock' });
+    expect(mock).toContain(
+      'The hosted office has no pause: every write Priya drafts there waits for your decision.',
     );
-    // Round two draws a Pause button and an Appearance card; neither has a backend or a theme.
-    expect(manage([])).not.toContain('Pause Priya');
-    expect(manage([])).not.toContain('Appearance');
+    expect(mock).not.toContain('Pause Priya');
+    // Round two draws an Appearance card; the stylesheet has no light theme to choose.
+    expect(real).not.toContain('Appearance');
   });
 
+  it('marks a paused employee on its card and offers Resume by name, in place of Pause', (): void => {
+    const html = renderToStaticMarkup(
+      <EmployeeContext
+        value={{
+          agent: { ...agent, pausedAt: Date.UTC(2026, 9, 4, 9, 30), pauseReason: 'Quarter close.' },
+          charter: approved,
+          surfaceMode: 'real',
+          scheduledWorkPaused: false,
+          surfaces: [],
+          arriving: false,
+          reportSentBack: () => undefined,
+          lastAttempt: null,
+          setLastAttempt: () => undefined,
+        }}
+      >
+        <ManageView />
+      </EmployeeContext>,
+    );
+    expect(html).toMatch(/<button[^>]*>Resume Priya<\/button>/);
+    expect(html).not.toContain('Pause Priya');
+    expect(html).toMatch(/text-\[var\(--color-warn\)\][^>]*>Paused</);
+    expect(html).toContain('Reason: Quarter close.');
+    // The card itself is drawn in warn while it holds the employee, as Retire is drawn in danger.
+    expect(html).toMatch(
+      /<section[^>]*border-\[var\(--color-warn-line\)\][^>]*>(?:(?!<section).)*>Pause</s,
+    );
+  });
+
+  it('pauses and resumes this employee through the backend', async (): Promise<void> => {
+    backend.calls = [];
+    const view = mount(
+      <EmployeeContext
+        value={{
+          agent,
+          charter: approved,
+          surfaceMode: 'real',
+          scheduledWorkPaused: false,
+          surfaces: [],
+          arriving: false,
+          reportSentBack: () => undefined,
+          lastAttempt: null,
+          setLastAttempt: () => undefined,
+        }}
+      >
+        <ManageView />
+      </EmployeeContext>,
+    );
+    await press(view.container, 'Pause Priya');
+    expect(backend.calls).toEqual([{ name: 'agents:pause', args: { agentId: 'a1' } }]);
+    view.unmount();
+
+    backend.calls = [];
+    const paused = mount(
+      <EmployeeContext
+        value={{
+          agent: { ...agent, pausedAt: 5 },
+          charter: approved,
+          surfaceMode: 'real',
+          scheduledWorkPaused: false,
+          surfaces: [],
+          arriving: false,
+          reportSentBack: () => undefined,
+          lastAttempt: null,
+          setLastAttempt: () => undefined,
+        }}
+      >
+        <ManageView />
+      </EmployeeContext>,
+    );
+    await press(paused.container, 'Resume Priya');
+    expect(backend.calls).toEqual([{ name: 'agents:resume', args: { agentId: 'a1' } }]);
+    paused.unmount();
+  });
+
+  // Re-pinned for 12-P: before the charter there is no work to hold, and the card says when Pause
+  // comes rather than that there is none.
   it('says at day zero that no work comes before the charter, not that the employee keeps working (second pass, walk M3)', (): void => {
-    for (const mode of ['mock', 'real'] as const) {
-      const page = manage([], { mode, charter: null, state: 'day-one-in-progress' });
-      expect(page).toContain(
-        'There is no pause for one employee: Priya takes on work only once its charter is approved, and every write waits for your decision until you say otherwise.',
-      );
-      expect(page).not.toContain('keeps working');
-    }
+    const real = manage([], { mode: 'real', charter: null, state: 'day-one-in-progress' });
+    expect(real).toContain(
+      'Pause is here once Priya&#x27;s charter is approved; until then it takes on no work.',
+    );
+    expect(real).not.toContain('Pause Priya');
+    const mock = manage([], { mode: 'mock', charter: null, state: 'day-one-in-progress' });
+    expect(mock).toContain(
+      'The hosted office has no pause: Priya takes on work only once its charter is approved, and every write waits for your decision.',
+    );
+    for (const page of [real, mock]) expect(page).not.toContain('keeps working');
   });
 
   it('says what retiring does in each mode, and waits for the mode before offering it', (): void => {

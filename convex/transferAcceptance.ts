@@ -34,11 +34,8 @@ import {
   type TransferPreview,
 } from './transferPreview';
 import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
-import {
-  returnApprovalsForHandover,
-  stopRunsForHandover,
-  voidDecisionRequestsForHandover,
-} from './work';
+import { returnApprovalsForHandover, voidDecisionRequestsForHandover } from './work';
+import { stopRunsForHandover } from './workRuns';
 import {
   HANDOVER_ENDED_CANCEL_REASON,
   HANDOVER_SETTINGS_REASON,
@@ -312,6 +309,7 @@ async function cutConnections(
           surfaceId: surface.surfaceId,
           displayName: surface.displayName,
           bound: new Set(surface.boundCredentials),
+          appLevelToken: surface.appLevelTokenCredentialId,
         })),
       },
     ],

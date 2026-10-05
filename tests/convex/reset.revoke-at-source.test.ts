@@ -18,6 +18,7 @@ import {
   seedIssuedIdentities,
 } from './fakes/issued-identities';
 import { SLACK_AUTH_REVOKE_OK, SLACK_MANIFEST_DELETE_OK } from '../fixtures/revokers';
+import { landAppLevelTokenRow } from './fakes/app-level-token';
 
 /*
  * The retire's revocation at the vendor (11-AR; the access plan, section 4.4, with the 1 October
@@ -244,6 +245,49 @@ describe('the retire revokes at the vendor what Day0 obtained (11-AR)', (): void
         expect.objectContaining({ system: 'slack', outcome: 'app-uninstalled' }),
       ]),
     );
+  });
+  it('ends in Day0 the app-level token the employee’s app was given, which nothing else names (W12-R2)', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+    const token = await landAppLevelTokenRow(harness, leo.slack.surfaceId);
+    network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
+    network.answer('/oauth/revoke', { status: 200, body: '' });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.retire, { agentId: leo.agentId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [row] = await credentialRows(harness, [token]);
+    expect(row).toMatchObject({ revokedAt: expect.any(Number) });
+    expect([row?.ciphertext, row?.iv]).toEqual([undefined, undefined]);
+    // Pasted, so never sent to Slack: deleting the app ends it there.
+    expect(network.calls.map((call) => new URL(call.url).pathname).sort()).toEqual([
+      '/api/apps.manifest.delete',
+      '/oauth/revoke',
+      '/oauth/revoke',
+    ]);
+    const [retirement] = await harness.run(
+      async (ctx) => await ctx.db.query('retirements').collect(),
+    );
+    expect(retirement).toMatchObject({ revokedCredentials: 6, keptCredentials: 0 });
+  });
+
+  it('ends it at "Delete my data" too, which retires every employee first (W12-R2)', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true, heldBy: 'organisation' });
+    const token = await landAppLevelTokenRow(harness, leo.slack.surfaceId);
+    network.answer('/api/apps.manifest.delete', { status: 200, body: SLACK_MANIFEST_DELETE_OK });
+    network.answer('/oauth/revoke', { status: 200, body: '' });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [row] = await credentialRows(harness, [token]);
+    expect(row).toMatchObject({ revokedAt: expect.any(Number) });
+    expect([row?.ciphertext, row?.iv]).toEqual([undefined, undefined]);
   });
 });
 

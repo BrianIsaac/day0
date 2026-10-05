@@ -18,7 +18,8 @@ import {
   skillOwnerKeyOf,
   STORED_COPY_CLEARED,
 } from './skillVersions';
-import { applyVerdict, stopRunsInTransaction } from './work';
+import { applyVerdict } from './work';
+import { stopRunsInTransaction } from './workRuns';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
@@ -193,6 +194,8 @@ async function parkForSkill(
   const behind = await liveSkillNamed(ctx, item.agentId, wait.name);
   await ctx.db.patch(item._id, {
     state: 'needs-skill',
+    // A wait on a skill is stamped as every wait is (wave 12, 12-W).
+    waitingSince: wait.now,
     verdict: {
       decision: 'needs-skill',
       reason: wait.reason,
@@ -614,7 +617,7 @@ const STOPPED_BY_WITHDRAW: readonly Doc<'workItems'>['state'][] = ['executing', 
 
 /**
  * Stop the runs of one holder of a withdrawn version, as a handover's deadline stops a run
- * (`work.stopRunsInTransaction`; decision 3 (b), the wave 10 review, M4): every item executing
+ * (`workRuns.stopRunsInTransaction`; decision 3 (b), the wave 10 review, M4): every item executing
  * the row, and every item holding for the manager's approval the actions a run of it drafted,
  * fails as stopped with {@link withdrawnRunReason} and offers Retry, so the body the manager has
  * withdrawn as wrong writes nothing more. A Retire stops nothing: its dialog says a run already
@@ -631,7 +634,7 @@ async function stopRunsOf(ctx: MutationCtx, holder: Doc<'skills'>): Promise<numb
       .take(APPROVED_SCAN);
     runs.push(...items.filter((item) => item.skillId === holder._id));
   }
-  await stopRunsInTransaction(ctx, runs, withdrawnRunReason(holder.name));
+  await stopRunsInTransaction(ctx, runs, withdrawnRunReason(holder.name), { tellManager: true });
   return runs.length;
 }
 

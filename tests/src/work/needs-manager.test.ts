@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { AUTHORING_LEASE_MS } from '../../../src/lib/skill-authoring';
+import { INTERRUPTED_APPLY_REASON } from '../../../src/work/reconciliation';
 import {
   oneToOneWaitsOnManager,
   attemptsSpent,
@@ -8,7 +9,8 @@ import {
   skillWaitsOnManager,
   skillsWaitingOnManager,
   stoppedRowNeedsManager,
-  stoppedRowOffersMove,
+  failedRowMove,
+  waitingStamp,
 } from '../../../src/work/needs-manager';
 
 const NOW = 1_000_000_000;
@@ -98,8 +100,53 @@ describe('needs-manager rules', (): void => {
     );
   });
 
+  // Re-pinned in wave 12 (E-8): the predicate became the move, since every failed row has one.
   it('offers Retry on a stopped row whose ledger names nothing to reconcile', (): void => {
-    expect(stoppedRowOffersMove(row({ skipReason: 'the run stopped' }))).toBe(true);
+    expect(failedRowMove(row({ skipReason: 'the run stopped' }))).toBe('retry');
+  });
+
+  it('offers Close without retry on an interrupted apply whose ledger names nothing to reconcile (E-8)', (): void => {
+    expect(
+      failedRowMove(
+        row({
+          skipReason: INTERRUPTED_APPLY_REASON,
+          output: { actions: [{ tool: 'mcp.call', args: {} }], applied: [] },
+        }),
+      ),
+    ).toBe('close-without-retry');
+  });
+
+  it('offers the reconciliation first where a write may have landed, then Retry', (): void => {
+    const output = {
+      actions: [{ tool: 'mcp.call', args: {} }],
+      applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'k' }],
+    };
+    expect(failedRowMove(row({ skipReason: 'the run stopped', output }))).toBe('reconcile');
+    expect(
+      failedRowMove(
+        row({
+          skipReason: 'the run stopped',
+          output,
+          providerReconciliation: { actor: 'owner', confirmedAt: 1, entries: [] },
+        }),
+      ),
+    ).toBe('retry');
+    // Confirmed whole before the per-entry answers, the unknown write is asked again (W12-R3).
+    const unanswered = {
+      phase: 'single' as const,
+      actionIndex: 0,
+      tool: 'mcp.call',
+      outcome: 'outcome-unknown' as const,
+    };
+    expect(
+      failedRowMove(
+        row({
+          skipReason: 'the run stopped',
+          output,
+          providerReconciliation: { actor: 'owner', confirmedAt: 1, entries: [unanswered] },
+        }),
+      ),
+    ).toBe('reconcile');
   });
 });
 
@@ -128,5 +175,16 @@ describe('skillsWaitingOnManager (the Skills tab badge, C-m1)', (): void => {
       skill('f', { state: 'retired' }),
     ];
     expect(skillsWaitingOnManager(rows, now)).toBe(3);
+  });
+});
+
+describe('waitingStamp (wave 12, H D11)', (): void => {
+  it('stamps a transition into every state that waits, and no other', (): void => {
+    for (const state of ['plan-pending', 'actions-pending', 'deferred', 'needs-skill', 'failed']) {
+      expect(waitingStamp(state, 7)).toEqual({ waitingSince: 7 });
+    }
+    for (const state of ['discovered', 'claimed', 'plan-approved', 'executing', 'completed']) {
+      expect(waitingStamp(state, 7)).toEqual({});
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 
 const port = Number(process.env.FAKE_SLACK_PORT || 8090);
@@ -40,6 +41,43 @@ function appNumbered(number) {
     created: false,
     deleted: false,
     installed: number === 1,
+    // The app-level token a person generates in the app's settings (K2), once they have.
+    appLevelToken: undefined,
+    // The manifest it was created from, or last updated to (W12V-7). The first app answered
+    // before any manifest, and takes messages as it always has.
+    manifest: undefined,
+    takesMessages: number === 1,
+  };
+}
+
+/**
+ * Whether a manifest lets a person message the app: its App Home messages tab on and not
+ * read-only, as the walk on real Slack found (W12V-7).
+ */
+function manifestTakesMessages(manifest) {
+  const home = manifest && manifest.features && manifest.features.app_home;
+  return Boolean(
+    home && home.messages_tab_enabled === true && home.messages_tab_read_only_enabled === false,
+  );
+}
+
+/** Slack's markup a message's text carries: what Slack would read as a mention or a link. */
+const MARKUP = /<(?:!(?:here|channel|everyone)|@[UW][A-Z0-9]+|#C[A-Z0-9]+)(?:\|[^>]*)?>/g;
+
+/** The same markup escaped as Slack asks (`&lt;!here&gt;`), which Slack shows as text. */
+const ESCAPED_MARKUP =
+  /&lt;(?:!(?:here|channel|everyone)|@[UW][A-Z0-9]+|#C[A-Z0-9]+)(?:\|(?:(?!&gt;).)*)?&gt;/g;
+
+/**
+ * What the fake keeps of a message's text: the markup Slack would read in it as a mention or a
+ * link, and the markup it carries escaped, which Slack shows as text (W12V-7's pre-tag). Never
+ * the body.
+ */
+function markupOf(text) {
+  const written = typeof text === 'string' ? text : '';
+  return {
+    mentions: written.match(MARKUP) || [],
+    escapedMarkup: written.match(ESCAPED_MARKUP) || [],
   };
 }
 
@@ -54,7 +92,62 @@ function resetApps() {
   apps = [appNumbered(1)];
   revokedTokens.clear();
   memberships.clear();
+  messages.clear();
+  managerMessages.length = 0;
+  holds.clear();
+  for (const connection of sockets) connection.socket.destroy();
+  sockets.clear();
+  tickets.clear();
+  presses.length = 0;
 }
+
+// Day0's posted messages, by channel and ts, with the app whose bot posted them: what
+// chat.update edits and a press is made on (wave 12, 12-M), with the block types and each
+// button's action id, block id and value (a decision code). Never a body: of the text, only the
+// markup Slack would read in it as a mention or a link and the markup it carries escaped, so a
+// bed can read back that a quoted `<!here>` went out as text (W12V-7's pre-tag).
+const messages = new Map();
+
+// What the manager typed in a DM with an app (W12V-7): the decision poll reads it back through
+// conversations.history, from the app the message was sent to.
+const managerMessages = [];
+
+// Calls a bed holds on the wire before answering, by method, each for its own time: a Stop lands
+// while a write is being sent (12-W's reconciliation, W12V-14's bed).
+const holds = new Map();
+
+/** What the fake keeps of a message's blocks: their types and their buttons. */
+function shapeOf(blocks) {
+  const list = Array.isArray(blocks) ? blocks : [];
+  return {
+    blockTypes: list.map((block) => String(block && block.type)),
+    buttons: list
+      .filter((block) => block && block.type === 'actions' && Array.isArray(block.elements))
+      .flatMap((block) =>
+        block.elements
+          .filter((element) => element && element.type === 'button')
+          .map((element) => ({
+            actionId: String(element.action_id),
+            blockId: String(block.block_id),
+            value: String(element.value),
+          })),
+      ),
+  };
+}
+const messageKey = (channel, ts) => `${channel}:${ts}`;
+
+// Socket Mode (K1): single-use tickets apps.connections.open hands out, the open connections,
+// and every press with whether its envelope was acknowledged.
+const tickets = new Map();
+const sockets = new Set();
+const presses = [];
+// Slack allows an app ten open connections at once (K1).
+const MAX_CONNECTIONS_PER_APP = 10;
+// How long a press waits for its envelope's acknowledgement.
+const ACK_WAIT_MS = 3000;
+// How often each connection is pinged; one that answered nothing since the last ping is dropped,
+// as a connection whose client died without closing it (a killed container) would be.
+const PING_MS = Number(process.env.FAKE_SLACK_PING_MS || 10000);
 
 function appByClientId(clientId) {
   return apps.find((app) => app.clientId === clientId);
@@ -176,6 +269,13 @@ const server = createServer(async (request, response) => {
       postsByChannel: Object.fromEntries(postsByChannel),
       apps: apps.filter((app) => app.created && !app.deleted).map((app) => app.appId),
       revokedTokens: revokedTokens.size,
+      messages: [...messages.values()],
+      socketConnections: Object.fromEntries(
+        apps
+          .filter((app) => app.appLevelToken)
+          .map((app) => [app.appId, [...sockets].filter((s) => s.appId === app.appId).length]),
+      ),
+      presses,
       configurationRotations: configuration.rotations,
       configurationRevoked: revokedConfigurationTokens.size,
       // Channel ids each live app's bot is in, by app id.
@@ -185,6 +285,66 @@ const server = createServer(async (request, response) => {
           .map((app) => [app.appId, [...(memberships.get(app.botUserId) || [])]]),
       ),
     });
+  }
+  if (url.pathname === '/proof/app-level-token' && request.method === 'POST') {
+    // The person's click under Basic Information, App-Level Tokens (K2).
+    const { appId } = jsonArguments(request, await bodyOf(request));
+    const app = apps.find((candidate) => candidate.appId === appId && !candidate.deleted);
+    if (!app) return json(response, 404, { ok: false, error: 'invalid_app_id' });
+    const suffix = app.appId === 'A_DAY0_FAKE' ? '' : `-${app.appId.split('_').pop()}`;
+    app.appLevelToken = `xapp-day0-fake-app-level-token${suffix}`;
+    return json(response, 200, { ok: true, token: app.appLevelToken });
+  }
+  if (url.pathname === '/proof/manager-message' && request.method === 'POST') {
+    // The manager types a reply in their DM with an app (W12V-7). Slack offers no composer under
+    // an app whose messages tab is off or read-only, and says so in these words.
+    const { appId, text, threadTs } = jsonArguments(request, await bodyOf(request));
+    const app = apps.find((candidate) => candidate.appId === appId && !candidate.deleted);
+    if (!app) return json(response, 404, { ok: false, error: 'invalid_app_id' });
+    if (!app.takesMessages) {
+      return json(response, 200, {
+        ok: false,
+        error: 'messages_tab_off',
+        shown: 'Sending messages to this app has been turned off.',
+      });
+    }
+    if (typeof text !== 'string' || text.trim() === '') {
+      return json(response, 400, { ok: false, error: 'no_text' });
+    }
+    // Stamped now, as Slack stamps it: Day0 reads no reply older than its employee.
+    const ts = `${Math.floor(Date.now() / 1000)}.${String(managerMessages.length + 1).padStart(6, '0')}`;
+    managerMessages.push({
+      appId: app.appId,
+      channel: 'D_DAY0_MANAGER',
+      user: 'U_DAY0_MANAGER',
+      text,
+      ts,
+      ...(typeof threadTs === 'string' ? { threadTs } : {}),
+    });
+    return json(response, 200, { ok: true, channel: 'D_DAY0_MANAGER', ts });
+  }
+  if (url.pathname === '/proof/hold' && request.method === 'POST') {
+    // Hold the next call of a method for `ms` before it is answered.
+    const { method, ms } = jsonArguments(request, await bodyOf(request));
+    if (typeof method !== 'string' || typeof ms !== 'number' || ms <= 0) {
+      return json(response, 400, { ok: false, error: 'invalid_hold' });
+    }
+    holds.set(method, ms);
+    return json(response, 200, { ok: true });
+  }
+  if (url.pathname === '/proof/press' && request.method === 'POST') {
+    return json(response, 200, await press(jsonArguments(request, await bodyOf(request))));
+  }
+  if (url.pathname === '/proof/disconnect' && request.method === 'POST') {
+    // Slack asking every connection of an app to refresh, or one going away (K1).
+    const { appId, reason } = jsonArguments(request, await bodyOf(request));
+    let told = 0;
+    for (const connection of sockets) {
+      if (connection.appId !== appId) continue;
+      sendFrame(connection.socket, JSON.stringify({ type: 'disconnect', reason, debug_info: {} }));
+      told += 1;
+    }
+    return json(response, 200, { ok: true, told });
   }
   if (url.pathname === '/reset' && request.method === 'POST') {
     calls.clear();
@@ -214,6 +374,11 @@ const server = createServer(async (request, response) => {
   const method = url.pathname.slice('/api/'.length);
   count(method);
   const body = await bodyOf(request);
+  const held = holds.get(method);
+  if (held !== undefined) {
+    holds.delete(method);
+    await new Promise((resolve) => setTimeout(resolve, held));
+  }
 
   if (method === 'tooling.tokens.rotate') {
     // S2: exchanges the refresh token for a new configuration token and a new
@@ -255,13 +420,46 @@ const server = createServer(async (request, response) => {
       const parsed = JSON.parse(manifest);
       const bot = parsed && parsed.oauth_config && parsed.oauth_config.scopes;
       app.scopes = Array.isArray(bot && bot.bot) ? bot.bot : [];
+      app.manifest = parsed;
     } catch {
       app.scopes = [];
+      app.manifest = undefined;
     }
+    app.takesMessages = manifestTakesMessages(app.manifest);
     return json(response, 200, {
       ok: true,
       app_id: app.appId,
       credentials: { client_id: app.clientId, client_secret: app.clientSecret },
+    });
+  }
+  if (method === 'apps.manifest.export' || method === 'apps.manifest.update') {
+    // W12V-7: the configuration token reads and changes the manifest of an app it created.
+    const refused = configurationRefusal(request);
+    if (refused) return json(response, 200, { ok: false, error: refused });
+    const form = readArguments(url, request, body);
+    const app = apps.find((candidate) => candidate.appId === form.get('app_id'));
+    if (!app || !app.created || app.deleted) {
+      return json(response, 200, { ok: false, error: 'app_not_found' });
+    }
+    if (method === 'apps.manifest.export') {
+      return json(response, 200, { ok: true, manifest: app.manifest || {} });
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(form.get('manifest') || '');
+    } catch {
+      return json(response, 200, { ok: false, error: 'invalid_manifest' });
+    }
+    const scopes = parsed && parsed.oauth_config && parsed.oauth_config.scopes;
+    const bot = Array.isArray(scopes && scopes.bot) ? scopes.bot : [];
+    const permissionsUpdated = JSON.stringify(bot) !== JSON.stringify(app.scopes || []);
+    app.manifest = parsed;
+    app.scopes = bot;
+    app.takesMessages = manifestTakesMessages(parsed);
+    return json(response, 200, {
+      ok: true,
+      app_id: app.appId,
+      permissions_updated: permissionsUpdated,
     });
   }
   if (method === 'apps.manifest.delete') {
@@ -344,6 +542,21 @@ const server = createServer(async (request, response) => {
       team: { id: 'T_DAY0' },
     });
   }
+  if (method === 'apps.connections.open') {
+    // K1: an app-level token, in the Authorization header, opens a single-use WebSocket URL.
+    const bearer = bearerOf(request);
+    const app = apps.find(
+      (candidate) =>
+        !candidate.deleted && candidate.appLevelToken && candidate.appLevelToken === bearer,
+    );
+    if (!app) return json(response, 200, { ok: false, error: 'invalid_auth' });
+    const ticket = randomBytes(12).toString('hex');
+    tickets.set(ticket, app.appId);
+    const origin =
+      process.env.FAKE_SLACK_SOCKET_ORIGIN ||
+      `ws://${request.headers.host || `fake-slack:${port}`}`;
+    return json(response, 200, { ok: true, url: `${origin}/link/?ticket=${ticket}` });
+  }
   const bot = botOf(request);
   if (!bot) return json(response, 200, { ok: false, error: 'invalid_auth' });
   if (method === 'auth.test') {
@@ -407,7 +620,24 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { ok: false, error: 'channel_not_found' });
     }
     if (method === 'conversations.history') {
-      return json(response, 200, { ok: true, messages: [], has_more: false });
+      // What the manager typed to this bot's app, newest first, after `oldest` when given.
+      const oldest = Number(given.get('oldest') || 0);
+      const typed = managerMessages
+        .filter(
+          (message) =>
+            message.appId === bot.appId &&
+            message.channel === given.get('channel') &&
+            message.threadTs === undefined &&
+            Number(message.ts) > oldest,
+        )
+        .reverse()
+        .map((message) => ({
+          type: 'message',
+          user: message.user,
+          text: message.text,
+          ts: message.ts,
+        }));
+      return json(response, 200, { ok: true, messages: typed, has_more: false });
     }
     const ts = given.get('ts');
     if (!ts) return json(response, 200, { ok: false, error: 'invalid_arguments' });
@@ -424,6 +654,16 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
+    // Slack takes a public channel by its name, with or without its #, as well as by its id; a
+    // `#name` it does not know is not found, and any other channel the bot is not in refuses.
+    if (typeof payload.channel === 'string' && !CHANNELS.includes(payload.channel)) {
+      const name = payload.channel.replace(/^#/, '');
+      const named = PUBLIC_CHANNELS.find((channel) => channel.name === name);
+      if (named) payload.channel = named.id;
+      else if (payload.channel.startsWith('#')) {
+        return json(response, 200, { ok: false, error: 'channel_not_found' });
+      }
+    }
     if (!CHANNELS.includes(payload.channel)) {
       return json(response, 200, { ok: false, error: 'not_in_channel' });
     }
@@ -432,6 +672,14 @@ const server = createServer(async (request, response) => {
     }
     postsByChannel.set(payload.channel, (postsByChannel.get(payload.channel) || 0) + 1);
     const ts = `1787817600.${String(calls.get(method) || 1).padStart(6, '0')}`;
+    messages.set(messageKey(payload.channel, ts), {
+      channel: payload.channel,
+      ts,
+      appId: bot.appId,
+      ...markupOf(payload.text),
+      ...shapeOf(payload.blocks),
+      edits: 0,
+    });
     return json(response, 200, {
       ok: true,
       channel: payload.channel,
@@ -439,8 +687,212 @@ const server = createServer(async (request, response) => {
       message: { ts },
     });
   }
+  if (method === 'chat.update') {
+    // K3b: blocks given replace the message's (an empty array removes them); text given with no
+    // blocks removes them and renders the text; a bot edits only the messages it posted.
+    const payload = jsonArguments(request, body);
+    const message = messages.get(messageKey(payload.channel, payload.ts));
+    if (!message) return json(response, 200, { ok: false, error: 'message_not_found' });
+    if (message.appId !== bot.appId) {
+      return json(response, 200, { ok: false, error: 'cant_update_message' });
+    }
+    const text = typeof payload.text === 'string' ? payload.text : undefined;
+    const blocks = Array.isArray(payload.blocks) ? payload.blocks : undefined;
+    if (text === undefined && blocks === undefined) {
+      return json(response, 200, { ok: false, error: 'no_text' });
+    }
+    if (blocks !== undefined) Object.assign(message, shapeOf(blocks));
+    else if (text !== undefined) Object.assign(message, shapeOf([]));
+    if (text !== undefined) Object.assign(message, markupOf(text));
+    message.edits += 1;
+    return json(response, 200, {
+      ok: true,
+      channel: message.channel,
+      ts: message.ts,
+      text: message.text,
+    });
+  }
   return json(response, 200, { ok: false, error: 'method_not_supported_by_fake' });
 });
+
+// ---- Socket Mode (K1): a minimal RFC 6455 server, text frames only ----
+
+const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+/** Send one unmasked text (or close) frame to a client. */
+function sendFrame(socket, text, opcode = 0x1) {
+  const payload = Buffer.from(text);
+  const length = payload.length;
+  const header =
+    length < 126
+      ? Buffer.from([0x80 | opcode, length])
+      : length < 65536
+        ? Buffer.from([0x80 | opcode, 126, length >> 8, length & 0xff])
+        : Buffer.concat([Buffer.from([0x80 | opcode, 127]), bigLength(length)]);
+  socket.write(Buffer.concat([header, payload]));
+}
+
+function bigLength(length) {
+  const buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64BE(BigInt(length));
+  return buffer;
+}
+
+/** Read every whole client frame off the buffer; answers the rest still to come. */
+function readFrames(connection, onText) {
+  let buffer = connection.buffer;
+  for (;;) {
+    if (buffer.length < 2) break;
+    const opcode = buffer[0] & 0x0f;
+    let length = buffer[1] & 0x7f;
+    let offset = 2;
+    if (length === 126) {
+      if (buffer.length < 4) break;
+      length = buffer.readUInt16BE(2);
+      offset = 4;
+    } else if (length === 127) {
+      if (buffer.length < 10) break;
+      length = Number(buffer.readBigUInt64BE(2));
+      offset = 10;
+    }
+    const masked = (buffer[1] & 0x80) !== 0;
+    const maskLength = masked ? 4 : 0;
+    if (buffer.length < offset + maskLength + length) break;
+    const mask = buffer.subarray(offset, offset + maskLength);
+    const payload = Buffer.from(buffer.subarray(offset + maskLength, offset + maskLength + length));
+    if (masked)
+      for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
+    buffer = buffer.subarray(offset + maskLength + length);
+    if (opcode === 0x8) {
+      sendFrame(connection.socket, '', 0x8);
+      connection.socket.end();
+      break;
+    }
+    connection.alive = true;
+    if (opcode === 0x9) sendFrame(connection.socket, payload.toString(), 0xa);
+    if (opcode === 0x1) onText(payload.toString());
+  }
+  connection.buffer = buffer;
+}
+
+server.on('upgrade', (request, socket) => {
+  const url = new URL(request.url || '/', 'http://fake-slack');
+  const ticket = url.searchParams.get('ticket') || '';
+  const appId = tickets.get(ticket);
+  const open = [...sockets].filter((connection) => connection.appId === appId).length;
+  if (url.pathname !== '/link/' || appId === undefined || open >= MAX_CONNECTIONS_PER_APP) {
+    socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+    return;
+  }
+  tickets.delete(ticket);
+  const accept = createHash('sha1')
+    .update(`${request.headers['sec-websocket-key']}${WEBSOCKET_GUID}`)
+    .digest('base64');
+  socket.write(
+    'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+  const connection = { socket, appId, buffer: Buffer.alloc(0), waiting: new Map(), alive: true };
+  sockets.add(connection);
+  socket.on('data', (chunk) => {
+    connection.buffer = Buffer.concat([connection.buffer, chunk]);
+    readFrames(connection, (text) => {
+      let message;
+      try {
+        message = JSON.parse(text);
+      } catch {
+        return;
+      }
+      const acknowledged = connection.waiting.get(message.envelope_id);
+      if (acknowledged) acknowledged();
+    });
+  });
+  const close = () => sockets.delete(connection);
+  socket.on('close', close);
+  socket.on('error', close);
+  sendFrame(
+    socket,
+    JSON.stringify({
+      type: 'hello',
+      num_connections: open + 1,
+      connection_info: { app_id: appId },
+      debug_info: { host: 'fake-slack', approximate_connection_time: 3600 },
+    }),
+  );
+});
+
+setInterval(() => {
+  for (const connection of sockets) {
+    if (!connection.alive) {
+      sockets.delete(connection);
+      connection.socket.destroy();
+      continue;
+    }
+    connection.alive = false;
+    sendFrame(connection.socket, 'ping', 0x9);
+  }
+}, PING_MS).unref();
+
+let pressCount = 0;
+
+/**
+ * A person pressing one of a message's buttons (K3): the app's block_actions payload, sent as an
+ * envelope down one of its open connections, and whether the app acknowledged it in time. With no
+ * connection open the press reaches nobody, as Slack then shows the person an error.
+ */
+async function press({ channel, ts, button, userId }) {
+  const message = messages.get(messageKey(channel, ts));
+  if (!message) return { delivered: false, error: 'message_not_found' };
+  const element = message.buttons.find(
+    (candidate) => candidate.actionId === `day0.decision.${button}`,
+  );
+  if (!element) return { delivered: false, error: 'no_such_button' };
+  const connection = [...sockets].find((candidate) => candidate.appId === message.appId);
+  pressCount += 1;
+  const actionTs = `${Math.floor(Date.now() / 1000)}.${String(pressCount).padStart(6, '0')}`;
+  if (!connection) {
+    presses.push({ channel, ts, button, actionTs, delivered: false });
+    return { delivered: false, error: 'no_socket_connection' };
+  }
+  const envelopeId = randomBytes(8).toString('hex');
+  const payload = {
+    type: 'block_actions',
+    user: { id: userId || 'U_DAY0_MANAGER' },
+    team: { id: 'T_DAY0' },
+    api_app_id: message.appId,
+    container: { type: 'message', message_ts: ts, channel_id: channel, is_ephemeral: false },
+    channel: { id: channel },
+    message: { ts },
+    actions: [
+      {
+        action_id: element.actionId,
+        block_id: element.blockId,
+        value: element.value,
+        type: 'button',
+        action_ts: actionTs,
+      },
+    ],
+  };
+  const acknowledged = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ACK_WAIT_MS);
+    connection.waiting.set(envelopeId, () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    sendFrame(
+      connection.socket,
+      JSON.stringify({
+        envelope_id: envelopeId,
+        type: 'interactive',
+        payload,
+        accepts_response_payload: false,
+      }),
+    );
+  });
+  connection.waiting.delete(envelopeId);
+  presses.push({ channel, ts, button, actionTs, delivered: true, acknowledged });
+  return { delivered: true, acknowledged, envelopeId, actionTs };
+}
 
 server.listen(port, '0.0.0.0');
 

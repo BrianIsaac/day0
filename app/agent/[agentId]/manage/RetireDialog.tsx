@@ -153,9 +153,10 @@ export function retireLines(
 }
 
 /**
- * Where the manager who is not sure goes instead of retiring. Day0 has no pause for one employee
- * (the state machine has no paused state), so the alternative offered is the one that holds
- * every write for the manager: supervision.
+ * Where the manager who is not sure goes instead of retiring: supervision, the alternative that
+ * holds every write for the manager while the employee keeps working. The per-employee pause on
+ * Manage (wave 12) is the other reversible hold, which stops the employee altogether; this
+ * sentence does not offer it.
  *
  * @param agent - The employee.
  * @param mode - The deployment's surface mode.

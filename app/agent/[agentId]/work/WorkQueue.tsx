@@ -9,6 +9,7 @@ import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
 import type { AutonomyChange } from '@/work/autonomy';
+import type { RunHold } from '@/work/item-display';
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
 import { Button } from '../../../components/Button';
@@ -238,14 +239,20 @@ export function WorkQueue({
   autonomyChanges = [],
   loading = false,
   employeeName = 'the employee',
+  managerKey,
   needsYou = NO_ITEMS,
   refusedSkills = NO_REFUSED_SKILLS,
+  hold,
 }: {
   agentId: Id<'agents'>;
+  /** What holds the employee's next step (`runHoldOf`), for the cards; undefined while nothing does. */
+  hold?: RunHold;
   /** The employee's skills whose draft failed Day0's check, by id, for the cards waiting on one. */
   refusedSkills?: ReadonlyMap<string, RefusedSkill>;
   /** The employee's name, for the cards' sentences. */
   employeeName?: string;
+  /** The employee's manager's owner key (`agents.userId`), for who reconciled a run. */
+  managerKey?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
   needsYou?: ReadonlySet<string>;
   workItems: Doc<'workItems'>[];
@@ -270,13 +277,15 @@ export function WorkQueue({
   const executePlan = useAction(api.workActions.executeApprovedPlan);
   const approvePlan = useMutation(api.work.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
-  const retryFailed = useMutation(api.work.retryFailed);
-  const reconcileFailed = useMutation(api.work.reconcileFailed);
+  const retryFailed = useMutation(api.workRuns.retryFailed);
+  const reconcileFailed = useMutation(api.workRuns.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
   const approveActionsBatch = useMutation(api.work.approveActionsBatch);
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
-  const dismissFailed = useMutation(api.work.dismissFailed);
+  const dismissFailed = useMutation(api.workRuns.dismissFailed);
+  const stopRun = useMutation(api.workRuns.stopRun);
+  const closeWithoutRetry = useMutation(api.workRuns.closeWithoutRetry);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
   const [filter, setFilter] = useState<QueueFilter>('all');
@@ -408,8 +417,12 @@ export function WorkQueue({
                   onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
                   onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
                   onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
-                  onReconcileFailed={(confirmed) =>
-                    reconcileFailed({ workItemId: item._id, confirmed })
+                  onReconcileFailed={(answers) =>
+                    reconcileFailed({
+                      workItemId: item._id,
+                      confirmed: true,
+                      answers: [...answers],
+                    })
                   }
                   onApproveActions={(approvedIndexes) =>
                     item.pendingRunId
@@ -435,8 +448,14 @@ export function WorkQueue({
                   }
                   onResendDecision={() => resendDecision({ workItemId: item._id })}
                   onDismiss={() => dismissFailed({ workItemId: item._id })}
+                  onStop={(reason) =>
+                    stopRun({ workItemId: item._id, ...(reason !== '' ? { reason } : {}) })
+                  }
+                  onCloseWithoutRetry={() => closeWithoutRetry({ workItemId: item._id })}
                   employeeName={employeeName}
+                  managerKey={managerKey}
                   servedByLoop={surfaceMode === 'real'}
+                  hold={hold}
                   {...refusedSkillOf(item, refusedSkills)}
                 />
               ))}
@@ -468,7 +487,7 @@ export function nextItemToEvaluate(
  *   feedback: The retry note as typed; a blank note is not sent.
  *
  * Returns:
- *   The arguments for `work.retryFailed`.
+ *   The arguments for `workRuns.retryFailed`.
  */
 export function retryRequest(
   workItemId: Id<'workItems'>,

@@ -3,6 +3,7 @@ import { holdsLiveAuthoringClaim } from '../lib/skill-authoring';
 import { MAX_AUTHORING_ATTEMPTS } from './skill-library';
 import {
   providerReconciliationEntries,
+  reconciliationAnswered,
   retryRequiresProviderReconciliation,
 } from './reconciliation';
 
@@ -22,6 +23,29 @@ export const MANAGER_REJECTION_PREFIX = 'rejected by the manager';
  */
 export function oneToOneWaitsOnManager(agent: Pick<Doc<'agents'>, 'state'>): boolean {
   return agent.state === 'deployed';
+}
+
+/**
+ * The states a row waits in, for the manager or for what only they can give: a plan, a held set,
+ * a deferral, a skill, a stopped or failed run. Every transition into one stamps `waitingSince`
+ * (wave 12, 12-W; H D11, D12), which the inbox dates the wait by.
+ */
+export const WAITING_STATES: ReadonlySet<string> = new Set([
+  'plan-pending',
+  'actions-pending',
+  'deferred',
+  'needs-skill',
+  'failed',
+]);
+
+/**
+ * The stamp a transition into a state writes: `waitingSince` when the state waits, nothing else.
+ *
+ * @param state - The state the row enters.
+ * @param now - The transition's time.
+ */
+export function waitingStamp(state: string, now: number): { waitingSince?: number } {
+  return WAITING_STATES.has(state) ? { waitingSince: now } : {};
 }
 
 /** The open states that wait on the manager: a plan to approve, a held action set. */
@@ -111,23 +135,28 @@ export function parkedRowNeedsManager(
   return skill ? skillWaitsOnManager(skill, now) : false;
 }
 
+/** What a failed row's card leads with: Retry, the reconciliation that opens it, or Close without retry. */
+export type FailedRowMove = 'retry' | 'reconcile' | 'close-without-retry';
+
 /**
- * Whether a failed row's card still offers the manager a move.
+ * The move a failed row's card offers the manager (E-8): every failed row has one.
  *
- * The card offers Retry on every failed row, and where a write may have
- * landed it asks for the provider reconciliation first, which is also the
- * manager's. The one row with neither is an interrupted apply whose ledger
- * names nothing to verify: the confirmation and Retry are both disabled and
- * `work.reconcileFailed` refuses, so nothing the manager does moves it. A
- * recorded reconciliation needs no reading: it is only ever recorded against
- * a ledger that names entries.
+ * Where a write may have landed, the reconciliation comes first and opens Retry. A row whose
+ * ledger names nothing to reconcile is retried as it is, except an interrupted apply that could
+ * not say what it sent: Retry and the reconciliation both refuse it, so its move is Close without
+ * retry (`workRuns.closeWithoutRetry`), which records the manager's decision as a dismissal does.
  *
  * @param row - The failed row.
- * @returns True when Retry is open, or the reconciliation that opens it is.
  */
-export function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
-  if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) return true;
-  return providerReconciliationEntries(row.output).length > 0;
+export function failedRowMove(
+  row: Pick<Doc<'workItems'>, 'output' | 'skipReason' | 'providerReconciliation'>,
+): FailedRowMove {
+  if (providerReconciliationEntries(row.output).length > 0) {
+    return reconciliationAnswered(row.providerReconciliation) ? 'retry' : 'reconcile';
+  }
+  return retryRequiresProviderReconciliation(row.output, row.skipReason)
+    ? 'close-without-retry'
+    : 'retry';
 }
 
 /**

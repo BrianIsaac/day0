@@ -12,10 +12,12 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   AWAITING_CHARTER,
   EXECUTION_STALL_MS,
+  MANAGER_CLAIM_LAPSED_REASON,
   MAX_DRAFT_RESUMES,
   STEP_LEASE_MS,
 } from '../../convex/workLoop';
 import { managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -34,7 +36,13 @@ const recorded = vi.hoisted(() => ({
   planCalls: [] as string[],
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
+  /** Thrown by the planner once its gate opens, instead of its plan. */
+  planFailure: undefined as Error | undefined,
   skillRuns: [] as string[],
+  /** Holds the skill run open until the test releases it. */
+  skillGate: undefined as Promise<void> | undefined,
+  /** Answered by the skill run instead of the manager DM. */
+  skillOutput: undefined as ExecutionOutput | undefined,
   http: [] as Array<{ url: string; body: unknown }>,
 }));
 
@@ -67,6 +75,9 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
     draftExecutionPlan: async (args: { candidate: { title: string } }) => {
       recorded.planCalls.push(args.candidate.title);
       await recorded.planGate;
+      const failure = recorded.planFailure;
+      recorded.planFailure = undefined;
+      if (failure) throw failure;
       return {
         summary: 'Tell the manager the close summary is ready.',
         steps: ['DM the manager that the close summary is ready.'],
@@ -102,7 +113,8 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     ...original,
     runSkill: async (args: { candidate: { title: string } }): Promise<ExecutionOutput> => {
       recorded.skillRuns.push(args.candidate.title);
-      return managerDm;
+      await recorded.skillGate;
+      return recorded.skillOutput ?? managerDm;
     },
   };
 });
@@ -120,15 +132,26 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = managerIdentity();
 
+/**
+ * How long a test waits, in real time, for an action held at a gate to reach its model call. The
+ * first action a file runs imports every Convex module, which takes longer than `vi.waitFor`'s
+ * one-second default when the test runs alone (`-t`) or first.
+ */
+const COLD_ACTION_MS = 20_000;
+
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
   recorded.scopeOutcome = undefined;
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
+  recorded.planFailure = undefined;
   recorded.skillRuns.length = 0;
+  recorded.skillGate = undefined;
+  recorded.skillOutput = undefined;
   recorded.http.length = 0;
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   restoreSurfaceMode();
 });
 
@@ -299,10 +322,13 @@ describe('the server-side steps', (): void => {
       if (!skill) throw new Error('skill missing');
       return skill._id;
     });
-    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    const claim = await harness.mutation(internal.workRuns.claimForExecution, {
+      workItemId,
+      skillId,
+    });
     expect(claim.claimed).toBe(true);
 
-    await harness.mutation(internal.work.setFailed, {
+    await harness.mutation(internal.workRuns.setFailed, {
       workItemId,
       reason: 'no registered skill matches source surface linear',
     });
@@ -350,7 +376,7 @@ describe('the server-side steps', (): void => {
     });
 
     const first = harness.action(internal.workActions.draftPlanInternal, { workItemId });
-    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await expect(
       harness.action(internal.workActions.draftPlanInternal, { workItemId }),
     ).resolves.toEqual({ ok: false, reason: 'another draft of this work item is running' });
@@ -358,6 +384,97 @@ describe('the server-side steps', (): void => {
     await expect(first).resolves.toEqual({ ok: true });
 
     expect(recorded.planCalls).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+  });
+
+  it('stores no plan from a draft the manager stopped once Retry has queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-14');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    release();
+    await expect(stale).resolves.toMatchObject({ ok: false });
+    const afterStale = await readItem(harness, workItemId);
+    expect(afterStale.state).toBe('claimed');
+    expect(afterStale.plan).toBeUndefined();
+    expect(await eventsOf(harness, 'work.plan-drafted')).toEqual([]);
+
+    // The draft Retry queued holds the claim now, and its plan is the one stored.
+    await drain(harness);
+    expect(recorded.planCalls).toHaveLength(2);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.plan-drafted')).toHaveLength(1);
+  });
+
+  it('says a draft the manager stopped found its item moved on, never that another draft stored first', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-18');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    release();
+
+    await expect(stale).resolves.toEqual({
+      ok: false,
+      reason: "the work item moved on to failed; this draft's plan is not stored",
+    });
+    expect((await readItem(harness, workItemId)).plan).toBeUndefined();
+  });
+
+  it('fails nothing when a draft the manager stopped fails its model call after Retry queued its successor', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-17');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    let release = (): void => {};
+    recorded.planGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The class the Convex modules load, as workActions.test.ts takes it.
+    const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
+    recorded.planFailure = new ModelReplyCutError('day0-plan', '{"summary":"Comment');
+
+    const stale = harness.action(internal.workActions.draftPlanInternal, { workItemId });
+    await vi.waitFor(() => expect(recorded.planCalls).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    release();
+    await stale;
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+
+    // The draft Retry queued holds the claim, and its plan is the one stored.
+    await drain(harness);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
   });
 
@@ -558,7 +675,7 @@ describe('the server drives the work loop in real mode', (): void => {
 
     await harness
       .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: 'Send it again.' });
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Send it again.' });
     await drain(harness);
 
     expect(recorded.skillRuns).toEqual(['Triage the Linear close summary REVOPS-25']);
@@ -578,7 +695,9 @@ describe('the server drives the work loop in real mode', (): void => {
 
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-26');
     vi.advanceTimersByTime(0);
-    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1));
+    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1), {
+      timeout: COLD_ACTION_MS,
+    });
 
     const second = await harness.action(internal.workActions.evaluateWorkItemInternal, {
       workItemId,
@@ -1002,7 +1121,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
     });
     await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
     expect((await readItem(harness, dying)).state).toBe('deferred');
-    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: dying });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId: dying });
     const retried = await readItem(harness, dying);
     expect(retried.state).toBe('discovered');
     expect(retried).not.toHaveProperty('evaluationAttempts');
@@ -1152,13 +1271,41 @@ describe('what an outage leaves (P7-18)', (): void => {
     expect(await scheduledCalls(harness, 'workActions:draftPlanInternal')).toHaveLength(
       MAX_DRAFT_RESUMES,
     );
-    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([
+    // Re-pinned for W12-R7: the stop carries the dead draft's claim, so it fails only that draft.
+    expect(await scheduledCalls(harness, 'workRuns:setFailed')).toEqual([
       {
         workItemId,
         reason: `the plan draft died ${MAX_DRAFT_RESUMES + 1} times without an answer; Retry drafts it again`,
         stopped: true,
+        draftClaimedAt: expect.any(Number),
       },
     ]);
+  });
+
+  it('fails nothing when the manager stopped and retried the row before the sweep’s stop ran (W12-R7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-43');
+    for (let attempt = 0; attempt <= MAX_DRAFT_RESUMES; attempt += 1) {
+      await killDraft(harness, workItemId);
+      await harness.mutation(internal.work.resumeStalledSteps, {});
+    }
+    const [stop] = (await scheduledCalls(harness, 'workRuns:setFailed')) as Array<
+      Record<string, unknown>
+    >;
+    if (!stop) throw new Error('the sweep scheduled no stop');
+    // Before the job runs, the manager stops the row and retries it: a new draft holds it now.
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { draftClaimedAt: Date.now() });
+    });
+
+    await harness.mutation(internal.workRuns.setFailed, stop as never);
+
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'claimed' });
   });
 
   it("counts the dead drafts again from the manager's last Retry", async (): Promise<void> => {
@@ -1182,7 +1329,7 @@ describe('what an outage leaves (P7-18)', (): void => {
     vi.advanceTimersByTime(10);
     await killDraft(harness, workItemId);
     await harness.mutation(internal.work.resumeStalledSteps, {});
-    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([]);
+    expect(await scheduledCalls(harness, 'workRuns:setFailed')).toEqual([]);
     expect((await eventsOf(harness, 'work.draft-resumed')).at(-1)?.payload).toEqual({
       workItemId,
       attempt: 1,
@@ -1271,7 +1418,7 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
       name: 'work:recoverDependentAuthoring',
       args: { workItemId, runId },
     });
-    expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
+    expect(jobs.map((job) => job.name)).not.toContain('workRuns:setFailed');
   });
 });
 
@@ -1381,5 +1528,639 @@ describe('the stall sweep while a handover is finishing (D18)', (): void => {
         'workActions:executeApprovedPlanInternal',
       ]),
     );
+  });
+});
+
+describe('workLoop.checkForNewWork and the anonymous-caller guard (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {});
+    await expect(harness.mutation(api.workLoop.checkForNewWork, { agentId })).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+});
+
+describe('the manager-channel claims’ lease (N-3)', (): void => {
+  const LAPSED = 20 * 60_000;
+  const FRESH = 5 * 60_000;
+
+  /** One employee with a chat card, an item whose decision was claimed, and every kind of claim. */
+  async function claims(harness: TestConvex<typeof schema>, claimedAt: number) {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage', 'chat.update'],
+        managerDmChannelId: 'D0MANAGER',
+        credentialLanded: true,
+        whereFound: [],
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close the audit note',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'completed',
+        decision: {
+          id: 'abc234',
+          kind: 'actions',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1.1',
+          decidedAt: 2,
+          outcome: 'approved',
+          requestText: 'Approve?',
+          closeClaimedAt: claimedAt,
+          duplicateNotifiedAt: 3,
+          duplicateNoticeClaimedAt: claimedAt,
+        },
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const digestId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.manager-digest-sending',
+        payload: {},
+        createdAt: claimedAt,
+      });
+      const digestNote = await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt,
+        digestId,
+      });
+      const perRunNote = await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt,
+      });
+      const notice = await ctx.db.insert('managerDecisionNotices', {
+        agentId,
+        surfaceId,
+        workItemId,
+        decisionId: 'abc234',
+        messageTs: '2.2',
+        kind: 'received',
+        text: 'Approval abc234 received.',
+        createdAt: 1,
+        claimedAt,
+      });
+      const replaced = await ctx.db.insert('replacedDecisionRequests', {
+        agentId,
+        workItemId,
+        decisionId: 'old234',
+        kind: 'actions',
+        surfaceSlug: 'slack',
+        channel: 'D0MANAGER',
+        ts: '0.9',
+        replacedAt: 1,
+        editClaimedAt: claimedAt,
+      });
+      return { agentId, workItemId, digestNote, perRunNote, notice, replaced };
+    });
+  }
+
+  it('settles every claim an action died holding, as its own failure would, and no live one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    const live = await claims(harness, Date.now() - FRESH);
+
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+
+    const read = async (ids: typeof lapsed) =>
+      await harness.run(async (ctx) => ({
+        item: await ctx.db.get(ids.workItemId),
+        digestNote: await ctx.db.get(ids.digestNote),
+        perRunNote: await ctx.db.get(ids.perRunNote),
+        notice: await ctx.db.get(ids.notice),
+        replaced: await ctx.db.get(ids.replaced),
+      }));
+    const settled = await read(lapsed);
+    // An unsent digest's claim is released for the next digest, with the reason on the note.
+    expect(settled.digestNote).toMatchObject({ failure: MANAGER_CLAIM_LAPSED_REASON });
+    expect(settled.digestNote?.claimedAt).toBeUndefined();
+    expect(settled.digestNote?.digestId).toBeUndefined();
+    // A per-run note has its own switch (`recoverUnsentManagerNote`); the lease leaves it.
+    expect(settled.perRunNote?.failure).toBeUndefined();
+    expect(settled.notice?.failure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+    expect(settled.item?.decision).toMatchObject({
+      closeFailure: MANAGER_CLAIM_LAPSED_REASON,
+      duplicateNoticeFailure: MANAGER_CLAIM_LAPSED_REASON,
+    });
+    expect(settled.replaced?.editFailure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+
+    const untouched = await read(live);
+    expect(untouched.digestNote?.claimedAt).toEqual(expect.any(Number));
+    expect(untouched.digestNote?.failure).toBeUndefined();
+    expect(untouched.notice?.failure).toBeUndefined();
+    expect(untouched.item?.decision?.closeFailure).toBeUndefined();
+    expect(untouched.item?.decision?.duplicateNoticeFailure).toBeUndefined();
+    expect(untouched.replaced?.editFailure).toBeUndefined();
+  });
+
+  it('runs as a job of its own, apart from the stalled-step sweep', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(lapsed.notice)))?.failure,
+    ).toBeUndefined();
+    await expect(
+      harness.action(internal.crons.runScheduledJob, { job: 'workLoop:settleLapsedClaims' }),
+    ).resolves.toEqual({ settled: 5 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(lapsed.notice)))?.failure).toBe(
+      MANAGER_CLAIM_LAPSED_REASON,
+    );
+  });
+
+  it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const lapsed = await claims(harness, Date.now() - LAPSED);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(lapsed.workItemId);
+      await ctx.db.patch(lapsed.workItemId, {
+        decision: { ...row!.decision!, closedAt: Date.now() - LAPSED + 1_000 },
+      });
+    });
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    const row = await harness.run(async (ctx) => await ctx.db.get(lapsed.workItemId));
+    expect(row?.decision?.closeFailure).toBeUndefined();
+    const failed = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', lapsed.agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.manager-digest-failed'))
+          .collect(),
+    );
+    expect(failed).toHaveLength(1);
+  });
+});
+
+/** The posts sent to a channel, by channel id. */
+function postsTo(channel: string): unknown[] {
+  return recorded.http
+    .filter((call) => call.url.endsWith('/chat.postMessage'))
+    .map((call) => call.body)
+    .filter((body) => (body as { channel?: unknown }).channel === channel);
+}
+
+describe('a paused employee (12-P; G1 / A15)', (): void => {
+  /** A run whose one write is a public post, which a supervised employee holds for the manager. */
+  const publicPost: ExecutionOutput = {
+    draft: 'The close summary is posted.',
+    notes: '',
+    actions: [
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: '/chat.postMessage',
+          headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+          body: JSON.stringify({ channel: 'C0REVOPS', text: 'The close summary is posted.' }),
+        },
+      },
+    ],
+  };
+
+  async function pause(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+  }
+
+  async function resume(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+  }
+
+  it('takes no step for a row seeded while paused, and the resume takes it to a decision request', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await pause(harness, agentId);
+
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-80');
+    await drain(harness);
+
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'discovered' });
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationClaimedAt');
+    expect(recorded.scopeCalls).toEqual([]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
+
+    await resume(harness, agentId);
+    await drain(harness);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-pending');
+    expect(row.decision).toMatchObject({ kind: 'plan' });
+  });
+
+  it('holds each step queued before the pause at its claim, the row ready as it was', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const evaluated = await seedTicket(harness, agentId, 'REVOPS-81');
+    const drafted = await insertDiscovered(harness, agentId, 'REVOPS-82');
+    const executed = await insertDiscovered(harness, agentId, 'REVOPS-83');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(drafted, { state: 'claimed', verdict: { decision: 'claim' } });
+      await ctx.db.patch(executed, {
+        state: 'plan-approved',
+        verdict: { decision: 'claim' },
+        plan: { summary: 'Tell the manager.', steps: ['DM the manager.'] },
+      });
+    });
+    // The sweep queues the draft and the execution; the seed queued the evaluation.
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await pause(harness, agentId);
+    await drain(harness);
+
+    expect(recorded.scopeCalls).toEqual([]);
+    expect(recorded.planCalls).toEqual([]);
+    expect(recorded.skillRuns).toEqual([]);
+    expect((await readItem(harness, evaluated)).state).toBe('discovered');
+    expect(await readItem(harness, evaluated)).not.toHaveProperty('evaluationAttempts');
+    expect((await readItem(harness, drafted)).state).toBe('claimed');
+    expect(await readItem(harness, drafted)).not.toHaveProperty('draftClaimedAt');
+    expect((await readItem(harness, executed)).state).toBe('plan-approved');
+    expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
+
+    await resume(harness, agentId);
+    await drain(harness);
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect(recorded.planCalls).toEqual(expect.arrayContaining([expect.stringContaining('82')]));
+    expect(recorded.skillRuns).toEqual(expect.arrayContaining([expect.stringContaining('83')]));
+  });
+
+  it('holds a run that was executing at its next gate, sends nothing, and lets it go on at the resume', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-84');
+    await drain(harness);
+    let release = (): void => {};
+    recorded.skillGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dmsBefore = postsTo('D0MANAGER').length;
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    const running = drain(harness);
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    await pause(harness, agentId);
+    release();
+    await running;
+
+    const held = await readItem(harness, workItemId);
+    expect(held).toMatchObject({ state: 'executing', applyPhase: 'auto' });
+    expect(held).not.toHaveProperty('applyAttemptId');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore);
+    expect(await eventsOf(harness, 'work.actions-applying')).toEqual([]);
+
+    await resume(harness, agentId);
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore + 1);
+  });
+
+  it.each(['dashboard', 'typed code', 'button', 'batch code'] as const)(
+    'keeps the decisions asked before the pause answerable by the %s, and holds what each approval queues until the resume',
+    async (route): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers();
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const agentId = await seedEmployee(harness);
+      const slack = await harness.run(async (ctx) => {
+        await ctx.db.insert('permissionGrants', { agentId, scope: 'slack:write', createdAt: 1 });
+        const surface = (await ctx.db.query('surfaces').collect()).find(
+          (row) => row.slug === 'slack',
+        );
+        if (!surface) throw new Error('slack surface missing');
+        const clientSecretCredentialId = await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Ops (Day0) client secret',
+          ciphertext: 'ciphertext',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+        } as never);
+        await ctx.db.patch(surface._id, {
+          provisioning: {
+            appId: 'A0OPS',
+            appName: 'Ops (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+          providerWorkspaceId: 'T0DAY0',
+        });
+        return surface._id;
+      });
+      recorded.skillOutput = publicPost;
+      const workItemId = await seedTicket(harness, agentId, 'REVOPS-85');
+      await drain(harness);
+
+      /** Approve the row's open decision by this test's route. */
+      const approve = async (kind: 'plan' | 'actions'): Promise<void> => {
+        const row = await readItem(harness, workItemId);
+        const decision = row.decision;
+        if (!decision) throw new Error('no decision asked');
+        const owner = harness.withIdentity(OWNER);
+        if (route === 'typed code') {
+          await harness.mutation(internal.work.resolveChannelDecision, {
+            surfaceId: slack,
+            userId: 'UMANAGER',
+            messageTs: `1789000001.00${kind === 'plan' ? '1' : '2'}00`,
+            reply: { verb: 'approve', id: decision.id },
+          });
+        } else if (route === 'button') {
+          await harness.mutation(internal.slackSocket.resolvePress, {
+            surfaceId: slack,
+            press: {
+              userId: 'UMANAGER',
+              teamId: 'T0DAY0',
+              appId: 'A0OPS',
+              channelId: 'D0MANAGER',
+              messageTs: decision.ts ?? '',
+              actionTs: `1789000002.00${kind === 'plan' ? '1' : '2'}00`,
+              action: { action_id: 'day0.decision.approve', value: decision.id },
+            },
+          });
+        } else if (kind === 'plan') {
+          await owner.mutation(api.work.approvePlan, { workItemId });
+        } else if (route === 'batch code') {
+          await owner.mutation(api.work.approveActionsBatch, {
+            members: [{ workItemId, pendingRunId: row.pendingRunId!, approvedIndexes: [0] }],
+          });
+        } else {
+          await owner.mutation(api.work.approveActions, {
+            workItemId,
+            pendingRunId: row.pendingRunId!,
+            approvedIndexes: [0],
+          });
+        }
+      };
+
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+      await pause(harness, agentId);
+      await approve('plan');
+      await drain(harness);
+      expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+      expect(recorded.skillRuns).toEqual([]);
+
+      await resume(harness, agentId);
+      await drain(harness);
+      const asked = await readItem(harness, workItemId);
+      expect(asked.state).toBe('actions-pending');
+      expect(asked.decision).toMatchObject({ kind: 'actions' });
+
+      await pause(harness, agentId);
+      await approve('actions');
+      await drain(harness);
+      const approved = await readItem(harness, workItemId);
+      expect(approved.state).toBe('actions-pending');
+      expect(approved.approvedIndexes).toEqual([0]);
+      expect(postsTo('C0REVOPS')).toEqual([]);
+
+      await resume(harness, agentId);
+      await drain(harness);
+      expect((await readItem(harness, workItemId)).state).toBe('completed');
+      expect(postsTo('C0REVOPS')).toHaveLength(1);
+    },
+  );
+
+  it('holds an execution queued before the pause even when its skill has gone, parking nothing and proposing nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-89');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.run(async (ctx) => {
+      for (const skill of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(skill._id, { state: 'retired' });
+      }
+    });
+    await pause(harness, agentId);
+    await drain(harness);
+
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('skills').collect())).map(
+        (skill) => skill.state,
+      ),
+    ).toEqual(['retired']);
+    expect(recorded.skillRuns).toEqual([]);
+  });
+
+  /** An employee with a held public post asked for, its plan approved and run: `actions-pending`. */
+  async function heldWrite(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    pendingRunId: Id<'events'>;
+  }> {
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'slack:write', createdAt: 1 });
+    });
+    recorded.skillOutput = publicPost;
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-90');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await drain(harness);
+    const row = await readItem(harness, workItemId);
+    if (row.state !== 'actions-pending' || !row.pendingRunId) throw new Error('no held write');
+    return { agentId, workItemId, pendingRunId: row.pendingRunId };
+  }
+
+  async function appliesQueued(harness: Harness): Promise<number> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter(
+      (job) => job.name === 'workActions:applyApprovedActions' && job.state.kind === 'pending',
+    ).length;
+  }
+
+  it('ends the apply recovery timer’s chain while paused instead of rescheduling the held set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, pendingRunId } = await heldWrite(harness);
+    await pause(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId,
+      approvedIndexes: [0],
+    });
+    expect(await appliesQueued(harness)).toBe(0);
+
+    await expect(
+      harness.mutation(internal.work.recoverInterruptedApply, {
+        workItemId,
+        pendingRunId,
+        phase: 'approved',
+        fromTimer: true,
+      }),
+    ).resolves.toEqual({ recovered: 'held' });
+    expect(await appliesQueued(harness)).toBe(0);
+    expect(
+      (
+        await harness.run(
+          async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+        )
+      ).filter(
+        (job) => job.name === 'work:recoverInterruptedApply' && job.state.kind === 'pending',
+      ),
+    ).toEqual([]);
+  });
+
+  it('leaves an approved set whose apply is still queued to it, so the sweep never doubles it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, pendingRunId } = await heldWrite(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId,
+      approvedIndexes: [0],
+    });
+    expect(await appliesQueued(harness)).toBe(1);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await appliesQueued(harness)).toBe(1);
+  });
+
+  it('holds nothing in mock mode, where the page drives each step, whatever either pause says', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-91');
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { pausedAt: 5, pausedBy: 'owner' });
+      await ctx.db.patch(workItemId, { state: 'plan-approved', verdict: { decision: 'claim' } });
+      const skill = await ctx.db.query('skills').first();
+      if (!skill) throw new Error('skill missing');
+      return skill._id;
+    });
+    await expect(
+      harness.mutation(internal.workRuns.claimForExecution, { workItemId, skillId }),
+    ).resolves.toMatchObject({ claimed: true });
+  });
+
+  it("lets the manager stop a paused employee's working row", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-86');
+    await drain(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await pause(harness, agentId);
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  it('resumes nothing for a paused employee in the stalled-step sweep', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await insertDiscovered(harness, agentId, 'REVOPS-87');
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.query('workItems').first();
+      if (row) await ctx.db.patch(row._id, { state: 'claimed', verdict: { decision: 'claim' } });
+    });
+    await pause(harness, agentId);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledNames(harness)).toEqual([]);
+
+    await resume(harness, agentId);
+    expect(await scheduledNames(harness)).toEqual(['workActions:draftPlanInternal']);
+  });
+});
+
+describe("the deployment's pause holds queued steps too (12-P; crons.ts)", (): void => {
+  it('holds an execution and an apply queued before DAY0_CRONS_PAUSED, and the sweep queues each once the jobs run again', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-88');
+    await drain(harness);
+    const dmsBefore = postsTo('D0MANAGER').length;
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+
+    // The execution was queued before the deployment's jobs were paused: it holds at its claim.
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');
+    await drain(harness);
+    expect(recorded.skillRuns).toEqual([]);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+
+    // The jobs run again: the sweep queues the execution, and the deployment is paused once more
+    // while it runs, so its auto apply holds at its claim.
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    let release = (): void => {};
+    recorded.skillGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = drain(harness);
+    await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'restore from backup');
+    release();
+    await running;
+    const held = await readItem(harness, workItemId);
+    expect(held).toMatchObject({ state: 'executing', applyPhase: 'auto' });
+    expect(held).not.toHaveProperty('applyAttemptId');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore);
+
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(postsTo('D0MANAGER')).toHaveLength(dmsBefore + 1);
   });
 });

@@ -116,3 +116,120 @@ describe("correcting a connection's recorded redirect and scopes (the wave 11 re
     expect(ledger.map((line) => line.type)).toEqual(['organisation.connection-landed']);
   });
 });
+
+describe("recording the issuer of an MCP connection landed with none (the round review's m13)", (): void => {
+  /** An MCP connection as a release before the issuer rule landed it: no issuer recorded. */
+  async function seedIssuerless(harness: Harness, issuer?: string) {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('organisationConnections', {
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          kind: 'mcp-client',
+          mode: 'per-employee',
+          scopes: ['read'],
+          clientId: 'docs-client',
+          resource: 'https://auth.acme.test/mcp',
+          ...(issuer === undefined ? {} : { issuer }),
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status: 'active',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  it('records the issuer and says so on the ledger, naming no address and ending no card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await seedIssuerless(harness);
+
+    expect(
+      await harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'https://auth.acme.test',
+      }),
+    ).toEqual({ changed: true });
+
+    const after = await harness.run(async (ctx) => ({
+      connection: await ctx.db.get(connectionId),
+      ledger: await ctx.db.query('connectionEvents').collect(),
+    }));
+    expect(after.connection).toMatchObject({ status: 'active', issuer: 'https://auth.acme.test' });
+    expect(after.ledger.map((line) => [line.type, line.payload])).toEqual([
+      [
+        'organisation.connection-corrected',
+        {
+          organisationConnectionId: connectionId,
+          system: 'mcp:auth.acme.test',
+          displayName: 'auth.acme.test',
+          via: 'setup-cli',
+          issuerRecorded: true,
+        },
+      ],
+    ]);
+  });
+
+  it('never changes an issuer the connection records, and refuses one for a system that has none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedIssuerless(harness, 'https://auth.acme.test');
+    await landLinear(harness);
+
+    expect(
+      await harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'https://auth.acme.test',
+      }),
+    ).toEqual({ changed: false });
+    await expect(
+      harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'https://other.acme.test',
+      }),
+    ).rejects.toThrow(
+      'The connection already records its issuer: revoke it and land it again to change it.',
+    );
+    await expect(
+      harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'linear',
+        issuer: 'https://auth.acme.test',
+      }),
+    ).rejects.toThrow('Only an MCP connection records an issuer.');
+  });
+
+  it("refuses an issuer for a client that holds a secret, whose issuer only IT gives (M12 f; the second pass's code reader)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await seedIssuerless(harness);
+    await harness.run(async (ctx) => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'organisation',
+        kind: 'value',
+        label: 'auth.acme.test client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.patch(connectionId, { secretCredentialId: secret });
+    });
+
+    await expect(
+      harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'https://auth.acme.test',
+      }),
+    ).rejects.toThrow(
+      'A client with a secret takes the issuer IT registered it with: revoke the connection and land it again with that issuer.',
+    );
+  });
+
+  it('refuses an issuer that is not an https address', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedIssuerless(harness);
+
+    await expect(
+      harness.mutation(internal.organisationCorrections.correctFromSetup, {
+        system: 'mcp:auth.acme.test',
+        issuer: 'http://auth.acme.test',
+      }),
+    ).rejects.toThrow('An issuer is an absolute https (or local http) address.');
+  });
+});

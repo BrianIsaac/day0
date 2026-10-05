@@ -11,6 +11,7 @@ import { autonomousActionsOn } from '../../src/work/autonomy';
 import { evaluateCandidate, type EvalContext } from '../../src/work/evaluate';
 import { INTERRUPTED_APPLY_REASON } from '../../src/work/reconciliation';
 import { STOPPED_PREFIX } from '../../src/work/stop';
+import { PAUSE_REASON_MAX_CHARS, PAUSE_REASON_TOO_LONG } from '../../src/work/pause';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
@@ -25,6 +26,7 @@ import {
 } from '../../src/agent/manager-standing';
 import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/work';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -329,14 +331,26 @@ describe('agents.myManagerAddress', (): void => {
     ).resolves.toBe('lead@day0.local');
   });
 
-  it('answers null for a caller with no verified address and for an anonymous one', async (): Promise<void> => {
+  it('answers null for a caller with no verified address, and refuses an anonymous one', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(
       harness
         .withIdentity(managerIdentity('owner', { emailVerified: false }))
         .query(api.agents.myManagerAddress, {}),
     ).resolves.toBeNull();
-    await expect(harness.query(api.agents.myManagerAddress, {})).resolves.toBeNull();
+    await expect(harness.query(api.agents.myManagerAddress, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+
+  it('refuses a caller with no identity on every read of the caller’s own employees (12-G)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const refusal = await guardRefusal();
+    await expect(harness.query(api.agents.listForUser, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(refusal);
+    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).rejects.toMatchObject(
+      refusal,
+    );
   });
 
   it('is the address the shared fixture identity carries', async (): Promise<void> => {
@@ -790,9 +804,10 @@ describe('the autonomous-actions switch', (): void => {
     ).rejects.toThrow(
       'Autonomous actions is a local real-mode feature; this deployment runs in mock mode.',
     );
+    // A caller with no identity is refused by the guard before the mode is said (12-G).
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('local real-mode feature');
+    ).rejects.toMatchObject(await guardRefusal());
     expect(
       (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions,
     ).toBeUndefined();
@@ -1248,6 +1263,7 @@ describe('the employee roster', (): void => {
         // No one-to-one has opened: the room is waiting to talk.
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine: 'charter pending',
         openCount: 0,
         parkedCount: 0,
@@ -1257,6 +1273,8 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 1,
         landedThisMonth: NOTHING_LANDED,
+        // No chat surface: decisions reach the manager in this dashboard alone (12-M; H D6).
+        decisionsReach: { kind: 'dashboard' },
       },
       {
         agentId: mateo,
@@ -1265,6 +1283,7 @@ describe('the employee roster', (): void => {
         state: 'active',
         phase: 'talking',
         autonomous: true,
+        paused: false,
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
         parkedCount: 0,
@@ -1273,6 +1292,7 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 2,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
       {
         agentId: priya,
@@ -1281,6 +1301,7 @@ describe('the employee roster', (): void => {
         state: 'active',
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
@@ -1292,6 +1313,7 @@ describe('the employee roster', (): void => {
         needsYou: 3,
         docSourceCount: 2,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
     ]);
     await expect(
@@ -1304,6 +1326,7 @@ describe('the employee roster', (): void => {
         state: 'deployed',
         phase: 'talking',
         autonomous: false,
+        paused: false,
         roleLine: 'charter pending',
         openCount: 1,
         parkedCount: 0,
@@ -1312,9 +1335,101 @@ describe('the employee roster', (): void => {
         needsYou: 1,
         docSourceCount: 1,
         landedThisMonth: NOTHING_LANDED,
+        decisionsReach: { kind: 'dashboard' },
       },
     ]);
-    await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
+
+  it('says where each employee’s decisions reach the manager: a DM with buttons, a DM with typed codes, or here (12-M; H D6)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', 'bridge-secret-for-tests');
+    const harness = convexTest(schema, allConvexModules());
+    const buttons = await deployEmployee(harness, 'owner', 'Mateo');
+    const typed = await deployEmployee(harness, 'owner', 'Priya');
+    const here = await deployEmployee(harness, 'owner', 'Aiko');
+    const closed = await deployEmployee(harness, 'owner', 'Iris');
+    await harness.run(async (ctx): Promise<void> => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'client secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = async (
+        agentId: Id<'agents'>,
+        withToken: boolean,
+        takesMessages = true,
+      ): Promise<void> => {
+        const appId = `A0${String(agentId).slice(-4)}`;
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          path: 'documented-api',
+          endpoint: 'https://slack.com/api/',
+          managerDmChannelId: 'D0MANAGER',
+          managerUserId: 'UMANAGER',
+          credentialLanded: true,
+          credentialId: secret,
+          provisioning: {
+            appId,
+            appName: 'App (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: secret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: [],
+            createdAt: 1,
+            installedAt: 2,
+            ...(withToken ? { appLevelTokenCredentialId: secret } : {}),
+          },
+          createdAt: 1,
+        });
+        // Re-pinned for W12V-7: an app this release creates takes messages from the start, and
+        // the roster reads that from the employee's record.
+        if (takesMessages) {
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'surface.app-messages-open',
+            payload: { surfaceId, appId, appName: 'App (Day0)', how: 'created' },
+            createdAt: 2,
+          });
+        }
+      };
+      await slack(buttons, true);
+      await slack(typed, false);
+      await slack(closed, false, false);
+    });
+    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const reach = new Map(rows.map((row) => [row.agentId, row.decisionsReach]));
+    expect(reach.get(buttons)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: true,
+      typedCode: true,
+    });
+    expect(reach.get(typed)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: false,
+      typedCode: true,
+    });
+    expect(reach.get(closed)).toEqual({
+      kind: 'dm',
+      channel: 'Slack',
+      buttons: false,
+      typedCode: false,
+    });
+    expect(reach.get(here)).toEqual({ kind: 'dashboard' });
+    vi.unstubAllEnvs();
   });
 
   it('gives each row the state the employee’s own page shows, a charter outranking the row (m6)', async (): Promise<void> => {
@@ -1340,6 +1455,21 @@ describe('the employee roster', (): void => {
       Tomas: 'active',
       Mira: 'day-one-in-progress',
     });
+  });
+
+  it('says on each row whether the manager has paused the employee (12-P)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const paused = await deployEmployee(harness, 'owner', 'Nia');
+    await deployEmployee(harness, 'owner', 'Tomas');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(paused, { pausedAt: 5, pausedBy: 'owner' });
+    });
+    const rows = Object.fromEntries(
+      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
+        (row): [string, boolean] => [row.name, row.paused],
+      ),
+    );
+    expect(rows).toEqual({ Nia: true, Tomas: false });
   });
 
   it("carries the one-to-one's phase on each row, read off the newest session as the employee's page reads it (C2)", async (): Promise<void> => {
@@ -1592,12 +1722,13 @@ describe('the employee roster', (): void => {
     });
     expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
 
-    // The same with nothing to verify against: the card disables both the confirmation and Retry, for good.
+    // The same with nothing to verify against: Retry and the confirmation stay disabled, and
+    // Close without retry is the manager's move (E-8, wave 12; re-pinned from 2, 2).
     await seedParked(harness, aiko, 'LOG-dead-end', 'failed', {
       plan,
       skipReason: INTERRUPTED_APPLY_REASON,
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 3, 3]);
 
     // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
     // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
@@ -1620,17 +1751,17 @@ describe('the employee roster', (): void => {
         output: { actions: [comment] },
         pendingRunId,
       });
-      expect((await counts()).Aiko).toEqual([1, 0, 2 + index, 3]);
+      expect((await counts()).Aiko).toEqual([1, 0, 3 + index, 4]);
       await owner.mutation(api.work.rejectActions, { workItemId, pendingRunId, reason });
     }
-    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
 
     // A cancelled plan, a skip and finished work are not stopped rows.
     await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', {
       plan,
       skipReason: 'plan cancelled by the manager',
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
@@ -2201,7 +2332,9 @@ describe('agents.employeesReportingElsewhere (the home line, D17)', (): void => 
         .withIdentity(managerIdentity('owner', { emailVerified: false }))
         .query(api.agents.employeesReportingElsewhere, {}),
     ).resolves.toBeNull();
-    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).resolves.toBeNull();
+    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
   });
 });
 
@@ -2545,5 +2678,141 @@ describe('the old manager’s authority while a handover is open (U3-m3, U5-m4)'
     await expect(
       harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
     ).resolves.toMatchObject({ changed: true });
+  });
+});
+
+describe('the anonymous-caller guard before the mode (12-G)', (): void => {
+  it('refuses a caller with no identity before it says the deployment runs in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {});
+    const refusal = await guardRefusal();
+    await expect(
+      harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      harness.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
+    ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe('the per-employee pause (12-P)', (): void => {
+  /** An active employee of the fixture's owner, with nothing paused. */
+  async function seedActive(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  async function agentEvents(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<Array<[string, unknown]>> {
+    return (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect(),
+      )
+    ).map((event) => [event.type, event.payload]);
+  }
+
+  it('lets the owner pause with a reason and resume, with an event for each change and none for a repeat', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.pause, { agentId, reason: '  Quarter close.  ' }),
+    ).resolves.toEqual({ ok: true, paused: true, changed: true });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toMatchObject({
+      pausedAt: 1_000_000,
+      pausedBy: 'owner',
+      pauseReason: 'Quarter close.',
+    });
+    // A second press keeps the first pause, its time and its reason.
+    vi.setSystemTime(2_000_000);
+    await expect(owner.mutation(api.agents.pause, { agentId, reason: 'Other' })).resolves.toEqual({
+      ok: true,
+      paused: true,
+      changed: false,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.pausedAt).toBe(1_000_000);
+
+    await expect(owner.mutation(api.agents.resume, { agentId })).resolves.toEqual({
+      ok: true,
+      paused: false,
+      changed: true,
+    });
+    const resumed = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(resumed).not.toHaveProperty('pausedAt');
+    expect(resumed).not.toHaveProperty('pausedBy');
+    expect(resumed).not.toHaveProperty('pauseReason');
+    await expect(owner.mutation(api.agents.resume, { agentId })).resolves.toEqual({
+      ok: true,
+      paused: false,
+      changed: false,
+    });
+
+    expect(await agentEvents(harness, agentId)).toEqual([
+      ['agent.paused', { reason: 'Quarter close.' }],
+      ['agent.resumed', { pausedAt: 1_000_000 }],
+    ]);
+  });
+
+  it('stores no reason for a blank one, and refuses one past the bound', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.pause, { agentId, reason: 'x'.repeat(PAUSE_REASON_MAX_CHARS + 1) }),
+    ).rejects.toThrow(PAUSE_REASON_TOO_LONG);
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).not.toHaveProperty(
+      'pausedAt',
+    );
+    await owner.mutation(api.agents.pause, { agentId, reason: '   ' });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).not.toHaveProperty(
+      'pauseReason',
+    );
+    expect(await agentEvents(harness, agentId)).toEqual([['agent.paused', {}]]);
+  });
+
+  it('refuses a stranger and an anonymous caller, and the mock deployment after the guard', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedActive(harness);
+    for (const call of [api.agents.pause, api.agents.resume]) {
+      await expect(
+        harness.withIdentity(managerIdentity('intruder')).mutation(call, { agentId }),
+      ).rejects.toThrow('This employee is not yours.');
+      await expect(harness.mutation(call, { agentId })).rejects.toMatchObject(await guardRefusal());
+    }
+    useSurfaceMode('mock');
+    const hosted = convexTest(schema, allConvexModules());
+    const hostedAgent = await seedActive(hosted);
+    for (const call of [api.agents.pause, api.agents.resume]) {
+      await expect(hosted.mutation(call, { agentId: hostedAgent })).rejects.toMatchObject(
+        await guardRefusal(),
+      );
+      await expect(
+        hosted.withIdentity(managerIdentity()).mutation(call, { agentId: hostedAgent }),
+      ).rejects.toThrow('Pause is a local real-mode feature; this deployment runs in mock mode.');
+    }
+    expect(await agentEvents(harness, agentId)).toEqual([]);
+    expect(await agentEvents(hosted, hostedAgent)).toEqual([]);
   });
 });

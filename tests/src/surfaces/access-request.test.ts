@@ -382,6 +382,52 @@ describe('the access request’s words, the same wherever they are shown', (): v
     expect(draft.text).not.toContain('documentation:');
   });
 
+  it("names the app-level token step for an employee's own Slack app, for decision buttons (12-M; RM3)", (): void => {
+    const draft = draftAccessRequest({
+      ...base,
+      card: {
+        ...card,
+        slug: 'slack',
+        displayName: 'Slack',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        provisioning: { installUrl: 'https://slack.com/oauth/v2/authorize?client_id=maya' },
+      },
+      reason: 'install-needed',
+      connection: {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: ['chat:write'],
+      },
+    });
+    // Re-pinned for W12V-7: the typed code does not always work, since an app that takes no
+    // messages refuses it.
+    expect(draft.text).toContain(
+      'For Approve and Reject buttons in the manager’s decision requests (optional; without them the manager decides each request in day0, or by its typed code where the app takes messages): a collaborator on Maya’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on Maya’s Slack card.',
+    );
+  });
+
+  it('names no app-level token for a system other than Slack', (): void => {
+    const draft = draftAccessRequest({
+      ...base,
+      card: {
+        ...card,
+        provisioning: { installUrl: 'https://linear.app/oauth/authorize?client_id=leo' },
+      },
+      reason: 'install-needed',
+      connection: {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read'],
+      },
+    });
+    expect(draft.text).not.toContain('app-level token');
+  });
+
   it("names the card on the organisation page for an employee's own Linear app IT must create and record, never the setup verb (M4)", (): void => {
     const draft = draftAccessRequest({
       ...base,

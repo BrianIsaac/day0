@@ -167,3 +167,33 @@ describe('employeeStateTally', (): void => {
     expect(employeeStateTally([])).toEqual([]);
   });
 });
+
+describe('a paused employee’s state (12-P)', (): void => {
+  it('reads Paused, in warn, whatever state the row is in, on the chip, the face and the pill', (): void => {
+    for (const state of EMPLOYEE_STATES) {
+      expect(employeeStateWords(state, undefined, true)).toEqual({ text: 'Paused', tone: 'warn' });
+      for (const autonomous of [false, true]) {
+        expect(employeeStateLabel(state, autonomous, undefined, true)).toEqual({
+          text: 'Paused',
+          tone: 'warn',
+        });
+      }
+    }
+    expect(employeeStateWords('active', undefined, false)).toEqual({ text: 'Active', tone: 'ok' });
+  });
+
+  it('counts a paused employee apart from the active ones, just after them', (): void => {
+    expect(
+      employeeStateTally([
+        { state: 'deployed' },
+        { state: 'active', paused: true },
+        { state: 'active' },
+        { state: 'active', paused: true },
+      ]),
+    ).toEqual([
+      { text: 'Active', count: 1 },
+      { text: 'Paused', count: 2 },
+      { text: 'Waiting for your one-to-one', count: 1 },
+    ]);
+  });
+});

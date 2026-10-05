@@ -160,7 +160,7 @@ interface RosterRowViewProps {
 }
 
 function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
-  const words = employeeStateWords(employee.state, employee.phase);
+  const words = employeeStateWords(employee.state, employee.phase, employee.paused);
   const tone = toneClasses(words.tone);
   const waitingOnManager = waiting ?? 0;
   // Parked and stopped work hold no slot, so each is named under the open count and only when there is some.
@@ -197,6 +197,7 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
             avatar={avatarById(employee.avatarId)}
             state={employee.state}
             phase={employee.phase}
+            paused={employee.paused}
             label={employee.name}
             size="sm"
           />
@@ -215,6 +216,7 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
       </Cell>
       <Cell column="Autonomy">
         <AutonomyBadge autonomous={employee.autonomous} />
+        <DecisionsReach reach={employee.decisionsReach} />
       </Cell>
       <Cell column="Needs you">
         {loaded ? (
@@ -268,6 +270,70 @@ function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
     >
       {/* The page's, the pill's and the deploy form's word (walk m10). */}
       {autonomyLabel(autonomous)}
+    </span>
+  );
+}
+
+/** Where one employee's decision requests reach the manager, under its autonomy on the roster. */
+interface DecisionsReachProps {
+  /** Absent on a row from functions pushed before the line (12-M). */
+  readonly reach: RosterRow['decisionsReach'] | undefined;
+}
+
+/**
+ * The words of a decision DM: its buttons, its typed code, both, or neither (W12V-7: an app that
+ * takes no messages takes no typed code, so the manager decides here). A row from functions pushed
+ * before the typed code was read carries none and reads as before.
+ */
+function dmWords(reach: Extract<RosterRow['decisionsReach'], { kind: 'dm' }>): {
+  readonly parts: readonly string[];
+  readonly title: string;
+} {
+  const typed = reach.typedCode !== false;
+  if (reach.buttons) {
+    return {
+      parts: ['Requests:', `${reach.channel} DM,`, 'buttons'],
+      title: typed
+        ? `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons and its typed code`
+        : `Each decision request also arrives as a ${reach.channel} DM with Approve and Reject buttons; no typed code reaches the app until it takes messages`,
+    };
+  }
+  return typed
+    ? {
+        parts: ['Requests:', `${reach.channel} DM,`, 'typed codes'],
+        title: `Each decision request also arrives as a ${reach.channel} DM; reply with its typed code`,
+      }
+    : {
+        parts: ['Requests:', `${reach.channel} DM,`, 'decide here'],
+        title: `Each decision request also arrives as a ${reach.channel} DM, but neither buttons nor a typed reply work there yet: decide it here`,
+      };
+}
+
+/**
+ * Where the employee's decision requests reach the manager (wave 12, 12-M; H D6): this dashboard
+ * only, or also as a DM on its chat channel, with Approve and Reject buttons or with the typed code
+ * alone. A line under the autonomy pill, since a column of its own would push the roster past its
+ * card and its header would read as the page's other decision figures.
+ */
+function DecisionsReach({ reach }: DecisionsReachProps) {
+  if (reach === undefined) return null;
+  // Each part stays whole, so a narrow cell breaks only between the parts.
+  const words =
+    reach.kind === 'dashboard'
+      ? {
+          parts: ['Requests:', 'dashboard only'],
+          title:
+            'Decision requests wait for you in this dashboard; no chat surface carries them yet',
+        }
+      : dmWords(reach);
+  return (
+    <span title={words.title} className="mt-1.5 block text-xs text-[var(--color-muted)]">
+      {words.parts.map((part, index) => (
+        <span key={part} className="whitespace-nowrap">
+          {index > 0 ? ' ' : null}
+          {part}
+        </span>
+      ))}
     </span>
   );
 }

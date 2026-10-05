@@ -6,6 +6,8 @@ import type {
 } from '@/surfaces/access-identity';
 import type { CardIdentity, KeyOrigin } from '@/surfaces/card-identity';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
+import type { DecisionButtons } from '@/surfaces/slack-socket';
+import { MESSAGES_TAB_TOGGLE, type TypedCodeReach } from '@/surfaces/slack-messages-tab';
 import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
 
@@ -102,20 +104,26 @@ export interface StateChipWords {
  * connection, since it is what the manager has to act on.
  *
  * An approved card with nothing landed says what it waits on where that is not a paste: IT, for a
- * card whose access request is out, or the manager's Connect, for a card IT's connection covers.
+ * card whose access request is out, or the manager's Connect, for a card IT's connection covers;
+ * so does one its approval's probe left `ungranted` with no credential, when the caller says so.
  *
  * @param surface - The card's row.
  * @param now - The instant to judge the access against.
- * @param options - What an approved card with nothing landed waits on, when not a paste.
+ * A Slack card whose own app is never installed again (W12X-4) waits on nothing and says it ended.
+ *
+ * @param options - What an approved card with nothing landed waits on, when not a paste, and
+ *   whether its own app is not installed again.
  */
 export function stateChip(
   surface: WordedSurface,
   now: number,
   zone: string | undefined,
-  options: { readonly waitsOn?: 'it' | 'connect' } = {},
+  options: { readonly waitsOn?: 'it' | 'connect'; readonly notReinstalled?: boolean } = {},
 ): StateChipWords {
   const access = accessStanding(surface, now, zone);
   if (access.kind === 'ended') return { text: 'Access ended', tone: 'warn' };
+  // The card's own app is never installed again, so nothing it waits on brings it back (W12X-4).
+  if (options.notReinstalled === true) return { text: 'Ended', tone: 'warn' };
   if (access.kind === 'ending') {
     return {
       text:
@@ -139,6 +147,10 @@ export function stateChip(
     case 'connected':
       return { text: rung ? `Connected ${rung.via}` : 'Connected', tone: 'ok' };
     case 'ungranted':
+      // The approval's own probe finds no credential before IT's install or the manager's
+      // Connect lands one, and the card is waiting on that, not refused (the wave 11 review's m23).
+      if (options.waitsOn === 'it') return { text: 'Waiting on IT', tone: 'muted' };
+      if (options.waitsOn === 'connect') return { text: 'Ready to connect', tone: 'accent' };
       return { text: 'Not granted', tone: 'warn' };
     case 'listed-dead':
       return { text: 'Not answering', tone: 'warn' };
@@ -289,17 +301,41 @@ export function calendarDay(ms: number, zone: string): string {
 }
 
 /**
+ * What a card its approval's probe found with no credential says while it waits for one (the wave
+ * 11 review's m23): the employee reads nothing from the system until IT gives it access, or until
+ * the manager connects it.
+ *
+ * @param employee - The employee's name.
+ * @param system - The card's system, as the card names it.
+ * @param waitsOn - Whom the card waits on.
+ */
+export function awaitingAccessWords(
+  employee: string,
+  system: string,
+  waitsOn: 'it' | 'connect',
+): string {
+  return waitsOn === 'it'
+    ? `${employee} reads nothing from ${system} until IT gives it access.`
+    : `${employee} reads nothing from ${system} until you connect it.`;
+}
+
+/**
  * The manager's read-only line for a system IT connected for the organisation: "Connected for
- * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged).
+ * your organisation by IT on 1 October" (the wave file's draft; a product call, flagged). A card
+ * still acting as a pasted key says the connection is not its own yet, so the line is not read as
+ * true of the card beside "Acts as a key someone pasted" (the wave 11 review's m19).
  *
  * @param connection - The organisation's connection for the card's system.
  * @param zone - The zone the day is named in.
+ * @param onPastedKey - Whether the card still acts as a key someone pasted.
  */
 export function connectedForOrganisationWords(
   connection: Pick<OrganisationSystem, 'connectedAt'>,
   zone: string,
+  onPastedKey = false,
 ): string {
-  return `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  const line = `Connected for your organisation by IT on ${calendarDay(connection.connectedAt, zone)}`;
+  return onPastedKey ? `${line}. This card does not use it yet.` : line;
 }
 
 /**
@@ -477,6 +513,19 @@ export function actsAsAfterRevokeWords(names: {
 }
 
 /**
+ * Whom a Slack card acts as once its employee's own app was created through a connection IT
+ * revoked: nobody, whatever IT connects next, since Day0 never installs that app again (W12X-4;
+ * `KEPT_APP_CONNECTION_REVOKED`). The card's provisioning row says why, once. A draft.
+ */
+export const NOT_REINSTALLED_ACTS_AS = 'nobody';
+
+/**
+ * What such a card says in place of its renewal (W12X-4): nothing goes through it, and renewing
+ * brings nothing back, so none is offered. A draft.
+ */
+export const NOT_REINSTALLED_ACCESS = 'Nothing is read or sent through this card.';
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *
@@ -507,4 +556,141 @@ export function unservedConnectionWords(system: string): string {
  */
 export function noWayOnWords(system: string, employee: string): string {
   return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
+}
+
+/**
+ * What a Slack card covered by IT's connection says when it has no way on because its
+ * documentation describes no install of the employee's own app (W12V-1, words only): what is
+ * missing and which page would supply it. What a card may offer is still read from the
+ * documentation (wave 13's design).
+ *
+ * @param employee - The employee's name.
+ */
+export function slackNoInstallWords(employee: string): string {
+  return `Day0 cannot create ${employee}’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying ${employee}’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.`;
+}
+
+/** What a Slack card says about where the manager's decisions reach them, and what it asks for. */
+export interface DecisionButtonsWords {
+  readonly title: string;
+  readonly note: string;
+  /** The card asks for the app's app-level token. */
+  readonly asksForToken: boolean;
+  /** The card offers to replace a token already landed. */
+  readonly offersReplacement: boolean;
+}
+
+/**
+ * Where a manager channel's decision requests reach the manager (wave 12, 12-M; RM3 (a)): with
+ * Approve and Reject buttons beside the typed code, or the typed code alone and why. Asks for the
+ * app's app-level token only where its absence is the reason.
+ *
+ * @param buttons - Whether the card's requests carry buttons, as `listForAgent` read it.
+ * @param appName - The employee's own app, where the card has one.
+ * @param typedCode - Whether the manager's typed code reaches the app (W12V-7): an app that takes
+ *   no messages is never said to take one.
+ */
+export function decisionButtonsWords(
+  buttons: DecisionButtons,
+  appName: string | undefined,
+  typedCode = true,
+): DecisionButtonsWords {
+  const app = appName ?? "the employee's app";
+  if (buttons.available) {
+    return {
+      // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
+      // before the token landed keeps its typed code alone (W12-R10).
+      title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
+      note: typedCode
+        ? 'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.'
+        : `Each new request to you arrives with Approve and Reject buttons. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
+      asksForToken: false,
+      offersReplacement: true,
+    };
+  }
+  // Where the requests reach the manager without buttons: the typed code, or day0 alone for an app
+  // that takes no messages.
+  const withoutButtons = typedCode
+    ? 'requests reach you with a typed code only'
+    : `requests reach you with no buttons, and with no typed code until ${app} takes messages: decide them in day0`;
+  const typedOnly = (title: string, note: string): DecisionButtonsWords => ({
+    title,
+    note,
+    asksForToken: false,
+    offersReplacement: false,
+  });
+  switch (buttons.why) {
+    case 'no-app-level-token':
+      return {
+        title: "Buttons: needs this app's socket token",
+        note: `${
+          typedCode
+            ? 'Requests reach you with a typed code only.'
+            : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
+        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.`,
+        asksForToken: true,
+        offersReplacement: false,
+      };
+    case 'no-bridge':
+      return typedOnly(
+        'Buttons: needs the Slack socket service',
+        buttons.tokenStored
+          ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
+          : `This deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of ${app}.`,
+      );
+    case 'no-own-app':
+      return typedOnly(
+        'Decisions in Slack: typed codes only',
+        'Buttons need the Slack app Day0 creates for this employee, and this card uses a different connection.',
+      );
+    case 'not-slack-api':
+      return typedOnly(
+        'Decisions in Slack: typed codes only',
+        "This connection can only send plain messages; buttons need Slack's own API.",
+      );
+    default: {
+      const unknown: never = buttons;
+      throw new Error(`unhandled reason ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
+/** What a Slack card says when the manager's typed code cannot reach its app, and its one control. */
+export interface TypedCodeWords {
+  readonly title: string;
+  readonly note: string;
+  /** The control with which the manager says a person turned the messages tab on. */
+  readonly confirm: string;
+}
+
+/**
+ * Whether the manager's typed code reaches the employee's own Slack app (W12V-7): nothing while it
+ * takes messages; otherwise that it does not, who opens its messages tab (Day0 at the card's next
+ * check, or only a person in Slack), the one toggle by Slack's own words, and the control with
+ * which the manager says it is on.
+ *
+ * @param reach - Whether the typed code reaches the app, as `listForAgent` read it.
+ */
+export function typedCodeWords(reach: TypedCodeReach): TypedCodeWords | undefined {
+  const toggle = `turns on App Home, “${MESSAGES_TAB_TOGGLE}”`;
+  switch (reach.state) {
+    case 'open':
+      return undefined;
+    case 'day0-opens':
+      return {
+        title: 'Typed code: off until this app takes messages',
+        note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
+        confirm: 'It is on in Slack',
+      };
+    case 'needs-toggle':
+      return {
+        title: 'Typed code: off until this app takes messages',
+        note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it, and Day0 cannot change this app’s settings. Someone who manages ${reach.appName} in Slack ${toggle}; then say so here.`,
+        confirm: 'It is on in Slack',
+      };
+    default: {
+      const unknown: never = reach;
+      throw new Error(`unhandled reach ${JSON.stringify(unknown)}`);
+    }
+  }
 }

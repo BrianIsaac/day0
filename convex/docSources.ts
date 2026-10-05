@@ -19,6 +19,7 @@ import {
 import { getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { readCardPages, reconcileDocumentedSystems } from './surfaces';
+import { credentialOwnerRefusal } from './handoverFence';
 import { purgeCredential } from './credentials';
 import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
@@ -28,7 +29,6 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
 import {
   endedShort,
-  reasonWithoutLegacyRecord,
   unreadPagesLine,
   unreadRecordIn,
   withUnreadPages,
@@ -36,6 +36,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { credentialPageRef } from '../src/docs/credential-ref';
+import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import {
   FINISHING_CURSOR,
   finishingCursor,
@@ -66,8 +67,9 @@ export { FINISHING_CURSOR };
 
 /**
  * How many finishing pages go by between the checkpoints a run's cursor
- * records: a run begun before 0.6.0 lists its pages, so recording it after
- * every page would rewrite that list each time; a finish resumed from a
+ * records: a run begun before 0.6.0 listed its pages until the
+ * `sync-runs-refs` migration cleared them, so recording it after every page
+ * would have rewritten that list each time; a finish resumed from a
  * checkpoint walks at most this many pages again, which delete nothing new.
  */
 export const FINISHING_CHECKPOINT_EVERY = 10;
@@ -113,8 +115,7 @@ const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this on
 
 /**
  * The patch that says why a run ended short: the reason on one line, and the
- * run's record of its unread pages on its own field, where an earlier
- * release's record kept in the reason text moves as the reason is rewritten.
+ * run's record of its unread pages on its own field.
  */
 function endedShortPatch(
   ending: string,
@@ -148,18 +149,12 @@ async function storedPageCount(ctx: QueryCtx, source: Doc<'docSources'>): Promis
   return newest ? listedCount(newest) : 0;
 }
 
-/** How many page refs a run's listing has named, counted from a pre-0.6.0 run's refs where it kept no count. */
-function listedCount(run: Doc<'docSyncRuns'>): number {
-  return run.pagesListed ?? run.refs?.length ?? 0;
-}
-
 /**
- * The page refs a run begun before 0.6.0 recorded before its listing was
- * stamped on `docPageListings`: its finish keeps them as listed. Empty for
- * every later run.
+ * How many page refs a run's listing has named. A run of a release before 0.6.0 counted its refs,
+ * which the `sync-runs-refs` migration carries into `pagesListed` as it clears them.
  */
-function legacyListedRefs(run: Doc<'docSyncRuns'>): ReadonlySet<string> {
-  return new Set(run.refs ?? []);
+function listedCount(run: Doc<'docSyncRuns'>): number {
+  return run.pagesListed ?? 0;
 }
 
 /** Start the next listing of a source, one that reads from page one, and return its number. */
@@ -435,8 +430,8 @@ export const link = action({
     credential: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docSources'>> => {
-    assertRealMode('Documentation linking');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation linking');
     const input = validateLinkInput({
       label: args.label,
       kind: args.kind,
@@ -493,8 +488,8 @@ export const link = action({
 export const rotateCredential = action({
   args: { sourceId: v.id('docSources'), credential: v.string() },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
-    assertRealMode('Documentation credential rotation');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation credential rotation');
     if (!args.credential) throw new Error('Connection secret is required.');
     const source = await ctx.runQuery(internal.docSources.getOwnedInternal, {
       sourceId: args.sourceId,
@@ -540,8 +535,8 @@ export const rotateCredential = action({
 export const resync = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<void> => {
-    assertRealMode('Documentation resync');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation resync');
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');
@@ -566,8 +561,8 @@ export const resync = mutation({
 export const unlink = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<null> => {
-    assertRealMode('Documentation unlinking');
     const identity = await getCallerOrThrow(ctx);
+    assertRealMode('Documentation unlinking');
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');
@@ -877,7 +872,6 @@ export const beginSync = internalMutation({
       listing:
         resumed === undefined ? await nextListing(ctx, source) : await runListing(ctx, resumed),
       pagesListed: resumed === undefined ? 0 : listedCount(resumed),
-      ...(resumed?.refs !== undefined ? { refs: resumed.refs } : {}),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
@@ -947,8 +941,8 @@ export const restartSync = internalMutation({
  * over `RUN_HISTORY_MS` ago is deleted unless the source still points at it
  * (running, last completed, last discovered); a completed one is kept while
  * the migration that reads completed runs by their completion time has not
- * run. A run begun before 0.6.0 lists its pages, so a pass reads at most
- * `RUN_PRUNE_BATCH`.
+ * run. A run begun before 0.6.0 listed its pages until the `sync-runs-refs`
+ * migration cleared them, so a pass reads at most `RUN_PRUNE_BATCH`.
  *
  * @returns How many runs were deleted.
  */
@@ -1041,7 +1035,6 @@ export const recordSyncBatch = internalMutation({
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
       unread: withUnreadPages(unreadRecordIn(run), args.unread ?? []),
-      reason: reasonWithoutLegacyRecord(run.reason),
     });
     await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
@@ -1133,8 +1126,7 @@ function phaseOf(checkpoint: string, phase: FinishingPhase): void {
  * Internal; the finishing sync walks, with it, only the source's listing rows
  * an earlier listing stamped (D D2 (a)): a page this generation listed was
  * restamped by its batch, one it listed but could not read too (P5-11), so
- * the walk reads nothing a stable corpus keeps, whatever its size. A page a
- * run begun before 0.6.0 recorded in its refs is kept and restamped.
+ * the walk reads nothing a stable corpus keeps, whatever its size.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1144,23 +1136,14 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    // A run begun before 0.6.0 cut off here holds a cursor of its walk over the
-    // pages themselves, which this walk cannot take; the walk starts over, as
-    // every row it has already passed is gone or restamped.
-    const from = finishing.run.listing === undefined ? null : args.from;
     const listing = await runListing(ctx, finishing.run);
-    const legacy = legacyListedRefs(finishing.run);
-    // A row this page restamps or deletes leaves the range behind the cursor.
+    // A row this page deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
-      .paginate({ numItems: STALE_LISTING_PAGE, cursor: from });
+      .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
     let removed = 0;
     for (const row of page.page) {
-      if (legacy.has(row.ref)) {
-        await ctx.db.patch(row._id, { seenBy: listing });
-        continue;
-      }
       const stored = await ctx.db
         .query('docPages')
         .withIndex('by_source_ref', (index) =>
@@ -1246,20 +1229,13 @@ export const pruneMirrors = internalMutation({
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
     const listing = await runListing(ctx, finishing.run);
-    // A run begun before 0.6.0 names some of its pages only in its refs, and a
-    // page the listing migration has not reached yet has no row to restamp.
-    const legacy = legacyListedRefs(finishing.run);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (
-        mirror.sourceRef &&
-        (legacy.has(mirror.sourceRef) ||
-          (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing)))
-      ) {
+      if (mirror.sourceRef && (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing))) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is
@@ -1527,6 +1503,15 @@ export const finishSync = internalMutation({
       )
       .take(1_001);
     if (credentials.length > 1_000) throw new Error('Source exceeds 1,000 credentials.');
+    // What the generation before this one stated tells a value swapped in from one the page
+    // already held under the same label (N23).
+    const previous = source.lastCompletedSyncId
+      ? await ctx.db.get(source.lastCompletedSyncId)
+      : null;
+    const swap: PageSwapContext = {
+      stated: currentCredentialRefs,
+      statedBefore: previous === null ? undefined : new Set(previous.credentialRefs),
+    };
     let credentialsSuperseded = 0;
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
@@ -1534,7 +1519,7 @@ export const finishSync = internalMutation({
       // An earlier sync already superseded it and unbound its surfaces; doing
       // it again would rewrite nothing but the count.
       if (credential.status === 'superseded') continue;
-      await supersedeCredential(ctx, credential);
+      await supersedeCredential(ctx, credential, swap);
       credentialsSuperseded += 1;
     }
     const pageCount = run.pageCount + args.pageCount;
@@ -1572,14 +1557,81 @@ export const finishSync = internalMutation({
   },
 });
 
+/** The verdicts of a card a swapped-out credential held that a re-bind sends back to its probe. */
+const REBOUND_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
+  'connected',
+  'approved',
+  'listed-dead',
+  'ungranted',
+]);
+
+/** The reason `surfaces.endAccessInTransaction` leaves on a card whose access ended. */
+const ACCESS_ENDED_REASON = 'expired';
+
+/** What a re-bound card its manager approved says until its probe has checked the page's new value. */
+const REBOUND_REASON =
+  'The documentation now states a new value under the same label. Day0 bound it to this card and checks it before the card connects again.';
+
+/** What a card sent back to landing a credential says. */
+const UNBOUND_REASON =
+  'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.';
+
+/** The page credentials a finishing sync states, and those the sync it follows stated. */
+interface PageSwapContext {
+  /** Every credential ref this generation stated. */
+  readonly stated: ReadonlySet<string>;
+  /** Every credential ref the source's previous completed generation stated; absent when none. */
+  readonly statedBefore: ReadonlySet<string> | undefined;
+}
+
 /**
- * Supersede one page-derived credential no page of its source states any more,
- * and send every surface bound to it back to landing a credential.
+ * The live row that takes over from a page credential a sync superseded on a page swap (N23; the
+ * wave 3.5 review's M15): among the page's live rows of the same label, which the label resolver
+ * orientation binds a `<credential: label, stored>` marker with returns
+ * (`credentials.pageRowsByLabel`), the one value this generation states that the generation before
+ * it did not. A value the page already stated is another system's under the same label, never the
+ * one swapped in; two new values under the label cannot be told apart, so neither is bound; with
+ * no earlier generation to compare, none is. Undefined in each of those cases.
+ *
+ * The read is bounded as `credentials.store` bounds the page's rows, so a page this reads in full
+ * is one whose credentials were stored.
+ */
+async function replacementFor(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  swap: PageSwapContext,
+): Promise<Doc<'credentials'> | undefined> {
+  const statedBefore = swap.statedBefore;
+  if (typeof credential.source === 'string' || statedBefore === undefined) return undefined;
+  const rows: Doc<'credentials'>[] = await ctx.runQuery(internal.credentials.pageRowsByLabel, {
+    userId: credential.userId,
+    sourceId: credential.source.sourceId,
+    pageRef: credentialPageRef(credential.source.ref),
+    label: credential.label,
+  });
+  const swappedIn = rows.filter(
+    (row) =>
+      row._id !== credential._id &&
+      row.ciphertext !== undefined &&
+      typeof row.source !== 'string' &&
+      swap.stated.has(row.source.ref) &&
+      !statedBefore.has(row.source.ref),
+  );
+  return swappedIn.length === 1 ? swappedIn[0] : undefined;
+}
+
+/**
+ * Supersede one page-derived credential no page of its source states any more. On a page swap
+ * (the page states one new value under the same label, which this sync stored) every surface the
+ * old row held whose employee belongs to the credential's owner is re-bound to the new row; any
+ * other surface goes back to landing a credential.
  */
 async function supersedeCredential(
   ctx: MutationCtx,
   credential: Doc<'credentials'>,
+  swap: PageSwapContext,
 ): Promise<void> {
+  const now = Date.now();
   // Superseded, not revoked: the status alone keeps the value out of every
   // decrypt and exact-value list, and the same value returning on a later
   // sync revives the row (`credentials.store`). Only a person's revoke
@@ -1588,74 +1640,149 @@ async function supersedeCredential(
   await ctx.db.patch(credential._id, {
     status: 'superseded',
     statusReason: 'No longer detected in synced documentation.',
-    supersededAt: Date.now(),
+    supersededAt: now,
   });
   const surfaces = await ctx.db
     .query('surfaces')
     .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
     .take(1_001);
   if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
-  await recordSuperseded(ctx, credential, surfaces);
+  const replacement =
+    surfaces.length === 0 ? undefined : await replacementFor(ctx, credential, swap);
+  const outcomes: SupersededSurface[] = [];
   for (const surface of surfaces) {
-    const request = surface.request as { credential?: Record<string, unknown> } | undefined;
-    const location =
-      surface.credentialLocation ??
-      'Ask the system administrator to land a valid credential using the linked documentation.';
-    await ctx.db.patch(surface._id, {
-      credentialId: undefined,
-      credentialKind: undefined,
-      credentialLocation: location,
-      credentialLanded: false,
-      request: request
-        ? {
-            ...request,
-            credential: {
-              ...request.credential,
-              found: 'location',
-              location,
-              governanceFinding: undefined,
-            },
-          }
-        : undefined,
-      verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict)
-        ? 'ungranted'
-        : surface.verdict,
-      reason:
-        'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
-      // A probe that already decrypted the retired value cannot reconnect this surface.
-      probeGeneration: (surface.probeGeneration ?? 0) + 1,
-      probeStartedAt: undefined,
-      toolAllowlist: undefined,
-      withheldTools: undefined,
-      toolArguments: undefined,
-      lastVerifiedAt: undefined,
-      providerIdentityId: undefined,
-      providerWorkspaceId: undefined,
-      managerDmChannelId: undefined,
-      managerUserId: undefined,
-      managerName: undefined,
-      channelsNotJoined: undefined,
+    // A card handed to another owner keeps its credential for the new manager's re-approval; it is
+    // never bound to the old owner's new value (`credentialOwnerRefusal`, as a hand landing checks).
+    const rebound =
+      replacement !== undefined &&
+      (await credentialOwnerRefusal(ctx.db, surface.agentId, replacement._id)) === null;
+    if (rebound) await rebindSurface(ctx, surface, replacement, now);
+    else await unbindSurface(ctx, surface);
+    outcomes.push({ surface, rebound });
+  }
+  await recordSuperseded(ctx, credential, outcomes, now);
+}
+
+/**
+ * Send a card a superseded page credential held back to landing a credential: unbound, its
+ * request saying where one is documented, and out of `connected`, `approved` and `listed-dead`.
+ */
+async function unbindSurface(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<void> {
+  const request = surface.request as { credential?: Record<string, unknown> } | undefined;
+  const location =
+    surface.credentialLocation ??
+    'Ask the system administrator to land a valid credential using the linked documentation.';
+  await ctx.db.patch(surface._id, {
+    credentialId: undefined,
+    credentialKind: undefined,
+    credentialLocation: location,
+    credentialLanded: false,
+    request: request
+      ? {
+          ...request,
+          credential: {
+            ...request.credential,
+            found: 'location',
+            location,
+            governanceFinding: undefined,
+          },
+        }
+      : undefined,
+    verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict)
+      ? 'ungranted'
+      : surface.verdict,
+    reason: UNBOUND_REASON,
+    ...forgetProbedValue(surface),
+  });
+}
+
+/**
+ * What a probe of the old value learned, cleared, and the probe generation moved on: a probe that
+ * already decrypted the retired value cannot reconnect the card.
+ */
+function forgetProbedValue(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+  return {
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
+    toolAllowlist: undefined,
+    withheldTools: undefined,
+    toolArguments: undefined,
+    lastVerifiedAt: undefined,
+    providerIdentityId: undefined,
+    providerWorkspaceId: undefined,
+    managerDmChannelId: undefined,
+    managerUserId: undefined,
+    managerName: undefined,
+    channelsNotJoined: undefined,
+  };
+}
+
+/**
+ * Bind a card a swapped-out page credential held to the row that took over from it, as a hand
+ * landing binds a pasted one (`surfaces.attachCredential`): the card keeps its approval and its
+ * approved tools and forgets what the old value's probe learned. A card its manager approved is
+ * probed with the new value at once and says so; a card not approved, or whose access has ended
+ * (its renewal probes it), keeps its verdict and its own reason, and nothing is probed.
+ */
+async function rebindSurface(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  replacement: Doc<'credentials'>,
+  now: number,
+): Promise<void> {
+  const accessEnded =
+    surface.reason === ACCESS_ENDED_REASON ||
+    (surface.expiresAt !== undefined && surface.expiresAt <= now);
+  const probe =
+    !accessEnded &&
+    surface.managerApprovedAt !== undefined &&
+    REBOUND_VERDICTS.has(surface.verdict);
+  await ctx.db.patch(surface._id, {
+    credentialId: replacement._id,
+    credentialKind: replacement.kind,
+    credentialLanded: false,
+    // Whom the card acts as is the new row's, named by its label; the old value's identity is
+    // not carried over, as the probe learns the new one.
+    actsAs: actsAsAtUpgrade(
+      { ...surface, providerIdentityId: undefined },
+      { kind: replacement.kind, label: replacement.label },
+    ),
+    ...(probe ? { verdict: 'approved' as const, reason: REBOUND_REASON } : {}),
+    ...forgetProbedValue(surface),
+  });
+  if (probe) {
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: surface._id,
     });
   }
 }
 
+/** A card a superseded page credential held, and whether the page swap re-bound it. */
+interface SupersededSurface {
+  readonly surface: Doc<'surfaces'>;
+  readonly rebound: boolean;
+}
+
 /**
  * Tell every agent whose card was bound to a superseded page credential, one
- * event each through the contract, naming the page and never the value. A
- * credential no card was bound to reaches no agent's feed.
+ * event each through the contract, naming the page and never the value: the
+ * cards sent back to landing a credential, and those re-bound to the value the
+ * page states now. A credential no card was bound to reaches no agent's feed.
  */
 async function recordSuperseded(
   ctx: MutationCtx,
   credential: Doc<'credentials'>,
-  surfaces: readonly Doc<'surfaces'>[],
+  outcomes: readonly SupersededSurface[],
+  now: number,
 ): Promise<void> {
   if (typeof credential.source === 'string') return;
-  const byAgent = new Map<Id<'agents'>, Id<'surfaces'>[]>();
-  for (const surface of surfaces) {
-    byAgent.set(surface.agentId, [...(byAgent.get(surface.agentId) ?? []), surface._id]);
+  const byAgent = new Map<Id<'agents'>, { unbound: Id<'surfaces'>[]; rebound: Id<'surfaces'>[] }>();
+  for (const { surface, rebound } of outcomes) {
+    const cards = byAgent.get(surface.agentId) ?? { unbound: [], rebound: [] };
+    (rebound ? cards.rebound : cards.unbound).push(surface._id);
+    byAgent.set(surface.agentId, cards);
   }
-  const now = Date.now();
-  for (const [agentId, surfaceIds] of byAgent) {
+  for (const [agentId, cards] of byAgent) {
     await appendEvent(ctx, {
       agentId,
       type: 'credential.superseded',
@@ -1664,7 +1791,8 @@ async function recordSuperseded(
         label: credential.label,
         sourceId: credential.source.sourceId,
         page: credentialPageRef(credential.source.ref),
-        surfaceIds,
+        surfaceIds: cards.unbound,
+        ...(cards.rebound.length > 0 ? { reboundSurfaceIds: cards.rebound } : {}),
       },
       createdAt: now,
     });
