@@ -20,6 +20,7 @@ import {
   type CharterBounds,
   type JudgedCorrection,
 } from '../src/work/agreements';
+import { awaitingCheck } from '../src/work/agreement-words';
 import {
   AGREEMENT_APPROVED_VIA,
   AGREEMENT_REFUSAL_REASONS,
@@ -107,13 +108,6 @@ function binds(row: Doc<'workingAgreements'>, agent: Doc<'agents'>): boolean {
     row.userId === scope &&
     (row.agentId === undefined || row.agentId === agent._id)
   );
-}
-
-/** Whether a kept agreement is still waiting on its check: kept on a card, not yet in effect. */
-export function awaitingCheck(
-  row: Pick<Doc<'workingAgreements'>, 'status' | 'approvedAt'>,
-): boolean {
-  return row.status === 'proposed' && row.approvedAt !== undefined;
 }
 
 /** An employee's newest approved charter's boundaries, or null before its first approval. */
