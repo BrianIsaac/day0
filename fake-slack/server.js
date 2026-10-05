@@ -111,6 +111,7 @@ function resetApps() {
   presses.length = 0;
   responseUrls.clear();
   responses.length = 0;
+  refusals.clear();
 }
 
 // Day0's posted messages, by channel and ts, with the app whose bot posted them: what
@@ -157,6 +158,9 @@ const presses = [];
 // response_url as taking a JSON message (`response_type`, `replace_original`, `text`) for the
 // person who pressed; the walks posted none, so this follows the documentation.
 const responseUrls = new Map();
+// Methods a bed asked to be refused, each with the error Slack answers (13-FS): the walks met
+// Slack refusing calls Day0 makes, and a bed reproduces one without changing the fake.
+const refusals = new Map();
 const responses = [];
 // Slack allows an app ten open connections at once (K1).
 const MAX_CONNECTIONS_PER_APP = 10;
@@ -313,6 +317,15 @@ const server = createServer(async (request, response) => {
     app.appLevelToken = `xapp-day0-fake-app-level-token${suffix}`;
     return json(response, 200, { ok: true, token: app.appLevelToken });
   }
+  if (url.pathname === '/proof/refuse' && request.method === 'POST') {
+    const { method, error } = jsonArguments(request, await bodyOf(request));
+    if (typeof method !== 'string' || method === '') {
+      return json(response, 400, { ok: false, error: 'invalid_method' });
+    }
+    if (typeof error === 'string' && error !== '') refusals.set(method, error);
+    else refusals.delete(method);
+    return json(response, 200, { ok: true });
+  }
   if (url.pathname === '/proof/configuration-token' && request.method === 'POST') {
     // IT's Generate Token under Your App Configuration Tokens (13-FS): a fresh pair after a
     // revoke, so a bed lands Slack again without restarting the fake and losing its apps.
@@ -413,6 +426,10 @@ const server = createServer(async (request, response) => {
   }
 
   const method = url.pathname.slice('/api/'.length);
+  if (refusals.has(method)) {
+    count(method);
+    return json(response, 200, { ok: false, error: refusals.get(method) });
+  }
   count(method);
   const body = await bodyOf(request);
   const held = holds.get(method);

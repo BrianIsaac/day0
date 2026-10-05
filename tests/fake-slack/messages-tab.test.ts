@@ -120,6 +120,25 @@ describe('fake Slack: the messages tab as the re-walk found it (13-FS)', (): voi
     });
   });
 
+  it('refuses a method as a bed asks, until the bed lifts it, as Slack refused the walks', async (): Promise<void> => {
+    const { appId } = await installedApp();
+    expect(
+      await proof('/proof/refuse', { method: 'apps.manifest.update', error: 'invalid_manifest' }),
+    ).toEqual({ ok: true });
+    const exported = await api('apps.manifest.export', CONFIGURATION_TOKEN, { app_id: appId });
+    const update = { app_id: appId, manifest: JSON.stringify(exported.manifest) };
+    expect(await api('apps.manifest.update', CONFIGURATION_TOKEN, update)).toEqual({
+      ok: false,
+      error: 'invalid_manifest',
+    });
+    expect(await proof('/proof/refuse', { method: 'apps.manifest.update', error: null })).toEqual({
+      ok: true,
+    });
+    expect(await api('apps.manifest.update', CONFIGURATION_TOKEN, update)).toMatchObject({
+      ok: true,
+    });
+  });
+
   it('keeps the bot’s own posts on an app created without app_home, whose tab Slack leaves read-only', async (): Promise<void> => {
     const { bot } = await installedApp();
     expect(
