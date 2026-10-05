@@ -49,6 +49,7 @@ import {
   type WaterfallPage,
 } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
+import type { ItemPeopleLookups, PersonLookup } from '../src/people/resolution';
 import { isPaused, PAUSED_INTAKE_REASON } from '../src/work/pause';
 import {
   appIdentityOf,
@@ -123,6 +124,12 @@ interface IntakeRecord {
 export interface IntakeCandidate extends WorkCandidate {
   /** When the item was raised, by the provider's clock (a Linear issue's `createdAt`). */
   askedAt?: number;
+  /**
+   * Whom to ask the owner's people graph about once the row lands (wave 13, 13-P): the
+   * requester and owner as the provider identified them, resolved beside the strings
+   * (`people.resolveItemPeople`), never in place of them.
+   */
+  people?: ItemPeopleLookups;
 }
 
 interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
@@ -133,6 +140,8 @@ interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
   askedAt?: number;
   /** When intake read it: the poll's start. */
   observedAt: number;
+  /** Whom to ask the owner's people graph about once the row lands (wave 13, 13-P). */
+  people?: ItemPeopleLookups;
 }
 
 interface IntakeDecisionReply {
@@ -679,7 +688,7 @@ export function issueTeamLabels(issue: Record<string, unknown>): string[] {
  * Returns:
  *   Structured provider payload when one is present.
  */
-function decodeMcpPayload(value: unknown): unknown {
+export function decodeMcpPayload(value: unknown): unknown {
   const record = asRecord(value);
   if (record?.structuredContent !== undefined) return record.structuredContent;
   const content = record?.content;
@@ -866,6 +875,50 @@ function personOf(issue: Record<string, unknown>, keys: readonly string[]): stri
 }
 
 /**
+ * How the people graph is asked about one person field of a Linear issue (wave 13, 13-P; Q11): by
+ * the user's id and the display name Linear prints, in the card's organisation, then by an
+ * address where the provider gives one; never by the graph's own names. The MCP server prints
+ * `createdBy`/`createdById` and `assignee`/`assigneeId`; a GraphQL-shaped read nests `creator` or
+ * `assignee` with its `id`, `name` and `email`.
+ *
+ * @param issue - Provider issue object.
+ * @param keys - The field names to try, in order.
+ * @param workspaceId - The card's Linear organisation, where its probe read one.
+ * @returns The lookups to try in order, or undefined when the issue names nobody there.
+ */
+function linearPersonLookups(
+  issue: Record<string, unknown>,
+  keys: readonly string[],
+  workspaceId: string | undefined,
+): PersonLookup[] | undefined {
+  for (const key of keys) {
+    const value = issue[key];
+    const nested = asRecord(value);
+    const printed = typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+    const idOf = (candidate: unknown): string | undefined =>
+      typeof candidate === 'string' && candidate.trim() !== '' ? candidate.trim() : undefined;
+    const externalId = idOf(issue[`${key}Id`]) ?? idOf(nested?.id);
+    const displayName = printed ?? idOf(nested?.name) ?? idOf(nested?.displayName);
+    const email = idOf(nested?.email) ?? (printed?.includes('@') ? printed : undefined);
+    const lookups: PersonLookup[] = [
+      ...(externalId === undefined && (displayName === undefined || displayName === email)
+        ? []
+        : [
+            {
+              provider: 'linear' as const,
+              ...(externalId === undefined ? {} : { externalId }),
+              ...(displayName === undefined || displayName === email ? {} : { displayName }),
+              ...(workspaceId === undefined ? {} : { workspaceId }),
+            },
+          ]),
+      ...(email === undefined ? [] : [{ provider: 'email' as const, externalId: email }]),
+    ];
+    if (lookups.length > 0) return lookups;
+  }
+  return undefined;
+}
+
+/**
  * Create one normalised work candidate from a Linear issue.
  *
  * Args:
@@ -902,6 +955,12 @@ export function linearCandidate(
           : undefined;
   const requester = personOf(issue, ['creator', 'createdBy']);
   const owner = personOf(issue, ['assignee']);
+  const requesterLookups = linearPersonLookups(
+    issue,
+    ['creator', 'createdBy'],
+    surface.providerWorkspaceId,
+  );
+  const ownerLookups = linearPersonLookups(issue, ['assignee'], surface.providerWorkspaceId);
   // Linear's MCP server prints the identifier as `id` and the UUID as `uuid`;
   // a GraphQL-shaped read prints the UUID as `id` beside `identifier`.
   const alias = [issue.uuid, issue.identifier].find(
@@ -922,6 +981,14 @@ export function linearCandidate(
     requesterLabel: requester ?? owner,
     ...(owner === undefined ? {} : { owner }),
     ...(requester === undefined ? {} : { requester }),
+    ...(requesterLookups === undefined && ownerLookups === undefined
+      ? {}
+      : {
+          people: {
+            ...(requesterLookups === undefined ? {} : { requester: requesterLookups }),
+            ...(ownerLookups === undefined ? {} : { owner: ownerLookups }),
+          },
+        }),
   };
 }
 
@@ -1406,7 +1473,7 @@ export function slackCandidate(
   surface: Doc<'surfaces'>,
   observedAt: number,
   askerName?: string,
-): WorkCandidate {
+): IntakeCandidate {
   const teamId = surface.providerWorkspaceId!;
   const threadKey = `${channel.id}-${message.ts.replace('.', '')}`;
   return {
@@ -1419,6 +1486,17 @@ export function slackCandidate(
     observedAt: new Date(observedAt),
     requesterLabel: askerName ?? message.user,
     requester: message.user,
+    // The asker's name labels the ask and is never asked about (RM6): the graph knows a Slack
+    // user only through an identity a lookup by address recorded.
+    ...(message.user === undefined
+      ? {}
+      : {
+          people: {
+            requester: [
+              { provider: 'slack' as const, externalId: message.user, workspaceId: teamId },
+            ],
+          },
+        }),
     // A reply belongs in the ask's thread: under the mention itself, or under
     // the parent when the mention was already a threaded message.
     replyTarget: {
@@ -1776,6 +1854,7 @@ function seedOf(
     owner: candidate.owner,
     requester: candidate.requester,
     replyTarget: candidate.replyTarget,
+    ...(candidate.people === undefined ? {} : { people: candidate.people }),
   };
 }
 
@@ -2349,8 +2428,21 @@ export function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     recordDecisionPoll: async (record): Promise<void> => {
       await ctx.runMutation(internal.work.recordDecisionPoll, record);
     },
-    seed: async (candidate: IntakeSeed, startedUnder: string | null): Promise<void> => {
+    seed: async (
+      { people, ...candidate }: IntakeSeed,
+      startedUnder: string | null,
+    ): Promise<void> => {
       await ctx.runMutation(internal.intakeSeed.seedListedItem, { ...candidate, startedUnder });
+      if (people === undefined) return;
+      // Whom the requester and owner are in the owner's graph, beside the strings (13-P).
+      await ctx.runMutation(internal.people.resolveItemPeople, {
+        agentId: candidate.agentId,
+        sourceSystem: candidate.sourceSystem,
+        externalId: candidate.externalId,
+        startedUnder,
+        ...(people.requester === undefined ? {} : { requester: [...people.requester] }),
+        ...(people.owner === undefined ? {} : { owner: [...people.owner] }),
+      });
     },
     withdraw: async (
       candidate: IntakeSeed & { leftQueue: string },

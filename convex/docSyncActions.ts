@@ -597,6 +597,14 @@ async function finishGeneration(
       sourceId: source._id,
       runId,
     });
+    // The people the generation's pages name, proposed for the manager to confirm (wave 13,
+    // 13-P): the graph is real mode's.
+    if (SURFACE_MODE === 'real') {
+      await ctx.scheduler.runAfter(0, internal.peopleExtractionActions.extractSource, {
+        sourceId: source._id,
+        runId,
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
       sourceId: source._id,
       pagesRemoved,

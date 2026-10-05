@@ -9,6 +9,14 @@
     { "key": "FIN", "name": "Finance close", "project": "September close" },
     { "key": "LOG", "name": "Logistics desk", "project": "Shipment exceptions" }
   ],
+  "people": [
+    { "name": "Rowan Hale", "email": "rowan.hale@kestrel.test" },
+    { "name": "Lee Tan", "email": "lee.tan@kestrel.test", "admin": true },
+    { "name": "Noor Rahman", "email": "noor.rahman@kestrel.test" },
+    { "name": "Dana Okafor", "email": "dana.okafor@kestrel.test" },
+    { "name": "Ines Duarte", "email": "ines.duarte@kestrel.test" },
+    { "name": "Femi Adeyemi", "email": "femi.adeyemi@kestrel.test" }
+  ],
   "tickets": [
     {
       "key": "revops-tile",
@@ -43,14 +51,16 @@
       "team": "FIN",
       "title": "Accruals booked for September",
       "description": "Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.",
-      "state": "Done"
+      "state": "Done",
+      "assignee": "ines.duarte@kestrel.test"
     },
     {
       "key": "fin-bankrec",
       "team": "FIN",
       "title": "Bank reconciliation for September",
       "description": "Close calendar step, business day 4: the accounting team reconciles the September bank statements in NetLedger.",
-      "state": "In Progress"
+      "state": "In Progress",
+      "assignee": "ines.duarte@kestrel.test"
     },
     {
       "key": "fin-brightwater",

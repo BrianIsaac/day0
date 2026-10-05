@@ -12,6 +12,7 @@ import { HANDOVER_SETTINGS_REASON } from '@/agent/manager-transfer';
 import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
+import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import type { ManagerAt } from '../earlier-manager';
 
@@ -692,6 +693,26 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Seeding work from the approved charter failed${because(p.reason)}; ${
       p.retrying === true ? 'trying again' : 'given up'
     }`,
+  'person.proposed': (p, subject) =>
+    `${subject.name} proposed ${text(p.person) ?? 'a person'} from ${
+      p.via === 'handover' ? 'the charter it brought' : 'its approved charter'
+    }, for ${addressee(subject)} to confirm${
+      p.possiblySame === true ? ', as possibly someone already in the people' : ''
+    }`,
+  'person.confirmed': (p, subject) =>
+    p.how === 'same-person'
+      ? `${decider(subject)} said ${text(p.person) ?? 'a proposed person'} is someone already in the people`
+      : `${decider(subject)} confirmed ${text(p.person) ?? 'a proposed person'}${
+          typeof p.edgesConfirmed === 'number' && p.edgesConfirmed > 0
+            ? ` and ${counted(p.edgesConfirmed, 'relationship')} to them`
+            : ''
+        }`,
+  'person.dismissed': (p, subject) =>
+    `${decider(subject)} dismissed ${text(p.person) ?? 'a proposed person'}`,
+  'relationship.changed': (p, subject) =>
+    `${decider(subject)} ${
+      p.change === 'retired' ? 'ended' : p.change === 'edited' ? 'changed' : 'added'
+    } ${subject.name}'s ${relationshipNoun(p.type)} ${text(p.person) ?? 'in the people'}`,
   'work.charter-derived': (p) =>
     `${counted(p.count, 'work item') ?? 'Work items'} seeded from the charter`,
   'coworker.replied': (p) =>

@@ -380,8 +380,8 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      // Version 6 adds the replaced decision requests (12-M; F2 D14).
-      version: 6,
+      // Version 7 adds the owner's people graph (wave 13, 13-P).
+      version: 7,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -517,6 +517,10 @@ describe('the paged trace export', (): void => {
       managerNotes: 0,
       decisionNotices: 0,
       replacedRequests: 0,
+      // Version 7's people graph (13-P): this owner holds none.
+      people: 0,
+      personIdentities: 0,
+      relationships: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);
@@ -1216,5 +1220,39 @@ describe('the Record tab reader over a long record', (): void => {
       .withIdentity(managerIdentity())
       .query(api.events.record, { agentId, paginationOpts: { numItems: 5, cursor: null } });
     expect(page.page.map((entry) => entry.connection)).toEqual(['Linear']);
+  });
+});
+
+describe('the people graph in the audit export (wave 13, 13-P)', (): void => {
+  it("lists the owner's people, identities and edges, and nothing of another owner's graph", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { seedEdge, seedIdentity, seedPerson } = await import('./fakes/people-graph');
+    const agentId = await seedTracedAgent(harness);
+    const dana = await seedPerson(harness, 'Dana Okafor', {
+      evidence: [{ quote: 'Dana Okafor approves NetLedger access', where: 'Onboarding', at: 2 }],
+    });
+    await seedIdentity(harness, dana, { provider: 'linear', externalId: 'lin-dana' });
+    await seedEdge(harness, dana, { type: 'approval-authority', scope: 'NetLedger access' });
+    const theirs = await seedPerson(harness, 'Their Person', { userId: 'stranger' });
+    await seedIdentity(harness, theirs, { provider: 'slack', externalId: 'U0THEIRS' });
+    await seedEdge(harness, theirs, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      userId: 'stranger',
+    });
+
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
+    expect(trace.sections.people.map((person) => person.displayName)).toEqual(['Dana Okafor']);
+    expect(trace.sections.people[0]?.evidence).toEqual([
+      { quote: 'Dana Okafor approves NetLedger access', where: 'Onboarding', at: 2 },
+    ]);
+    expect(trace.sections.personIdentities.map((identity) => identity.externalId)).toEqual([
+      'lin-dana',
+    ]);
+    expect(trace.sections.relationships).toMatchObject([
+      { toPersonId: dana, type: 'approval-authority', scope: 'NetLedger access' },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('Their Person');
+    expect(JSON.stringify(trace)).not.toContain('U0THEIRS');
   });
 });

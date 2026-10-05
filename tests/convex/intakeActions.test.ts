@@ -53,6 +53,7 @@ import {
   runDecisionSweep,
   runIntakeSweep,
   safeIntakeError,
+  slackCandidate,
   slackChannelsFromPages,
   type IntakeDependencies,
   type IntakeDocumentation,
@@ -2109,6 +2110,8 @@ describe('intake provider contracts', (): void => {
       priority: 'Urgent',
       requesterLabel: 'Sam',
       requester: 'Sam',
+      // Whom intake asks the people graph about (13-P): the name Linear printed, no id given.
+      people: { requester: [{ provider: 'linear', displayName: 'Sam' }] },
     });
     const assigneeOnly = linearCandidate(
       {
@@ -5247,5 +5250,100 @@ describe("a Slack ask's asker, by name where the card allows users.info (the sec
     });
     // One question per asker, however many asks they made.
     expect(infoAsked.toSorted()).toEqual(['UGONE', 'UPRIYA']);
+  });
+});
+
+describe('the people intake asks the graph about (wave 13, 13-P; Q11, RM6)', (): void => {
+  const observedAt = Date.parse('2026-10-05T02:00:00.000Z');
+
+  it("asks about a Linear creator and assignee by the provider's id and display name, then an address", (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+      providerWorkspaceId: 'org-kestrel',
+    });
+    const printed = linearCandidate(
+      {
+        id: 'FIN-1',
+        title: 'Post the close note',
+        url: 'https://linear.app/kestrel/issue/FIN-1',
+        createdBy: 'Rowan Hale',
+        createdById: 'lin-rowan',
+        assignee: 'Dana Okafor',
+        assigneeId: 'lin-dana',
+      },
+      surface,
+      observedAt,
+    );
+    expect(printed?.people).toEqual({
+      requester: [
+        {
+          provider: 'linear',
+          externalId: 'lin-rowan',
+          displayName: 'Rowan Hale',
+          workspaceId: 'org-kestrel',
+        },
+      ],
+      owner: [
+        {
+          provider: 'linear',
+          externalId: 'lin-dana',
+          displayName: 'Dana Okafor',
+          workspaceId: 'org-kestrel',
+        },
+      ],
+    });
+    expect(printed).toMatchObject({ requester: 'Rowan Hale', owner: 'Dana Okafor' });
+
+    const nested = linearCandidate(
+      {
+        id: 'FIN-2',
+        title: 'Reconcile',
+        url: 'https://linear.app/kestrel/issue/FIN-2',
+        assignee: { id: 'lin-dana', name: 'Dana Okafor', email: 'Dana@Kestrel.test' },
+      },
+      surface,
+      observedAt,
+    );
+    expect(nested?.people).toEqual({
+      owner: [
+        {
+          provider: 'linear',
+          externalId: 'lin-dana',
+          displayName: 'Dana Okafor',
+          workspaceId: 'org-kestrel',
+        },
+        { provider: 'email', externalId: 'Dana@Kestrel.test' },
+      ],
+    });
+    const unheld = linearCandidate(
+      { id: 'FIN-3', title: 'Unassigned', url: 'https://linear.app/kestrel/issue/FIN-3' },
+      surface,
+      observedAt,
+    );
+    expect(unheld).not.toHaveProperty('people');
+  });
+
+  it("asks about a Slack asker by the user id in the card's workspace, never by the name Slack gives them", (): void => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', { providerWorkspaceId: 'T0KESTREL' });
+    const ask = slackCandidate(
+      { ts: '1770000000.000100', user: 'UPRIYA', text: '<@UBOT> please review' },
+      { id: 'CASKS', name: 'ops-requests' },
+      surface,
+      observedAt,
+      'Priya',
+    );
+    expect(ask.requesterLabel).toBe('Priya');
+    expect(ask.people).toEqual({
+      requester: [{ provider: 'slack', externalId: 'UPRIYA', workspaceId: 'T0KESTREL' }],
+    });
+    const botless = slackCandidate(
+      { ts: '1770000000.000101', text: 'no author' },
+      { id: 'CASKS', name: 'ops-requests' },
+      surface,
+      observedAt,
+    );
+    expect(botless).not.toHaveProperty('people');
   });
 });

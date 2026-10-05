@@ -1647,6 +1647,15 @@ export async function runSurfaceProbe(
       if (!recorded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (managerUserId !== undefined) {
+        await recordManagerAsOwnerIdentity(ctx, {
+          agentId: surface.agentId,
+          ...(providerWorkspaceId === undefined ? {} : { workspaceId: providerWorkspaceId }),
+          userId: managerUserId,
+          ...(managerName === undefined ? {} : { name: managerName }),
+          lookedUpAt: verifiedAt,
+        });
+      }
       if (surface.path === 'documented-api' && surface.provisioning !== undefined) {
         await openMessagesTabOf(ctx, surfaceId, dependencies, request.asked === true);
       }
@@ -1671,6 +1680,31 @@ export async function runSurfaceProbe(
     }
   }
   return { verdict: 'skipped', reason: 'The approved surface ladder was exhausted.' };
+}
+
+/**
+ * The people graph's half of the probe's identity region (wave 13, 13-P): the manager the probe
+ * looked up becomes the owner's own person's Slack identity (`people.recordOwnerChatIdentity`). A
+ * failure is logged and leaves the probe's verdict alone: the connection stands, and the owner's
+ * next sign-in (`people.ensureOwner`) reads the same user from the card.
+ */
+async function recordManagerAsOwnerIdentity(
+  ctx: Pick<ActionCtx, 'runMutation'>,
+  identity: {
+    readonly agentId: Id<'agents'>;
+    readonly workspaceId?: string;
+    readonly userId: string;
+    readonly name?: string;
+    readonly lookedUpAt: number;
+  },
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.people.recordOwnerChatIdentity, identity);
+  } catch (error: unknown) {
+    log.warn("the probe's manager was not recorded as the owner's Slack identity", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
