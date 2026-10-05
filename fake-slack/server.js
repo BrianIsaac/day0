@@ -635,9 +635,10 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
-    // Slack takes a public channel by its name as well as its id (`#revops`).
-    if (typeof payload.channel === 'string' && payload.channel.startsWith('#')) {
-      const named = PUBLIC_CHANNELS.find((channel) => `#${channel.name}` === payload.channel);
+    // Slack takes a public channel by its name, with or without its #, as well as by its id.
+    if (typeof payload.channel === 'string' && !CHANNELS.includes(payload.channel)) {
+      const name = payload.channel.replace(/^#/, '');
+      const named = PUBLIC_CHANNELS.find((channel) => channel.name === name);
       if (!named) return json(response, 200, { ok: false, error: 'channel_not_found' });
       payload.channel = named.id;
     }

@@ -167,7 +167,7 @@ describe('fake Slack: the messages tab', (): void => {
     ]);
   });
 
-  it('posts to a public channel named by its name, as Slack takes it', async (): Promise<void> => {
+  it('posts to a public channel named by its name, with or without its #, as Slack takes it', async (): Promise<void> => {
     const { bot } = await installedApp(WRITABLE);
     const posted = await api(
       'chat.postMessage',
@@ -176,6 +176,14 @@ describe('fake Slack: the messages tab', (): void => {
       true,
     );
     expect(posted).toMatchObject({ ok: true, channel: 'C_REVOPS' });
+    expect(
+      await api(
+        'chat.postMessage',
+        bot,
+        { channel: 'revops', text: 'The same, named bare.' },
+        true,
+      ),
+    ).toMatchObject({ ok: true, channel: 'C_REVOPS' });
     expect(
       await api('chat.postMessage', bot, { channel: '#no-such-channel', text: 'x' }, true),
     ).toEqual({ ok: false, error: 'channel_not_found' });
