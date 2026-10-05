@@ -1,11 +1,14 @@
 'use client';
 
-import { useQuery } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import { sameManagerAddress } from '@/agent/manager-address';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
+import { employeeTabHref } from '../employee-tabs';
+import { AgreementsCard } from './AgreementsCard';
 import { actorAt, CharterAside } from './CharterAside';
 import { CharterCard } from './CharterCard';
 import { charterActors } from './charter-actors';
@@ -15,6 +18,7 @@ import { charterActors } from './charter-actors';
  * (`charter-review.html`) and as the record of what the employee works under once approved, with
  * its amendments (`agent-charter.html`). The transcript it was drafted from is kept beside it,
  * until a handover: the old manager's words leave with them, and the tab says whose they were.
+ * Beside it in real mode, the working agreements kept with it (A18).
  */
 export function CharterView() {
   const { agent, charter, arriving, reportSentBack, surfaceMode } = useEmployee();
@@ -30,6 +34,16 @@ export function CharterView() {
     api.managerTransfers.earlierManagers,
     charter?.approved ? { agentId: agent._id } : 'skip',
   );
+  // Real mode only, as agreements are: the working agreements kept beside the charter (A18).
+  const agreements = useQuery(
+    api.workingAgreements.listForAgent,
+    charter?.approved && surfaceMode === 'real' ? { agentId: agent._id } : 'skip',
+  );
+  const keepAgreement = useMutation(api.workingAgreements.keep);
+  const editAgreement = useMutation(api.workingAgreements.edit);
+  const retireAgreement = useMutation(api.workingAgreements.retire);
+  const dismissAgreement = useMutation(api.workingAgreements.dismiss);
+  const onCard = (agreementId: Id<'workingAgreements'>) => ({ agreementId, agentId: agent._id });
   // Who acted before a handover is named, never "you" for the earlier manager.
   const actor = (at: number): string => actorAt(at, earlier, agent.bossEmail);
   if (!charter) {
@@ -80,6 +94,23 @@ export function CharterView() {
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
         actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />
+      {agreements !== undefined ? (
+        <AgreementsCard
+          agreements={agreements}
+          employeeName={agent.name}
+          workHref={employeeTabHref(agent._id, 'work')}
+          onKeepForEveryEmployee={(agreementId) =>
+            keepAgreement({
+              ...onCard(agreementId),
+              forEveryEmployee: true,
+              via: 'agreements-card',
+            })
+          }
+          onEdit={(agreementId, statement) => editAgreement({ ...onCard(agreementId), statement })}
+          onRetire={(agreementId) => retireAgreement(onCard(agreementId))}
+          onDismiss={(agreementId) => dismissAgreement(onCard(agreementId))}
+        />
+      ) : null}
     </Columns>
   );
 }
