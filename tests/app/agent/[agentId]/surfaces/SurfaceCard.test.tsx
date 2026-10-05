@@ -912,7 +912,12 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain('Typed code');
       expect(markup).not.toContain('app-level token');
     }
-    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+    // Re-pinned for 13-FS: the reason is IT's whether or not Slack is connected again, and the
+    // card offers no check that could only overwrite it.
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).toContain("IT's reason: The re-walk ends the bed connection.");
+      expect(markup).not.toContain('Check the connection');
+    }
   });
 
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {

@@ -4,6 +4,7 @@ import schema from '../../convex/schema';
 import {
   activeConnectionFor,
   activeSystemsAmong,
+  endedByItsRevoke,
   revokedConnectionsAmong,
   systemConnectionRevoked,
 } from '../../convex/organisationConnectionReads';
@@ -92,6 +93,76 @@ describe('reading an organisation connection', (): void => {
           ])),
         ].sort(),
       ).toEqual([ids.linearRevoked, ids.notionRevoked].sort());
+    });
+  });
+
+  it('says IT’s revoke ended a card for good when its own app was created through a revoked connection, and until IT connects again otherwise (13-FS)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const connection = (status: 'active' | 'revoked', at: number) =>
+        ctx.db.insert('organisationConnections', {
+          system: 'slack',
+          displayName: 'Slack',
+          kind: 'slack-configuration',
+          mode: 'per-employee',
+          scopes: [],
+          registeredBy: { via: 'setup-cli', at },
+          status,
+          createdAt: at,
+        });
+      const revoked = await connection('revoked', 1);
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Dara',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Slack',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      const card = async (ownApp: boolean) =>
+        (await ctx.db.get(
+          await ctx.db.insert('surfaces', {
+            agentId,
+            slug: ownApp ? 'slack' : 'slack-shared',
+            displayName: 'Slack',
+            class: 'chat',
+            endpoint: 'https://slack.com/api/',
+            verdict: 'approved',
+            whereFound: [],
+            credentialLanded: false,
+            organisationConnectionId: revoked,
+            ...(ownApp
+              ? {
+                  provisioning: {
+                    appId: 'A-DARA',
+                    appName: 'Dara (Day0)',
+                    clientId: '1.2',
+                    clientSecretCredentialId: secret,
+                    installUrl: 'https://slack.com/oauth/v2/authorize',
+                    redirectUrl: 'https://day0.test/api/oauth/slack',
+                    scopes: [],
+                    organisationConnectionId: revoked,
+                    createdAt: 1,
+                  },
+                }
+              : {}),
+            createdAt: 1,
+          }),
+        ))!;
+      const kept = await card(true);
+      const shared = await card(false);
+      expect(await endedByItsRevoke(ctx, kept)).toBe('kept-app-ended');
+      expect(await endedByItsRevoke(ctx, shared)).toBe('connection-revoked');
+      await connection('active', 2);
+      expect(await endedByItsRevoke(ctx, kept)).toBe('kept-app-ended');
+      expect(await endedByItsRevoke(ctx, shared)).toBeUndefined();
+      expect(await endedByItsRevoke(ctx, { ...shared, credentialId: secret })).toBeUndefined();
     });
   });
 });

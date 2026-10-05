@@ -9,6 +9,7 @@ import {
 } from './_generated/server';
 import { isEventOf } from '../src/events/contract';
 import { appendEvent, eventsOfType } from './eventLog';
+import { endedByItsRevoke } from './organisationConnectionReads';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
 import {
@@ -268,7 +269,8 @@ interface MessagesTabRow {
 
 /**
  * Internal, for `check:access`: one page of the employee apps Day0 created that carry decision
- * requests, each with whether the manager's typed code reaches it.
+ * requests, each with whether the manager's typed code reaches it; an app IT's revoke ended is not
+ * installed again and carries none, so it is left out (13-FS, W12X-4).
  */
 export const messagesTabReport = internalQuery({
   args: { cursor: v.union(v.string(), v.null()) },
@@ -277,11 +279,16 @@ export const messagesTabReport = internalQuery({
       .query('surfaces')
       .withIndex('by_class', (q) => q.eq('class', 'chat'))
       .paginate({ cursor: args.cursor, numItems: REPORT_PAGE });
-    const installed = page.page.flatMap((surface) =>
-      surface.provisioning?.installedAt === undefined
-        ? []
-        : [{ surface, appName: surface.provisioning.appName }],
-    );
+    const installed = (
+      await Promise.all(
+        page.page.map(async (surface) =>
+          surface.provisioning?.installedAt === undefined ||
+          (await endedByItsRevoke(ctx, surface)) === 'kept-app-ended'
+            ? []
+            : [{ surface, appName: surface.provisioning.appName }],
+        ),
+      )
+    ).flat();
     const apps = await Promise.all(
       installed.map(
         async ({ surface, appName }): Promise<MessagesTabRow> => ({

@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { httpAction, internalMutation, internalQuery, type MutationCtx } from './_generated/server';
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
+import { endedByItsRevoke } from './organisationConnectionReads';
 import { resolveManagerReply } from './work';
 import { isManagerChannel } from './workLoop';
 import {
@@ -325,7 +326,8 @@ export const cardOf = internalQuery({
 
 /**
  * Internal, the landing's: the card's employee and its own app, when it has one (null when it
- * connects through no app Day0 created for the employee); null when the card is not a chat card.
+ * connects through no app Day0 created for the employee), and whether IT's revoke ended that app;
+ * null when the card is not a chat card.
  */
 export const appLevelTokenTarget = internalQuery({
   args: { surfaceId: v.id('surfaces') },
@@ -335,6 +337,8 @@ export const appLevelTokenTarget = internalQuery({
   ): Promise<{
     agentId: Id<'agents'>;
     app: { appId: string; appName: string } | null;
+    /** The card's own app was created through a connection IT revoked (W12X-4). */
+    keptAppEnded: boolean;
   } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (surface === null || surface.class !== 'chat') return null;
@@ -345,6 +349,7 @@ export const appLevelTokenTarget = internalQuery({
         provisioning === undefined
           ? null
           : { appId: provisioning.appId, appName: provisioning.appName },
+      keptAppEnded: (await endedByItsRevoke(ctx, surface)) === 'kept-app-ended',
     };
   },
 });

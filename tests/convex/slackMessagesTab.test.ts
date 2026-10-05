@@ -247,4 +247,20 @@ describe('messagesTabReport', (): void => {
       { appName: 'Iris (Day0)', reach: 'refused' },
     ]);
   });
+
+  it('leaves out an app IT’s revoke ended, which is not installed again (13-FS, W12X-4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const connectionId = await landSlack(harness);
+    await card(harness, { name: 'Bram', createdBy: connectionId, takesMessages: true });
+    await card(harness, { name: 'Dara', createdBy: connectionId, takesMessages: true });
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'The re-walk ends the bed connection.',
+    });
+    await landSlack(harness);
+    const report = await harness.query(internal.slackMessagesTab.messagesTabReport, {
+      cursor: null,
+    });
+    expect(report.apps).toEqual([]);
+  });
 });

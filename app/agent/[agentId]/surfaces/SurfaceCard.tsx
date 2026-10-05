@@ -446,7 +446,9 @@ export function SurfaceCard({
         surface.reason !== skipReason &&
         surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
-            {surface.connectionRevoked ? itsReasonWords(surface.reason) : surface.reason}
+            {surface.connectionRevoked || surface.keptAppNotReinstalled
+              ? itsReasonWords(surface.reason)
+              : surface.reason}
           </p>
         ) : null}
         {awaitingAccess ? (
@@ -667,7 +669,9 @@ export function SurfaceCard({
             onReject={actions.reject}
           />
         ) : null}
-        {PROBEABLE.has(surface.verdict) ? (
+        {/* A card IT's revoke ended has nothing to check: a probe could only fail and replace IT's
+            reason (13-FS, W12X-4). */}
+        {PROBEABLE.has(surface.verdict) && !notReinstalled && !surface.connectionRevoked ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button size="small" onClick={actions.probe} disabled={pending === 'probe'}>
               {pending === 'probe' ? 'Checking…' : 'Check the connection'}

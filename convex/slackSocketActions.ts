@@ -16,6 +16,7 @@ import {
   NO_OWN_APP_FOR_TOKEN,
   NOT_AN_APP_LEVEL_TOKEN,
 } from '../src/surfaces/slack-socket';
+import { KEPT_APP_TAKES_NO_TOKEN } from '../src/surfaces/kept-app';
 
 /** How long Slack's `apps.connections.open` may take. */
 const OPEN_TIMEOUT_MS = 20_000;
@@ -126,7 +127,8 @@ async function landToken(
  * token is checked by opening a Socket Mode connection with it before anything is kept; it is
  * never logged and never returned, and any refusal names Slack's reason without it. Writes a
  * credentials row held by the organisation, the card's `provisioning.appLevelTokenCredentialId`,
- * and a `surface.socket-token-landed` event; an earlier token's row is ended in Day0.
+ * and a `surface.socket-token-landed` event; an earlier token's row is ended in Day0. Refused, with
+ * nothing asked of Slack, on a card whose own app IT's revoke ended (W12X-4).
  */
 export const landAppLevelToken = action({
   args: { surfaceId: v.id('surfaces'), token: v.string() },
@@ -139,6 +141,7 @@ export const landAppLevelToken = action({
     await assertOwnsAgentAction(ctx, target.agentId);
     assertRealMode('Slack buttons');
     if (target.app === null) throw new ConvexError(NO_OWN_APP_FOR_TOKEN);
+    if (target.keptAppEnded) throw new ConvexError(KEPT_APP_TAKES_NO_TOKEN);
     const token = args.token.trim();
     if (!isAppLevelTokenShape(token)) throw new ConvexError(NOT_AN_APP_LEVEL_TOKEN);
     await landToken(ctx, { surfaceId: args.surfaceId, ...target.app }, token);

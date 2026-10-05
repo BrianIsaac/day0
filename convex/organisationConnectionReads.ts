@@ -1,5 +1,7 @@
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx } from './_generated/server';
+import { organisationSystemOf } from '../src/surfaces/access-request';
+import { keptAppNotReinstalled } from '../src/surfaces/kept-app';
 
 /*
  * The organisation's connections as other modules read them (the access plan, section 4.1),
@@ -89,4 +91,30 @@ export async function activeSystemsAmong(
     ),
   );
   return new Set(active.flat());
+}
+
+/**
+ * Whether IT's revoke ended the card and nothing can connect it now (13-FS, W12X-4): its own app
+ * was created through a connection now revoked (`kept-app-ended`, for good), or it holds no
+ * credential and the organisation connection it used is revoked with none active for its system
+ * since (`connection-revoked`, until IT connects it again); undefined otherwise.
+ *
+ * @param ctx - A query's or a mutation's context.
+ * @param surface - The card.
+ */
+export async function endedByItsRevoke(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+): Promise<'kept-app-ended' | 'connection-revoked' | undefined> {
+  const creatorId = surface.provisioning?.organisationConnectionId;
+  const creator = creatorId === undefined ? null : await ctx.db.get(creatorId);
+  if (keptAppNotReinstalled(surface, creator?.status === 'revoked')) return 'kept-app-ended';
+  if (surface.credentialId !== undefined || surface.organisationConnectionId === undefined) {
+    return undefined;
+  }
+  const used = await ctx.db.get(surface.organisationConnectionId);
+  if (used?.status !== 'revoked') return undefined;
+  const system = organisationSystemOf(surface);
+  if (system !== undefined && (await activeConnectionFor(ctx, system)) !== null) return undefined;
+  return 'connection-revoked';
 }
