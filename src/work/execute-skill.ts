@@ -2895,10 +2895,12 @@ export function executorInstructions(args: {
  * the work was done "from the applied ledger", held its close back (REVOPS-2 run 1) or answered
  * partial while closing (run 2), and stopped. So the run is told that the approval of the set is
  * what lands each write in it, and answers for the work as it will stand once the set lands. A run
- * that did not do the work still answers partial or not-done, and never closes (decision D-1 (b)).
+ * that did not do the work still answers partial or not-done however its writes land, and never
+ * closes (decision D-1 (b)): the bed's REVOPS-3 answered done for its plan's gap note until the
+ * rule said so.
  */
 export const HELD_SET_REAL =
-  "Held writes are approved together: the writes this response emits wait as one set, and the manager's approval of that set sends them all. Write each write the work needs, the ticket's state change included when the work is done once they land: a plan step that waits for the manager's approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket's state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it.";
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';

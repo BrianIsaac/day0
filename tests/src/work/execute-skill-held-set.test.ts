@@ -119,6 +119,16 @@ describe('the closing set of a supervised run, told how its held writes land (W1
     expect(told).toContain('a write emitted here counts as done');
   });
 
+  it('keeps workDone on the work the item asks for: a set that only records why it could not be done is not done (the bed’s REVOPS-3)', async (): Promise<void> => {
+    // The bed (5 October): with the held-set rule alone, the walk's REVOPS-3 answered "done" for
+    // "the plan's scope ... recording the gap on REVOPS-9 and escalating", the ticket left open.
+    await closingSet(false, RUN_2_CLOSING).catch((): void => undefined);
+    const told = recorded.instructions.at(-1) ?? '';
+    expect(told).toContain(
+      '`workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands.',
+    );
+  });
+
   it('tells a run with autonomous actions on nothing of a held set: its writes land as emitted', async (): Promise<void> => {
     await closingSet(true, RUN_2_CLOSING).catch((): void => undefined);
     const told = recorded.instructions.at(-1) ?? '';
