@@ -2,7 +2,6 @@
 
 import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
-import type { WithoutSystemFields } from 'convex/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
