@@ -1,6 +1,13 @@
 import { ConvexError, v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import { internalMutation, internalQuery, mutation, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
+import { isEventOf } from '../src/events/contract';
 import { appendEvent, eventsOfType } from './eventLog';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
@@ -33,12 +40,58 @@ async function appTakesMessages(
   agentId: Id<'agents'>,
   appId: string,
 ): Promise<boolean> {
+  return (await newestOpening(ctx, agentId, appId)) !== undefined;
+}
+
+/** The newest `surface.app-messages-open` line the employee's record holds for the app, if any. */
+async function newestOpening(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+  appId: string,
+): Promise<{ readonly how: MessagesTabOpenHow; readonly at: number } | undefined> {
   const opened = await eventsOfType(ctx, agentId, 'surface.app-messages-open')
     .order('desc')
     .take(OPEN_EVENTS_READ);
-  return opened.some(
-    (event) => (event.payload as { readonly appId?: unknown } | null)?.appId === appId,
-  );
+  for (const event of opened) {
+    if (!isEventOf(event, 'surface.app-messages-open') || event.payload.appId !== appId) continue;
+    return { how: event.payload.how, at: event.createdAt };
+  }
+  return undefined;
+}
+
+/** How many chat cards one page of the messages tab backfill reads; each may read its record. */
+const MESSAGES_TAB_BACKFILL_PAGE = 25;
+
+/**
+ * Copy onto each chat card's app the open state the employee's record kept (the
+ * `surfaces-messages-tab` pass, 13-K; W12V-7): the newest `surface.app-messages-open` line for
+ * the card's app, as `provisioning.messagesTab` (`open`, how, when). A card with no app of Day0's,
+ * an app the record does not name, and an app whose state is already written (the newer word) are
+ * left, so a second run changes nothing.
+ *
+ * @param ctx - The migration page's mutation context.
+ * @param cursor - Where the previous page stopped, or null for the first.
+ */
+export async function backfillMessagesTabPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('surfaces')
+    .withIndex('by_class', (q) => q.eq('class', 'chat'))
+    .paginate({ numItems: MESSAGES_TAB_BACKFILL_PAGE, cursor });
+  let changed = 0;
+  for (const surface of page.page) {
+    const app = surface.provisioning;
+    if (app === undefined || app.messagesTab !== undefined) continue;
+    const opening = await newestOpening(ctx, surface.agentId, app.appId);
+    if (opening === undefined) continue;
+    await ctx.db.patch(surface._id, {
+      provisioning: { ...app, messagesTab: { state: 'open', how: opening.how, at: opening.at } },
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /** Whether the configuration connection that created the card's app is still active. */

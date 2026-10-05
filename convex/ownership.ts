@@ -30,6 +30,8 @@ import {
   NOT_AN_ADMINISTRATOR,
 } from '../src/lib/administrators';
 import { isOrganisationOwnerKey } from '../src/lib/organisation-key';
+import { PERSON_NOT_YOURS, RELATIONSHIP_NOT_YOURS } from '../src/people/vocabulary';
+import { AGREEMENT_NOT_YOURS } from '../src/work/agreement-vocabulary';
 import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
 
@@ -497,4 +499,93 @@ export async function assertOwnsVoiceSession(
   if (!session) throw new Error('voice session not found');
   await callersAgent(ctx, caller, session.agentId);
   return session;
+}
+
+/**
+ * The owner scope a caller's owner-level rows are keyed and read under (wave 13, 13-K; the wave
+ * file's section 5.1): the people graph, its identities and edges, and the working agreements.
+ * Every owner-level lookup of the caller's goes through it, so keying them by a company rather
+ * than an owner later is a change here alone (the enhancements plan, section 12.2). Today it is
+ * the owner key ({@link ownerKeyOf}).
+ *
+ * @param caller - A caller a guard admitted.
+ * @returns The scope every owner-level index leads with.
+ */
+export function ownerScope(caller: Pick<Caller, 'ownerKey'>): string {
+  return caller.ownerKey;
+}
+
+/**
+ * The owner scope of an employee's owner, for a path that writes or reads the owner's rows with no
+ * caller (an internal function, a migration, the work loop): the same scope {@link ownerScope}
+ * gives the owner when they call, or undefined for an employee no owner holds, whose owner-level
+ * rows do not exist.
+ *
+ * @param agent - The employee, or any row carrying its owner key.
+ */
+export function employeeOwnerScope(agent: Pick<Doc<'agents'>, 'userId'>): string | undefined {
+  return agent.userId === undefined ? undefined : ownerScope({ ownerKey: agent.userId });
+}
+
+/**
+ * A row of an owner-level table if the caller's owner scope holds it; throws the one refusal for
+ * a row of another scope and a row that does not exist. The caller is admitted before the read.
+ */
+async function ownedInScope<Row extends { readonly userId: string }>(
+  ctx: QueryCtx | MutationCtx,
+  read: () => Promise<Row | null>,
+  refusal: string,
+): Promise<Row> {
+  const scope = ownerScope(await getCallerOrThrow(ctx));
+  const row = await read();
+  if (row === null || row.userId !== scope) throw new ConvexError(refusal);
+  return row;
+}
+
+/**
+ * The person, if the caller's owner scope holds it (13-K for 13-P): the guard of every public
+ * function that reads or changes one person of the graph. The caller is admitted before the row is
+ * read, and a person of another owner reads as one that does not exist.
+ *
+ * @throws ConvexError with {@link PERSON_NOT_YOURS}; the not-authenticated error for an anonymous
+ *   caller.
+ */
+export async function assertOwnsPerson(
+  ctx: QueryCtx | MutationCtx,
+  personId: Id<'people'>,
+): Promise<Doc<'people'>> {
+  return await ownedInScope(ctx, async () => await ctx.db.get(personId), PERSON_NOT_YOURS);
+}
+
+/**
+ * The edge, if the caller's owner scope holds it (13-K for 13-P): the guard of every public
+ * function that changes or retires one edge. Admits the caller before the read.
+ *
+ * @throws ConvexError with {@link RELATIONSHIP_NOT_YOURS}; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertOwnsRelationship(
+  ctx: QueryCtx | MutationCtx,
+  relationshipId: Id<'relationships'>,
+): Promise<Doc<'relationships'>> {
+  return await ownedInScope(
+    ctx,
+    async () => await ctx.db.get(relationshipId),
+    RELATIONSHIP_NOT_YOURS,
+  );
+}
+
+/**
+ * The working agreement, if the caller's owner scope holds it (13-K for 13-W): the guard of every
+ * public function that keeps, edits, promotes or retires one, whether it binds one employee or
+ * every employee. Admits the caller before the read.
+ *
+ * @throws ConvexError with {@link AGREEMENT_NOT_YOURS}; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertOwnsAgreement(
+  ctx: QueryCtx | MutationCtx,
+  agreementId: Id<'workingAgreements'>,
+): Promise<Doc<'workingAgreements'>> {
+  return await ownedInScope(ctx, async () => await ctx.db.get(agreementId), AGREEMENT_NOT_YOURS);
 }

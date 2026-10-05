@@ -77,6 +77,57 @@ async function waitingSince(
   return latest?.createdAt;
 }
 
+/** How many `proposed` cards one page of the mark's backfill reads; each may read its record. */
+const MARK_BACKFILL_PAGE = 25;
+
+/** One page of a pass over the deployment's `proposed` cards. */
+export interface ProposedCardsPage {
+  readonly read: number;
+  readonly changed: number;
+  readonly cursor: string;
+  readonly isDone: boolean;
+}
+
+/**
+ * Mark each card a handover kept before the mark existed (the `surfaces-kept-identity-since`
+ * pass, 13-K; the round review's m16): every `proposed` card the sweep now holds a kept identity
+ * by its reason's words alone ({@link holdsKeptIdentity} with no mark), dated as the sweep dates
+ * it ({@link waitingSince}: its newest `surface.proposed` line), or by the upgrade when its record
+ * holds none, so no card's wait ends sooner than it would have. A marked card and every other card
+ * are left, so a second run changes nothing. Once every deployment has run it, the sweep's
+ * reason-word fallback has nothing left to read and goes in the release after.
+ *
+ * @param ctx - The migration page's mutation context.
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @param now - The upgrade's time, for a card whose record names no proposal.
+ */
+export async function markKeptBeforeTheMarkPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+  now: number,
+): Promise<ProposedCardsPage> {
+  const page = await ctx.db
+    .query('surfaces')
+    .withIndex('by_verdict', (index) => index.eq('verdict', 'proposed'))
+    .paginate({ numItems: MARK_BACKFILL_PAGE, cursor });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.keptIdentitySince !== undefined || !(await holdsKeptIdentity(ctx, surface))) {
+      continue;
+    }
+    await ctx.db.patch(surface._id, {
+      keptIdentitySince: (await waitingSince(ctx, surface)) ?? now,
+    });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /** One page of {@link endUnapproved}: how many it ended, and where the next page starts. */
 export interface KeptSweepPage {
   readonly ended: number;

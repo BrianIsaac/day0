@@ -7,7 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, assertOwnsSkill } from './ownership';
+import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
@@ -33,7 +33,9 @@ import {
  * A version is what a verified skill is; an employee's `skills` row is what it holds. Every
  * lookup goes through `ownerVersions`, which leads every index read with the owner key, so a
  * lookup can only ever answer the owner it names: a lookup across owners is impossible by index,
- * not refused by a filter. 13-K re-points that one helper to `ownerScope`.
+ * not refused by a filter. The public `library` read passes it the caller's `ownerScope` (13-K);
+ * the internal paths pass the employee's owner key, the same scope today, which a company key
+ * would route through `employeeOwnerScope` too.
  *
  * Writers: registration (`skills.completeRegistration`, through `recordRegisteredVersion`), the
  * re-check stamp (`stampRecheckDue`, the helper every trigger calls), the handover's copy
@@ -916,13 +918,15 @@ function libraryEntry(version: Doc<'skillVersions'>): LibraryEntry {
 
 /**
  * Public, guarded by `assertOwnsAgent`: the versions of one shape in the library of the
- * employee's owner, newest first. Reads only; the lookup is the owner's by index.
+ * employee's owner, newest first. Reads only; the lookup is the caller's owner scope by index
+ * (`ownerScope`, 13-K), which the guard has just held to be the employee's owner.
  */
 export const library = query({
   args: { agentId: v.id('agents'), surfaceClass: v.string(), operation: v.string() },
   handler: async (ctx, args): Promise<LibraryEntry[]> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const versions = await ownerVersions(ctx.db, agent.userId!, {
+    const caller = await getCallerOrThrow(ctx);
+    await assertOwnsAgent(ctx, args.agentId);
+    const versions = await ownerVersions(ctx.db, ownerScope(caller), {
       by: 'shape',
       surfaceClass: args.surfaceClass,
       operation: args.operation,

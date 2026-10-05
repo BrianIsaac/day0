@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 interface Holdings {
   employees: boolean;
   skillLibrary: boolean;
+  people: boolean;
   handoverWords: boolean;
   retiredBoundaries: boolean;
   documentation: boolean;
@@ -23,9 +24,11 @@ vi.mock('convex/react', () => ({
 import { ResetCard, deletionWarning, heldNow, unlinkLabel } from '../../../app/home/ResetCard';
 import { focusedName, mount, press, said, unmountAll } from '../../fixtures/dom/press';
 
+// Re-pinned at 13-K: `reset.holdings` answers `people` too, the graph and agreements a deletion takes.
 const NOTHING: Holdings = {
   employees: false,
   skillLibrary: false,
+  people: false,
   handoverWords: false,
   retiredBoundaries: false,
   documentation: false,
@@ -96,6 +99,17 @@ describe('ResetCard', (): void => {
       read.holdings = holding(held);
       expect(buttonOf(renderToStaticMarkup(<ResetCard />))).not.toContain('disabled=""');
     }
+  });
+
+  it('is live for a manager who keeps people or working agreements, and says they go (13-K)', (): void => {
+    read.holdings = holding({ people: true });
+    expect(buttonOf(renderToStaticMarkup(<ResetCard />))).not.toContain('disabled=""');
+    expect(heldNow(holding({ skillLibrary: true, people: true }), false)).toBe(
+      'Stored for you now: your skill library and the people and working agreements you keep.',
+    );
+    expect(deletionWarning(holding({ employees: true, people: true }), false)).toBe(
+      'This deletes every employee and its data and the people and working agreements you keep. Your sign-in stays. It cannot be undone.',
+    );
   });
 
   it('is disabled while there is nothing to delete, or before the page knows', (): void => {

@@ -159,6 +159,8 @@ const oneEmployeeMetrics = {
 const state = vi.hoisted(() => ({
   roster: [] as unknown[],
   inbox: undefined as unknown,
+  /** Every mutation the page sent, by function name. */
+  sent: [] as string[],
   /** How many employees report to someone else, as `agents.employeesReportingElsewhere` counts. */
   reportingElsewhere: undefined as unknown,
   /** The manager's finished handovers, as `managerTransfers.departures` lists them. */
@@ -224,7 +226,11 @@ vi.mock('convex/react', () => {
     // The home reads its inbox through `useQueries`, which answers a failed read as a value.
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
-    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    useMutation:
+      (reference: FunctionReference<'mutation'>): (() => Promise<void>) =>
+      async (): Promise<void> => {
+        state.sent.push(getFunctionName(reference));
+      },
   };
 });
 
@@ -542,6 +548,21 @@ describe('the company home', (): void => {
     });
     expect(page).toContain('Company supervision');
     expect(page).toMatchSnapshot();
+  });
+});
+
+describe("the owner's own person", (): void => {
+  it('asks the backend to keep it when the signed-in home opens (wave 13, 13-K)', (): void => {
+    vi.useRealTimers();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    state.roster = roster;
+    state.inbox = inbox;
+    state.sent = [];
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    act(() => root.render(<SignedInDashboard boss={boss} />));
+    expect(state.sent).toContain('people:ensureOwner');
+    act(() => root.unmount());
   });
 });
 

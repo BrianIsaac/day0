@@ -13,6 +13,7 @@ import {
   assertOwnsAgent,
   getCallerOrThrow,
   ownedAgentOrNull,
+  ownerScope,
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
@@ -62,8 +63,10 @@ export const AGENT_KEYED_TABLES = [
   'managerQuestions',
   'managerDecisionNotices',
   'replacedDecisionRequests',
+  'socketHeartbeats',
   'managerNotes',
   'corrections',
+  'workingAgreements',
   'decisionBatches',
   'skills',
   'permissionGrants',
@@ -96,6 +99,15 @@ export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const
 export const OWNER_LIBRARY_TABLES = ['skillVersions'] as const;
 
 /**
+ * The owner's people graph (wave 13, 13-K; the wave file's section 5.1), keyed by the owner scope
+ * and named by no `agentId`: an employee's retire keeps every person and identity and retires the
+ * edges leaving the employee ({@link retireEdgesOf}), since they are the owner's record of whom
+ * the employee worked with; the owner's deletion deletes the three with the owner-wide working
+ * agreements ({@link deleteOwnerPeople}). `workingAgreements` itself is agent-keyed (RM5 (a)).
+ */
+export const OWNER_PEOPLE_TABLES = ['people', 'personIdentities', 'relationships'] as const;
+
+/**
  * The tables of the organisation as a whole (wave 11, 11-AK; the access plan, section 4.1): the
  * systems IT connected at install and their ledger. They belong to no owner, so neither a retire
  * nor an owner's deletion touches them, and the organisation's secrets they name are
@@ -103,6 +115,120 @@ export const OWNER_LIBRARY_TABLES = ['skillVersions'] as const;
  * misses by index. Only an administrator's revoke ends a connection (11-AO).
  */
 export const DEPLOYMENT_ACCESS_TABLES = ['organisationConnections', 'connectionEvents'] as const;
+
+/** The most rows one read of the people graph's deletion and edge retirement takes. */
+const PEOPLE_PAGE = 200;
+
+/** The edge standings a retire ends: one in force, and two never confirmed. */
+const STANDING_EDGES: ReadonlySet<Doc<'relationships'>['status']> = new Set([
+  'proposed',
+  'active',
+  'disputed',
+]);
+
+/**
+ * Retire the edges leaving one employee (wave 13, 13-K; the wave file's section 5.1), each kept
+ * as the owner's record of whom the employee worked with: an `active` edge ends now
+ * (`effectiveUntil`), and a `proposed` or `disputed` one, never in force, is `retired` with no end,
+ * so no reading of who held an edge on a date counts it. An edge already superseded, retired or
+ * ended keeps how and when it ended. The retire calls it, and a handover's move is to (13-P):
+ * neither leaves an edge of the old owner's that reads as live. Read as a stream over the
+ * employee's own edges, which its collaborators bound.
+ *
+ * @param ctx - The retire's or the move's mutation context.
+ * @param agentId - The departing employee.
+ * @param now - When it departed.
+ * @returns How many edges it retired.
+ */
+export async function retireEdgesOf(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  let retired = 0;
+  for await (const edge of ctx.db
+    .query('relationships')
+    .withIndex('by_from_agent_type', (q) => q.eq('fromAgentId', agentId))) {
+    if (edge.effectiveUntil !== undefined || !STANDING_EDGES.has(edge.status)) continue;
+    await ctx.db.patch(edge._id, {
+      status: 'retired',
+      ...(edge.status === 'active' ? { effectiveUntil: now } : {}),
+    });
+    retired += 1;
+  }
+  return retired;
+}
+
+/**
+ * Delete every row of one owner-scoped table under a scope, a page at a time. Every page is
+ * inside the deletion's one transaction, as the employees' own rows and the skill library are
+ * (`deleteOwnerLibrary`), so the graph's size counts against the transaction's limits: an owner's
+ * graph is the people their employees work with, a few hundred rows, far inside them. Each read
+ * sees the pages already deleted, so the loop ends at the first short page.
+ */
+async function deleteScoped(
+  read: () => Promise<ReadonlyArray<{ readonly _id: Id<keyof DataModel & string> }>>,
+  remove: (id: Id<keyof DataModel & string>) => Promise<void>,
+): Promise<number> {
+  let deleted = 0;
+  for (;;) {
+    const page = await read();
+    for (const row of page) await remove(row._id);
+    deleted += page.length;
+    if (page.length < PEOPLE_PAGE) return deleted;
+  }
+}
+
+/**
+ * Delete the owner's people graph and every working agreement left under the owner's scope (wave
+ * 13, 13-K; RM5 (a)): the edges, the identities, the people, the owner's own row among them, and
+ * the agreements no employee holds (each employee's own went with it). The whole-owner deletion's
+ * step; the owner's next sign-in writes their own row again (`people.ensureOwner`).
+ *
+ * @param ctx - The deletion's mutation context.
+ * @param scope - The owner scope (`ownerScope`).
+ * @returns How many rows it deleted.
+ */
+export async function deleteOwnerPeople(ctx: MutationCtx, scope: string): Promise<number> {
+  const remove = async (id: Id<keyof DataModel & string>): Promise<void> => {
+    await ctx.db.delete(id);
+  };
+  const counts = [
+    await deleteScoped(
+      async () =>
+        await ctx.db
+          .query('relationships')
+          .withIndex('by_user_to', (q) => q.eq('userId', scope))
+          .take(PEOPLE_PAGE),
+      remove,
+    ),
+    await deleteScoped(
+      async () =>
+        await ctx.db
+          .query('personIdentities')
+          .withIndex('by_user_provider_external', (q) => q.eq('userId', scope))
+          .take(PEOPLE_PAGE),
+      remove,
+    ),
+    await deleteScoped(
+      async () =>
+        await ctx.db
+          .query('people')
+          .withIndex('by_user_status', (q) => q.eq('userId', scope))
+          .take(PEOPLE_PAGE),
+      remove,
+    ),
+    await deleteScoped(
+      async () =>
+        await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_user_status', (q) => q.eq('userId', scope))
+          .take(PEOPLE_PAGE),
+      remove,
+    ),
+  ];
+  return counts.reduce((sum, count) => sum + count, 0);
+}
 
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
@@ -200,6 +326,11 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
         .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId)),
       limit,
     ),
+  socketHeartbeats: (db, { agentId }, limit) =>
+    upTo(
+      db.query('socketHeartbeats').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
   managerNotes: (db, { agentId }, limit) =>
     upTo(
       db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
@@ -208,6 +339,13 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   corrections: (db, { agentId }, limit) =>
     upTo(
       db.query('corrections').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  // The employee's own agreements (RM5 (a)); the owner-wide ones, with no `agentId`, go with the
+  // owner's deletion instead.
+  workingAgreements: (db, { agentId }, limit) =>
+    upTo(
+      db.query('workingAgreements').withIndex('by_agent_status', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   decisionBatches: (db, { agentId }, limit) =>
@@ -878,9 +1016,13 @@ async function retireEmployees(
   const retired = new Map<Id<'agents'>, Retired>();
   for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
   if (options.single) {
-    for (const agent of agents) await releaseAuthor(ctx, agent._id);
+    for (const agent of agents) {
+      await releaseAuthor(ctx, agent._id);
+      await retireEdgesOf(ctx, agent._id, now);
+    }
   } else {
     await deleteOwnerLibrary(ctx, userId);
+    await deleteOwnerPeople(ctx, ownerScope({ ownerKey: userId }));
   }
   await cancelJobsFor(ctx, {
     ids: new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
@@ -1168,10 +1310,41 @@ export const deleteMyData = mutation({
   },
 });
 
+/**
+ * Whether the owner scope holds a person other than the owner's own row, an edge or a working
+ * agreement: what of the people graph a deletion would take that a sign-in does not write again.
+ * Each read stops at its first match; the people read takes two rows, past the one owner row.
+ */
+async function holdsPeople(db: DatabaseReader, scope: string): Promise<boolean> {
+  const [people, edge, agreement] = await Promise.all([
+    // At most one row is the owner's own, so two rows always name another person when there is one.
+    db
+      .query('people')
+      .withIndex('by_user_status', (q) => q.eq('userId', scope))
+      .take(2),
+    db
+      .query('relationships')
+      .withIndex('by_user_to', (q) => q.eq('userId', scope))
+      .first(),
+    db
+      .query('workingAgreements')
+      .withIndex('by_user_status', (q) => q.eq('userId', scope))
+      .first(),
+  ]);
+  const person = people.some((row) => row.isOwner !== true);
+  return person || edge !== null || agreement !== null;
+}
+
 /** Whether the owner holds each kind of row a deletion of their data removes or changes. */
 const holdingsValidator = v.object({
   employees: v.boolean(),
   skillLibrary: v.boolean(),
+  /**
+   * A person, an edge or a working agreement of the owner's (13-K). The owner's own person is not
+   * counted: their next sign-in writes it again, so it alone never makes the deletion's control
+   * live.
+   */
+  people: v.boolean(),
   handoverWords: v.boolean(),
   retiredBoundaries: v.boolean(),
   documentation: v.boolean(),
@@ -1198,7 +1371,7 @@ async function deletionHoldings(
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<Infer<typeof holdingsValidator>> {
   const { ownerKey, address } = party;
-  const [employee, version, source, credential, requests, retirements] = await Promise.all([
+  const [employee, version, people, source, credential, requests, retirements] = await Promise.all([
     db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
@@ -1207,6 +1380,7 @@ async function deletionHoldings(
       .query('skillVersions')
       .withIndex('by_owner_shape', (q) => q.eq('userId', ownerKey))
       .first(),
+    holdsPeople(db, ownerScope({ ownerKey })),
     db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', ownerKey))
@@ -1245,6 +1419,7 @@ async function deletionHoldings(
   return {
     employees: employee !== null,
     skillLibrary: version !== null,
+    people,
     handoverWords: requests.some((request) => request !== null),
     retiredBoundaries: retirements.some(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,

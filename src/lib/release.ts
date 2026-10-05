@@ -16,7 +16,7 @@
  * ships the first migration of a release; `tests/convex/migrations.test.ts`
  * holds it equal to the migrations' own releases.
  */
-export const NEWEST_MIGRATION_RELEASE = '0.16.0';
+export const NEWEST_MIGRATION_RELEASE = '0.17.0';
 
 /** A release as a stamp names it: three dot-separated numbers, no prefix. */
 const RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
