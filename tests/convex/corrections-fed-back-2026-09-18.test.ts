@@ -363,6 +363,7 @@ describe('a note on item one changes the plan of item two', (): void => {
       sourceSystem: 'linear',
       surfaces: ['linear', 'slack'],
       appliedTo: [],
+      origin: 'dashboard',
     });
     expect(correction.retiredAt).toBeUndefined();
   });
@@ -791,6 +792,7 @@ describe("the manager's other written reasons are kept too", (): void => {
       kind: 'rejection',
       text: 'Damage claims go to the carrier portal, never to the customer.',
       itemTitle: 'Exception: SH-4520 damaged in transit',
+      origin: 'dashboard',
     });
   });
 
@@ -842,7 +844,12 @@ describe('retrying a cancelled plan', (): void => {
     expect(row.state).toBe('cancelled');
     expect(row.managerFeedback).toMatchObject({ reason: CANCEL_REASON, kind: 'plan-rejection' });
     const [kept] = await correctionsOf(harness, agentId);
-    expect(kept).toMatchObject({ workItemId, kind: 'plan-rejection', text: CANCEL_REASON });
+    expect(kept).toMatchObject({
+      workItemId,
+      kind: 'plan-rejection',
+      text: CANCEL_REASON,
+      origin: 'dashboard',
+    });
   });
 
   it('returns the row to claimed with the plan cleared, and the turned-down plan never runs', async (): Promise<void> => {

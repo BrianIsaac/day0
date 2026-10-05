@@ -21,6 +21,9 @@ import type { ExecutionPlan } from './types';
 
 export type CorrectionKind = ManagerFeedbackKind;
 
+/** Where the manager gave a correction: on the dashboard, or in the manager channel (A14). */
+export type CorrectionOrigin = 'dashboard' | 'channel';
+
 /** A kept correction as the selection reads it; the `corrections` row carries these fields. */
 export interface CorrectionRecord {
   _id: string;

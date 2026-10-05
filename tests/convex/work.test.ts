@@ -610,10 +610,10 @@ describe('batched decisions', (): void => {
     }
     // The reason is kept once per item for each item's employee's later work.
     const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
-    expect(kept.map((row) => [row.workItemId, row.kind, row.text]).sort()).toEqual(
+    expect(kept.map((row) => [row.workItemId, row.kind, row.text, row.origin]).sort()).toEqual(
       [
-        [first.workItemId, 'rejection', 'not this week'],
-        [second.workItemId, 'rejection', 'not this week'],
+        [first.workItemId, 'rejection', 'not this week', 'channel'],
+        [second.workItemId, 'rejection', 'not this week', 'channel'],
       ].sort(),
     );
   });
@@ -2020,7 +2020,13 @@ describe('single-use manager decisions', (): void => {
     });
     const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
     expect(kept).toMatchObject([
-      { agentId, workItemId, kind: 'plan-rejection', text: 'Use the revised runbook' },
+      {
+        agentId,
+        workItemId,
+        kind: 'plan-rejection',
+        text: 'Use the revised runbook',
+        origin: 'channel',
+      },
     ]);
   });
 

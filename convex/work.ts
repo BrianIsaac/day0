@@ -5075,7 +5075,13 @@ async function cancelPlanInTransaction(
   }
   const skipReason = planCancelledReason(reason);
   const feedback = managerText(reason);
-  if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
+  if (feedback) {
+    await keepCorrectionInTransaction(ctx, row, {
+      kind: 'plan-rejection',
+      text: feedback,
+      origin: via,
+    });
+  }
   const now = Date.now();
   await ctx.db.patch(row._id, {
     state: 'cancelled',
@@ -6430,8 +6436,14 @@ async function rejectActionsInTransaction(
   const rejected = await ctx.db.get(args.workItemId);
   if (rejected) await settleBatchesHolding(ctx, rejected);
   await scheduleRequestClose(ctx, args.workItemId);
-  if (feedback)
-    await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
+  if (feedback) {
+    await keepCorrectionInTransaction(ctx, row, {
+      kind: 'rejection',
+      text: feedback,
+      origin: via,
+      runId: args.pendingRunId,
+    });
+  }
   await releaseItemClaim(ctx, args.workItemId, now);
   await appendEvent(ctx, {
     agentId: row.agentId,

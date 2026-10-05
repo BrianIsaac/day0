@@ -247,7 +247,14 @@ export const retryFailed = mutation({
       evaluationUnavailableCause: undefined,
     });
     // The note is also kept for the employee's later work of the same kind.
-    if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);
+    // Retry is the dashboard's alone: the manager channel decides plans and held writes only.
+    if (feedback) {
+      await keepCorrectionInTransaction(ctx, row, {
+        kind: 'retry-note',
+        text: feedback,
+        origin: 'dashboard',
+      });
+    }
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.retry',
