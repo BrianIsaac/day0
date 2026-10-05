@@ -60,6 +60,7 @@ import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
 import type * as ownership from '../ownership.js';
 import type * as people from '../people.js';
+import type * as peopleProposals from '../peopleProposals.js';
 import type * as probeActions from '../probeActions.js';
 import type * as refreshLease from '../refreshLease.js';
 import type * as reset from '../reset.js';
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   orientationData: typeof orientationData;
   ownership: typeof ownership;
   people: typeof people;
+  peopleProposals: typeof peopleProposals;
   probeActions: typeof probeActions;
   refreshLease: typeof refreshLease;
   reset: typeof reset;
