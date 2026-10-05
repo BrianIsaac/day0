@@ -694,7 +694,7 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
   );
 }
 
-/** The decision-buttons row's words, its landing state and its one control. */
+/** The typed-code row's words, its recording state and its one control. */
 export interface TypedCodeRowProps {
   readonly words: TypedCodeWords;
   readonly error?: string;
@@ -733,6 +733,7 @@ export function TypedCodeRow(props: TypedCodeRowProps): React.ReactNode {
   );
 }
 
+/** The decision-buttons row's words, its landing state and its one control. */
 export interface DecisionButtonsRowProps {
   readonly words: DecisionButtonsWords;
   readonly error?: string;

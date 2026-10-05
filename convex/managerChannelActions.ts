@@ -399,7 +399,6 @@ export const markRequestReplaced = internalAction({
   },
 });
 
-/** Send the sole acknowledgement claimed for a late or duplicate reply. */
 /** How long the already-decided notice waits between looks for the acknowledgement it follows. */
 const NOTICE_WAIT_MS = 1_000;
 
