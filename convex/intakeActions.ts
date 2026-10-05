@@ -688,7 +688,7 @@ export function issueTeamLabels(issue: Record<string, unknown>): string[] {
  * Returns:
  *   Structured provider payload when one is present.
  */
-function decodeMcpPayload(value: unknown): unknown {
+export function decodeMcpPayload(value: unknown): unknown {
   const record = asRecord(value);
   if (record?.structuredContent !== undefined) return record.structuredContent;
   const content = record?.content;

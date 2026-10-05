@@ -763,3 +763,158 @@ export const recordExtractionFailure = internalMutation({
     return true;
   },
 });
+
+/** A connected card of the owner's that can look a person up by address. */
+export interface LookupCard {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly kind: 'slack' | 'linear';
+  readonly credentialId: Id<'credentials'>;
+  readonly endpoint?: string;
+  readonly workspaceId?: string;
+}
+
+/** The validator of {@link LookupCard}. */
+const lookupCardValidator = v.object({
+  surfaceId: v.id('surfaces'),
+  kind: v.union(v.literal('slack'), v.literal('linear')),
+  credentialId: v.id('credentials'),
+  endpoint: v.optional(v.string()),
+  workspaceId: v.optional(v.string()),
+});
+
+/** One person to look up: their address and the cards that can look it up. */
+const lookupTargetValidator = v.object({
+  personId: v.id('people'),
+  address: v.string(),
+  cards: v.array(lookupCardValidator),
+});
+
+/** How many of an owner's employees, and cards of one employee, a lookup's read takes. */
+const OWNER_CARDS_READ = 200;
+
+/**
+ * The cards of an owner's employees that can look a person up by address, one per kind and
+ * workspace: a connected Slack card (`users.lookupByEmail`, which every Slack probe requires) and a
+ * connected Linear card whose approval allows `get_user`. The employee's own connection, never the
+ * owner's or another vendor's.
+ */
+async function lookupCardsOf(ctx: QueryCtx, scope: string): Promise<LookupCard[]> {
+  const employees = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', scope))
+    .take(OWNER_CARDS_READ);
+  const cards = (
+    await Promise.all(
+      employees.map(
+        async (agent) =>
+          await ctx.db
+            .query('surfaces')
+            .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+            .take(OWNER_CARDS_READ),
+      ),
+    )
+  ).flat();
+  const chosen = new Map<string, LookupCard>();
+  for (const card of cards) {
+    if (card.verdict !== 'connected' || card.credentialId === undefined) continue;
+    const kind =
+      card.class === 'chat' && card.path === 'documented-api'
+        ? 'slack'
+        : card.class === 'kanban' &&
+            card.path === 'mcp' &&
+            card.toolAllowlist?.includes('get_user') === true
+          ? 'linear'
+          : undefined;
+    if (kind === undefined) continue;
+    const key = `${kind}/${card.providerWorkspaceId ?? ''}`;
+    if (chosen.has(key)) continue;
+    chosen.set(key, {
+      surfaceId: card._id,
+      kind,
+      credentialId: card.credentialId,
+      ...(card.endpoint === undefined ? {} : { endpoint: card.endpoint }),
+      ...(card.providerWorkspaceId === undefined ? {} : { workspaceId: card.providerWorkspaceId }),
+    });
+  }
+  return [...chosen.values()];
+}
+
+/**
+ * Internal, for `peopleLookupActions.lookUpAddresses`: each person still in the graph with an
+ * address, with the cards of their owner's employees that can look the address up.
+ */
+export const lookupTargets = internalQuery({
+  args: { personIds: v.array(v.id('people')) },
+  returns: v.array(lookupTargetValidator),
+  handler: async (ctx, args): Promise<Infer<typeof lookupTargetValidator>[]> => {
+    const targets: Infer<typeof lookupTargetValidator>[] = [];
+    const cardsByScope = new Map<string, LookupCard[]>();
+    for (const personId of args.personIds) {
+      const person = await ctx.db.get(personId);
+      if (person === null || person.status === 'dismissed' || person.primaryEmail === undefined) {
+        continue;
+      }
+      let cards = cardsByScope.get(person.userId);
+      if (cards === undefined) {
+        cards = await lookupCardsOf(ctx, person.userId);
+        cardsByScope.set(person.userId, cards);
+      }
+      if (cards.length === 0) continue;
+      targets.push({ personId, address: person.primaryEmail, cards: [...cards] });
+    }
+    return targets;
+  },
+});
+
+/** The validator of an identity a lookup found. */
+const foundIdentityValidator = v.object({
+  provider: v.union(v.literal('slack'), v.literal('linear')),
+  externalId: v.string(),
+  workspaceId: v.optional(v.string()),
+  displayName: v.optional(v.string()),
+});
+
+/**
+ * Internal, for `peopleLookupActions.lookUpAddresses`: record what a lookup by a person's address
+ * found as their identities (`source: 'provider-lookup'`, verified now). An identity on a proposal
+ * answers for nobody until Confirm (readers read confirmed people only); one another person
+ * already holds is left for the manager to merge.
+ *
+ * @returns How many identities it added.
+ */
+export const recordLookups = internalMutation({
+  args: { personId: v.id('people'), found: v.array(foundIdentityValidator) },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const person = await ctx.db.get(args.personId);
+    if (person === null || person.status === 'dismissed') return 0;
+    const now = Date.now();
+    let added = 0;
+    for (const identity of args.found) {
+      const held = (await identitiesUnder(ctx, person.userId, [identity])).filter(
+        (row) => row.providerWorkspaceId === identity.workspaceId,
+      );
+      if (held.length > 0) continue;
+      await ctx.db.insert('personIdentities', {
+        userId: person.userId,
+        personId: person._id,
+        provider: identity.provider,
+        ...(identity.workspaceId === undefined
+          ? {}
+          : { providerWorkspaceId: identity.workspaceId }),
+        externalId: identity.externalId,
+        ...(identity.displayName === undefined
+          ? {}
+          : {
+              displayName: identity.displayName,
+              displayNameKey: personNameKey(identity.displayName),
+            }),
+        verifiedAt: now,
+        source: 'provider-lookup',
+        createdAt: now,
+      });
+      added += 1;
+    }
+    return added;
+  },
+});
