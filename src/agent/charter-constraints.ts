@@ -121,6 +121,7 @@ export function withoutProvenanceSuffixes(charter: Charter): Charter {
     proposedFunction: stripProvenanceSuffix(charter.proposedFunction),
     evidence: charter.evidence.map((item) => ({ ...item, text: stripProvenanceSuffix(item.text) })),
     shortTermGoals: {
+      ...charter.shortTermGoals,
       day30: stripProvenanceSuffix(charter.shortTermGoals.day30),
       day60: stripProvenanceSuffix(charter.shortTermGoals.day60),
       day90: stripProvenanceSuffix(charter.shortTermGoals.day90),

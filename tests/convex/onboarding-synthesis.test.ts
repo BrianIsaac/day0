@@ -22,7 +22,12 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
  * synthesised constraints are whatever the test sets before the call.
  */
 const scripted = vi.hoisted(() => ({
-  constraints: [] as Array<{ kind: string; quote: string; wording: string[] }>,
+  constraints: [] as Array<{
+    kind: string;
+    quote: string;
+    wording: string[];
+    binds: Array<{ field: string; index: number }>;
+  }>,
   charterPrompts: [] as string[],
   systemPrompts: {} as Record<string, string>,
   /** When set, the charter agent answers with this payload instead of the 14 September clauses. */
@@ -63,6 +68,7 @@ vi.mock('../../src/lib/mastra', () => ({
           day30: 'Clean drafts on tickets.',
           day60: 'Own routine tickets.',
           day90: 'Cover close-week tracker maintenance.',
+          stated: { day30: true, day60: true, day90: true },
         },
         proposedBoundaries: {
           willDo: [
@@ -148,11 +154,13 @@ describe('charter synthesis from the 14 September transcript', (): void => {
         kind: 'candidate-property',
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned, prioritized'],
+        binds: [{ field: 'willDo', index: 0 }],
       },
       {
         kind: 'system-boundary',
         quote: 'Never post to public channels.',
         wording: ['Post to public Slack channels.'],
+        binds: [{ field: 'willNotDo', index: 0 }],
       },
     ];
     const charter = await synthesise();
@@ -166,12 +174,14 @@ describe('charter synthesis from the 14 September transcript', (): void => {
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned, prioritized'],
         origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 0 }],
       },
       {
         kind: 'system-boundary',
         quote: 'Never post to public channels.',
         wording: ['Post to public Slack channels.'],
         origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 0 }],
       },
     ]);
     expect(body.proposedBoundaries.willDo[0]).toContain('owned, prioritized');
@@ -191,6 +201,10 @@ describe('charter synthesis from the 14 September transcript', (): void => {
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned', 'prioritized'],
         origin: 'derived',
+        binds: [
+          { field: 'proposedFunction', index: 0 },
+          { field: 'willDo', index: 0 },
+        ],
       },
     ]);
   });
@@ -206,7 +220,16 @@ describe('provenance suffixes on clauses', (): void => {
 
   it('strips the suffix GLM wrote on every clause of the 16 September draft and still verifies the constraint', async (): Promise<void> => {
     useSurfaceMode('mock');
-    scripted.draft = GLM_DRAFT_2026_09_16;
+    // The 16 September reply in the shape the drafter now answers in: the goals said to be given,
+    // and the rule with no binds, so it is bound by the clause its wording is in.
+    scripted.draft = {
+      ...GLM_DRAFT_2026_09_16,
+      shortTermGoals: {
+        ...GLM_DRAFT_2026_09_16.shortTermGoals,
+        stated: { day30: true, day60: true, day90: true },
+      },
+      constraints: GLM_DRAFT_2026_09_16.constraints.map((rule) => ({ ...rule, binds: [] })),
+    };
     const charter = await synthesise();
     const body = charter.body as Charter;
     expect(body.proposedFunction).toBe(CLEAN_CLAUSES_2026_09_16.proposedFunction);
@@ -219,7 +242,10 @@ describe('provenance suffixes on clauses', (): void => {
     expect(body.evidence).toEqual([
       { text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' },
     ]);
-    expect(body.shortTermGoals).toEqual(CLEAN_CLAUSES_2026_09_16.shortTermGoals);
+    expect(body.shortTermGoals).toEqual({
+      ...CLEAN_CLAUSES_2026_09_16.shortTermGoals,
+      stated: { day30: true, day60: true, day90: true },
+    });
     expect(body.priorityReading).toEqual(CLEAN_CLAUSES_2026_09_16.priorityReading);
     expect(JSON.stringify(body)).not.toContain(PROVENANCE_SUFFIX_2026_09_16.trim());
     expect(body.constraints?.[0]).toEqual({
@@ -227,6 +253,7 @@ describe('provenance suffixes on clauses', (): void => {
       quote: 'Never post to public channels.',
       wording: ['Post to public Slack channels.'],
       origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
     });
   });
 });
@@ -285,6 +312,7 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
         kind: 'system-boundary',
         quote: 'Never post to public channels.',
         wording: ['Post to public Slack channels.'],
+        binds: [{ field: 'willNotDo', index: 0 }],
       },
     ];
     const { harness, agentId, sessionId, charterId } = await draftFromSession();
