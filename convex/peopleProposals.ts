@@ -1,7 +1,11 @@
 import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import type { MutationCtx, QueryCtx } from './_generated/server';
+import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import { employeeOwnerScope } from './ownership';
 import { normaliseManagerAddress } from '../src/agent/manager-address';
+import { transcriptTurns, type TranscriptTurn } from '../src/agent/transcript-turns';
+import { charterPeople, charterQuote, type CharterPerson } from '../src/people/charter-people';
+import { managerQuoteFor } from '../src/people/evidence';
 import {
   matchProposal,
   type HeldIdentity,
@@ -362,3 +366,132 @@ export async function proposePersonInTransaction(
     }
   }
 }
+
+/** How many of an employee's one-to-one sessions are read to find the one a charter came from. */
+const SESSIONS_SEARCHED = 20;
+
+/** How many superseded versions are walked back to the draft the one-to-one wrote. */
+const VERSIONS_WALKED = 50;
+
+/** The one-to-one a charter's first version was drafted from, with when it closed. */
+async function oneToOneOf(
+  ctx: QueryCtx,
+  charter: Doc<'charters'>,
+): Promise<{ turns: TranscriptTurn[]; at: number } | undefined> {
+  let first = charter;
+  for (let hops = 0; first.supersedes !== undefined && hops < VERSIONS_WALKED; hops += 1) {
+    const previous = await ctx.db.get(first.supersedes);
+    if (previous === null) break;
+    first = previous;
+  }
+  const sessions = await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', charter.agentId))
+    .order('desc')
+    .take(SESSIONS_SEARCHED);
+  const session = sessions.find((candidate) => candidate.charterId === first._id);
+  if (session === undefined) return undefined;
+  const turns =
+    session.turns !== undefined && session.turns.length > 0
+      ? session.turns.map(({ speaker, text }): TranscriptTurn => ({ speaker, text }))
+      : transcriptTurns(session.transcriptText ?? '');
+  return {
+    turns,
+    at: session.conversationEndedAt ?? session.endedAt ?? session.startedAt,
+  };
+}
+
+/** One charter person as a proposal from the employee, with the best words there are for them. */
+function charterProposal(
+  person: CharterPerson,
+  agentId: Id<'agents'>,
+  charter: Doc<'charters'>,
+  oneToOne: { turns: readonly TranscriptTurn[]; at: number } | undefined,
+  now: number,
+): { proposal: ProposedPerson; origin: ProposalOrigin } {
+  const quote = oneToOne === undefined ? undefined : managerQuoteFor(person.name, oneToOne.turns);
+  const evidence: Evidence =
+    quote !== undefined && oneToOne !== undefined
+      ? { quote, where: ONE_TO_ONE_WHERE, at: oneToOne.at }
+      : {
+          quote: charterQuote(person),
+          where: `charter version ${charter.version}`,
+          at: charter.approvedAt ?? now,
+        };
+  return {
+    proposal: {
+      name: person.name,
+      identities: [],
+      evidence: [evidence],
+      edges: [
+        {
+          type: person.type,
+          fromAgentId: agentId,
+          ...(person.scope === undefined ? {} : { scope: person.scope }),
+        },
+      ],
+    },
+    origin: { source: quote === undefined ? 'charter' : 'one-to-one', sourceRef: charter._id },
+  };
+}
+
+/** Where the one-to-one's words were said, as the card says it. */
+export const ONE_TO_ONE_WHERE = 'the one-to-one';
+
+/**
+ * Propose the people an approved charter names into its employee's owner's graph (A1): one per
+ * named collaborator and neighbouring role, each with the manager's own sentence from the
+ * one-to-one where it can be found, else the charter's line, and the edge from the employee. Safe
+ * to run again: the same words are a repeat. Nothing for an employee no owner holds.
+ *
+ * @param ctx - The mutation's context.
+ * @param agent - The employee whose charter it is.
+ * @param charter - The approved charter.
+ * @param now - The proposal's time.
+ * @returns What each person came to.
+ */
+export async function proposeCharterPeople(
+  ctx: MutationCtx,
+  agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
+  charter: Doc<'charters'>,
+  now: number,
+): Promise<ProposalOutcome[]> {
+  const scope = employeeOwnerScope(agent);
+  if (scope === undefined) return [];
+  const people = charterPeople(charter.body);
+  if (people.length === 0) return [];
+  const oneToOne = await oneToOneOf(ctx, charter);
+  const outcomes: ProposalOutcome[] = [];
+  for (const person of people) {
+    const { proposal, origin } = charterProposal(person, agent._id, charter, oneToOne, now);
+    outcomes.push(await proposePersonInTransaction(ctx, scope, proposal, origin, now));
+  }
+  return outcomes;
+}
+
+/**
+ * Internal, scheduled by `onboarding.postCharterApproval` in real mode: propose the people an
+ * approved charter names ({@link proposeCharterPeople}). A charter that is no longer approved, or
+ * not the employee's, proposes nobody. Writes `people`, `personIdentities` and `relationships`.
+ *
+ * @returns How many people it proposed afresh.
+ */
+export const proposeFromCharter = internalMutation({
+  args: { agentId: v.id('agents'), charterId: v.id('charters') },
+  returns: v.object({ proposed: v.number() }),
+  handler: async (ctx, args): Promise<{ proposed: number }> => {
+    const [agent, charter] = await Promise.all([
+      ctx.db.get(args.agentId),
+      ctx.db.get(args.charterId),
+    ]);
+    if (agent === null || charter === null || charter.agentId !== agent._id || !charter.approved) {
+      return { proposed: 0 };
+    }
+    const outcomes = await proposeCharterPeople(ctx, agent, charter, Date.now());
+    return {
+      proposed: outcomes.filter(
+        (outcome) => outcome.kind === 'proposed' || outcome.kind === 'possibly',
+      ).length,
+    };
+  },
+});

@@ -440,3 +440,89 @@ describe('the mock office in the drafted charter (round 0141 R-D item 5)', (): v
     expect(drafter.prompts.at(-1)).not.toContain('[office]');
   });
 });
+
+/** Name two people in the seeded charter and keep the one-to-one it was drafted from. */
+async function namePeople(
+  harness: TestConvex<typeof schema>,
+  agentId: Id<'agents'>,
+  charterId: Id<'charters'>,
+): Promise<void> {
+  await harness.run(async (ctx) => {
+    const charter = await ctx.db.get(charterId);
+    await ctx.db.patch(charterId, {
+      body: {
+        ...(charter?.body as Record<string, unknown>),
+        namedCollaborators: [
+          { name: 'Priya Shah', topic: 'segment and pipeline', introPath: 'self' },
+        ],
+        adjacentRoles: [
+          { who: 'Dana Okafor', staysOutOfTheirLaneBy: 'leaving ledger access to her' },
+        ],
+      },
+    });
+    await ctx.db.insert('voiceSessions', {
+      agentId,
+      mode: 'chat',
+      state: 'done',
+      answers: {},
+      charterId,
+      turns: [
+        { id: 't1', speaker: 'employee', text: 'Who do you work with?', at: 2 },
+        {
+          id: 't2',
+          speaker: 'manager',
+          text: 'Mostly the close. Priya Shah for segment and pipeline. That is it.',
+          at: 3,
+        },
+      ],
+      startedAt: 1,
+      conversationEndedAt: 4,
+    });
+  });
+}
+
+describe('charter approval proposes people', (): void => {
+  it("in real mode proposes each person the charter names, unverified, with the manager's quote or the charter's line", async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await namePeople(harness, agentId, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    const people = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('people')
+          .withIndex('by_user_status', (q) => q.eq('userId', 'owner'))
+          .collect(),
+    );
+    expect(people.map((person) => [person.displayName, person.status, person.source])).toEqual([
+      ['Priya Shah', 'unverified', 'one-to-one'],
+      ['Dana Okafor', 'unverified', 'charter'],
+    ]);
+    expect(people[0]?.evidence).toEqual([
+      { quote: 'Priya Shah for segment and pipeline.', where: 'the one-to-one', at: 4 },
+    ]);
+    expect(people[1]?.evidence).toEqual([
+      { quote: 'Dana Okafor: leaving ledger access to her', where: 'charter version v1', at: 1 },
+    ]);
+    const edges = await harness.run(async (ctx) => await ctx.db.query('relationships').collect());
+    expect(edges.map((edge) => [edge.type, edge.status, edge.fromAgentId])).toEqual([
+      ['collaborator', 'proposed', agentId],
+      ['adjacent-role', 'proposed', agentId],
+    ]);
+
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    const again = await harness.run(async (ctx) => await ctx.db.query('people').collect());
+    expect(again).toHaveLength(2);
+  });
+
+  it('in mock mode proposes nobody: the graph is real mode only', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await namePeople(harness, agentId, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    expect(await harness.run(async (ctx) => await ctx.db.query('people').collect())).toEqual([]);
+  });
+});

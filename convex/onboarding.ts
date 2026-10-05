@@ -632,8 +632,10 @@ export const CHARTER_SEEDING_RETRY_MS = 60_000;
 
 /**
  * Seed the work an approved charter implies. Internal: `charters.approve`
- * schedules it in the approval's transaction. In real mode it declares the
- * charter's named systems as surfaces and runs orientation; in mock mode it
+ * schedules it in the approval's transaction. In real mode it proposes the
+ * people the charter names for the manager to confirm on the People tab
+ * (`peopleProposals.proposeFromCharter`, wave 13), declares the charter's
+ * named systems as surfaces and runs orientation; in mock mode it
  * seeds the generated work items and logs `work.charter-derived`. It makes no
  * web-research call and needs no search key, so approval completes on a
  * machine without one (decision N19).
@@ -652,6 +654,14 @@ export const postCharterApproval = internalAction({
   handler: async (ctx, args): Promise<{ workItemsGenerated: number } | { failed: string }> => {
     const attempt = args.attempt ?? 1;
     try {
+      // The people the charter names are proposed for the manager to confirm (wave 13, 13-P): the
+      // graph is real mode's, and a retry proposes nobody twice.
+      if (SURFACE_MODE === 'real') {
+        await ctx.runMutation(internal.peopleProposals.proposeFromCharter, {
+          agentId: args.agentId,
+          charterId: args.charterId,
+        });
+      }
       return await seedApprovedCharter(ctx, args.agentId, args.charterId);
     } catch (err: unknown) {
       const reason = (err instanceof Error ? err.message : String(err)).slice(0, 240);
