@@ -9,6 +9,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { isOfferable } from '../../src/work/skill-library';
 import { USE_COUNT_SCAN_LIMIT } from '../../convex/skillVersions';
 import { avatarById } from '../../src/agent/avatar-pets';
@@ -994,21 +995,21 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.16.0, the wave 12 schema step, from 0.6.0, 0.10.0, 0.13.0, 0.14.0 and 0.15.0:
-    // a stamp names a release no older than the newest a shipped migration names.
+    // Re-pinned at 0.17.0, the wave 13 schema step, from 0.6.0, 0.10.0, 0.13.0, 0.14.0, 0.15.0 and
+    // 0.16.0: a stamp names a release no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.16.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.17.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.16.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.16.0', previous: '0.16.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.17.0', previous: '0.17.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.17.0', previous: '0.16.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.18.0', previous: '0.17.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.17.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.18.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2726,7 +2727,8 @@ describe('the sync runs refs clearing (12-S3, N10)', (): void => {
 
   it('is registered at 0.16.0, after the access follow-up passes, and names the declaration the next release removes', (): void => {
     expect(MIGRATIONS['sync-runs-refs'].release).toBe('0.16.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.16.0');
+    // Re-pinned at 13-K: the newest release a migration names moved to 0.17.0, pinned by the
+    // kept identity mark's registration test.
     expect(MIGRATION_NAMES.indexOf('sync-runs-refs')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('credentials-organisation-purge'),
     );
@@ -2931,5 +2933,294 @@ describe('the decision close record (12-W, N-3; 12-S3)', (): void => {
       harness.mutation(internal.migrations.runMigrationPage, { name: 'work-decision-closed' }),
     ).resolves.toMatchObject({ read: 4, changed: 0 });
     expect(await read()).toEqual(recorded);
+  });
+});
+
+describe('the kept identity mark backfill (the round review m16; 13-K)', (): void => {
+  /** A Slack bot token of the employee's own app, as Day0 obtained it at install, live or revoked. */
+  async function token(
+    harness: Harness,
+    fields: Partial<Doc<'credentials'>> = {},
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'oauth',
+          label: 'Priya Slack bot token',
+          source: 'oauth',
+          issuedBy: { system: 'slack', grant: 'oauth-install', appId: 'A0123' },
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** A `proposed` card of the employee, with what a handover left on it. */
+  async function card(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    slug: string,
+    fields: Partial<Doc<'surfaces'>> = {},
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'chat',
+          verdict: 'proposed',
+          whereFound: [],
+          credentialLanded: true,
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  it('is registered at 0.17.0 after the wave 12 passes, the newest release any migration names', (): void => {
+    expect(MIGRATIONS['surfaces-kept-identity-since'].release).toBe('0.17.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.17.0');
+    expect(MIGRATION_NAMES.indexOf('surfaces-kept-identity-since')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('work-decision-closed'),
+    );
+  });
+
+  it('marks each card a handover kept before the mark, dated as the sweep dates it, leaves every other card, and is safe to run twice', async (): Promise<void> => {
+    const { HANDOVER_CUT_REASON, HANDOVER_CUT_REPROPOSE_REASON, HANDOVER_REAPPROVE_REASON } =
+      await import('../../convex/surfaces');
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const kept = await card(harness, priya, 'slack', {
+      reason: HANDOVER_REAPPROVE_REASON,
+      credentialId: await token(harness),
+    });
+    const keptAddressWent = await card(harness, priya, 'slack-2', {
+      reason: HANDOVER_CUT_REPROPOSE_REASON,
+      credentialId: await token(harness),
+    });
+    const untouched = {
+      cut: await card(harness, priya, 'linear', { reason: HANDOVER_CUT_REASON }),
+      marked: await card(harness, priya, 'slack-3', {
+        reason: HANDOVER_REAPPROVE_REASON,
+        credentialId: await token(harness),
+        keptIdentitySince: 7,
+      }),
+      approved: await card(harness, priya, 'slack-4', {
+        reason: HANDOVER_REAPPROVE_REASON,
+        credentialId: await token(harness),
+        managerApprovedAt: 8,
+      }),
+      pasted: await card(harness, priya, 'slack-5', {
+        reason: HANDOVER_REAPPROVE_REASON,
+        credentialId: await token(harness, { issuedBy: undefined, source: 'entered' }),
+      }),
+      revoked: await card(harness, priya, 'slack-6', {
+        reason: HANDOVER_REAPPROVE_REASON,
+        credentialId: await token(harness, { revokedAt: 9 }),
+      }),
+      otherReason: await card(harness, priya, 'slack-7', {
+        reason: 'Proposed again: the queue changed.',
+        credentialId: await token(harness),
+      }),
+    };
+    await harness.run(async (ctx) => {
+      for (const [createdAt, surfaceId] of [
+        [30, kept],
+        [40, kept],
+        [35, untouched.marked],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId: priya,
+          type: 'surface.proposed',
+          payload: { surfaceId, slug: 'slack', displayName: 'Slack' },
+          createdAt,
+        });
+      }
+    });
+    const before = await harness.run(
+      async (ctx) =>
+        await Promise.all(Object.values(untouched).map(async (id) => await ctx.db.get(id))),
+    );
+    const upgradeStart = Date.now();
+
+    await runAll(harness);
+
+    const read = await harness.run(async (ctx) => ({
+      kept: (await ctx.db.get(kept))?.keptIdentitySince,
+      keptAddressWent: (await ctx.db.get(keptAddressWent))?.keptIdentitySince,
+      untouched: await Promise.all(
+        Object.values(untouched).map(async (id) => await ctx.db.get(id)),
+      ),
+    }));
+    // Dated by the newest `surface.proposed` line its own record holds, as the sweep's fallback
+    // dates it; a card with none waits from the upgrade, so nothing ends sooner than before.
+    expect(read.kept).toBe(40);
+    expect(read.keptAddressWent).toBeGreaterThanOrEqual(upgradeStart);
+    expect(read.untouched).toEqual(before);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'surfaces-kept-identity-since'),
+    ).toMatchObject({ release: '0.17.0', changed: 2, completedAt: expect.any(Number) });
+
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'surfaces-kept-identity-since'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, {
+        name: 'surfaces-kept-identity-since',
+      }),
+    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the messages tab state backfill (W12V-7; 13-K)', (): void => {
+  /** A chat card with the employee's own app, as the access kit made it. */
+  async function appCard(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    slug: string,
+    provisioning: Partial<NonNullable<Doc<'surfaces'>['provisioning']>> | null,
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx) => {
+      const secret = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: `${slug} client secret`,
+        source: 'oauth',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug,
+        displayName: slug,
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+        ...(provisioning === null
+          ? {}
+          : {
+              provisioning: {
+                appId: 'A0123',
+                appName: 'Day0 Priya',
+                clientId: '123.456',
+                clientSecretCredentialId: secret,
+                installUrl: 'https://slack.com/oauth/v2/authorize',
+                redirectUrl: 'http://localhost:3000/api/oauth/slack',
+                scopes: ['chat:write'],
+                createdAt: 1,
+                installedAt: 2,
+                ...provisioning,
+              },
+            }),
+      });
+    });
+  }
+
+  it('is registered at 0.17.0 after the kept identity mark', (): void => {
+    expect(MIGRATIONS['surfaces-messages-tab'].release).toBe('0.17.0');
+    expect(MIGRATION_NAMES.indexOf('surfaces-messages-tab')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('surfaces-kept-identity-since'),
+    );
+  });
+
+  it("copies onto each app the open state the employee's record kept, leaves an app the record does not name, and is safe to run twice", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const opened = await appCard(harness, priya, 'slack', {});
+    const otherApp = await appCard(harness, priya, 'slack-2', { appId: 'A0999' });
+    const noApp = await appCard(harness, priya, 'slack-3', null);
+    const alreadyRefused = await appCard(harness, priya, 'slack-4', {
+      appId: 'A0444',
+      messagesTab: { state: 'refused', reason: 'not_allowed', at: 6, attempts: 2 },
+    });
+    await harness.run(async (ctx) => {
+      for (const [appId, how, createdAt, surfaceId] of [
+        ['A0123', 'created', 10, opened],
+        ['A0123', 'opened', 20, opened],
+        ['A0444', 'confirmed', 30, alreadyRefused],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId: priya,
+          type: 'surface.app-messages-open',
+          payload: { surfaceId, slug: 'slack', displayName: 'Slack', appId, appName: 'Day0', how },
+          createdAt,
+        });
+      }
+    });
+
+    await runAll(harness);
+
+    const read = await harness.run(async (ctx) => ({
+      opened: (await ctx.db.get(opened))?.provisioning?.messagesTab,
+      otherApp: (await ctx.db.get(otherApp))?.provisioning,
+      noApp: await ctx.db.get(noApp),
+      alreadyRefused: (await ctx.db.get(alreadyRefused))?.provisioning?.messagesTab,
+    }));
+    // The newest line for the app is the one that stands.
+    expect(read.opened).toEqual({ state: 'open', how: 'opened', at: 20 });
+    expect(read.otherApp).not.toHaveProperty('messagesTab');
+    expect(read.noApp).not.toHaveProperty('provisioning');
+    // A state already written is the newer word; the pass never overwrites it.
+    expect(read.alreadyRefused).toEqual({
+      state: 'refused',
+      reason: 'not_allowed',
+      at: 6,
+      attempts: 2,
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-messages-tab')).toMatchObject({
+      release: '0.17.0',
+      changed: 1,
+    });
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'surfaces-messages-tab'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'surfaces-messages-tab' }),
+    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the owner person at the upgrade (13-K)', (): void => {
+  it('writes nothing before the owner signs in: every pass leaves the people graph empty', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId: priya,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        managerUserId: 'U0BOSS',
+        providerWorkspaceId: 'T0123',
+        createdAt: 1,
+      });
+    });
+
+    await runAll(harness);
+    await runAll(harness);
+
+    const graph = await harness.run(async (ctx) => ({
+      people: await ctx.db.query('people').collect(),
+      identities: await ctx.db.query('personIdentities').collect(),
+    }));
+    expect(graph).toEqual({ people: [], identities: [] });
   });
 });

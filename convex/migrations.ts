@@ -51,6 +51,8 @@ import {
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
+import { markKeptBeforeTheMarkPage } from './keptIdentities';
+import { backfillMessagesTabPage } from './slackMessagesTab';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
@@ -94,6 +96,8 @@ export const MIGRATION_NAMES = [
   'credentials-organisation-purge',
   'sync-runs-refs',
   'work-decision-closed',
+  'surfaces-kept-identity-since',
+  'surfaces-messages-tab',
 ] as const;
 
 /** One migration's name. */
@@ -163,6 +167,12 @@ const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
  * the edit kept its result (12-W's N-3 lease).
  */
 const SUPERVISION_RELEASE = '0.16.0';
+
+/**
+ * The release of people and working agreements (wave 13): the schema step's marks on the cards
+ * wave 12 recorded state for only in their reason words or the employee's record (13-K).
+ */
+const PEOPLE_RELEASE = '0.17.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -302,6 +312,18 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SUPERVISION_RELEASE,
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
+  },
+  'surfaces-kept-identity-since': {
+    release: PEOPLE_RELEASE,
+    does: 'marks each card a handover kept the employee’s own identity on before the mark existed, which the kept-identity sweep read by the card’s reason words alone, dated by the card’s newest surface.proposed line as the sweep dated it, or by the upgrade when its record holds none, so no wait ends sooner; a marked card and every other card are left',
+    thenRemoves:
+      'nothing in the schema: the sweep’s reason-word fallback (keptByHandover and its reason set in convex/keptIdentities.ts) goes the release after',
+  },
+  'surfaces-messages-tab': {
+    release: PEOPLE_RELEASE,
+    does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card reads it off the row; a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
+    thenRemoves:
+      'nothing in the schema: the event read in typedCodeReachOf goes once every writer of the opening writes the field too',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -949,6 +971,9 @@ const MIGRATION_PAGES: Readonly<
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'sync-runs-refs': clearRunRefs,
   'work-decision-closed': recordClaimedCloses,
+  'surfaces-kept-identity-since': async (ctx, cursor) =>
+    await markKeptBeforeTheMarkPage(ctx, cursor, Date.now()),
+  'surfaces-messages-tab': async (ctx, cursor) => await backfillMessagesTabPage(ctx, cursor),
 };
 
 /** A migration's row, if it has started. */
