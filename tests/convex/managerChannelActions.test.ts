@@ -932,6 +932,106 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     );
   });
 
+  it('answers a replaced request once, whatever further replies or presses name it (W12-R19)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    const reply = async (messageTs: string): Promise<unknown> =>
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'approve', id: oldCode },
+      });
+    await expect(reply('1787768409.000100')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: true,
+    });
+    await expect(reply('1787768409.000200')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: false,
+    });
+    const notices = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notices.filter((notice) => notice.kind === 'replaced')).toHaveLength(1);
+    const replaced = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique(),
+    );
+    expect(replaced?.answeredAt).toEqual(expect.any(Number));
+  });
+
+  it('answers the oldest code of a request replaced six times with the newest (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    let current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    for (let replacement = 2; replacement <= 6; replacement += 1) {
+      await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: current });
+      await harness.action(internal.managerChannelActions.requestDecision, {
+        workItemId,
+        kind: 'plan',
+        supersedes: current,
+      });
+      current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    }
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(6);
+    // Every earlier request points at the newest, so its answer takes one step.
+    expect(new Set(rows.map((row) => row.replacedBy))).toEqual(new Set([current]));
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768420.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: current });
+  });
+
+  it('answers the oldest code of a chain an earlier release left longer than its walk with the item’s standing request (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    // Seven links, each pointing at the next, as nameReplacement wrote them before 0.17.0.
+    const codes = ['old0aa', 'old1bb', 'old2cc', 'old3dd', 'old4ee', 'old5ff', 'old6gg'];
+    await harness.run(async (ctx): Promise<void> => {
+      for (const [index, code] of codes.entries()) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: code,
+          replacedBy: codes[index + 1] ?? standing,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768421.000100',
+        reply: { verb: 'approve', id: 'old0aa' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: standing });
+  });
+
   it('answers another Slack user’s reply to a replaced code with nothing', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());

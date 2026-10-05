@@ -799,9 +799,21 @@ describe('a Retry that re-drafts a declined plan (12-M’s replaced request, car
     const notices = await harness.run(
       async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
     );
+    // Re-pinned for 13-FS (W12V-16): the replaced request keeps the decision it had, so the answer
+    // says it was rejected as well as replaced.
     expect(notices.map((notice) => notice.text)).toEqual([
-      'That request (5z73m6) was replaced and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.',
+      'That request (5z73m6) was rejected, then replaced, and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.',
     ]);
+    const remembered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', '5z73m6'),
+          )
+          .unique(),
+    );
+    expect(remembered).toMatchObject({ outcome: 'rejected', decidedAt: 2, decidedVia: 'channel' });
     // Its message already says how it was decided, so it is not edited again.
     const scheduled = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
