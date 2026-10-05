@@ -575,7 +575,8 @@ export function SurfaceCard({
             surfaceSlug={surface.slug}
           />
         ) : null}
-        {surface.decisionButtons !== undefined ? (
+        {/* A card nothing goes through carries no requests, so it says nothing of buttons. */}
+        {surface.decisionButtons !== undefined && !notReinstalled ? (
           <DecisionButtonsRow
             words={decisionButtonsWords(
               surface.decisionButtons,
@@ -589,7 +590,7 @@ export function SurfaceCard({
             surfaceSlug={surface.slug}
           />
         ) : null}
-        {typedCode !== undefined ? (
+        {typedCode !== undefined && !notReinstalled ? (
           <TypedCodeRow
             words={typedCode}
             error={failed('messages-tab')}

@@ -860,6 +860,10 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expiresAt: NOW + 80 * DAY,
       reason: 'The re-walk ends the bed connection.',
       keptAppNotReinstalled: true,
+      // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
+      // install), as the bed showed once IT connected Slack again.
+      decisionButtons: { available: true },
+      typedCode: { state: 'day0-opens', appName: 'Maya (Day0)' },
       provisioning: {
         appId: 'A1',
         appName: 'Maya (Day0)',
@@ -894,6 +898,10 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       );
       expect(markup).not.toMatch(/Renew for/);
       expect(chip(markup)).not.toBe('Ready to connect');
+      // Nothing goes through the card, so it says nothing of requests, buttons or typed codes.
+      expect(markup).not.toContain('Decisions in Slack');
+      expect(markup).not.toContain('Typed code');
+      expect(markup).not.toContain('app-level token');
     }
     expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
   });
