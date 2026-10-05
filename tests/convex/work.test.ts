@@ -5378,9 +5378,10 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       },
       refused: 'assigned to someone else',
       listedAt: expect.any(Number),
-      // Re-pinned for W12V-15: whose identity holds it, so the card names no raw id.
-      holder: { employeeName: expect.any(String), holderIsEmployee: false },
+      // Re-pinned for W12V-15: the card names no raw id. No card on the item's system records
+      // the identity the employee acts as, so the listing cannot say whose it is (second pass).
     });
+    expect(latest?.holder).toBeUndefined();
     await expect(
       harness
         .withIdentity(managerIdentity('stranger'))

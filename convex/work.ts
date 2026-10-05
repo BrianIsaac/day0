@@ -406,7 +406,8 @@ const HOLDER_CARDS_READ = 100;
 
 /**
  * Whether a listed ticket's holder is the identity the employee acts as in its tracker: the
- * provider identity its card on the item's source system recorded (W12V-15).
+ * provider identity its card on the item's source system recorded (W12V-15). Undefined when no
+ * such card recorded one, so the page says only that someone holds it.
  */
 async function ticketHolderOf(
   ctx: QueryCtx,
@@ -419,12 +420,13 @@ async function ticketHolderOf(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .take(HOLDER_CARDS_READ);
-  const holderIsEmployee = cards.some(
-    (card) =>
-      card.slug === row.sourceSystem &&
-      (card.providerIdentityId === assigneeId || card.actsAs?.providerIdentityId === assigneeId),
-  );
-  return { employeeName: agent.name, holderIsEmployee };
+  // Only a card that recorded the identity it acts as can say the holder is or is not it.
+  const identities = cards
+    .filter((card) => card.slug === row.sourceSystem)
+    .flatMap((card) => [card.providerIdentityId, card.actsAs?.providerIdentityId])
+    .filter((identity): identity is string => identity !== undefined);
+  if (identities.length === 0) return undefined;
+  return { employeeName: agent.name, holderIsEmployee: identities.includes(assigneeId) };
 }
 
 /** How many of an employee's newest plan drafts the earlier-plan read walks. */
