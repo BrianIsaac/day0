@@ -87,6 +87,12 @@ export const SOCKET_HEARTBEAT_REFRESH_MS = 2 * 60_000;
  */
 export const SOCKET_HEARTBEAT_FRESH_MS = 3 * 60_000;
 
+/**
+ * When a live report that was not renewed is written down: just past the window a card reads it
+ * as live in, so a card open on a page re-renders once the bridge died unseen (13-FS).
+ */
+export const SOCKET_HEARTBEAT_EXPIRY_MS = SOCKET_HEARTBEAT_FRESH_MS + 5_000;
+
 /** The longest failure a report stores, so a bridge cannot fill the row. */
 const HEARTBEAT_FAILURE_LIMIT = 300;
 

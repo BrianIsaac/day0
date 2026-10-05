@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { socketBridgeStateOf } from '../../convex/socketHeartbeats';
 import {
+  SOCKET_HEARTBEAT_EXPIRY_MS,
   SOCKET_HEARTBEAT_FRESH_MS,
   SOCKET_HEARTBEAT_REFRESH_MS,
 } from '../../src/surfaces/slack-socket';
@@ -187,6 +188,41 @@ describe('recordHeartbeats', (): void => {
     expect(
       await harness.run(async (ctx) => await ctx.db.query('socketHeartbeats').collect()),
     ).toEqual([]);
+  });
+});
+
+describe('a live report that is not renewed (13-FS second pass)', (): void => {
+  it('schedules its own expiry when it writes a live report, past the window a card reads it in', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    const before = Date.now();
+    await harness.mutation(internal.socketHeartbeats.recordHeartbeats, {
+      reports: [{ surfaceId, appId: 'A0MATEO', live: true, liveSince: before }],
+    });
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    const expiry = jobs.find((job) => job.name === 'socketHeartbeats:expire');
+    expect(expiry?.args[0]).toMatchObject({ surfaceId });
+    expect(expiry?.scheduledTime).toBeGreaterThanOrEqual(before + SOCKET_HEARTBEAT_EXPIRY_MS);
+    expect(SOCKET_HEARTBEAT_EXPIRY_MS).toBeGreaterThan(SOCKET_HEARTBEAT_FRESH_MS);
+  });
+
+  it('writes the report down once it was not renewed, and leaves one renewed since alone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedCard(harness);
+    const reportedAt = Date.now() - SOCKET_HEARTBEAT_EXPIRY_MS;
+    await reportBridgeOn(harness, surfaceId, { reportedAt });
+    await harness.mutation(internal.socketHeartbeats.expire, {
+      surfaceId,
+      reportedAt: reportedAt - 1,
+    });
+    expect((await rowsOf(harness, surfaceId))[0]).toMatchObject({ live: true, reportedAt });
+    await harness.mutation(internal.socketHeartbeats.expire, { surfaceId, reportedAt });
+    const [row] = await rowsOf(harness, surfaceId);
+    expect(row).toMatchObject({ live: false, reportedAt });
+    expect(row?.liveSince).toBeUndefined();
+    expect(await stateOf(harness, surfaceId)).toBe('down');
   });
 });
 

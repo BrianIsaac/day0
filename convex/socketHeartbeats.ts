@@ -1,8 +1,10 @@
 import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { internalMutation, type QueryCtx } from './_generated/server';
 import {
   heartbeatWriteDue,
+  SOCKET_HEARTBEAT_EXPIRY_MS,
   socketBridgeConfigured,
   socketBridgeStateFor,
   type SocketBridgeState,
@@ -29,7 +31,8 @@ const reportValidator = v.object({
  * Internal, for the heartbeat route: keep one page of the bridge's report, one row per card. A row
  * is written for a card's first report, a change of liveness or app, and an unchanged report once
  * the row is about two minutes old; anything else is left, so the readers wake only for news. An
- * entry whose id names no chat card is dropped.
+ * entry whose id names no chat card is dropped. Each live row written schedules its own expiry
+ * (`expire`), so a bridge that dies unseen is written down and the card re-renders.
  *
  * @returns How many rows were written.
  */
@@ -59,9 +62,34 @@ export const recordHeartbeats = internalMutation({
       };
       if (kept === null) await ctx.db.insert('socketHeartbeats', row);
       else await ctx.db.replace(kept._id, row);
+      if (row.live) {
+        await ctx.scheduler.runAfter(SOCKET_HEARTBEAT_EXPIRY_MS, internal.socketHeartbeats.expire, {
+          surfaceId: surface._id,
+          reportedAt: now,
+        });
+      }
       written += 1;
     }
     return { written };
+  },
+});
+
+/**
+ * Internal, scheduled by `recordHeartbeats`: write a card's live report down when nothing renewed
+ * it since (the row still carries the `reportedAt` it was scheduled for), so every reader of the
+ * row, the card's open page included, reads the bridge as down. A renewed or a changed row is left.
+ */
+export const expire = internalMutation({
+  args: { surfaceId: v.id('surfaces'), reportedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query('socketHeartbeats')
+      .withIndex('by_surface', (q) => q.eq('surfaceId', args.surfaceId))
+      .first();
+    if (row === null || !row.live || row.reportedAt !== args.reportedAt) return null;
+    await ctx.db.patch(row._id, { live: false, liveSince: undefined });
+    return null;
   },
 });
 
