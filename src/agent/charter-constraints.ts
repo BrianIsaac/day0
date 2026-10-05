@@ -37,6 +37,12 @@ export interface CharterConstraint {
   origin: ConstraintOrigin;
   /** Set when the manager struck it; kept rather than deleted so the decision is on record. */
   struck?: boolean;
+  /**
+   * The clauses the rule produced, by list and place: what a strike removes. Empty when no clause
+   * carries the rule. Absent on a rule drafted before rules were bound, which strikes by its
+   * wording alone.
+   */
+  binds?: ClauseRef[];
 }
 
 /** What the synthesis call returns for one constraint, before verification. */
@@ -44,6 +50,8 @@ export interface RawConstraint {
   kind: ConstraintKind;
   quote: string;
   wording: string[];
+  /** The clauses the model says the rule produced; absent from a reply drafted before binds. */
+  binds?: readonly ClauseRef[];
 }
 
 /** The clauses a constraint may be encoded in. */
@@ -55,6 +63,12 @@ export const CLAUSE_FIELDS = [
 ] as const;
 
 export type ClauseField = (typeof CLAUSE_FIELDS)[number];
+
+/** One clause by the list it is in and its place there, counted from 0; the function is place 0. */
+export interface ClauseRef {
+  readonly field: ClauseField;
+  readonly index: number;
+}
 
 /**
  * A provenance suffix a model may append to a clause: a bracketed note that
@@ -144,6 +158,99 @@ export function wordingPresent(phrase: string, clauses: readonly string[]): bool
   return clauses.some((clause: string): boolean => pattern.test(clause));
 }
 
+/** One clause with its place, in the order `clauseTexts` lists them. */
+interface PlacedText {
+  readonly ref: ClauseRef;
+  readonly text: string;
+}
+
+/** Every clause a rule may bind, with its place: the function, then each list in turn. */
+function placedClauses(charter: ClauseCharter): PlacedText[] {
+  return [
+    { ref: { field: 'proposedFunction', index: 0 }, text: charter.proposedFunction },
+    ...LIST_FIELDS.flatMap((field): PlacedText[] =>
+      charter.proposedBoundaries[field].map(
+        (text: string, index: number): PlacedText => ({ ref: { field, index }, text }),
+      ),
+    ),
+  ];
+}
+
+/** The clause at a place, or undefined when the charter has none there. */
+function clauseAt(charter: ClauseCharter, ref: ClauseRef): string | undefined {
+  if (!Number.isInteger(ref.index) || ref.index < 0) return undefined;
+  if (ref.field === 'proposedFunction')
+    return ref.index === 0 ? charter.proposedFunction : undefined;
+  return charter.proposedBoundaries[ref.field][ref.index];
+}
+
+function sameRef(left: ClauseRef, right: ClauseRef): boolean {
+  return left.field === right.field && left.index === right.index;
+}
+
+/** The places, each once, in the order first given. */
+function distinctRefs(refs: readonly ClauseRef[]): ClauseRef[] {
+  return refs.filter(
+    (ref: ClauseRef, at: number): boolean =>
+      refs.findIndex((other: ClauseRef): boolean => sameRef(other, ref)) === at,
+  );
+}
+
+/**
+ * A prohibition's opening: "Never", "Do not", "I will not" and their kin. A manager's "Never
+ * change a deal amount in the tracker." is drafted as the will-not-do "Change a deal amount in the
+ * tracker.", and the model's wording often keeps the "Never" (every hosted walk from v0.11.0 to
+ * v0.16.0, finding 1).
+ */
+const PROHIBITION_OPENING =
+  /^(?:i\s+)?(?:never|(?:do|does|will|must|should|shall)\s+not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|shouldn['\u2019]t)\s+/i;
+
+/**
+ * The phrase as the clauses carry it: itself without a provenance suffix, else without a
+ * prohibition's opening when a clause states the act it forbids, else nothing.
+ */
+function verifiedPhrase(phrase: string, clauses: readonly string[]): string | undefined {
+  const stripped = stripProvenanceSuffix(phrase);
+  if (wordingPresent(stripped, clauses)) return stripped;
+  const act = stripped.replace(PROHIBITION_OPENING, '');
+  return act !== stripped && wordingPresent(act, clauses) ? act : undefined;
+}
+
+/**
+ * The places a rule binds: those the model named that the charter has, each once; when it named
+ * none that exists, the clauses that carry the rule's verified wording, so a reply that placed the
+ * rule by words alone still binds it.
+ */
+function verifiedBinds(
+  raw: readonly ClauseRef[],
+  wording: readonly string[],
+  charter: ClauseCharter,
+): ClauseRef[] {
+  const named = distinctRefs(
+    raw.filter((ref: ClauseRef): boolean => clauseAt(charter, ref) !== undefined),
+  );
+  if (named.length > 0) return named;
+  return placedClauses(charter)
+    .filter((clause: PlacedText): boolean =>
+      wording.some((phrase: string): boolean => wordingPresent(phrase, [clause.text])),
+    )
+    .map((clause: PlacedText): ClauseRef => clause.ref);
+}
+
+/** Whether a rule has a handle on the clauses: words they carry, or places it binds. */
+function placedInClauses(constraint: CharterConstraint): boolean {
+  return constraint.wording.length > 0 || (constraint.binds?.length ?? 0) > 0;
+}
+
+/** Two rules' places as one list, absent only when neither rule was bound. */
+function mergedBinds(
+  left: readonly ClauseRef[] | undefined,
+  right: readonly ClauseRef[] | undefined,
+): ClauseRef[] | undefined {
+  if (left === undefined && right === undefined) return undefined;
+  return distinctRefs([...(left ?? []), ...(right ?? [])]);
+}
+
 /**
  * Remove a phrase from a clause together with the separator that joined it.
  *
@@ -191,10 +298,15 @@ export function removeWording(text: string, phrase: string): string {
  *
  * A constraint without a quote is nothing the manager can confirm and is
  * dropped. Wording the clauses do not carry is dropped from the constraint,
- * because striking it would then change nothing while looking as if it had.
- * Wording is stripped of any provenance suffix first, as the clauses were.
- * A sentence listed twice is one rule for each kind it makes with words the
- * clauses carry, and a copy with none is dropped.
+ * because striking it would then change nothing while looking as if it had;
+ * a phrase that opens on a prohibition the clause states as the act ("Never
+ * change ..." against "Change ...") is kept as the act. Wording is stripped of
+ * any provenance suffix first, as the clauses were. A reply that binds its
+ * rules keeps each bind whose clause exists (`verifiedBinds`), and a rule it
+ * bound to none is kept with no binds, as a rule in no clause; a reply drafted
+ * before binds leaves its rules unbound. A sentence listed twice is one rule
+ * for each kind it makes with words or places of its own, and a copy with
+ * neither is dropped.
  *
  * @param raw - The constraints as the model returned them.
  * @param charter - The assembled charter whose clauses they should name.
@@ -211,26 +323,40 @@ export function normaliseConstraints(
     if (!quote) continue;
     const wording = [
       ...new Set(
-        item.wording
-          .map((phrase: string): string => stripProvenanceSuffix(phrase))
-          .filter((phrase: string): boolean => wordingPresent(phrase, clauses)),
+        item.wording.flatMap((phrase: string): string[] => {
+          const verified = verifiedPhrase(phrase, clauses);
+          return verified === undefined ? [] : [verified];
+        }),
       ),
     ];
+    const binds =
+      item.binds === undefined ? undefined : verifiedBinds(item.binds, wording, charter);
     // A sentence the model lists twice (the production walk's 6c) is one rule for each kind it
-    // makes with words the clauses carry; a copy with none left once verified is no rule.
-    const rule: CharterConstraint = { kind: item.kind, quote, wording, origin: 'synthesis' };
+    // makes with words or places of its own; a copy with neither once verified is no rule.
+    const rule: CharterConstraint = {
+      kind: item.kind,
+      quote,
+      wording,
+      origin: 'synthesis',
+      ...(binds === undefined ? {} : { binds }),
+    };
     const said = (listed: CharterConstraint): boolean => sameQuote(listed.quote, quote);
-    const bare = out.findIndex((listed) => said(listed) && listed.wording.length === 0);
+    const bare = out.findIndex((listed) => said(listed) && !placedInClauses(listed));
     const sameKind = out.findIndex((listed) => said(listed) && listed.kind === item.kind);
     if (!out.some(said)) {
       out.push(rule);
-    } else if (wording.length === 0) {
+    } else if (!placedInClauses(rule)) {
       continue;
     } else if (bare !== -1) {
       out[bare] = rule;
     } else if (sameKind !== -1) {
       const earlier = out[sameKind]!;
-      out[sameKind] = { ...earlier, wording: [...new Set([...earlier.wording, ...wording])] };
+      const merged = mergedBinds(earlier.binds, rule.binds);
+      out[sameKind] = {
+        ...earlier,
+        wording: [...new Set([...earlier.wording, ...wording])],
+        ...(merged === undefined ? {} : { binds: merged }),
+      };
     } else {
       out.push(rule);
     }
@@ -261,8 +387,8 @@ export interface ListedRule {
 
 /**
  * The rules to list, one line per rule: a constraint whose sentence another constraint quotes
- * with the clauses' words is the same rule with none of its own, and is left out, struck or not,
- * since its strike changed nothing. A draft synthesised before `normaliseConstraints` merged
+ * with the clauses' words or places is the same rule with neither of its own, and is left out,
+ * struck or not, since its strike changed nothing. A draft synthesised before `normaliseConstraints` merged
  * such pairs still holds both (the production walk's 6c).
  *
  * @param constraints - The charter's constraints, in their stored order.
@@ -270,12 +396,12 @@ export interface ListedRule {
  */
 export function listedRules(constraints: readonly CharterConstraint[]): ListedRule[] {
   return constraints.flatMap((constraint, index): ListedRule[] => {
-    if (constraint.wording.length > 0) return [{ constraint, index }];
+    if (placedInClauses(constraint)) return [{ constraint, index }];
     const other = constraints.findIndex(
       (candidate, at) =>
         at !== index &&
         sameQuote(candidate.quote, constraint.quote) &&
-        (candidate.wording.length > 0 || at < index),
+        (placedInClauses(candidate) || at < index),
     );
     return other === -1 ? [{ constraint, index }] : [];
   });
@@ -317,29 +443,34 @@ function managerSentences(answers: Partial<Record<DayOneTopic, string>>): string
  *   listed: Constraints already verified, whose wording is not repeated.
  *
  * Returns:
- *   One derived constraint per quoting sentence, in clause order.
+ *   One derived constraint per quoting sentence, in clause order, bound to
+ *   the clauses its words were found in.
  */
 export function deriveConstraints(
   charter: Charter,
   answers: Partial<Record<DayOneTopic, string>>,
   listed: readonly CharterConstraint[],
 ): CharterConstraint[] {
-  const clauses = clauseTexts(charter);
+  const clauses = placedClauses(charter);
   const sentences = managerSentences(answers);
   const byQuote = new Map<string, CharterConstraint>();
   for (const property of CANDIDATE_PROPERTIES) {
     const global = new RegExp(property.words.source, 'gi');
-    const carrying = clauses.filter((clause: string): boolean => property.words.test(clause));
+    const carrying = clauses.filter((clause: PlacedText): boolean =>
+      property.words.test(clause.text),
+    );
     if (carrying.length === 0) continue;
     const quote =
-      sentences.find((sentence: string): boolean => property.words.test(sentence)) ?? carrying[0]!;
+      sentences.find((sentence: string): boolean => property.words.test(sentence)) ??
+      carrying[0]!.text;
     for (const clause of carrying) {
-      for (const found of clause.match(global) ?? []) {
+      for (const found of clause.text.match(global) ?? []) {
         const word = found.toLowerCase();
         if (covered(word, listed)) continue;
         const existing = byQuote.get(quote);
         if (existing) {
           if (!existing.wording.includes(word)) existing.wording.push(word);
+          existing.binds = distinctRefs([...(existing.binds ?? []), clause.ref]);
           continue;
         }
         byQuote.set(quote, {
@@ -347,6 +478,7 @@ export function deriveConstraints(
           quote,
           wording: [word],
           origin: 'derived',
+          binds: [clause.ref],
         });
       }
     }
@@ -406,13 +538,20 @@ function boundingClauses(charter: ClauseCharter): string[] {
   return BOUNDING_FIELDS.flatMap((field): string[] => charter.proposedBoundaries[field]);
 }
 
+/** Whether a place is a bounding clause: a will-not-do or an escalation trigger. */
+function boundingRef(ref: ClauseRef): boolean {
+  return ref.field === 'willNotDo' || ref.field === 'escalationTriggers';
+}
+
 /**
  * Refuse a direct edit of the clauses that drops the last clause enforcing a
  * standing system-boundary rule (P8-9's second bypass): the rule would stay
  * on the card with nothing enforcing it. Striking the rule is how the manager
  * lifts it. Unlike a strike, an edit may remove the last clause that merely
  * names a system: the manager is writing the boundary itself, not striking a
- * rule about which work qualifies.
+ * rule about which work qualifies. A bound rule is enforced by the bounding
+ * clauses it binds, so `after` carries its binds re-indexed for the edit
+ * (`withClauseRemoved`); an edit that rewrites a bound clause in place keeps it.
  *
  * Args:
  *   before: The charter before the edit.
@@ -431,15 +570,16 @@ export function assertEditKeepsBoundaries(before: ClauseCharter, after: ClauseCh
  * A candidate-property strike is about which work qualifies, never about
  * where the agent may act, so it may not be the change that lets the agent
  * into a system. A clause bounds a system when it names one of the charter's
- * named systems or carries the wording of a system-boundary constraint the
- * manager has not struck; if no remaining will-not-do or escalation clause
- * bounds that system, the strike is refused. Striking the system-boundary
- * constraint itself is the manager lifting the boundary and is not checked.
+ * named systems or enforces a system-boundary constraint the manager has not
+ * struck: carries its wording, or, for a bound rule, is one of the bounding
+ * clauses it binds. If no remaining will-not-do or escalation clause bounds
+ * that system, the strike is refused. Striking the system-boundary constraint
+ * itself is the manager lifting the boundary and is not checked.
  *
  * Args:
  *   charter: The charter before the strikes.
- *   lifted: The charter with only the non-property strikes applied.
- *   result: The charter with every strike applied.
+ *   lifted: The charter with only the non-property strikes applied, binds re-indexed.
+ *   result: The charter with every strike applied, binds re-indexed.
  *   struck: The constraints being struck.
  *   change: What the refusal names: a strike, or a direct edit of a clause.
  *
@@ -458,12 +598,15 @@ function assertBoundariesKept(
     (clause: string): boolean => !remaining.includes(clause),
   );
   if (dropped.length === 0) return;
-  const keptBoundaries = (charter.constraints ?? []).filter(
-    (constraint: CharterConstraint): boolean =>
+  const kept = (charter.constraints ?? []).flatMap(
+    (constraint: CharterConstraint, index: number): number[] =>
       constraint.kind === 'system-boundary' &&
       constraint.struck !== true &&
-      !struck.includes(constraint),
+      !struck.includes(constraint)
+        ? [index]
+        : [],
   );
+  const ruleAt = (index: number): CharterConstraint => (charter.constraints ?? [])[index]!;
   for (const clause of dropped) {
     for (const system of charter.namedSystems ?? []) {
       if (!wordingPresent(system.name, [clause])) continue;
@@ -473,7 +616,9 @@ function assertBoundariesKept(
         `${change} refused: \u201c${clause}\u201d is the only clause that bounds ${system.name}`,
       );
     }
-    for (const boundary of keptBoundaries) {
+    for (const index of kept) {
+      const boundary = ruleAt(index);
+      if (boundary.binds !== undefined) continue;
       if (!boundary.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
         continue;
       }
@@ -486,17 +631,162 @@ function assertBoundariesKept(
       );
     }
   }
+  for (const index of kept) {
+    const boundary = ruleAt(index);
+    if (boundary.binds === undefined) continue;
+    const before = (lifted.constraints?.[index]?.binds ?? []).filter(boundingRef);
+    const after = (result.constraints?.[index]?.binds ?? []).filter(boundingRef);
+    if (before.length === 0 || after.length > 0) continue;
+    throw new Error(
+      `${change} refused: \u201c${clauseAt(lifted, before[0]!)}\u201d is the only clause that enforces \u201c${boundary.quote}\u201d`,
+    );
+  }
+}
+
+/** One list clause as a strike carries it: its words, and its place in the charter struck from. */
+interface PlacedClause {
+  readonly text: string;
+  readonly at: number;
+}
+
+/** A list the strikes rewrite. */
+type ListField = (typeof LIST_FIELDS)[number];
+
+/**
+ * The clauses a strike rewrites, each list clause keeping its place in the charter the strikes
+ * started from, so the binds of the rules left can be counted again once clauses are gone.
+ */
+interface PlacedCharter {
+  readonly proposedFunction: string;
+  readonly lists: Readonly<Record<ListField, readonly PlacedClause[]>>;
+}
+
+function placedCharter(charter: ClauseCharter): PlacedCharter {
+  const list = (field: ListField): PlacedClause[] =>
+    charter.proposedBoundaries[field].map(
+      (text: string, at: number): PlacedClause => ({ text, at }),
+    );
+  return {
+    proposedFunction: charter.proposedFunction,
+    lists: {
+      willDo: list('willDo'),
+      willNotDo: list('willNotDo'),
+      escalationTriggers: list('escalationTriggers'),
+    },
+  };
+}
+
+function textsOf(clauses: readonly PlacedClause[]): string[] {
+  return clauses.map((clause: PlacedClause): string => clause.text);
+}
+
+/** A bind's place after the strikes, or nothing when its clause is gone. */
+function placeAfter(ref: ClauseRef, after: PlacedCharter): ClauseRef[] {
+  if (ref.field === 'proposedFunction') return [ref];
+  const index = after.lists[ref.field].findIndex(
+    (clause: PlacedClause): boolean => clause.at === ref.index,
+  );
+  return index === -1 ? [] : [{ field: ref.field, index }];
+}
+
+/**
+ * The charter as the strikes left its clauses, every bound rule's binds counted again: a bind
+ * whose clause went is dropped, and one after it in its list moves up.
+ */
+function charterAfter<T extends ClauseCharter>(charter: T, after: PlacedCharter): T {
+  const constraints = charter.constraints?.map(
+    (constraint: CharterConstraint): CharterConstraint =>
+      constraint.binds === undefined
+        ? constraint
+        : {
+            ...constraint,
+            binds: constraint.binds.flatMap((ref: ClauseRef): ClauseRef[] =>
+              placeAfter(ref, after),
+            ),
+          },
+  );
+  return {
+    ...charter,
+    proposedFunction: after.proposedFunction,
+    proposedBoundaries: {
+      willDo: textsOf(after.lists.willDo),
+      willNotDo: textsOf(after.lists.willNotDo),
+      escalationTriggers: textsOf(after.lists.escalationTriggers),
+    },
+    ...(constraints === undefined ? {} : { constraints }),
+  };
+}
+
+/** The function minus the phrases, kept whole when they would empty it. */
+function functionWithout(proposedFunction: string, phrases: readonly string[]): string {
+  const rewritten = withoutPhrases(proposedFunction, phrases);
+  return hasWording(rewritten) ? rewritten : proposedFunction;
+}
+
+/**
+ * Strike rules that bind their clauses, by reference: each bound will-not-do and escalation
+ * clause goes whole; a bound will-do loses the rule's words when it carries them and goes whole
+ * when it does not, an emptied one with it; the function loses the rule's words and never its
+ * sentence.
+ */
+function withoutBoundClauses(
+  target: PlacedCharter,
+  struck: readonly CharterConstraint[],
+): PlacedCharter {
+  if (struck.length === 0) return target;
+  const whole = new Set<string>();
+  const trimmed = new Map<number, string[]>();
+  const functionPhrases: string[] = [];
+  for (const rule of struck) {
+    for (const ref of rule.binds ?? []) {
+      if (ref.field === 'proposedFunction') {
+        functionPhrases.push(...rule.wording);
+        continue;
+      }
+      const clause = target.lists[ref.field].find(
+        (candidate: PlacedClause): boolean => candidate.at === ref.index,
+      );
+      if (clause === undefined) continue;
+      const carries = rule.wording.some((phrase: string): boolean =>
+        wordingPresent(phrase, [clause.text]),
+      );
+      if (ref.field === 'willDo' && carries) {
+        trimmed.set(clause.at, [...(trimmed.get(clause.at) ?? []), ...rule.wording]);
+      } else {
+        whole.add(`${ref.field}:${clause.at}`);
+      }
+    }
+  }
+  const kept = (field: ListField): PlacedClause[] =>
+    target.lists[field]
+      .filter((clause: PlacedClause): boolean => !whole.has(`${field}:${clause.at}`))
+      .map(
+        (clause: PlacedClause): PlacedClause =>
+          field === 'willDo' && trimmed.has(clause.at)
+            ? { ...clause, text: withoutPhrases(clause.text, trimmed.get(clause.at)!) }
+            : clause,
+      )
+      .filter((clause: PlacedClause): boolean => hasWording(clause.text));
+  return {
+    proposedFunction: functionWithout(target.proposedFunction, functionPhrases),
+    lists: {
+      willDo: kept('willDo'),
+      willNotDo: kept('willNotDo'),
+      escalationTriggers: kept('escalationTriggers'),
+    },
+  };
 }
 
 /**
  * The charter with the given constraints struck.
  *
- * A derived candidate-property constraint drops, whole, every will-not-do
- * and escalation clause that carries its wording, and loses its wording
- * from the proposed function and the will-do clauses, which keep their
- * sentences. Every other constraint has its wording removed from the four
- * clause fields as `withoutClauseWording` does. A candidate-property strike
- * may not drop the last clause bounding a system.
+ * A rule that binds its clauses strikes them by reference (`withoutBoundClauses`). A rule drafted
+ * before binds strikes by its wording: a derived candidate-property constraint drops, whole, every
+ * will-not-do and escalation clause that carries its wording, and loses its wording from the
+ * proposed function and the will-do clauses, which keep their sentences; every other such
+ * constraint has its wording removed from the four clause fields as `withoutClauseWording` does.
+ * The binds of every rule are counted again over the clauses left. A candidate-property strike may
+ * not drop the last clause bounding a system.
  *
  * Args:
  *   charter: The charter to edit.
@@ -516,22 +806,25 @@ export function withoutConstraints<T extends ClauseCharter>(
   if (struck.length === 0) return charter;
   const isProperty = (constraint: CharterConstraint): boolean =>
     constraint.kind === 'candidate-property';
-  const apply = (target: T, constraints: readonly CharterConstraint[]): T => {
-    const whole = constraints.filter(strikesWholeClause);
-    const phrased = constraints.filter(
-      (constraint: CharterConstraint): boolean => !strikesWholeClause(constraint),
-    );
+  const apply = (
+    target: PlacedCharter,
+    constraints: readonly CharterConstraint[],
+  ): PlacedCharter => {
+    const bound = constraints.filter((constraint) => constraint.binds !== undefined);
+    const unbound = constraints.filter((constraint) => constraint.binds === undefined);
     return withoutClauseWording(
-      withoutClauses(target, whole),
-      phrased.flatMap((constraint: CharterConstraint): string[] => constraint.wording),
+      withoutClauses(withoutBoundClauses(target, bound), unbound.filter(strikesWholeClause)),
+      unbound
+        .filter((constraint: CharterConstraint): boolean => !strikesWholeClause(constraint))
+        .flatMap((constraint: CharterConstraint): string[] => constraint.wording),
     );
   };
   const lifted = apply(
-    charter,
+    placedCharter(charter),
     struck.filter((constraint: CharterConstraint): boolean => !isProperty(constraint)),
   );
-  const result = apply(lifted, struck.filter(isProperty));
-  assertBoundariesKept(charter, lifted, result, struck);
+  const result = charterAfter(charter, apply(lifted, struck.filter(isProperty)));
+  assertBoundariesKept(charter, charterAfter(charter, lifted), result, struck);
   return result;
 }
 
@@ -540,28 +833,30 @@ export function withoutConstraints<T extends ClauseCharter>(
  * the function and the will-do clauses keep their sentences minus the words,
  * a will-do emptied by that going with them.
  */
-function withoutClauses<T extends ClauseCharter>(
-  charter: T,
+function withoutClauses(
+  target: PlacedCharter,
   struck: readonly CharterConstraint[],
-): T {
-  if (struck.length === 0) return charter;
+): PlacedCharter {
+  if (struck.length === 0) return target;
   const phrases = struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording);
-  const carries = (clause: string): boolean =>
-    phrases.some((phrase: string): boolean => wordingPresent(phrase, [clause]));
-  const proposedFunction = withoutPhrases(charter.proposedFunction, phrases);
-  const boundaries = { ...charter.proposedBoundaries };
-  boundaries.willDo = charter.proposedBoundaries.willDo
-    .map((clause: string): string => withoutPhrases(clause, phrases))
-    .filter((clause: string): boolean => hasWording(clause));
-  for (const field of BOUNDING_FIELDS) {
-    boundaries[field] = charter.proposedBoundaries[field].filter(
-      (clause: string): boolean => !carries(clause),
-    );
-  }
+  const carries = (clause: PlacedClause): boolean =>
+    phrases.some((phrase: string): boolean => wordingPresent(phrase, [clause.text]));
+  const bounding = (field: ListField): PlacedClause[] =>
+    target.lists[field].filter((clause: PlacedClause): boolean => !carries(clause));
   return {
-    ...charter,
-    proposedFunction: hasWording(proposedFunction) ? proposedFunction : charter.proposedFunction,
-    proposedBoundaries: boundaries,
+    proposedFunction: functionWithout(target.proposedFunction, phrases),
+    lists: {
+      willDo: target.lists.willDo
+        .map(
+          (clause: PlacedClause): PlacedClause => ({
+            ...clause,
+            text: withoutPhrases(clause.text, phrases),
+          }),
+        )
+        .filter((clause: PlacedClause): boolean => hasWording(clause.text)),
+      willNotDo: bounding('willNotDo'),
+      escalationTriggers: bounding('escalationTriggers'),
+    },
   };
 }
 
@@ -699,43 +994,109 @@ export function strikePreview(charter: ClauseCharter, index: number): StrikePrev
  * refused, because a prohibition minus a qualifier is a wider prohibition.
  *
  * Args:
- *   charter: The charter to edit.
+ *   target: The clauses to edit, each list clause with its place.
  *   phrases: Whole-word phrases to remove.
  *
  * Returns:
- *   A copy with the phrases gone; the same charter when there are none.
+ *   The clauses with the phrases gone; the same clauses when there are none.
  *
  * Raises:
  *   Error: When a phrase is only part of a will-not-do clause.
  */
-export function withoutClauseWording<T extends ClauseCharter>(
-  charter: T,
-  phrases: readonly string[],
-): T {
-  if (phrases.length === 0) return charter;
-  for (const clause of charter.proposedBoundaries.willNotDo) {
-    if (!phrases.some((phrase) => wordingPresent(phrase, [clause]))) continue;
-    const remaining = withoutPhrases(clause, phrases);
-    if (remaining !== clause && hasWording(remaining)) {
+function withoutClauseWording(target: PlacedCharter, phrases: readonly string[]): PlacedCharter {
+  if (phrases.length === 0) return target;
+  for (const clause of target.lists.willNotDo) {
+    if (!phrases.some((phrase) => wordingPresent(phrase, [clause.text]))) continue;
+    const remaining = withoutPhrases(clause.text, phrases);
+    if (remaining !== clause.text && hasWording(remaining)) {
       throw new Error(
         'strike or edit the whole will-not-do clause; removing only part could change its boundary',
       );
     }
   }
-  const list = (clauses: readonly string[]): string[] =>
-    clauses
-      .map((clause: string): string => withoutPhrases(clause, phrases))
-      .filter((clause: string): boolean => hasWording(clause));
-  const proposedFunction = withoutPhrases(charter.proposedFunction, phrases);
+  const list = (field: ListField): PlacedClause[] =>
+    target.lists[field]
+      .map(
+        (clause: PlacedClause): PlacedClause => ({
+          ...clause,
+          text: withoutPhrases(clause.text, phrases),
+        }),
+      )
+      .filter((clause: PlacedClause): boolean => hasWording(clause.text));
   return {
-    ...charter,
-    proposedFunction: hasWording(proposedFunction) ? proposedFunction : charter.proposedFunction,
-    proposedBoundaries: {
-      willDo: list(charter.proposedBoundaries.willDo),
-      willNotDo: list(charter.proposedBoundaries.willNotDo),
-      escalationTriggers: list(charter.proposedBoundaries.escalationTriggers),
+    proposedFunction: functionWithout(target.proposedFunction, phrases),
+    lists: {
+      willDo: list('willDo'),
+      willNotDo: list('willNotDo'),
+      escalationTriggers: list('escalationTriggers'),
     },
   };
+}
+
+/** Where a rule is in the charter, for the card to say beside it. */
+export type RulePlacement =
+  /** A rule drafted before rules were bound: placed by its words alone. */
+  | { readonly kind: 'by-wording' }
+  /** A rule no clause carries: the draft left it out, and approving does not keep it. */
+  | { readonly kind: 'in-no-clause' }
+  /**
+   * A rule bound to the clauses it produced, and whether any of them carries the rule's own words
+   * (`wordingPresent`), the verification the card shows.
+   */
+  | { readonly kind: 'bound'; readonly clauses: readonly string[]; readonly carriesWords: boolean };
+
+/**
+ * Where a rule is in the charter: by its words alone (a rule drafted before binds), in no clause,
+ * or in the clauses it binds, with whether they carry its words.
+ *
+ * @param charter - The charter the rule's binds index, as drafted or as approved.
+ * @param constraint - One of its rules.
+ */
+export function rulePlacement(
+  charter: ClauseCharter,
+  constraint: CharterConstraint,
+): RulePlacement {
+  if (constraint.binds === undefined) return { kind: 'by-wording' };
+  const clauses = constraint.binds.flatMap((ref: ClauseRef): string[] => {
+    const clause = clauseAt(charter, ref);
+    return clause === undefined ? [] : [clause];
+  });
+  if (clauses.length === 0) return { kind: 'in-no-clause' };
+  return {
+    kind: 'bound',
+    clauses,
+    carriesWords: constraint.wording.some((phrase: string): boolean =>
+      wordingPresent(phrase, clauses),
+    ),
+  };
+}
+
+/**
+ * The rules with their binds counted again after one list clause is taken out: a bind to it is
+ * dropped and one after it in the same list moves up. A rule drafted before binds is returned as
+ * it is.
+ *
+ * @param constraints - The charter's rules, binds indexing the lists before the removal.
+ * @param field - The list the clause was taken from.
+ * @param index - Its place there before the removal.
+ */
+export function withClauseRemoved(
+  constraints: readonly CharterConstraint[],
+  field: ListField,
+  index: number,
+): CharterConstraint[] {
+  return constraints.map(
+    (constraint: CharterConstraint): CharterConstraint =>
+      constraint.binds === undefined
+        ? constraint
+        : {
+            ...constraint,
+            binds: constraint.binds.flatMap((ref: ClauseRef): ClauseRef[] => {
+              if (ref.field !== field || ref.index < index) return [ref];
+              return ref.index === index ? [] : [{ field, index: ref.index - 1 }];
+            }),
+          },
+  );
 }
 
 /** A clause a strike can change: the function, or an item of one of the lists. */
