@@ -33,7 +33,9 @@ import {
  * A version is what a verified skill is; an employee's `skills` row is what it holds. Every
  * lookup goes through `ownerVersions`, which leads every index read with the owner key, so a
  * lookup can only ever answer the owner it names: a lookup across owners is impossible by index,
- * not refused by a filter. 13-K re-points that one helper to `ownerScope`.
+ * not refused by a filter. The public `library` read passes it the caller's `ownerScope` (13-K);
+ * the internal paths pass the employee's owner key, the same scope today, which a company key
+ * would route through `employeeOwnerScope` too.
  *
  * Writers: registration (`skills.completeRegistration`, through `recordRegisteredVersion`), the
  * re-check stamp (`stampRecheckDue`, the helper every trigger calls), the handover's copy

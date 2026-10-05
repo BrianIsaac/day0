@@ -252,7 +252,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'gives every stored documentation page a listing row stamped 0, older than any listing a sync starts, so the next finish that does not name the page removes it and one that does restamps it',
     thenRemoves:
-      'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it',
+      'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it (cleared by sync-runs-refs at 0.16.0, removed at 0.17.0)',
   },
   'decision-batches-settled': {
     release: SCHEMA_STEP_RELEASE,
@@ -316,7 +316,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
   },
   'surfaces-messages-tab': {
     release: PEOPLE_RELEASE,
-    does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card reads it off the row; a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
+    does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card’s reader can read it off the row once every writer writes it (13-FS); a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
     thenRemoves:
       'nothing in the schema: the event read in typedCodeReachOf goes once every writer of the opening writes the field too',
   },

@@ -103,8 +103,9 @@ export const RUN_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * The most runs one pruning pass deletes. A run holds its counts, at most ten unread pages and
- * its credential refs (its page list went at 0.17.0, 13-K, once 0.16.0's `sync-runs-refs` had
- * cleared it), so a pass of this many stays well inside one transaction's read limit.
+ * its credential refs, at most the 1,000 a source may hold before its finish refuses (its page
+ * list went at 0.17.0, 13-K, once 0.16.0's `sync-runs-refs` had cleared it): a few hundred KiB
+ * at the most, so a pass of this many stays well inside one transaction's read limit.
  */
 const RUN_PRUNE_BATCH = 32;
 
