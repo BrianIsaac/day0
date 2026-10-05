@@ -100,17 +100,17 @@ export function proposedEmpty(employee: string): string {
  * @param employee - The employee's name.
  */
 export function proposedInMock(employee: string): string {
-  return `${employee} proposes people from the one-to-one and your documentation in a deployment of your own. This demo keeps the names the one-to-one gave the charter, above.`;
+  return `${employee} proposes people from the one-to-one and your documentation in a deployment of your own. This demo keeps the names the one-to-one gave the charter, below.`;
 }
 
 /**
- * One proposal's line: the person and, where a source said it, their role.
+ * What follows a person's name on the card: their role, where a source said it ("{person},
+ * {role}").
  *
- * @param person - The person's name.
  * @param role - Their title or team, when a source gave one.
  */
-export function proposalLine(person: string, role: string | undefined): string {
-  return role === undefined || role.trim() === '' ? person : `${person}, ${role}`;
+export function roleSuffix(role: string | undefined): string {
+  return role === undefined || role.trim() === '' ? '' : `, ${role.trim()}`;
 }
 
 /**
@@ -158,3 +158,72 @@ export function possiblySameLine(existing: string): string {
  */
 export const READS_FROM_THIS =
   'Names and roles, at most eight lines, regenerated when the graph changes. Never identities or credentials.';
+
+/** The People tab's line while the graph is read. */
+export const READING_PEOPLE = 'Reading your people.';
+
+/** The Confirmed card's empty line: nobody confirmed has an edge to the employee yet. */
+export function confirmedEmpty(employee: string): string {
+  return `No one confirmed works with ${employee} yet. The people you confirm above appear here.`;
+}
+
+/**
+ * The line under a person waiting on the manager for an edge, not themselves.
+ *
+ * @param noun - The edge's noun ({@link RELATIONSHIP_NOUNS}).
+ * @param scope - What it covers, when the source said.
+ */
+export function waitingLine(noun: string, scope: string | undefined): string {
+  return `Waiting on you: ${noun}${scope === undefined ? '' : `, ${scope}`}.`;
+}
+
+/**
+ * When the manager confirmed a person, as the Confirmed card says it.
+ *
+ * @param when - The time, as the page writes one.
+ */
+export function confirmedByYouLine(when: string): string {
+  return `Confirmed by you ${when}.`;
+}
+
+/** An identity of a person as the tab names it: the system and how it shows them. */
+export function identityLabel(identity: {
+  readonly provider: 'email' | 'oidc' | 'slack' | 'linear';
+  readonly externalId: string;
+  readonly displayName?: string;
+}): string {
+  switch (identity.provider) {
+    case 'slack':
+      return `Slack @${identity.displayName ?? identity.externalId}`;
+    case 'linear':
+      return `Linear ${identity.displayName ?? identity.externalId}`;
+    case 'email':
+      return identity.externalId;
+    case 'oidc':
+      return 'sign-in account';
+    default: {
+      const unknown: never = identity.provider;
+      throw new Error(`unhandled identity provider ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * One edge as the Confirmed card lists it.
+ *
+ * @param noun - The edge's noun.
+ * @param scope - What it covers.
+ * @param since - When it took effect, as the page writes a time.
+ * @param everyone - Whether it holds for everyone the manager manages, not this employee alone.
+ */
+export function edgeLine(
+  noun: string,
+  scope: string | undefined,
+  since: string,
+  everyone: boolean,
+): string {
+  const named = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
+  return `${named}${scope === undefined ? '' : `: ${scope}`} · since ${since}${
+    everyone ? ' · for everyone you manage' : ''
+  }`;
+}

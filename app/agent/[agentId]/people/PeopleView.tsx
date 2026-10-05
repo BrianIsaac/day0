@@ -38,6 +38,8 @@ import { EmployeeRail } from '../EmployeeRail';
 import { clockTime, useAgentZone } from '../../../components/time';
 import { actorAt } from '../charter/CharterAside';
 import { CancelHandoverDialog, HandOverDialog, MakeItYou } from './HandOver';
+import { ConfirmedPeopleCard, ProposedPeopleCard } from './PeopleGraph';
+import { READS_FROM_THIS } from '@/people/words';
 
 /** How the employee reaches a person the charter names, as the one-to-one settled it. */
 export type IntroPath = 'manager' | 'self' | 'tbd';
@@ -116,18 +118,21 @@ export function provenanceLine(
 }
 
 /**
- * The People tab (round two section 3.9, `agent-people.html`), as far as the product records
- * people: the manager, with the handover to another manager (the transfer plan, section 7.1)
- * and the flag on an address that is not the owner's (section 11.2), and the people the
- * charter names from the one-to-one with where each came from and how the employee reaches them.
- * The proposals the drawing confirms from a card (from the team pages and the one-to-one, matched
- * to a chat account) wait on the people records (A1); the tab says so rather than drawing
- * controls that do nothing.
+ * The People tab (round two section 3.9, `agent-people.html`; wave 13, 13-P): the manager, with
+ * the handover to another manager (the transfer plan, section 7.1) and the flag on an address that
+ * is not the owner's (section 11.2); the people the graph proposes, each confirmed or dismissed on
+ * the card (A1, A14, C5), and the confirmed people the employee's edges reach, with their
+ * identities and edges; and the people the charter names from the one-to-one. Mock mode keeps no
+ * graph, so its Proposed card says what a deployment of the manager's own does.
  */
 export function PeopleView() {
   const { agent, charter, surfaceMode, arriving } = useEmployee();
   const zone = useAgentZone();
   const named = namedPeople(charter?.body);
+  const people = useQuery(
+    api.people.forEmployee,
+    surfaceMode === 'real' ? { agentId: agent._id } : 'skip',
+  );
   const earlier = useQuery(
     api.managerTransfers.earlierManagers,
     charter?.approved ? { agentId: agent._id } : 'skip',
@@ -143,17 +148,28 @@ export function PeopleView() {
       aside={
         <>
           <Card title={`What ${agent.name} reads from this`}>
-            <p className="text-sm text-[var(--color-fg-2)]">
-              Each name, what they are the person for and how to reach them, under Key relationships
-              in the identity file {agent.name} works from, rewritten whenever the charter changes.
-              No account or credential of theirs.
-            </p>
+            <p className="text-sm text-[var(--color-fg-2)]">{READS_FROM_THIS}</p>
           </Card>
           <EmployeeRail />
         </>
       }
     >
       <ManagerCard agent={agent} surfaceMode={surfaceMode} />
+      <ProposedPeopleCard
+        agentId={agent._id}
+        employee={agent.name}
+        zone={zone}
+        people={people}
+        mode={surfaceMode}
+      />
+      {surfaceMode === 'real' && people !== undefined ? (
+        <ConfirmedPeopleCard
+          agentId={agent._id}
+          employee={agent.name}
+          zone={zone}
+          people={people}
+        />
+      ) : null}
       <Card title="Named in the charter" meta={named.length > 0 ? `${named.length}` : undefined}>
         {named.length === 0 || charter === null ? (
           <p className="text-sm text-[var(--color-muted)]">
@@ -176,12 +192,6 @@ export function PeopleView() {
             ))}
           </ul>
         )}
-      </Card>
-      <Card title="Proposed">
-        <p className="text-sm text-[var(--color-fg-2)]">
-          {agent.name} does not propose people for you to confirm yet. The names above are the ones
-          your one-to-one gave the charter; to add or remove one, amend the charter.
-        </p>
       </Card>
     </Columns>
   );
