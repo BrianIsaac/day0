@@ -119,7 +119,7 @@ export const DEPLOYMENT_ACCESS_TABLES = ['organisationConnections', 'connectionE
 /** The most rows one read of the people graph's deletion and edge retirement takes. */
 const PEOPLE_PAGE = 200;
 
-/** The edge standings that hold until something ends them. */
+/** The edge standings a retire ends: one in force, and two never confirmed. */
 const STANDING_EDGES: ReadonlySet<Doc<'relationships'>['status']> = new Set([
   'proposed',
   'active',
@@ -127,11 +127,13 @@ const STANDING_EDGES: ReadonlySet<Doc<'relationships'>['status']> = new Set([
 ]);
 
 /**
- * Retire the edges leaving one employee (wave 13, 13-K; the wave file's section 5.1): each that
- * still holds ends now, `retired`, and stays as the owner's record of whom the employee worked
- * with. An edge already superseded, retired or ended keeps how and when it ended. The retire calls
- * it, and a handover's move is to (13-P): neither leaves an edge of the old owner's that reads as
- * live.
+ * Retire the edges leaving one employee (wave 13, 13-K; the wave file's section 5.1), each kept
+ * as the owner's record of whom the employee worked with: an `active` edge ends now
+ * (`effectiveUntil`), and a `proposed` or `disputed` one, never in force, is `retired` with no end,
+ * so no reading of who held an edge on a date counts it. An edge already superseded, retired or
+ * ended keeps how and when it ended. The retire calls it, and a handover's move is to (13-P):
+ * neither leaves an edge of the old owner's that reads as live. Read as a stream over the
+ * employee's own edges, which its collaborators bound.
  *
  * @param ctx - The retire's or the move's mutation context.
  * @param agentId - The departing employee.
@@ -143,24 +145,26 @@ export async function retireEdgesOf(
   agentId: Id<'agents'>,
   now: number,
 ): Promise<number> {
-  const leaving = await ctx.db
+  let retired = 0;
+  for await (const edge of ctx.db
     .query('relationships')
-    .withIndex('by_from_agent_type', (q) => q.eq('fromAgentId', agentId))
-    .collect();
-  const standing = leaving.filter(
-    (edge) => edge.effectiveUntil === undefined && STANDING_EDGES.has(edge.status),
-  );
-  await Promise.all(
-    standing.map(
-      async (edge) => await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now }),
-    ),
-  );
-  return standing.length;
+    .withIndex('by_from_agent_type', (q) => q.eq('fromAgentId', agentId))) {
+    if (edge.effectiveUntil !== undefined || !STANDING_EDGES.has(edge.status)) continue;
+    await ctx.db.patch(edge._id, {
+      status: 'retired',
+      ...(edge.status === 'active' ? { effectiveUntil: now } : {}),
+    });
+    retired += 1;
+  }
+  return retired;
 }
 
 /**
- * Delete every row of one owner-scoped table under a scope, a page at a time, so a graph of any
- * size goes inside the reset's transaction one bounded read after another.
+ * Delete every row of one owner-scoped table under a scope, a page at a time. Every page is
+ * inside the deletion's one transaction, as the employees' own rows and the skill library are
+ * (`deleteOwnerLibrary`), so the graph's size counts against the transaction's limits: an owner's
+ * graph is the people their employees work with, a few hundred rows, far inside them. Each read
+ * sees the pages already deleted, so the loop ends at the first short page.
  */
 async function deleteScoped(
   read: () => Promise<ReadonlyArray<{ readonly _id: Id<keyof DataModel & string> }>>,
@@ -1309,15 +1313,15 @@ export const deleteMyData = mutation({
 /**
  * Whether the owner scope holds a person other than the owner's own row, an edge or a working
  * agreement: what of the people graph a deletion would take that a sign-in does not write again.
- * Each read stops at its first match; the people read passes over the one owner row at most.
+ * Each read stops at its first match; the people read takes two rows, past the one owner row.
  */
 async function holdsPeople(db: DatabaseReader, scope: string): Promise<boolean> {
-  const [person, edge, agreement] = await Promise.all([
+  const [people, edge, agreement] = await Promise.all([
+    // At most one row is the owner's own, so two rows always name another person when there is one.
     db
       .query('people')
       .withIndex('by_user_status', (q) => q.eq('userId', scope))
-      .filter((q) => q.neq(q.field('isOwner'), true))
-      .first(),
+      .take(2),
     db
       .query('relationships')
       .withIndex('by_user_to', (q) => q.eq('userId', scope))
@@ -1327,7 +1331,8 @@ async function holdsPeople(db: DatabaseReader, scope: string): Promise<boolean> 
       .withIndex('by_user_status', (q) => q.eq('userId', scope))
       .first(),
   ]);
-  return person !== null || edge !== null || agreement !== null;
+  const person = people.some((row) => row.isOwner !== true);
+  return person || edge !== null || agreement !== null;
 }
 
 /** Whether the owner holds each kind of row a deletion of their data removes or changes. */

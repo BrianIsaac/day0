@@ -7,6 +7,7 @@ import {
   AGENT_KEYED_TABLES,
   DEPLOYMENT_ACCESS_TABLES,
   OWNER_LIBRARY_TABLES,
+  OWNER_PEOPLE_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
   retireDuringHandoverRefusal,
@@ -1976,6 +1977,86 @@ describe('the people graph and the working agreements at a retire and a deletion
       );
     });
   }
+
+  it('retires a proposed or disputed edge at a retire without giving it a time it held, which it never did (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedGraph(harness);
+    const { proposed, disputed } = await harness.run(async (ctx) => {
+      const edge = async (status: 'proposed' | 'disputed') =>
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromAgentId: seeded.priya,
+          toPersonId: seeded.aiko,
+          type: 'approval-authority',
+          effectiveFrom: 1,
+          status,
+          source: 'documentation',
+          createdAt: 1,
+        });
+      return { proposed: await edge('proposed'), disputed: await edge('disputed') };
+    });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.retire, { agentId: seeded.priya });
+
+    const read = await harness.run(async (ctx) => ({
+      proposed: await ctx.db.get(proposed),
+      disputed: await ctx.db.get(disputed),
+      active: await ctx.db.get(seeded.priyasEdge),
+    }));
+    for (const edge of [read.proposed, read.disputed]) {
+      expect(edge?.status).toBe('retired');
+      expect(edge).not.toHaveProperty('effectiveUntil');
+    }
+    expect(read.active?.effectiveUntil).toEqual(expect.any(Number));
+  });
+
+  it('deletes a graph of more than one page of each table in the one deletion (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 205; index += 1) {
+        const personId = await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: `Person ${index}`,
+          nameKey: `person ${index}`,
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('personIdentities', {
+          userId: 'owner',
+          personId,
+          provider: 'linear',
+          externalId: `lin-${index}`,
+          source: 'documentation',
+          createdAt: 1,
+        });
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromPersonId: personId,
+          toPersonId: personId,
+          type: 'collaborator',
+          effectiveFrom: 1,
+          status: 'proposed',
+          source: 'documentation',
+          createdAt: 1,
+        });
+      }
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    const left = await harness.run(async (ctx) => ({
+      people: (await ctx.db.query('people').collect()).length,
+      identities: (await ctx.db.query('personIdentities').collect()).length,
+      edges: (await ctx.db.query('relationships').collect()).length,
+    }));
+    expect(left).toEqual({ people: 0, identities: 0, edges: 0 });
+    expect([...OWNER_PEOPLE_TABLES]).toEqual(['people', 'personIdentities', 'relationships']);
+  });
 
   it("deleteMyData deletes the owner's people, identities, edges and every agreement, and no other owner's", async (): Promise<void> => {
     useSurfaceMode('real');
