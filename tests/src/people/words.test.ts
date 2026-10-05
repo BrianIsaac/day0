@@ -5,6 +5,7 @@ import {
   identityLabel,
   possiblySameLine,
   proposedEdgeLine,
+  proposedInMock,
   relationshipNoun,
   waitingLine,
 } from '../../../src/people/words';
@@ -49,5 +50,14 @@ describe('people words', (): void => {
     );
     expect(relationshipNoun('approval-authority')).toBe('approver');
     expect(relationshipNoun(undefined)).toBe('relationship');
+  });
+});
+
+describe('the Proposed card in the hosted office (13-FD)', (): void => {
+  it('says what a deployment of your own does, of the hosted office as every mock-mode sentence does', (): void => {
+    expect(proposedInMock('Mira')).toBe(
+      'In a deployment of your own, Mira proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.',
+    );
+    expect(proposedInMock('Mira')).not.toMatch(/this demo|[\u2013\u2014]/i);
   });
 });

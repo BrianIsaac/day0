@@ -14,6 +14,7 @@ vi.mock('convex/react', () => ({
 import { CharterView } from '../../../../../app/agent/[agentId]/charter/CharterView';
 import { APPROVED_CHARTER, asEmployee } from '../../../../fixtures/dom/employee';
 import { strikeRefusalBody } from '../../../../fixtures/charter-strike-refusal-2026-09-15';
+import { AGREEMENTS_IN_MOCK, AGREEMENTS_TITLE } from '../../../../../src/work/agreement-words';
 
 describe('CharterView', () => {
   it('shows the charter card for the charter the page has', () => {
@@ -30,6 +31,33 @@ describe('CharterView', () => {
       },
     };
     expect(renderToStaticMarkup(asEmployee(<CharterView />, { charter }))).toContain('Close week.');
+  });
+
+  it('says, in the hosted office, that working agreements are kept in a deployment of your own (13-FD)', () => {
+    const charter = {
+      ...APPROVED_CHARTER,
+      body: {
+        whyThisHire: 'Close week.',
+        proposedFunction: 'Own routine revenue operations work.',
+        shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+        proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+        namedCollaborators: [],
+        priorityReading: [],
+        openQuestions: [],
+      },
+    };
+    const mock = renderToStaticMarkup(
+      asEmployee(<CharterView />, { charter, surfaceMode: 'mock' }),
+    );
+    expect(mock).toContain(AGREEMENTS_TITLE);
+    expect(mock).toContain(AGREEMENTS_IN_MOCK);
+    expect(AGREEMENTS_IN_MOCK).toBe(
+      'The hosted office keeps no working agreements. In a deployment of your own, a note you keep when you approve a plan, or a correction you give twice, becomes one here once Day0 checks it against the charter.',
+    );
+    const real = renderToStaticMarkup(
+      asEmployee(<CharterView />, { charter, surfaceMode: 'real' }),
+    );
+    expect(real).not.toContain(AGREEMENTS_IN_MOCK);
   });
 
   it('says the one-to-one drafts it when there is none yet', () => {

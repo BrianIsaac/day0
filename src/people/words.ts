@@ -98,12 +98,12 @@ export function proposedEmpty(employee: string): string {
 
 /**
  * The Proposed card in mock mode, where the graph is not kept (13-K: `ensureOwner` writes nothing)
- * and no proposal is ever made.
+ * and no proposal is ever made; said of "the hosted office", as every mock-mode sentence is (13-FD).
  *
  * @param employee - The employee's name.
  */
 export function proposedInMock(employee: string): string {
-  return `${employee} proposes people from the one-to-one and your documentation in a deployment of your own. This demo keeps the names the one-to-one gave the charter, below.`;
+  return `In a deployment of your own, ${employee} proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.`;
 }
 
 /**
