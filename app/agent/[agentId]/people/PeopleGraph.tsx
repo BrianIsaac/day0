@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -12,8 +12,10 @@ import {
   edgeLine,
   EMPLOYEE_RELATIONSHIP_TYPES,
   evidenceLine,
+  evidenceText,
   identityLabel,
   matchesSlackLine,
+  moreEvidence,
   possiblySameLine,
   proposedEdgeLine,
   proposedEmpty,
@@ -23,11 +25,13 @@ import {
   RELATIONSHIP_NOUNS,
   RELATIONSHIP_SCOPE_LIMIT,
   roleSuffix,
+  sameOrDifferentHelp,
   waitingLine,
 } from '@/people/words';
 import type { RelationshipType } from '@/people/vocabulary';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
+import { Disclosure } from '../../../components/Disclosure';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
@@ -64,6 +68,27 @@ interface GraphCardProps {
   readonly zone: string | undefined;
 }
 
+/** The attribute a row of a card's list carries, so focus can find the row that follows a decision. */
+const PERSON_ROW = 'data-person';
+
+/**
+ * Where focus lands once a decision on a row is said: the heading of the row named, else the card,
+ * since the pressed control may leave with its row. Read when the change lands, never in render.
+ *
+ * @param card - The card.
+ * @param row - The person whose row should take focus.
+ */
+function headingOf(
+  card: RefObject<HTMLElement | null>,
+  row: string | undefined,
+): HTMLElement | null {
+  return (
+    (row === undefined
+      ? null
+      : card.current?.querySelector<HTMLElement>(`[${PERSON_ROW}="${row}"] h3`)) ?? card.current
+  );
+}
+
 /**
  * The Proposed card: the people waiting on the manager, in real mode; in mock mode, where no graph
  * is kept, what a deployment of the manager's own does.
@@ -98,21 +123,78 @@ export function ProposedPeopleCard({
         <div className="grid gap-4">
           <p className="text-sm text-[var(--color-fg-2)]">{proposedLead(employee)}</p>
           <ul className="grid gap-5">
-            {waiting.map((proposal) => (
+            {waiting.map((proposal, index) => (
               <ProposalRow
                 key={proposal.personId}
                 proposal={proposal}
                 agentId={agentId}
                 zone={zone}
                 change={change}
-                landed={() => card.current}
+                card={card}
+                next={(waiting[index + 1] ?? waiting[index - 1])?.personId}
               />
             ))}
           </ul>
         </div>
       )}
-      <StatusRegion outcome={change.outcome} />
+      <div className="mt-1">
+        <StatusRegion outcome={change.outcome} />
+      </div>
     </Card>
+  );
+}
+
+/** A person's name as a row's heading, which focus lands on after a decision. */
+function PersonHeading({
+  name,
+  role,
+}: {
+  readonly name: string;
+  readonly role: string | undefined;
+}) {
+  return (
+    <h3
+      tabIndex={-1}
+      className="text-[15px] font-normal text-[var(--color-fg-2)] [overflow-wrap:anywhere] focus:outline-none focus-visible:outline-2"
+    >
+      <span className="font-semibold text-[var(--color-fg)]">{name}</span>
+      {roleSuffix(role)}
+    </h3>
+  );
+}
+
+/** A person's evidence: the first piece, and the rest behind a disclosure. */
+function EvidenceList({
+  evidence,
+  zone,
+}: {
+  readonly evidence: readonly { quote: string; where: string; at: number }[];
+  readonly zone: string | undefined;
+}) {
+  const [first, ...rest] = evidence;
+  if (first === undefined) return null;
+  const line = (item: { quote: string; where: string; at: number }): string =>
+    evidenceLine(evidenceText(item.quote), item.where, clockTime(item.at, zone));
+  return (
+    <div className="grid gap-1">
+      <p className="text-[13px] leading-relaxed text-[var(--color-muted)] [overflow-wrap:anywhere]">
+        {line(first)}
+      </p>
+      {rest.length === 0 ? null : (
+        <Disclosure summary={moreEvidence(rest.length)}>
+          <ul className="grid gap-1">
+            {rest.map((item, index) => (
+              <li
+                key={`${index}-${item.at}`}
+                className="text-[13px] leading-relaxed text-[var(--color-muted)] [overflow-wrap:anywhere]"
+              >
+                {line(item)}
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      )}
+    </div>
   );
 }
 
@@ -122,14 +204,18 @@ function ProposalRow({
   agentId,
   zone,
   change,
-  landed,
+  card,
+  next,
 }: {
   readonly proposal: Proposal;
   readonly agentId: Id<'agents'>;
   readonly zone: string | undefined;
   readonly change: Change;
-  readonly landed: () => HTMLElement | null;
+  readonly card: RefObject<HTMLElement | null>;
+  /** The row that takes focus once this one is decided and leaves. */
+  readonly next: string | undefined;
 }) {
+  const landed = (): HTMLElement | null => headingOf(card, next);
   const confirm = useMutation(api.people.confirm);
   const dismiss = useMutation(api.people.dismiss);
   const samePerson = useMutation(api.people.samePerson);
@@ -137,25 +223,20 @@ function ProposalRow({
   const notThisMatch = useMutation(api.people.notThisMatch);
   const { personId, name } = proposal;
   const args = { personId, agentId };
-  const role = roleSuffix(proposal.role);
+  const offered = proposal.possiblySameAs;
+  const offeredStanding =
+    offered === undefined
+      ? ''
+      : offered.standing === 'confirmed'
+        ? 'already confirmed'
+        : 'also proposed';
   return (
-    <li className={ROW}>
-      <p className="text-[15px] text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-        <span className="font-semibold text-[var(--color-fg)]">{name}</span>
-        {role}
-      </p>
-      {proposal.evidence.map((item) => (
+    <li className={ROW} {...{ [PERSON_ROW]: personId }}>
+      <PersonHeading name={name} role={proposal.role} />
+      {proposal.waiting.map((edge, index) => (
         <p
-          key={`${item.where}-${item.at}-${item.quote}`}
-          className="text-[13px] leading-relaxed text-[var(--color-fg-2)] [overflow-wrap:anywhere]"
-        >
-          {evidenceLine(item.quote, item.where, clockTime(item.at, zone))}
-        </p>
-      ))}
-      {proposal.waiting.map((edge) => (
-        <p
-          key={`${edge.type}-${edge.scope ?? ''}`}
-          className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]"
+          key={`${index}-${edge.type}`}
+          className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]"
         >
           {proposal.status === 'active'
             ? waitingLine(RELATIONSHIP_NOUNS[edge.type], edge.scope)
@@ -163,26 +244,30 @@ function ProposalRow({
         </p>
       ))}
       {proposal.match !== undefined ? (
-        <p className="text-[13px] text-[var(--color-fg-2)]">
+        <p className="text-sm text-[var(--color-fg-2)]">
           {matchesSlackLine(proposal.match.handle)}
         </p>
       ) : null}
-      {proposal.possiblySameAs !== undefined ? (
-        <p className="text-[13px] text-[var(--color-fg-2)]">
-          {possiblySameLine(proposal.possiblySameAs.name)}
+      {offered !== undefined ? (
+        <p className="text-sm text-[var(--color-fg-2)]">
+          {possiblySameLine(offered.name, offered.standing, offered.role)}
         </p>
       ) : null}
+      <EvidenceList evidence={proposal.evidence} zone={zone} />
+      {offered !== undefined ? (
+        <p className="text-[13px] text-[var(--color-muted)]">{sameOrDifferentHelp(offered.name)}</p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        {proposal.possiblySameAs !== undefined ? (
+        {offered !== undefined ? (
           <>
             <Button
               size="small"
               variant="approve"
               disabled={change.busy}
-              aria-label={`Same person: ${name} is ${proposal.possiblySameAs.name}`}
+              aria-label={`Same person: ${name} is the ${offered.name} ${offeredStanding}`}
               onClick={() =>
                 change.run(() => samePerson(args), {
-                  done: `${name} is now the same person as ${proposal.possiblySameAs?.name ?? 'the one you know'}.`,
+                  done: `${name} is now the same person as ${offered.name}.`,
                   refused: `${name} was not merged.`,
                   focus: landed,
                 })
@@ -193,7 +278,7 @@ function ProposalRow({
             <Button
               size="small"
               disabled={change.busy}
-              aria-label={`Different: ${name} is not ${proposal.possiblySameAs.name}`}
+              aria-label={`Different: ${name} is not the ${offered.name} ${offeredStanding}`}
               onClick={() =>
                 change.run(() => notTheSame(args), {
                   done: `${name} stays a proposal of its own.`,
@@ -217,7 +302,7 @@ function ProposalRow({
               }
               onClick={() =>
                 change.run(() => confirm(args), {
-                  done: `Confirmed ${name}.`,
+                  done: `Confirmed ${name}: now under Confirmed.`,
                   refused: `${name} was not confirmed.`,
                   focus: landed,
                 })
@@ -231,10 +316,10 @@ function ProposalRow({
                 disabled={change.busy}
                 aria-label={`A different person: ${name} is not @${proposal.match.handle}`}
                 onClick={() => {
-                  const identityId = proposal.match?.identityId;
-                  if (identityId === undefined) return;
-                  change.run(() => notThisMatch({ ...args, identityId }), {
-                    done: `Dropped the Slack match for ${name}, and the address it was found by.`,
+                  const match = proposal.match;
+                  if (match === undefined) return;
+                  change.run(() => notThisMatch({ ...args, identityId: match.identityId }), {
+                    done: `${name} is no longer matched to @${match.handle}.`,
                     refused: `The match for ${name} was not dropped.`,
                   });
                 }}
@@ -291,12 +376,14 @@ export function ConfirmedPeopleCard({
               agentId={agentId}
               zone={zone}
               change={change}
-              landed={() => card.current}
+              card={card}
             />
           ))}
         </ul>
       )}
-      <StatusRegion outcome={change.outcome} />
+      <div className="mt-1">
+        <StatusRegion outcome={change.outcome} />
+      </div>
     </Card>
   );
 }
@@ -313,33 +400,38 @@ function ConfirmedRow({
   agentId,
   zone,
   change,
-  landed,
+  card,
 }: {
   readonly person: Confirmed;
   readonly agentId: Id<'agents'>;
   readonly zone: string | undefined;
   readonly change: Change;
-  readonly landed: () => HTMLElement | null;
+  readonly card: RefObject<HTMLElement | null>;
 }) {
+  const landed = (): HTMLElement | null => headingOf(card, person.personId);
   const retire = useMutation(api.people.retireRelationship);
   const [form, setForm] = useState<RowForm>({ kind: 'none' });
+  const row = useRef<HTMLLIElement>(null);
   const { name } = person;
-  const role = roleSuffix(person.role);
+  // A form closed by Cancel hands focus back to the row it was opened on.
+  const close = (): void => {
+    setForm({ kind: 'none' });
+    requestAnimationFrame(() => row.current?.querySelector<HTMLElement>('h3')?.focus());
+  };
+  const edgeForm = (editing: Edge | undefined): ReactNode => (
+    <EdgeForm
+      person={person}
+      agentId={agentId}
+      editing={editing}
+      change={change}
+      onDone={() => setForm({ kind: 'none' })}
+      onCancel={close}
+      landed={landed}
+    />
+  );
   return (
-    <li className={ROW}>
-      <p className="text-[15px] text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-        <span className="font-semibold text-[var(--color-fg)]">{name}</span>
-        {role}
-      </p>
-      {person.evidence !== undefined ? (
-        <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-          {evidenceLine(
-            person.evidence.quote,
-            person.evidence.where,
-            clockTime(person.evidence.at, zone),
-          )}
-        </p>
-      ) : null}
+    <li className={ROW} ref={row} {...{ [PERSON_ROW]: person.personId }}>
+      <PersonHeading name={name} role={person.role} />
       <p className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]">
         {[
           ...(person.confirmedAt === undefined
@@ -350,52 +442,59 @@ function ConfirmedRow({
             : [`Identities: ${person.identities.map(identityLabel).join(', ')}.`]),
         ].join(' ')}
       </p>
-      <ul className="grid gap-2">
-        {person.edges.map((edge) => (
-          <li
-            key={edge.relationshipId}
-            className="flex flex-wrap items-center justify-between gap-2"
-          >
-            <span className="min-w-0 text-[13px] text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-              {edgeLine(
-                RELATIONSHIP_NOUNS[edge.type],
-                edge.scope,
-                clockTime(edge.since, zone),
-                !edge.fromEmployee,
-              )}
-            </span>
-            <span className="flex flex-wrap gap-2">
-              <Button
-                size="small"
-                disabled={change.busy}
-                aria-label={`Change ${RELATIONSHIP_NOUNS[edge.type]} ${name}`}
-                onClick={() => {
-                  change.clear();
-                  setForm({ kind: 'edit', edge });
-                }}
-              >
-                Change
-              </Button>
-              <Button
-                size="small"
-                variant="quiet"
-                disabled={change.busy}
-                aria-label={`End ${RELATIONSHIP_NOUNS[edge.type]} ${name}`}
-                onClick={() =>
-                  change.run(() => retire({ relationshipId: edge.relationshipId, agentId }), {
-                    done: `Ended ${RELATIONSHIP_NOUNS[edge.type]} ${name}.`,
-                    refused: `The ${RELATIONSHIP_NOUNS[edge.type]} ${name} was not ended.`,
-                    focus: landed,
-                  })
-                }
-              >
-                End
-              </Button>
-            </span>
-          </li>
-        ))}
+      <ul className="grid gap-3">
+        {person.edges.map((edge) => {
+          const noun = RELATIONSHIP_NOUNS[edge.type];
+          return (
+            <li key={edge.relationshipId} className="grid gap-2">
+              <div className="grid items-start gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <span className="min-w-0 text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+                  {edgeLine(noun, edge.scope, clockTime(edge.since, zone), !edge.fromEmployee)}
+                </span>
+                <span className="flex flex-wrap gap-2">
+                  <Button
+                    size="small"
+                    disabled={change.busy}
+                    aria-label={`Change ${noun} ${name}`}
+                    onClick={() => {
+                      change.clear();
+                      setForm({ kind: 'edit', edge });
+                    }}
+                  >
+                    Change
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="quiet"
+                    disabled={change.busy}
+                    aria-label={`End ${noun} ${name}`}
+                    onClick={() =>
+                      change.run(() => retire({ relationshipId: edge.relationshipId, agentId }), {
+                        done: edge.fromEmployee
+                          ? `Ended ${noun} ${name}.`
+                          : `Ended ${noun} ${name}, for everyone you manage.`,
+                        refused: `The ${noun} ${name} was not ended.`,
+                        focus: landed,
+                      })
+                    }
+                  >
+                    End
+                  </Button>
+                </span>
+              </div>
+              {form.kind === 'edit' && form.edge.relationshipId === edge.relationshipId
+                ? edgeForm(edge)
+                : null}
+            </li>
+          );
+        })}
       </ul>
-      {form.kind === 'none' ? (
+      {person.evidence !== undefined ? (
+        <EvidenceList evidence={[person.evidence]} zone={zone} />
+      ) : null}
+      {form.kind === 'add' ? (
+        edgeForm(undefined)
+      ) : (
         <div>
           <Button
             size="small"
@@ -410,15 +509,6 @@ function ConfirmedRow({
             Add a relationship
           </Button>
         </div>
-      ) : (
-        <EdgeForm
-          person={person}
-          agentId={agentId}
-          editing={form.kind === 'edit' ? form.edge : undefined}
-          change={change}
-          onDone={() => setForm({ kind: 'none' })}
-          landed={landed}
-        />
       )}
     </li>
   );
@@ -438,15 +528,22 @@ function EdgeForm({
   editing,
   change,
   onDone,
+  onCancel,
   landed,
 }: {
   readonly person: Confirmed;
   readonly agentId: Id<'agents'>;
   readonly editing: Edge | undefined;
   readonly change: Change;
+  /** Closes the form once its change is said; focus then lands where `landed` says. */
   readonly onDone: () => void;
+  /** Closes the form unchanged and hands focus back to its row. */
+  readonly onCancel: () => void;
   readonly landed: () => HTMLElement | null;
 }) {
+  const first = useRef<HTMLSelectElement>(null);
+  // The form takes focus when it opens: the control that opened it has gone.
+  useEffect(() => first.current?.focus(), []);
   const add = useMutation(api.people.addRelationship);
   const edit = useMutation(api.people.editRelationship);
   const types = typesFor(editing);
@@ -462,7 +559,7 @@ function EdgeForm({
       change.run(
         () => edit({ relationshipId: editing.relationshipId, agentId, type, ...covered }),
         {
-          done: `Changed the ${noun} ${person.name}.`,
+          done: `Changed ${person.name} to ${noun}.`,
           refused: `The relationship with ${person.name} was not changed.`,
           after: onDone,
           focus: landed,
@@ -488,6 +585,7 @@ function EdgeForm({
         {(control) => (
           <select
             {...control}
+            ref={first}
             className={`${INPUT_CLASS} w-full`}
             disabled={change.busy || types.length === 1}
             value={type}
@@ -523,7 +621,7 @@ function EdgeForm({
         <Button type="submit" size="small" variant="primary" disabled={change.busy || tooLong}>
           {editing === undefined ? 'Add' : 'Save'}
         </Button>
-        <Button size="small" variant="quiet" disabled={change.busy} onClick={onDone}>
+        <Button size="small" variant="quiet" disabled={change.busy} onClick={onCancel}>
           Cancel
         </Button>
       </div>

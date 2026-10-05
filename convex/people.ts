@@ -1184,7 +1184,15 @@ const proposalShownValidator = v.object({
   status: v.union(v.literal('unverified'), v.literal('active')),
   evidence: v.array(evidenceShownValidator),
   match: v.optional(matchShownValidator),
-  possiblySameAs: v.optional(v.object({ personId: v.id('people'), name: v.string() })),
+  possiblySameAs: v.optional(
+    v.object({
+      personId: v.id('people'),
+      name: v.string(),
+      role: v.optional(v.string()),
+      /** Whether the person it may be is confirmed or itself still a proposal. */
+      standing: v.union(v.literal('confirmed'), v.literal('proposed')),
+    }),
+  ),
   waiting: v.array(v.object({ type: relationshipTypeValidator, scope: v.optional(v.string()) })),
 });
 
@@ -1253,7 +1261,14 @@ async function proposalShown(
       : {}),
     ...(offered === undefined
       ? {}
-      : { possiblySameAs: { personId: offered._id, name: offered.displayName } }),
+      : {
+          possiblySameAs: {
+            personId: offered._id,
+            name: offered.displayName,
+            ...(roleOf(offered) === undefined ? {} : { role: roleOf(offered) }),
+            standing: offered.status === 'active' ? ('confirmed' as const) : ('proposed' as const),
+          },
+        }),
     waiting: waiting.map((edge) => ({
       type: edge.type,
       ...(edge.scope === undefined ? {} : { scope: edge.scope }),

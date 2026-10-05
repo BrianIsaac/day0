@@ -1,0 +1,53 @@
+import { describe, expect, it } from 'vitest';
+import {
+  edgeLine,
+  evidenceText,
+  identityLabel,
+  possiblySameLine,
+  proposedEdgeLine,
+  relationshipNoun,
+  waitingLine,
+} from '../../../src/people/words';
+
+describe('people words', (): void => {
+  it("shows a table row's quote as words, without its cell bars or code marks", (): void => {
+    expect(evidenceText('| Slack | `#ops-requests` asks | Noor Rahman |')).toBe(
+      'Slack · #ops-requests asks · Noor Rahman',
+    );
+    expect(evidenceText('Priya Shah for pipeline.')).toBe('Priya Shah for pipeline.');
+  });
+
+  it('says an edge once, with no stop left before what follows it', (): void => {
+    expect(edgeLine('collaborator', 'Raising requests through the manager.', '6 Oct', false)).toBe(
+      'Collaborator: Raising requests through the manager · since 6 Oct',
+    );
+    expect(edgeLine('approver', 'NetLedger access', '6 Oct', true)).toBe(
+      'Approver: NetLedger access · since 6 Oct · for everyone you manage',
+    );
+  });
+
+  it('says a proposed edge and one waiting on a confirmed person in one form', (): void => {
+    expect(proposedEdgeLine('collaborator', 'Linear access.')).toBe('Collaborator: Linear access.');
+    expect(waitingLine('collaborator', 'Linear access')).toBe(
+      'Collaborator: Linear access (waiting on you).',
+    );
+    expect(proposedEdgeLine('dotted-line contact', undefined)).toBe('Dotted-line contact.');
+  });
+
+  it('tells two people of one name apart by role and standing', (): void => {
+    expect(possiblySameLine('Lee Tan', 'proposed')).toBe(
+      'Possibly the same as Lee Tan (also proposed).',
+    );
+    expect(possiblySameLine('Lee Tan', 'confirmed', 'Linear admin')).toBe(
+      'Possibly the same as Lee Tan, Linear admin (already confirmed).',
+    );
+  });
+
+  it('names an identity and a relationship read from a stored row', (): void => {
+    expect(identityLabel({ provider: 'slack', externalId: 'U1', displayName: 'lee' })).toBe(
+      'Slack @lee',
+    );
+    expect(relationshipNoun('approval-authority')).toBe('approver');
+    expect(relationshipNoun(undefined)).toBe('relationship');
+  });
+});

@@ -146,12 +146,53 @@ export function confirmAsLabel(handle: string): string {
 }
 
 /**
- * The line under a proposal whose name alone matched someone already in the graph (C5).
+ * The line under a proposal whose name alone matched someone already in the graph (C5), with what
+ * tells the two apart when the names are the same: the known person's role and standing.
+ *
+ * @param existing - The name of the person it may be.
+ * @param standing - Whether that person is confirmed or itself a proposal.
+ * @param role - Their role, where the graph holds one.
+ */
+export function possiblySameLine(
+  existing: string,
+  standing: 'confirmed' | 'proposed',
+  role?: string,
+): string {
+  const who = role === undefined ? existing : `${existing}, ${role}`;
+  return `Possibly the same as ${who} (${standing === 'confirmed' ? 'already confirmed' : 'also proposed'}).`;
+}
+
+/**
+ * What Same person and Different do, under a name-only match.
  *
  * @param existing - The name of the person it may be.
  */
-export function possiblySameLine(existing: string): string {
-  return `Possibly the same as ${existing}.`;
+export function sameOrDifferentHelp(existing: string): string {
+  return `Same person adds these words to ${existing}; Different keeps them apart.`;
+}
+
+/**
+ * A quote as the card shows it: a table row's cell bars and a page's code marks left out, so the
+ * words read as words.
+ *
+ * @param quote - The kept quote.
+ */
+export function evidenceText(quote: string): string {
+  return quote
+    .replace(/`/g, '')
+    .replace(/^\s*\|\s*|\s*\|\s*$/g, '')
+    .replace(/\s*\|\s*/g, ' · ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The disclosure over a person's further evidence.
+ *
+ * @param count - How many more pieces there are.
+ */
+export function moreEvidence(count: number): string {
+  return `${count} more ${count === 1 ? 'source' : 'sources'}`;
 }
 
 /**
@@ -167,7 +208,7 @@ export const READING_PEOPLE = 'Reading your people.';
 
 /** The Confirmed card's empty line: nobody confirmed has an edge to the employee yet. */
 export function confirmedEmpty(employee: string): string {
-  return `No one confirmed works with ${employee} yet. The people you confirm above appear here.`;
+  return `No one confirmed works with ${employee} yet. The people you confirm appear here.`;
 }
 
 /**
@@ -177,7 +218,7 @@ export function confirmedEmpty(employee: string): string {
  * @param scope - What it covers, when the source said.
  */
 export function waitingLine(noun: string, scope: string | undefined): string {
-  return `Waiting on you: ${noun}${scope === undefined ? '' : `, ${scope}`}.`;
+  return proposedEdgeLine(noun, scope).replace(/\.$/, ' (waiting on you).');
 }
 
 /**
@@ -238,7 +279,8 @@ export function edgeLine(
   everyone: boolean,
 ): string {
   const named = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
-  return `${named}${scope === undefined ? '' : `: ${scope}`} · since ${since}${
+  const covered = scope?.replace(/[.!?]+$/, '');
+  return `${named}${covered === undefined ? '' : `: ${covered}`} · since ${since}${
     everyone ? ' · for everyone you manage' : ''
   }`;
 }

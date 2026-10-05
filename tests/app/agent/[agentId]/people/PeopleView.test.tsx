@@ -51,6 +51,7 @@ import {
   focusedName,
   mount,
   press,
+  settle,
   said,
   typeInto,
   unmountAll,
@@ -820,10 +821,12 @@ const GRAPH = {
       status: 'unverified',
       evidence: [
         {
-          quote: 'Finance systems owner: Dana Okafor approves NetLedger access',
+          quote:
+            '| NetLedger | the books | Finance systems owner: Dana Okafor approves `NetLedger` access |',
           where: 'Kestrel Supply onboarding',
           at: Date.UTC(2026, 9, 5, 6, 0),
         },
+        { quote: 'Dana Okafor for NetLedger.', where: 'the one-to-one', at: 1 },
       ],
       waiting: [{ type: 'approval-authority', scope: 'NetLedger access' }],
     },
@@ -840,7 +843,12 @@ const GRAPH = {
       name: 'Priya Shah',
       status: 'unverified',
       evidence: [{ quote: 'Priya Shah owns pipeline.', where: 'Team overview', at: 1 }],
-      possiblySameAs: { personId: 'person-priya', name: 'Priya Shah' },
+      possiblySameAs: {
+        personId: 'person-priya',
+        name: 'Priya Shah',
+        role: 'Revenue operations',
+        standing: 'confirmed',
+      },
       waiting: [],
     },
   ],
@@ -905,13 +913,25 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     );
     expect(proposed.textContent).toContain('3 waiting on you');
     expect(proposed.textContent).toContain('Dana Okafor, Finance systems owner');
+    // A table row's bars and code marks are left out, and further evidence waits behind a disclosure.
     expect(proposed.textContent).toContain(
-      'Evidence: “Finance systems owner: Dana Okafor approves NetLedger access” (Kestrel Supply onboarding, 5 Oct 2026, 06:00).',
+      'Evidence: “NetLedger · the books · Finance systems owner: Dana Okafor approves NetLedger access” (Kestrel Supply onboarding, 5 Oct 2026, 06:00).',
     );
+    expect(proposed.querySelector('summary')?.textContent).toBe('1 more source');
     expect(proposed.textContent).toContain('Approver: NetLedger access.');
     expect(proposed.textContent).toContain('Collaborator.');
     expect(proposed.textContent).toContain('Matches Slack user @sara.');
-    expect(proposed.textContent).toContain('Possibly the same as Priya Shah.');
+    expect(proposed.textContent).toContain(
+      'Possibly the same as Priya Shah, Revenue operations (already confirmed).',
+    );
+    expect(proposed.textContent).toContain(
+      'Same person adds these words to Priya Shah; Different keeps them apart.',
+    );
+    expect([...proposed.querySelectorAll('h3')].map((heading) => heading.textContent)).toEqual([
+      'Dana Okafor, Finance systems owner',
+      'Sara Lim',
+      'Priya Shah',
+    ]);
     expect(buttonNames(proposed)).toEqual([
       'Confirm',
       'Dismiss',
@@ -930,14 +950,17 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
       name: 'people:confirm',
       args: { personId: 'person-dana', agentId: 'agent-1' },
     });
-    expect(said(section(view.container, 'Proposed'))).toEqual(['Confirmed Dana Okafor.']);
-    expect(focusedName()).toBe('Proposed');
+    expect(said(section(view.container, 'Proposed'))).toEqual([
+      'Confirmed Dana Okafor: now under Confirmed.',
+    ]);
+    // The row that followed the decided one takes focus, the pressed control having gone with it.
+    expect(document.activeElement?.textContent).toBe('Sara Lim');
     await press(view.container, 'A different person: Sara Lim is not @sara');
     expect(backend.calls.at(-1)).toEqual({
       name: 'people:notThisMatch',
       args: { personId: 'person-sara', agentId: 'agent-1', identityId: 'identity-sara' },
     });
-    await press(view.container, 'Same person: Priya Shah is Priya Shah');
+    await press(view.container, 'Same person: Priya Shah is the Priya Shah already confirmed');
     expect(backend.calls.at(-1)?.name).toBe('people:samePerson');
     backend.refusals['people:dismiss'] = 'Nothing about this person is waiting on you.';
     await press(view.container, 'Dismiss Sara Lim');
@@ -974,7 +997,14 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
         scope: 'pipeline questions',
       },
     });
-    expect(said(confirmed)).toEqual(['Changed the escalation contact Priya Shah.']);
+    expect(said(confirmed)).toEqual(['Changed Priya Shah to escalation contact.']);
+    await press(confirmed, 'Add a relationship with Priya Shah');
+    await settle();
+    // The form takes focus as it opens; Cancel hands it back to the person's row.
+    expect(document.activeElement?.tagName).toBe('SELECT');
+    await press(confirmed, 'Cancel');
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.activeElement?.textContent).toBe('Priya Shah, Revenue operations');
     await press(confirmed, 'Add a relationship with Priya Shah');
     await press(confirmed, 'Add');
     expect(backend.calls.at(-1)).toEqual({
