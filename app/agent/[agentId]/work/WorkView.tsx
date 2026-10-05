@@ -10,10 +10,12 @@ import { needsYouItemIds } from '@/work/state-display';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import {
+  AgreementProposals,
   KeptCorrectionsPanel,
   keptCorrectionsTitle,
   type KeptCorrection,
 } from '../corrections-panel';
+import { employeeTabHref } from '../employee-tabs';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { StateGlossary } from './StateGlossary';
@@ -22,7 +24,8 @@ import { WorkQueue } from './WorkQueue';
 
 /**
  * The Work tab: the employee's queue, what needs the manager first, beside the corrections the
- * manager asked it to keep (real mode) and the page's rail.
+ * manager asked it to keep and the working agreements Day0 proposes from them (real mode), and the
+ * page's rail.
  */
 export function WorkView() {
   const { agent, charter, surfaceMode, scheduledWorkPaused, surfaces, arriving } = useEmployee();
@@ -46,6 +49,10 @@ export function WorkView() {
   // Real mode only: the mock has no switch, so nothing there ever flips it.
   const autonomyChanges = useQuery(api.events.autonomyChanges, real ? { agentId } : 'skip');
   const retireCorrection = useMutation(api.corrections.retire);
+  // Real mode only, as agreements are: the working agreements Day0 proposes from the corrections.
+  const agreements = useQuery(api.workingAgreements.listForAgent, real ? { agentId } : 'skip');
+  const keepAgreement = useMutation(api.workingAgreements.keep);
+  const dismissAgreement = useMutation(api.workingAgreements.dismiss);
   // The inbox's own read, which the shell already holds: the Needs you filter is its rule set.
   const inbox = useQuery(api.work.needsYouForAgent, { agentId });
   const needsYou = useMemo(() => needsYouItemIds(inbox?.entries ?? []), [inbox]);
@@ -60,6 +67,25 @@ export function WorkView() {
         <>
           {real ? (
             <Card title={keptCorrectionsTitle(corrections)}>
+              <AgreementProposals
+                agreements={agreements ?? []}
+                employeeName={agent.name}
+                charterHref={employeeTabHref(agentId, 'charter')}
+                onKeep={(agreementId, forEveryEmployee) =>
+                  keepAgreement({
+                    agreementId,
+                    agentId,
+                    forEveryEmployee,
+                    via: 'promotion-card',
+                  })
+                }
+                onDismiss={(agreementId) =>
+                  dismissAgreement({
+                    agreementId,
+                    agentId,
+                  })
+                }
+              />
               <KeptCorrectionsPanel
                 corrections={corrections}
                 titles={itemTitles}

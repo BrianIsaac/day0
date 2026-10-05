@@ -6,6 +6,7 @@ import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { Help, ItemFoot, ItemSection } from './ItemParts';
+import { KEEP_NOTE_LABEL, keepNoteHint } from '@/work/agreement-words';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -13,6 +14,8 @@ export interface PlanApproval {
   note?: string;
   /** N11: "this would have taken me about N minutes", when the manager gave it. */
   manualEstimateMinutes?: number;
+  /** "Keep this note for later work of this kind" (13-W): the note becomes a working agreement. */
+  keepNote?: boolean;
 }
 
 /**
@@ -24,7 +27,8 @@ export interface PlanApproval {
  *   decision: The answers and note as the form collected them.
  *
  * Returns:
- *   The arguments for `planApproval.approvePlan`; nothing optional is sent empty.
+ *   The arguments for `planApproval.approvePlan`; nothing optional is sent empty, and the note is
+ *   kept as a working agreement only when there is one.
  */
 export function planApprovalRequest(
   workItemId: Id<'workItems'>,
@@ -34,6 +38,7 @@ export function planApprovalRequest(
   answers?: PlanApproval['answers'];
   note?: string;
   manualEstimateMinutes?: number;
+  keepNote?: true;
 } {
   return {
     workItemId,
@@ -42,6 +47,7 @@ export function planApprovalRequest(
     ...(decision.manualEstimateMinutes !== undefined
       ? { manualEstimateMinutes: decision.manualEstimateMinutes }
       : {}),
+    ...(decision.note && decision.keepNote === true ? { keepNote: true as const } : {}),
   };
 }
 
@@ -116,6 +122,7 @@ export function PlanApprovalForm({
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [estimate, setEstimate] = useState('');
+  const [keepNote, setKeepNote] = useState(false);
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
   const minutes = typedEstimateMinutes(estimate);
@@ -138,6 +145,7 @@ export function PlanApprovalForm({
       }),
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(typeof minutes === 'number' ? { manualEstimateMinutes: minutes } : {}),
+      ...(note.trim() && keepNote && gate === 'real' ? { keepNote: true } : {}),
     };
   }
   return (
@@ -182,6 +190,24 @@ export function PlanApprovalForm({
               />
             )}
           </Field>
+          {gate === 'real' ? (
+            <div className="mt-1 grid gap-0.5">
+              <label className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--color-fg)]">
+                <input
+                  type="checkbox"
+                  checked={keepNote}
+                  disabled={busy}
+                  onChange={(event) => setKeepNote(event.target.checked)}
+                  aria-describedby={`${id}-keep-why`}
+                  className="size-4 accent-[var(--color-accent)]"
+                />
+                {KEEP_NOTE_LABEL}
+              </label>
+              <p id={`${id}-keep-why`} className="text-[13px] text-[var(--color-muted)]">
+                {keepNoteHint(employeeName)}
+              </p>
+            </div>
+          ) : null}
         </ItemSection>
       ) : null}
       <ItemSection>

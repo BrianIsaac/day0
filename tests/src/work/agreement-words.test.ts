@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Id } from '../../../convex/_generated/dataModel';
 import {
   awaitingCheck,
   awaitingManager,
@@ -15,13 +16,22 @@ import { AGREEMENT_SOURCE_TYPES } from '../../../src/work/agreement-vocabulary';
 describe('what the cards say of a working agreement', (): void => {
   it('asks of repeated words "You have said this twice", in the wave file\'s words', (): void => {
     expect(
-      proposalQuestion({ statement: 'Comment, never email.', correctionIds: ['a', 'b'] }, 'Priya'),
+      proposalQuestion(
+        {
+          statement: 'Comment, never email.',
+          correctionIds: ['a' as Id<'corrections'>, 'b' as Id<'corrections'>],
+        },
+        'Priya',
+      ),
     ).toBe('You have said this twice: “Comment, never email.” Keep it as a working agreement?');
   });
 
   it('asks of a correction applied to a second item without saying it was said twice', (): void => {
     expect(
-      proposalQuestion({ statement: 'Comment, never email.', correctionIds: ['a'] }, 'Priya'),
+      proposalQuestion(
+        { statement: 'Comment, never email.', correctionIds: ['a' as Id<'corrections'>] },
+        'Priya',
+      ),
     ).toBe(
       'Priya applied this correction on a second item: “Comment, never email.” Keep it as a working agreement?',
     );
@@ -59,13 +69,19 @@ describe('what the cards say of a working agreement', (): void => {
 
   it('closes a quoted sentence once, whether or not the words end one', (): void => {
     expect(
-      proposalQuestion({ statement: 'Comment, never email', correctionIds: ['a', 'b'] }, 'P'),
+      proposalQuestion(
+        {
+          statement: 'Comment, never email',
+          correctionIds: ['a' as Id<'corrections'>, 'b' as Id<'corrections'>],
+        },
+        'P',
+      ),
     ).toBe('You have said this twice: “Comment, never email”. Keep it as a working agreement?');
   });
 
   it('names whom it binds, where it came from for every source, and what the tick does', (): void => {
     expect(bindingWords({}, 'Priya')).toBe('for every employee');
-    expect(bindingWords({ agentId: 'a1' }, 'Priya')).toBe('for Priya');
+    expect(bindingWords({ agentId: 'a1' as Id<'agents'> }, 'Priya')).toBe('for Priya');
     for (const source of AGREEMENT_SOURCE_TYPES) expect(sourceWords(source)).not.toBe('');
     expect(keepNoteHint('Priya')).toContain('working agreement for Priya on the Charter tab');
   });

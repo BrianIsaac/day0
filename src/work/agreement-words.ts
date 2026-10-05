@@ -4,6 +4,7 @@
  * Charter tab (A18), and a refusal. Pure, so every card says each one the same way.
  */
 
+import type { Id } from '../../convex/_generated/dataModel';
 import type {
   AgreementRefusalReason,
   AgreementSourceType,
@@ -12,14 +13,14 @@ import type {
 
 /** A working agreement as a card reads it; the `workingAgreements` row carries these fields. */
 export interface AgreementView {
-  readonly _id: string;
+  readonly _id: Id<'workingAgreements'>;
   /** The one employee it binds; absent for every employee of the owner. */
-  readonly agentId?: string;
+  readonly agentId?: Id<'agents'>;
   readonly statement: string;
   readonly status: AgreementStatus;
   readonly sourceType: AgreementSourceType;
   /** The corrections a promotion came from. */
-  readonly correctionIds?: readonly string[];
+  readonly correctionIds?: readonly Id<'corrections'>[];
   /** When the manager kept it; set while the check runs, before it takes effect. */
   readonly approvedAt?: number;
   readonly effectiveFrom?: number;
