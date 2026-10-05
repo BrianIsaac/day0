@@ -666,3 +666,95 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
     );
   });
 });
+
+describe('a rule in no clause on the charter card (13-R, a product call)', (): void => {
+  /** Nell's draft as the v0.16.0 walk met it: one rule bound to its clause, one in no clause. */
+  function nell(approved: boolean): Doc<'charters'> {
+    return {
+      _id: 'charter-nell',
+      _creationTime: 1,
+      agentId: 'agent-nell',
+      version: '0.0',
+      approved,
+      createdAt: 1,
+      body: {
+        whyThisHire: 'The helpdesk queue grows every Monday.',
+        proposedFunction: 'Triage the helpdesk queue.',
+        shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+        proposedBoundaries: {
+          willDo: ['Sort new tickets on the ticket queue.'],
+          willNotDo: ['Order hardware without approval.'],
+          escalationTriggers: [],
+        },
+        namedCollaborators: [],
+        priorityReading: [],
+        openQuestions: [],
+        constraints: [
+          {
+            kind: 'system-boundary',
+            quote: 'Never order hardware without approval.',
+            wording: ['Order hardware without approval.'],
+            origin: 'synthesis',
+            binds: [{ field: 'willNotDo', index: 0 }],
+          },
+          {
+            kind: 'system-boundary',
+            quote: 'Never share a password in a ticket comment.',
+            wording: [],
+            origin: 'synthesis',
+            binds: [],
+          },
+        ],
+      },
+    } as unknown as Doc<'charters'>;
+  }
+
+  afterEach((): void => {
+    backend.results = {};
+    backend.calls = [];
+  });
+
+  it('draws the bound rule confirmed and the other in no clause, and says beside Approve it is not kept', (): void => {
+    const html = renderToStaticMarkup(<CharterCard charter={nell(false)} name="Nell" />);
+    expect(html).toContain('where I may act · in the charter as ');
+    expect(html).toMatch(/<span[^>]*>In no clause<\/span>/);
+    expect(html).not.toContain('not verified');
+    expect(html).toContain(
+      '1 rule is in no clause, so approving does not keep it. Approving lets Nell read the office',
+    );
+  });
+
+  it('adds the rule as a clause by amendment once the charter is approved', async (): Promise<void> => {
+    backend.results = { 'charters:amend': { charterId: 'charter-nell-1', version: '0.1' } };
+    const view = mount(<CharterCard charter={nell(true)} name="Nell" />);
+    await press(view.container, 'Add as a clause: Never share a password in a ticket comment.');
+    expect(backend.calls).toEqual([
+      {
+        name: 'charters:amend',
+        args: {
+          agentId: 'agent-nell',
+          changes: [
+            {
+              kind: 'add-constraint',
+              constraint: {
+                kind: 'system-boundary',
+                quote: 'Never share a password in a ticket comment.',
+                clause: 'willNotDo',
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(said(view.container)).toEqual(['Charter amended: version 0.1 is the one in force.']);
+    view.unmount();
+  });
+
+  it('offers the request for changes on a draft', (): void => {
+    const view = mount(<CharterCard charter={nell(false)} name="Nell" />);
+    expect(
+      button(view.container, 'Ask for changes to add: Never share a password in a ticket comment.'),
+    ).toBeTruthy();
+    view.unmount();
+  });
+});

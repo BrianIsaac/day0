@@ -5,6 +5,7 @@ import {
   type CharterConstraint,
   type StruckClause,
   listedRules,
+  rulePlacement,
   strikePreview,
 } from '@/agent/charter-constraints';
 import { synthesisNotes } from '@/agent/manager-questions';
@@ -18,7 +19,7 @@ import { type CharterChange, nextCharterVersion } from '@/agent/charter-amendmen
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { clockTime, useAgentZone } from '../../../components/time';
-import { AmendCharterPanel } from './AmendCharterPanel';
+import { AmendCharterPanel, defaultRuleClause } from './AmendCharterPanel';
 import { CharterDocument, INLINE_LINK } from './CharterDocument';
 import { CHANGES_REQUEST_ID } from './ChangesRequest';
 import { ConstraintList } from './RuleRow';
@@ -90,6 +91,10 @@ export function CharterCard({
   const struckCount = listedRules(constraints).filter(({ constraint }) => constraint.struck).length;
   const struck =
     struckCount === 0 ? '' : `${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`;
+  const unplacedCount = listedRules(constraints).filter(
+    ({ constraint }) =>
+      !constraint.struck && rulePlacement(body, constraint).kind === 'in-no-clause',
+  ).length;
 
   function toggleStrike(index: number, strike: boolean): void {
     const quote = constraints[index]?.quote ?? 'the rule';
@@ -117,6 +122,16 @@ export function CharterCard({
       refused: 'The amendment was refused.',
       after,
       focus,
+    });
+  }
+
+  /** Keep a rule no clause carries by adding it as a clause, under the list a new rule defaults to. */
+  function keepAsClause(index: number): void {
+    const rule = constraints[index];
+    if (rule === undefined) return;
+    sendAmendment({
+      kind: 'add-constraint',
+      constraint: { kind: rule.kind, quote: rule.quote, clause: defaultRuleClause(rule.quote) },
     });
   }
 
@@ -167,11 +182,14 @@ export function CharterCard({
           <ConstraintList
             constraints={constraints}
             approved={charter.approved}
+            name={name}
             actors={actors}
             busy={change.busy}
             onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
             onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
+            onKeep={charter.approved ? keepAsClause : askForChanges}
             previewStrike={(index) => strikePreview(body, index)}
+            placementOf={(constraint) => rulePlacement(body, constraint)}
           />
           <SynthesisNotes notes={synthesisNotes(body)} />
         </div>
@@ -203,7 +221,7 @@ export function CharterCard({
               </Button>
             </div>
             <p className="text-[13px] text-[var(--color-muted)]">
-              {approvalConsequence({ name, struckCount, autonomous })}
+              {approvalConsequence({ name, struckCount, unplacedCount, autonomous })}
             </p>
           </div>
         )}
@@ -214,16 +232,22 @@ export function CharterCard({
 }
 
 /**
- * What approving does, said beside Approve: what the strikes take out, that the employee starts on
- * the work the charter implies, where its writes go, and that the charter stays amendable.
+ * What approving does, said beside Approve: what the strikes take out, the rules no clause keeps,
+ * that the employee starts on the work the charter implies, where its writes go, and that the
+ * charter stays amendable.
+ *
+ * @param unplacedCount - Rules the manager gave that no clause carries, so approving keeps none of
+ *   them (13-R, a product call); none when not given.
  */
 export function approvalConsequence({
   name,
   struckCount,
+  unplacedCount = 0,
   autonomous,
 }: {
   name: string;
   struckCount: number;
+  unplacedCount?: number;
   autonomous: boolean;
 }): string {
   const strikes =
@@ -232,10 +256,16 @@ export function approvalConsequence({
       : struckCount === 1
         ? 'The struck rule takes its clauses out of the charter. '
         : `The ${struckCount} struck rules take their clauses out of the charter. `;
+  const unplaced =
+    unplacedCount === 0
+      ? ''
+      : unplacedCount === 1
+        ? '1 rule is in no clause, so approving does not keep it. '
+        : `${unplacedCount} rules are in no clause, so approving does not keep them. `;
   const writes = autonomous
     ? 'Autonomous actions are on, so its writes go ahead without asking.'
     : 'Every write still waits for you.';
-  return `${strikes}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
+  return `${strikes}${unplaced}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
 }
 
 /**
