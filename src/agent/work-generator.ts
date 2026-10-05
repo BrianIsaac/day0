@@ -7,7 +7,7 @@ import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
 /**
- * Generate three day-one work items grounded in the boss's charter AND
+ * Generate four day-one work items grounded in the boss's charter AND
  * the agent's actual mock environment.
  *
  * No hardcoded slugs in the prompt - we render the live surface
@@ -17,51 +17,79 @@ import type { MockSurfaceSnapshot } from '../work/types';
  * mutate. A ticket-queue item is a new ticket, which the office opens
  * from the item's own words when the batch is seeded.
  *
- * The 3-item mix drives the standard demo narrative:
+ * The 4-item mix drives the standard demo narrative:
  *   1. A docs-read item - handled by the builtin `see-internal-docs` skill
- *   2. An action item - triggers the propose-new-skill loop
- *   3. An out-of-scope item - evaluator skips it
+ *   2. An action ticket the office can back - triggers the propose-new-skill loop
+ *   3. A ticket whose ask reaches beyond the office
+ *   4. An out-of-scope item - evaluator skips it
+ *
+ * The two tickets are the hosted demo's two honest ends (13-FD). On the v0.16.0 redeploy every
+ * first ticket asked for what the office does not hold (a CRM, finance's posted charges, an
+ * invoice), so 5 of 5 runs answered partly done and a visitor never saw a ticket closed. The
+ * generator then saw only the office's slugs and tab names; it now sees what the office holds
+ * (rows, messages, team documents) and drafts one ticket whose every ask those records let the
+ * role finish in one run, which names them in its references, and one whose ask needs a record
+ * or system the office does not hold, as tickets in any office do. Nothing is scripted: the run
+ * reads the same office through the same tools and answers in its own words.
  *
  * Mock mode judges scope on the item's own words (`sharedCharterWords`): one
  * word of the role or its willDo clauses places an item in the job. So an
  * out-of-scope item that shares one, typically a sentence comparing the
  * request with the role, would be judged the role's work and wait on a skill,
- * and a read or action item that shares none would be skipped. The generator
+ * and a read or ticket item that shares none would be skipped. The generator
  * names the role's words up front, asks again for a draft that reads against
  * its purposes, and leaves out an out-of-scope item that still shares a word
  * after every draft.
  */
 
 export const WORK_GEN_SYSTEM = [
-  'You generate 3 day-one work items for a newly-deployed autonomous agent.',
-  "The boss has just approved the agent's charter; three realistic inbox-style requests now land in the agent's queue - the kind of work a competent new hire would face on their first week.",
+  'You generate 4 day-one work items for a newly-deployed autonomous agent.',
+  "The boss has just approved the agent's charter; four realistic inbox-style requests now land in the agent's queue - the kind of work a competent new hire would face on their first week.",
   '',
-  "You will be given (a) the charter and (b) a snapshot of the agent's actual mock work environment with real slugs/IDs. Use ONLY surface identifiers that appear in the snapshot - never invent slugs the env doesn't have. Each work item's contentRefs must reference real rows the executor can later mutate.",
+  "You will be given (a) the charter and (b) a snapshot of the agent's actual mock work environment with real slugs/IDs and what each record holds. Use ONLY surface identifiers that appear in the snapshot - never invent slugs the env doesn't have. Each work item's contentRefs must reference real rows the executor can later mutate.",
   '',
-  'Generate exactly 3 items, in this order, with this purpose:',
+  'Generate exactly 4 items, in this order, with this purpose:',
   '',
   '1. Read-and-answer item - sourceSystem MUST be "docs". A question the agent answers by reading internal team docs (the agent has a builtin "see-internal-docs" skill). Pick a topic that fits the role described in the charter and a doc slug that actually exists in the snapshot.',
   '',
   '2. Action item - a new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket". The task requires the role\'s write action on that ticket (work it, comment on it and close it). This will trigger the propose-new-skill flow.',
+  'Every ask of the action ticket is one the office lets the role finish in this one run: each fact it needs is in the snapshot, named as the snapshot names it (a row, a message or a document), and its contentRefs name those records; the work is a write in the office (a row appended to a tab, a message posted, a comment on the ticket), and the ticket closes once that is written. It never asks for a record, figure, reply or system the snapshot does not show, for anything done outside the office (buying, repairing, calling, meeting), or a draft to review before it closes: the manager approves every write before it lands.',
+  '',
+  '3. Beyond-the-office item - a second new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket", as a colleague would file it. Its ask needs one record or system the snapshot does not show (one the charter or the team docs name), as such tickets arrive in any office; the ticket never says the office lacks anything.',
   '',
   'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s willDo as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
   '',
-  '3. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its willDo leaves out or its willNotDo excludes, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
+  '4. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its willDo leaves out or its willNotDo excludes, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
   '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
-  '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>").',
+  '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>"); the two tickets never share one.',
   '  - Vary priorities: ideally one P1, one P2, one low.',
   "  - requesterLabel is a person's name or role; never the agent itself.",
   '  - The title and contentSummary are the request as its sender wrote it, and the manager reads them on the work card: never say how the request should be handled (no "skip this", "route this back", "out of scope") and never mention the agent, the evaluator or Day0.',
   '  - Titles are 8-14 words.',
   '  - sourceCategory is one of "ticket-queue", "inbox", or "social-mention".',
-  '  - purpose is "read-and-answer", "action" or "out-of-scope": which of the three items above it is.',
+  '  - purpose is "read-and-answer", "action", "beyond-the-office" or "out-of-scope": which of the four items above it is.',
 ].join('\n');
 
-/** What each of the three drafted items is for, in the order the prompt lists them. */
-export const WORK_ITEM_PURPOSES = ['read-and-answer', 'action', 'out-of-scope'] as const;
+/** What each of the four drafted items is for, in the order the prompt lists them. */
+export const WORK_ITEM_PURPOSES = [
+  'read-and-answer',
+  'action',
+  'beyond-the-office',
+  'out-of-scope',
+] as const;
+
+/** One of {@link WORK_ITEM_PURPOSES}. */
+type WorkItemPurpose = (typeof WORK_ITEM_PURPOSES)[number];
+
+/** The purposes the office files on its ticket queue: the ticket it can back and the one it cannot. */
+const TICKET_PURPOSES: ReadonlySet<WorkItemPurpose> = new Set(['action', 'beyond-the-office']);
+
+/** The most rows of one tab, and messages of one channel, the generator is shown: the latest. */
+const ROWS_SHOWN = 10;
+const MESSAGES_SHOWN = 6;
 
 /** How many drafts the generator asks for before it leaves out an out-of-scope item that reads as the role's work. */
 export const GENERATION_ATTEMPTS = 3;
@@ -81,8 +109,8 @@ export const workGenSchema = z.object({
         requesterLabel: z.string(),
       }),
     )
-    .min(3)
-    .max(3),
+    .min(4)
+    .max(4),
 });
 
 /** One drafted item as the model returns it, its purpose included. */
@@ -93,9 +121,16 @@ export type GeneratedWorkItem = Omit<DraftedWorkItem, 'purpose'>;
 
 const workGeneratorAgent = makeAgent('day0-work-generator', WORK_GEN_SYSTEM);
 
+/** A text as one indented line under its record: newlines folded, quotes kept as written. */
+function shown(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Render the mock environment snapshot as a compact, slug-forward
- * description the LLM can copy identifiers out of without hallucinating.
+ * description the LLM can copy identifiers out of without hallucinating, with
+ * what each record holds (13-FD): a tab's latest rows, a channel's latest
+ * messages and each team document, so a ticket asks only for what is there.
  */
 function renderMockSnapshot(env: MockSurfaceSnapshot): string {
   const lines: string[] = [];
@@ -103,6 +138,12 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
     lines.push('Slack channels and DMs:');
     for (const c of env.slackChannels) {
       lines.push(`  - slug "${c.slug}" (${c.kind}, displayed as "${c.displayName}")`);
+      const messages = c.recentMessages.slice(-MESSAGES_SHOWN);
+      if (messages.length === 0) lines.push('      (no messages)');
+      for (const m of messages) {
+        const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
+        lines.push(`      ${m.sender}${thread}: "${shown(m.body)}"`);
+      }
     }
   }
   if (env.spreadsheets.length) {
@@ -110,12 +151,23 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
     for (const s of env.spreadsheets) {
       const tabs = s.tabs.map((t) => t.name).join(', ');
       lines.push(`  - slug "${s.slug}" titled "${s.title}" with tabs: ${tabs}`);
+      for (const tab of s.tabs) {
+        lines.push(`      tab "${tab.name}" (${tab.headers.join(' | ')}):`);
+        const rows = s.rows.filter((row) => row.tabName === tab.name).slice(-ROWS_SHOWN);
+        if (rows.length === 0) lines.push('        (no rows)');
+        for (const row of rows) {
+          lines.push(`        ${tab.headers.map((header) => row.cells[header] ?? '').join(' | ')}`);
+        }
+      }
     }
   }
   if (env.teamDocs.length) {
     lines.push('Team docs (read-only):');
     for (const d of env.teamDocs) {
-      lines.push(`  - slug "${d.slug}" titled "${d.title}"`);
+      lines.push(`  - slug "${d.slug}" titled "${d.title}":`);
+      for (const line of d.body.split('\n')) {
+        if (line.trim() !== '') lines.push(`      ${line.trim()}`);
+      }
     }
   }
   if (env.tweets.length) {
@@ -131,6 +183,33 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
+/** The references a drafted item may name that point at a record the office holds, by prefix. */
+const RECORD_PREFIXES = ['mock-spreadsheet://', 'channel://', 'docs-fixture/', 'twitter://'];
+
+/**
+ * Every reference to a record the snapshot holds, as a drafted item writes it without a thread or
+ * a fragment: `mock-spreadsheet://<slug>`, `channel://<slug>`, `docs-fixture/<slug>`,
+ * `twitter://<slug>`.
+ */
+function officeRecords(env: MockSurfaceSnapshot): ReadonlySet<string> {
+  return new Set([
+    ...env.spreadsheets.map((s) => `mock-spreadsheet://${s.slug}`),
+    ...env.slackChannels.map((c) => `channel://${c.slug}`),
+    ...env.teamDocs.map((d) => `docs-fixture/${d.slug}`),
+    ...env.howToGuides.map((d) => `docs-fixture/${d.slug}`),
+    ...env.tweets.map((tw) => `twitter://${tw.slug}`),
+  ]);
+}
+
+/** Whether a drafted item names at least one record the office holds. */
+function namesAnOfficeRecord(item: DraftedWorkItem, records: ReadonlySet<string>): boolean {
+  return item.contentRefs.some(
+    (ref) =>
+      RECORD_PREFIXES.some((prefix) => ref.startsWith(prefix)) &&
+      records.has(ref.split(/[#?]/, 1)[0] ?? ref),
+  );
+}
+
 /** An out-of-scope item that reads as the role's work, with the words that make it so. */
 interface RoleReading {
   readonly item: DraftedWorkItem;
@@ -138,18 +217,27 @@ interface RoleReading {
 }
 
 /**
- * How a draft reads against the scope rule mock mode judges by (`sharedCharterWords`): the
- * out-of-scope items that share a word with the role, which would be judged its work, and the
- * read-and-answer and action items that share none, which would be skipped.
+ * How a draft reads against the scope rule mock mode judges by (`sharedCharterWords`) and against
+ * the office: the out-of-scope items that share a word with the role, which would be judged its
+ * work; the in-scope items that share none, which would be skipped; the purposes it left out; the
+ * tickets it filed somewhere other than the queue; and whether its action ticket names no record
+ * the office holds.
  */
 interface DraftReading {
   readonly asTheRole: readonly RoleReading[];
   readonly untied: readonly DraftedWorkItem[];
-  /** Whether the action item is somewhere other than a ticket on the ticket queue (D2). */
-  readonly actionOffTheQueue: boolean;
+  readonly missing: readonly WorkItemPurpose[];
+  /** The ticket items filed somewhere other than a ticket on the ticket queue (D2). */
+  readonly offTheQueue: readonly DraftedWorkItem[];
+  /** Whether the action ticket names no record of an office that holds some (13-FD). */
+  readonly actionUngrounded: boolean;
 }
 
-function readDraft(items: readonly DraftedWorkItem[], charter: Charter): DraftReading {
+function readDraft(
+  items: readonly DraftedWorkItem[],
+  charter: Charter,
+  records: ReadonlySet<string>,
+): DraftReading {
   return {
     asTheRole: items
       .filter((item) => item.purpose === 'out-of-scope')
@@ -158,20 +246,36 @@ function readDraft(items: readonly DraftedWorkItem[], charter: Charter): DraftRe
     untied: items.filter(
       (item) => item.purpose !== 'out-of-scope' && sharedCharterWords(item, charter).length === 0,
     ),
-    actionOffTheQueue: items.some((item) => item.purpose === 'action' && !filedOnTicketQueue(item)),
+    missing: WORK_ITEM_PURPOSES.filter(
+      (purpose) => !items.some((item) => item.purpose === purpose),
+    ),
+    offTheQueue: items.filter(
+      (item) => TICKET_PURPOSES.has(item.purpose) && !filedOnTicketQueue(item),
+    ),
+    // An office that holds no record at all leaves nothing to name, so nothing is asked again.
+    actionUngrounded:
+      records.size > 0 &&
+      items.some((item) => item.purpose === 'action' && !namesAnOfficeRecord(item, records)),
   };
 }
 
-/** Whether a draft reads against the scope rule as its purposes say, its action on the queue. */
+/** Whether a draft reads against the scope rule as its purposes say, both tickets on the queue. */
 function readsAsIntended(reading: DraftReading): boolean {
   return (
-    reading.asTheRole.length === 0 && reading.untied.length === 0 && !reading.actionOffTheQueue
+    reading.asTheRole.length === 0 &&
+    reading.untied.length === 0 &&
+    reading.missing.length === 0 &&
+    reading.offTheQueue.length === 0 &&
+    !reading.actionUngrounded
   );
 }
 
 /** What the next draft is told about the last one's items that read against their purpose. */
 function askAgain(reading: DraftReading): string {
   const lines: string[] = [];
+  for (const purpose of reading.missing) {
+    lines.push(`Your last draft has no ${purpose} item: draft all four, one of each purpose.`);
+  }
   if (reading.asTheRole.length > 0) {
     const words = [...new Set(reading.asTheRole.flatMap((one) => one.words))].join(', ');
     lines.push(
@@ -183,13 +287,18 @@ function askAgain(reading: DraftReading): string {
       `The ${item.purpose} item in your last draft shares no word with the role and its duties, so it reads as another role's work: word it in the charter's own terms.`,
     );
   }
-  if (reading.actionOffTheQueue) {
+  for (const item of reading.offTheQueue) {
     lines.push(
-      `The action item in your last draft is not a ticket on the ticket queue: file it there, with sourceCategory "${TICKET_QUEUE_FILING.sourceCategory}" and sourceSystem "${TICKET_QUEUE_FILING.sourceSystem}".`,
+      `The ${item.purpose} item in your last draft is not a ticket on the ticket queue: file it there, with sourceCategory "${TICKET_QUEUE_FILING.sourceCategory}" and sourceSystem "${TICKET_QUEUE_FILING.sourceSystem}".`,
+    );
+  }
+  if (reading.actionUngrounded) {
+    lines.push(
+      "The action item in your last draft names no record the snapshot holds: ask only for work the snapshot's rows, messages or documents let the role finish, and name those records in its contentRefs.",
     );
   }
   lines.push(
-    "Draft all three items again. The out-of-scope request uses none of the role's words and never compares itself with the role: it is only the request as its sender wrote it.",
+    "Draft all four items again. The out-of-scope request uses none of the role's words and never compares itself with the role: it is only the request as its sender wrote it.",
   );
   return lines.join(' ');
 }
@@ -236,9 +345,11 @@ export async function generateWorkItemsFromCharter(
     // visitor's queue has no ticket run (D2, the pre-tag's bed walk).
     `The out-of-scope item uses none of these words from the role and its duties: ${charterWords(charter).join(', ')}.`,
     `The read-and-answer item and the action item each use at least one of these words from the role and its duties, as the sender would: ${charterWords(charter).join(', ')}.`,
+    'The beyond-the-office item uses at least one of them too.',
     '',
-    'Generate the 3 day-one work items now.',
+    'Generate the 4 day-one work items now.',
   ].join('\n');
+  const records = officeRecords(mockEnv);
   const ask = async (user: string): Promise<z.infer<typeof workGenSchema>> =>
     await agentJson<z.infer<typeof workGenSchema>>({
       agent: workGeneratorAgent,
@@ -247,39 +358,66 @@ export async function generateWorkItemsFromCharter(
     });
   let draft = await ask(brief);
   for (let attempt = 1; attempt < GENERATION_ATTEMPTS; attempt += 1) {
-    const reading = readDraft(draft.items, charter);
-    if (readsAsIntended(reading)) return draft.items.map(withoutPurpose);
+    const reading = readDraft(draft.items, charter, records);
+    if (readsAsIntended(reading)) return seeded(draft.items);
     draft = await ask(`${brief}\n\n${askAgain(reading)}`);
   }
   // The last draft is taken as it reads, but for an out-of-scope item that still reads as the
   // role's work, which is left out rather than queued as the role's work with a skill to approve.
-  // An in-scope item is never left out: the queue keeps its read and its action.
-  const reading = readDraft(draft.items, charter);
+  // An in-scope item is never left out: the queue keeps its read and its tickets, an action ticket
+  // that names no record of the office included (its run then says what it could not do).
+  const reading = readDraft(draft.items, charter, records);
   if (reading.asTheRole.length > 0) {
     log.warn('mock work generator left out an out-of-scope item that reads as the role', {
       attempts: GENERATION_ATTEMPTS,
       words: reading.asTheRole.flatMap((one) => one.words),
     });
   }
-  if (reading.actionOffTheQueue) {
-    log.warn('mock work generator filed an action item on the ticket queue itself', {
+  if (reading.offTheQueue.length > 0) {
+    log.warn('mock work generator filed a ticket item on the ticket queue itself', {
+      attempts: GENERATION_ATTEMPTS,
+      purposes: reading.offTheQueue.map((item) => item.purpose),
+    });
+  }
+  if (reading.actionUngrounded) {
+    log.warn('mock work generator kept an action ticket that names no record of the office', {
       attempts: GENERATION_ATTEMPTS,
     });
   }
+  if (reading.missing.length > 0) {
+    log.warn('mock work generator seeded a draft without every purpose', {
+      attempts: GENERATION_ATTEMPTS,
+      missing: reading.missing,
+    });
+  }
   const leftOut = new Set(reading.asTheRole.map((one) => one.item));
-  return draft.items
-    .filter((item) => !leftOut.has(item))
-    .map(onTheTicketQueue)
-    .map(withoutPurpose);
+  return seeded(draft.items.filter((item) => !leftOut.has(item)).map(onTheTicketQueue));
 }
 
 /**
- * The action item filed as a ticket on the ticket queue, its words kept, where the last draft put
- * it elsewhere: the office opens the ticket from them, so the visitor's first queue has a ticket
- * run (D2 (b)). Every other item is returned as drafted.
+ * The drafted items as the office seeds them: without their purpose, and with every external id
+ * its own. The seed merges two items of one source under one external id into one row, so a second
+ * ticket that repeats the first's id is given the next free one (`<id>-2`, then `-3`).
+ */
+function seeded(items: readonly DraftedWorkItem[]): GeneratedWorkItem[] {
+  const taken = new Set<string>();
+  return items.map((item): GeneratedWorkItem => {
+    let externalId = item.externalId;
+    for (let next = 2; taken.has(`${item.sourceSystem}:${externalId}`); next += 1) {
+      externalId = `${item.externalId}-${next}`;
+    }
+    taken.add(`${item.sourceSystem}:${externalId}`);
+    return withoutPurpose({ ...item, externalId });
+  });
+}
+
+/**
+ * A ticket item filed as a ticket on the ticket queue, its words kept, where the last draft put
+ * it elsewhere: the office opens the ticket from them, so the visitor's first queue has its ticket
+ * runs (D2 (b)). Every other item is returned as drafted.
  */
 function onTheTicketQueue(item: DraftedWorkItem): DraftedWorkItem {
-  return item.purpose === 'action' && !filedOnTicketQueue(item)
+  return TICKET_PURPOSES.has(item.purpose) && !filedOnTicketQueue(item)
     ? {
         ...item,
         ...TICKET_QUEUE_FILING,
