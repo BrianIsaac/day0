@@ -24,6 +24,7 @@ import {
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
 import type { RefusedSkill } from './VerdictSection';
+import { EmptyQueue } from './EmptyQueue';
 import { WorkItemCard } from './WorkItemCard';
 
 /**
@@ -381,11 +382,7 @@ export function WorkQueue({
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the work queue…</p>
         ) : items.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">
-            {charterApproved
-              ? 'Nothing has come in yet. New work appears here as it is found.'
-              : 'Work arrives once you approve the charter.'}
-          </p>
+          <EmptyQueue agentId={agentId} charterApproved={charterApproved} />
         ) : (
           <>
             <QueueFilters counts={counts} selected={filter} onSelect={setFilter} />

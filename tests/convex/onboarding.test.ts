@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { CHARTER_SEEDING_ATTEMPTS, parseTranscript } from '../../convex/onboarding';
+import { parseTranscript } from '../../convex/onboarding';
+import { CHARTER_SEEDING_ATTEMPTS, SEEDING_DID_NOT_FINISH } from '../../src/agent/charter-seeding';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -325,20 +326,45 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     expect(result.events).not.toContain('work.charter-derived');
   });
 
-  it.fails(
-    // until wave 13 designs the cure (12-J item 6): a seeding Convex ends at its 600 s limit runs no catch, so nothing records it or tries again
-    'records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent',
-    async (): Promise<void> => {
-      useSurfaceMode('mock');
-      const { harness, agentId } = await seedingHeldAtItsModelCall();
-      const result = await outcome(harness, agentId);
-      const scheduled = await harness.run(
-        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
-      );
-      const retried = scheduled.some((job) => job.name === 'onboarding:postCharterApproval');
-      expect(retried || result.events.includes('charter.seeding-failed')).toBe(true);
-    },
-  );
+  // Wave 13 (12-J item 6, option B): each attempt schedules a check of itself past the limit.
+  it('records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { harness, agentId } = await seedingHeldAtItsModelCall();
+    // The check the attempt scheduled past the limit is due: let it finish.
+    await harness.finishInProgressScheduledFunctions();
+    const result = await outcome(harness, agentId);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    const retried = scheduled.some((job) => job.name === 'onboarding:postCharterApproval');
+    expect(retried || result.events.includes('charter.seeding-failed')).toBe(true);
+  });
+
+  it('leaves an attempt that finished, or failed in its own words, as it ended', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.mutation(internal.charterSeeding.checkAttempt, {
+      agentId,
+      charterId,
+      attempt: 1,
+      startedAt: 1,
+    });
+    expect(await seedingFailures(harness)).toEqual([]);
+    generator.extra = [{ sourceCategory: 'ticket-queue', sourceSystem: 'tickets', title: 7 }];
+    const second = convexTest(schema, allConvexModules());
+    const failing = await seedApprovedCharter(second);
+    await second.action(internal.onboarding.postCharterApproval, failing);
+    await second.mutation(internal.charterSeeding.checkAttempt, {
+      ...failing,
+      attempt: 1,
+      startedAt: 1,
+    });
+    expect(
+      (await seedingFailures(second)).map((payload) => (payload as { attempt: number }).attempt),
+    ).toEqual([1]);
+  });
 
   it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
     useSurfaceMode('mock');

@@ -693,6 +693,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Seeding work from the approved charter failed${because(p.reason)}; ${
       p.retrying === true ? 'trying again' : 'given up'
     }`,
+  'charter.seeding-requested': (_p, subject) =>
+    `${decider(subject)} asked Day0 to find work for ${subject.name} again from the approved charter`,
   'person.proposed': (p, subject) =>
     `${subject.name} proposed ${text(p.person) ?? 'a person'} from ${
       p.via === 'handover' ? 'the charter it brought' : 'its approved charter'

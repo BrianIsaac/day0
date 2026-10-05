@@ -433,6 +433,11 @@ export interface CharterSeedingFailedPayload {
   readonly retrying: boolean;
 }
 
+/** The payload of `charter.seeding-requested` (wave 13): the manager asked Day0 to find work again. */
+export interface CharterSeedingRequestedPayload {
+  readonly charterId: CharterId;
+}
+
 /** How a person came to be proposed: the employee's approved charter, or the one a handover brought. */
 export type PersonProposedVia = 'charter' | 'handover';
 
@@ -1719,6 +1724,7 @@ export interface EventPayloads {
   'charter.question-answered': CharterQuestionAnsweredPayload;
   'charter.evidence-rejected': CharterEvidenceRejectedPayload;
   'charter.seeding-failed': CharterSeedingFailedPayload;
+  'charter.seeding-requested': CharterSeedingRequestedPayload;
   'work.charter-derived': WorkCharterDerivedPayload;
   'person.proposed': PersonProposedPayload;
   'person.confirmed': PersonConfirmedPayload;
@@ -1912,6 +1918,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'charter.question-answered',
   'charter.evidence-rejected',
   'charter.seeding-failed',
+  'charter.seeding-requested',
   'work.charter-derived',
   'person.proposed',
   'person.confirmed',

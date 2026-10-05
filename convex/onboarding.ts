@@ -24,6 +24,11 @@ import { logEvent } from './eventLog';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { MOCK_OFFICE_NAMED_SYSTEMS } from '../src/surfaces/mock-office';
 import { errorMessage } from '../src/lib/errors';
+import {
+  CHARTER_SEEDING_ATTEMPTS,
+  CHARTER_SEEDING_CHECK_MS,
+  CHARTER_SEEDING_RETRY_MS,
+} from '../src/agent/charter-seeding';
 import { userFromManager } from '../src/agent/charter-workspace';
 
 /**
@@ -624,12 +629,6 @@ export const draftKeptConversation = internalAction({
   },
 });
 
-/** How many times the seeding of an approved charter is tried before it stops for the feed. */
-export const CHARTER_SEEDING_ATTEMPTS = 3;
-
-/** The wait before the next try, times the attempt that failed. */
-export const CHARTER_SEEDING_RETRY_MS = 60_000;
-
 /**
  * Seed the work an approved charter implies. Internal: `charters.approve`
  * schedules it in the approval's transaction. In real mode it proposes the
@@ -653,6 +652,18 @@ export const postCharterApproval = internalAction({
   },
   handler: async (ctx, args): Promise<{ workItemsGenerated: number } | { failed: string }> => {
     const attempt = args.attempt ?? 1;
+    // Mock mode's seeding is the generator's model calls, which a slow model can keep past the
+    // platform's ten minutes; an action ended there runs no catch, so the attempt is checked
+    // past the limit (12-J item 6, option B). Real mode's seeding schedules orientation and
+    // returns in seconds; each surface's orientation is a job with a record of its own.
+    if (SURFACE_MODE === 'mock') {
+      await ctx.scheduler.runAfter(CHARTER_SEEDING_CHECK_MS, internal.charterSeeding.checkAttempt, {
+        agentId: args.agentId,
+        charterId: args.charterId,
+        attempt,
+        startedAt: Date.now(),
+      });
+    }
     try {
       // The people the charter names are proposed for the manager to confirm (wave 13, 13-P), as a
       // step of its own so a fault there never holds the seeding back: the graph is real mode's,
