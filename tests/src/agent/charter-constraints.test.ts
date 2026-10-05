@@ -1291,3 +1291,101 @@ describe('a rule bound to the proposed function (13-R)', (): void => {
     expect(rulePlacement(moss, rule)).toEqual({ kind: 'in-no-clause' });
   });
 });
+
+describe('the second pass on the binding (13-R)', (): void => {
+  const base = (willDo: string[], willNotDo: string[], constraints: CharterConstraint[]) => ({
+    proposedFunction: 'Keep the helpdesk moving.',
+    proposedBoundaries: { willDo, willNotDo, escalationTriggers: [] as string[] },
+    namedSystems: [],
+    constraints,
+  });
+
+  it('does not read a clause that shares two of four words as carrying the rule', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share a password in a ticket comment.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willDo', index: 0 }],
+    };
+    expect(
+      rulePlacement(base(['Add a comment to the ticket when closing.'], [], [rule]), rule),
+    ).toMatchObject({ carriesWords: false });
+  });
+
+  it('reads "access" and "accesses" as one word', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never grant accesses.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
+    };
+    expect(rulePlacement(base([], ['Not grant access.'], [rule]), rule)).toMatchObject({
+      carriesWords: true,
+    });
+  });
+
+  it("verifies a prohibition's act only in a clause that bounds, never in a will-do", (): void => {
+    const [rule] = normaliseConstraints(
+      [
+        {
+          kind: 'reporting-line',
+          quote: 'Never contact the customer directly.',
+          wording: ['Never contact the customer directly'],
+          binds: [],
+        },
+      ],
+      {
+        ...runThrough(),
+        proposedBoundaries: {
+          willDo: ['Contact the customer directly via the manager.'],
+          willNotDo: [],
+          escalationTriggers: [],
+        },
+      },
+    );
+    expect(rule).toMatchObject({ wording: [], binds: [] });
+  });
+
+  it('refuses an edit in place that rewrites the last clause enforcing a bound boundary into another', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Stay out of Salesforce records.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
+    };
+    const before = base([], ['Not touch Salesforce records.'], [rule]);
+    expect(() => assertEditKeepsBoundaries(before, base([], ['Be nice.'], [rule]))).toThrow(
+      'edit refused: “Not touch Salesforce records.” is the only clause that enforces “Stay out of Salesforce records.”',
+    );
+    expect(() =>
+      assertEditKeepsBoundaries(before, base([], ['Never edit Salesforce records.'], [rule])),
+    ).not.toThrow();
+  });
+
+  it('previews a bound will-do taken whole and another trimmed as the strike leaves them', (): void => {
+    const charter = base(
+      ['Draft replies.', 'Take owned tickets.'],
+      [],
+      [
+        {
+          kind: 'candidate-property',
+          quote: 'Only owned tickets.',
+          wording: ['owned'],
+          origin: 'synthesis',
+          binds: [
+            { field: 'willDo', index: 0 },
+            { field: 'willDo', index: 1 },
+          ],
+        },
+      ],
+    );
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: ['Draft replies.'],
+      rewrittenClauses: [{ from: 'Take owned tickets.', to: 'Take tickets.' }],
+      changes: true,
+    });
+  });
+});

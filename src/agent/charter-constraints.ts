@@ -208,13 +208,21 @@ const PROHIBITION_OPENING =
 
 /**
  * The phrase as the clauses carry it: itself without a provenance suffix, else without a
- * prohibition's opening when a clause states the act it forbids, else nothing.
+ * prohibition's opening when a clause that bounds the employee states the act it forbids, else
+ * nothing. The act alone is never verified in a will-do or the function, which grant it.
+ *
+ * @param clauses - Every clause a rule may name.
+ * @param bounding - The will-not-do and escalation clauses among them.
  */
-function verifiedPhrase(phrase: string, clauses: readonly string[]): string | undefined {
+function verifiedPhrase(
+  phrase: string,
+  clauses: readonly string[],
+  bounding: readonly string[],
+): string | undefined {
   const stripped = stripProvenanceSuffix(phrase);
   if (wordingPresent(stripped, clauses)) return stripped;
   const act = stripped.replace(PROHIBITION_OPENING, '');
-  return act !== stripped && wordingPresent(act, clauses) ? act : undefined;
+  return act !== stripped && wordingPresent(act, bounding) ? act : undefined;
 }
 
 /**
@@ -318,6 +326,7 @@ export function normaliseConstraints(
   charter: Charter,
 ): CharterConstraint[] {
   const clauses = clauseTexts(charter);
+  const bounding = boundingClauses(charter);
   const out: CharterConstraint[] = [];
   for (const item of raw) {
     const quote = item.quote.trim();
@@ -325,7 +334,7 @@ export function normaliseConstraints(
     const wording = [
       ...new Set(
         item.wording.flatMap((phrase: string): string[] => {
-          const verified = verifiedPhrase(phrase, clauses);
+          const verified = verifiedPhrase(phrase, clauses, bounding);
           return verified === undefined ? [] : [verified];
         }),
       ),
@@ -635,11 +644,18 @@ function assertBoundariesKept(
   for (const index of kept) {
     const boundary = ruleAt(index);
     if (boundary.binds === undefined) continue;
-    const before = (lifted.constraints?.[index]?.binds ?? []).filter(boundingRef);
-    const after = (result.constraints?.[index]?.binds ?? []).filter(boundingRef);
-    if (before.length === 0 || after.length > 0) continue;
+    // Enforced is bound to a bounding clause that carries the rule: a clause rewritten in place
+    // into something else keeps its bind and enforces nothing.
+    const enforcing = (charterAt: ClauseCharter, refs: readonly ClauseRef[]): string[] =>
+      refs.flatMap((ref: ClauseRef): string[] => {
+        const clause = clauseAt(charterAt, ref);
+        return clause !== undefined && boundingRef(ref) ? [clause] : [];
+      });
+    const before = enforcing(lifted, lifted.constraints?.[index]?.binds ?? []);
+    const after = enforcing(result, result.constraints?.[index]?.binds ?? []);
+    if (!carriesRuleIn(boundary, before) || carriesRuleIn(boundary, after)) continue;
     throw new Error(
-      `${change} refused: \u201c${clauseAt(lifted, before[0]!)}\u201d is the only clause that enforces \u201c${boundary.quote}\u201d`,
+      `${change} refused: \u201c${before.find((clause: string): boolean => carriesRuleIn(boundary, [clause])) ?? before[0]!}\u201d is the only clause that enforces \u201c${boundary.quote}\u201d`,
     );
   }
 }
@@ -973,7 +989,8 @@ export function strikePreview(charter: ClauseCharter, index: number): StrikePrev
       continue;
     }
     const to = willDoAfter[position];
-    if (to !== undefined && !willDoBefore.includes(to)) {
+    // As `clauseChanges` pairs them: a will-do taken whole never pairs with the next one's rewrite.
+    if (to !== undefined && !willDoBefore.includes(to) && isRewriteOf(clause, to)) {
       rewrittenClauses.push({ from: clause, to });
       position += 1;
     }
@@ -1042,7 +1059,7 @@ export type RulePlacement =
   | { readonly kind: 'in-no-clause' }
   /**
    * A rule bound to the clauses it produced, and whether any of them carries the rule: its
-   * verified wording or the manager's own words (`carriesRule`), the verification the card shows.
+   * verified wording or the manager's own words (`carriesRuleIn`), the verification the card shows.
    */
   | { readonly kind: 'bound'; readonly clauses: readonly string[]; readonly carriesWords: boolean };
 
@@ -1112,7 +1129,7 @@ function stem(word: string): string {
           ? word.slice(0, -2)
           : word.endsWith('es') && word.length > 4
             ? word.slice(0, -2)
-            : word.endsWith('s') && word.length > 3
+            : word.endsWith('s') && !word.endsWith('ss') && word.length > 3
               ? word.slice(0, -1)
               : word;
   return base.endsWith('e') && base.length > 3 ? base.slice(0, -1) : base;
@@ -1128,26 +1145,29 @@ function contentStems(text: string): Set<string> {
 }
 
 /**
- * Whether a clause carries a rule: one of the rule's verified phrases is in it, or it shares the
- * manager's own words, two of them or all of a sentence that has fewer. The drafter's clause for
- * "Never edit a booked figure." reads "Edit any booked figure.", which carries no phrase the model
- * listed but every word the manager said; a clause bound to a rule it has nothing of shares none
- * (the 13-R bed: 20 of 22 rules carried, the two that reached no clause not).
+ * Whether clauses carry a rule: one of the rule's verified phrases is in one of them, or together
+ * they hold more than half of the manager's own words. The drafter's clause for "Never edit a
+ * booked figure." reads "Edit any booked figure.", which carries no phrase the model listed but
+ * every word the manager said; a clause bound to a rule it has nothing of shares a word at most
+ * (the 13-R bed: 18 of 18 right binds carried, the two wrong ones not), and two of four words
+ * ("ticket", "comment") are not enough to read a clause as the rule.
  */
-function carriesRule(constraint: CharterConstraint, clause: string): boolean {
-  if (constraint.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
+function carriesRuleIn(constraint: CharterConstraint, clauses: readonly string[]): boolean {
+  if (clauses.length === 0) return false;
+  if (constraint.wording.some((phrase: string): boolean => wordingPresent(phrase, clauses))) {
     return true;
   }
   const said = contentStems(constraint.quote);
-  if (said.size === 0) return false;
-  const inClause = contentStems(clause);
-  const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
-  return shared >= Math.min(2, said.size);
+  const inClauses = new Set(
+    clauses.flatMap((clause: string): string[] => [...contentStems(clause)]),
+  );
+  const shared = [...said].filter((word: string): boolean => inClauses.has(word)).length;
+  return shared * 2 > said.size;
 }
 
 /**
  * Where a rule is in the charter: by its words alone (a rule drafted before binds), in no clause,
- * or in the clauses it binds, with whether any of them carries the rule (`carriesRule`). A bound
+ * or in the clauses it binds, with whether they carry the rule (`carriesRuleIn`). A bound
  * function is shown as the rule's words in it; one that carries none of them places the rule
  * nowhere, since a strike leaves the function's sentence whole.
  *
@@ -1177,9 +1197,7 @@ export function rulePlacement(
   return {
     kind: 'bound',
     clauses,
-    carriesWords:
-      (boundToFunction && inFunction.length > 0) ||
-      listed.some((clause: string): boolean => carriesRule(constraint, clause)),
+    carriesWords: (boundToFunction && inFunction.length > 0) || carriesRuleIn(constraint, listed),
   };
 }
 
