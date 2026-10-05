@@ -22,6 +22,7 @@
 import type { Doc } from '../../convex/_generated/dataModel';
 import { finishingStep } from './finishing';
 import { isListingCursor } from './readers/batch';
+import { isSyncHeldReason } from './sync-held';
 
 /** A run older than this is not resumed: its pages were read too long ago to finish a generation with. */
 export const RESUMABLE_RUN_MS = 24 * 60 * 60 * 1000;
@@ -30,7 +31,16 @@ export const RESUMABLE_RUN_MS = 24 * 60 * 60 * 1000;
 export type ResumeCandidate = Pick<
   Doc<'docSyncRuns'>,
   '_id' | 'state' | 'cursor' | 'listing' | 'pageCount' | 'createdAt'
->;
+> &
+  Partial<Pick<Doc<'docSyncRuns'>, 'reason'>>;
+
+/**
+ * Whether the deployment's pause ended the run before it read anything: `held`, or, as a release
+ * before 0.17.0 recorded a hold, `error` with the held reason (which a takeover keeps first).
+ */
+function heldRun(run: ResumeCandidate): boolean {
+  return run.state === 'held' || (run.state === 'error' && isSyncHeldReason(run.reason));
+}
 
 /**
  * The run a new sync carries forward, if any.
@@ -56,9 +66,13 @@ export function runToResume<R extends ResumeCandidate>(
     return undefined;
   }
   if (now - latest.createdAt > RESUMABLE_RUN_MS) return undefined;
+  // A held run tried nothing, so two runs at one cursor are a resume that got nowhere only when
+  // both read and failed there (W12-R27).
   const gotNowhere =
     previous !== undefined &&
     previous.state !== 'completed' &&
+    !heldRun(previous) &&
+    !heldRun(latest) &&
     previous.cursor === latest.cursor &&
     previous.pageCount === latest.pageCount;
   return gotNowhere ? undefined : latest;

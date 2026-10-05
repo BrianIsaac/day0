@@ -754,6 +754,30 @@ describe('documentation sources in real mode', (): void => {
     expect(credential?.revokedAt).toBeUndefined();
   });
 
+  it('ends a run the pause held as held, and the source as held, keeping its cursor (W12V-2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.run(async (ctx) => await ctx.db.patch(runId, { cursor: 'kept-cursor' }));
+    await harness.mutation(internal.docSources.failSync, {
+      sourceId,
+      runId,
+      status: 'held',
+      reason: "Held: this deployment's scheduled work is paused.",
+    });
+    const [source, run] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(sourceId), ctx.db.get(runId)]),
+    );
+    expect(source).toMatchObject({
+      status: 'held',
+      lastError: "Held: this deployment's scheduled work is paused.",
+    });
+    expect(source?.activeSyncId).toBeUndefined();
+    expect(run).toMatchObject({ state: 'held', cursor: 'kept-cursor' });
+  });
+
   it('records on each run why it ended short, and what a completed one changed (U8 D1 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
