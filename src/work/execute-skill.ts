@@ -49,6 +49,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   isChatMessage,
   itemEvidence,
+  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -1370,6 +1371,39 @@ export function withholdActions<T extends CorrectableOutput>(
 }
 
 /**
+ * The refusals with every message that reports a withheld write of its set added (W12X-2): the
+ * evidence check counted the write as the message's evidence and the apply binds the two, so the
+ * message goes with the write rather than reporting a write that is no longer sent. The evidence
+ * check's own rounds need none of this: each reads every message again against what stands.
+ *
+ * Args:
+ *   actions: The set as the audit saw it.
+ *   given: The writes being withheld, by index, with the reasons.
+ *
+ * Returns:
+ *   The refusals, each reporting message's added after the write it reports, in index order.
+ */
+export function withReportsOfWithheld(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+): AuditRefusal[] {
+  const refusals = [...given];
+  const withheld = new Map(given.map((refusal) => [refusal.index, refusal.reason]));
+  actions.forEach((action, index): void => {
+    if (withheld.has(index)) return;
+    const at = [...withheld.keys()]
+      .filter((earlier) => earlier < index)
+      .sort((a, b) => a - b)
+      .find((earlier) => reportsEarlierWrite(action, [actions[earlier]!]));
+    if (at === undefined) return;
+    const reason = `withheld with a write it reports, which was withheld: ${withheld.get(at)}`;
+    withheld.set(index, reason);
+    refusals.push({ index, reason });
+  });
+  return refusals.sort((a, b) => a.index - b.index);
+}
+
+/**
  * One refusal per action, its reasons joined: a message with two refused
  * sentences is one withheld action, not two.
  */
@@ -1455,10 +1489,13 @@ async function withheldAgainstFact<T extends CorrectableOutput & WorkDoneFields>
 ): Promise<T> {
   const fact = workDoneFactOf(output);
   if (fact === undefined || closingAgainstFact(fact, output.actions) === undefined) return output;
-  const refusals = closingChanges(output.actions).map(({ index, state }) => ({
-    index,
-    reason: closingAgainstFactReason(fact, state),
-  }));
+  const refusals = withReportsOfWithheld(
+    output.actions,
+    closingChanges(output.actions).map(({ index, state }) => ({
+      index,
+      reason: closingAgainstFactReason(fact, state),
+    })),
+  );
   await record?.(
     refusals.map((refusal) => refusal.index),
     `${WITHHELD_AGAINST_WORK_DONE}: ${refusals.map((refusal) => refusal.reason).join('; ')}`,
@@ -2903,10 +2940,12 @@ export function executorInstructions(args: {
  * what lands each write in it, and answers for the work as it will stand once the set lands. A run
  * that did not do the work still answers partial or not-done however its writes land, and never
  * closes (decision D-1 (b)): the bed's REVOPS-3 answered done for its plan's gap note until the
- * rule said so.
+ * rule said so. A message that reports the set's own writes is bound to them at the apply (wave
+ * 13, W12X-1 and W12X-2), and is told so: a comment that said its posts were "held for manager
+ * approval" landed beside them, untrue.
  */
 export const HELD_SET_REAL =
-  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands.';
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write before it has landed, and holds it back with them otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';
@@ -3863,7 +3902,10 @@ async function authorDependentSkillRun(
     const gate = gateIssues(output);
     if (gate.length > 0) throw new ClosingGateRefusal(gate, withLimitations(output));
     output = await withholdUnsupported(output, claimFindings, args.onAuditCorrection);
-    const orphaned = orphanedStatusChanges(output, landedCommentTargets(args));
+    const orphaned = withReportsOfWithheld(
+      output.actions,
+      orphanedStatusChanges(output, landedCommentTargets(args)),
+    );
     if (orphaned.length > 0) {
       output = withholdActions(output, orphaned);
       await args.onAuditCorrection?.(

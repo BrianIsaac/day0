@@ -74,6 +74,7 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
+import { heldWithReportedWrites } from '../src/work/evidence-claims';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import {
   AUTONOMOUS_WIP_LIMIT,
@@ -5961,19 +5962,23 @@ export async function reviewHeldActions(
     ? transitionDirectedByNote({ plan, planStepOutcomes, feedback: row.managerFeedback, actions })
     : false;
   return {
-    verdicts: reviewActions(
+    // A message that reports a held write of its own set waits with it (W12X-2).
+    verdicts: heldWithReportedWrites(
       actions,
-      surfaceRows.map((surface) =>
-        toSurfaceRecord(withBrowserComponentState(surface, browserRefusal)),
+      reviewActions(
+        actions,
+        surfaceRows.map((surface) =>
+          toSurfaceRecord(withBrowserComponentState(surface, browserRefusal)),
+        ),
+        grants,
+        Date.now(),
+        {
+          autonomousActions,
+          replyTarget: replyTargetFor(row),
+          transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
+          closeAgainstWords,
+        },
       ),
-      grants,
-      Date.now(),
-      {
-        autonomousActions,
-        replyTarget: replyTargetFor(row),
-        transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
-        closeAgainstWords,
-      },
     ),
     autonomousActions,
     transitionDirectedByNote: directed,

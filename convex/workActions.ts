@@ -37,6 +37,7 @@ import {
   repairToolArguments,
   withArgumentRepairs,
   withholdActions,
+  withReportsOfWithheld,
   runDependentSkill,
   runSkill,
 } from '../src/work/execute-skill';
@@ -1782,12 +1783,13 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
     question: asked.question,
   });
   if (!open) return read;
-  const removed = new Set(open.withheld.map((row) => row.index));
-  const withheld = withholdActions(
-    read,
+  // A message that reports a write withheld for the answer goes with it (W12X-2).
+  const refusals = withReportsOfWithheld(
+    read.actions,
     open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
-    "for the manager's answer",
   );
+  const removed = new Set(refusals.map((row) => row.index));
+  const withheld = withholdActions(read, refusals, "for the manager's answer");
   const reindex = (index: number): number =>
     index - [...removed].filter((removedIndex) => removedIndex < index).length;
   return {

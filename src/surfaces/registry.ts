@@ -2,6 +2,7 @@ import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
+import { reportsEarlierWrite } from '../work/evidence-claims';
 import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
@@ -38,6 +39,7 @@ import {
   UNKNOWN_TOOL,
   WITHHELD_AFTER_FAILED_BROWSER_WRITE,
   WITHHELD_AFTER_FAILED_WRITE,
+  WITHHELD_REPORTED_WRITE_NOT_LANDED,
   type ParsedSurfaceAction,
   type RequestEdit,
 } from './policy';
@@ -329,6 +331,25 @@ function writeDidNotLand(
       (action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '')) &&
       (row.outcomeUnknown === true || (!row.ok && row.held !== true))
     );
+  });
+}
+
+/**
+ * Whether a write earlier in the set did not land: refused, failed, held back (not approved,
+ * withheld, held by a claim) or with its outcome unknown. A carried row that landed counts as
+ * landed.
+ */
+function earlierWriteNotLanded(
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  actions: readonly MockAction[],
+): boolean {
+  return applied.some((row, index) => {
+    const action = parsed[index];
+    const write = action
+      ? actionIntent(action) === 'write'
+      : isSurfaceTool(actions[index]?.tool ?? '');
+    return write && (!row.ok || row.held === true || row.outcomeUnknown === true);
   });
 }
 
@@ -744,6 +765,17 @@ export async function applySurfaceActions(
           effect: describeAction(action),
           idempotencyKey,
         });
+        continue;
+      }
+      // A message that reports a write of its own set is bound to the writes
+      // before it (the evidence check counted them as its evidence): one held
+      // back (not approved, held by a claim) leaves its report untrue too.
+      if (
+        isMessage(parsed.action, surface) &&
+        reportsEarlierWrite(action, actions.slice(0, index)) &&
+        earlierWriteNotLanded(applied, parsedByIndex, actions)
+      ) {
+        await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
         continue;
       }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
