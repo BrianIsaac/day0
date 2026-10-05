@@ -642,6 +642,21 @@ describe('the live feed labels', (): void => {
     expect(evaluated('constructor')).toBe('evaluated: constructor');
   });
 
+  it('says a finished run done, partly done or not done, in the word its own answer gives the card (13-FD)', (): void => {
+    const finished = (workDone?: string): string =>
+      eventLabel({
+        type: 'work.completed',
+        payload: {
+          workItemId: 'w1',
+          output: workDone === undefined ? {} : { workDone, workDoneWhy: 'Its one line of why.' },
+        },
+      } as never);
+    expect(finished('done')).toBe('done');
+    expect(finished('partial')).toBe('partly done');
+    expect(finished('not-done')).toBe('not done');
+    expect(finished()).toBe('done');
+  });
+
   it('prints a type only an older release wrote as it was stored', (): void => {
     expect(eventLabel({ type: 'work.legacy-thing', payload: { x: 1 } })).toBe('work.legacy-thing');
   });

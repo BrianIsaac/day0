@@ -535,6 +535,22 @@ describe('recordWords', (): void => {
       ),
     ).toBe('Mira finished \u201cWhy is ARR down?\u201d');
   });
+
+  it('says a finished run partly done or not done when its own answer says so, as its card does (13-FD)', (): void => {
+    const subject = { name: 'Mira', item: 'Reconcile vendor charges' };
+    const finished = (workDone: string): string =>
+      recordWords(
+        { type: 'work.completed', payload: { output: { workDone, workDoneWhy: 'Why.' } } },
+        subject,
+      );
+    expect(finished('done')).toBe('Mira finished \u201cReconcile vendor charges\u201d.');
+    expect(finished('partial')).toBe(
+      'Mira ended \u201cReconcile vendor charges\u201d partly done; its card says why.',
+    );
+    expect(finished('not-done')).toBe(
+      'Mira ended \u201cReconcile vendor charges\u201d not done; its card says why.',
+    );
+  });
 });
 
 describe('the access request and the organisation connection ledger in the record (11-AO)', (): void => {
