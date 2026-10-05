@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { log } from '../lib/logger';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
 import { charterWords, sharedCharterWords } from '../work/scope';
@@ -69,6 +70,8 @@ export const WORK_GEN_SYSTEM = [
   "  - requesterLabel is a person's name or role; never the agent itself.",
   '  - The title and contentSummary are the request as its sender wrote it, and the manager reads them on the work card: never say how the request should be handled (no "skip this", "route this back", "out of scope") and never mention the agent, the evaluator or Day0.',
   '  - Titles are 8-14 words.',
+  // The quoted requests carried an em dash on the hosted office (the v0.16.0 redeploy, finding 5).
+  `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
   '  - sourceCategory is one of "ticket-queue", "inbox", or "social-mention".',
   '  - purpose is "read-and-answer", "action", "beyond-the-office" or "out-of-scope": which of the four items above it is.',
 ].join('\n');

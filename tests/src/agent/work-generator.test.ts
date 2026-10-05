@@ -13,6 +13,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import type { Charter } from '../../../src/agent/charter';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
   WORK_GEN_SYSTEM,
@@ -398,5 +399,12 @@ describe('the first tickets the office can and cannot back (13-FD, the v0.16.0 r
     const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
     expect(new Set(items.map((item) => item.externalId)).size).toBe(items.length);
     expect(items[1]?.externalId).toBe('ticket-action');
+  });
+});
+
+describe('the punctuation of the requests the generator drafts (13-FD, the v0.16.0 redeploy finding 5)', (): void => {
+  it('states the house copy rule to the generator, whose quoted requests carried an em dash on the hosted office', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(PLAIN_PUNCTUATION_IN_EVERY_FIELD);
+    expect(WORK_GEN_SYSTEM).not.toMatch(/[\u2013\u2014]/);
   });
 });
