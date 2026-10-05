@@ -24,16 +24,17 @@ export const TRACE_FORMAT = 'day0-trace';
  * from traces cuts each manager's figures by tenure, each owner key as a
  * salted digest ({@link ownerKeyDigest}); 5 adds the organisation's ledger
  * lines about the connections the employee's cards use (wave 11, F17); 6 adds
- * the decision requests a newer one replaced (wave 12, 12-M; F2 D14).
+ * the decision requests a newer one replaced (wave 12, 12-M; F2 D14); 7 adds the
+ * owner's people graph, its people, identities and edges (wave 13, 13-P).
  */
-export const TRACE_VERSION = 6;
+export const TRACE_VERSION = 7;
 
 /**
  * The earlier versions this release still reads: a version 2 trace has no
- * delivery records, neither 2 nor 3 carries the handovers, and none before 6
- * the replaced decision requests.
+ * delivery records, neither 2 nor 3 carries the handovers, none before 6
+ * the replaced decision requests, and none before 7 the people graph.
  */
-const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, 5, TRACE_VERSION]);
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, 5, 6, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -49,6 +50,9 @@ export const TRACE_SECTIONS = [
   'managerNotes',
   'decisionNotices',
   'replacedRequests',
+  'people',
+  'personIdentities',
+  'relationships',
   'events',
 ] as const;
 
@@ -57,6 +61,9 @@ const ADDED_IN_VERSION_3: readonly TraceSection[] = ['managerNotes', 'decisionNo
 
 /** The sections a trace before version 6 did not carry, read from one as empty. */
 const ADDED_IN_VERSION_6: readonly TraceSection[] = ['replacedRequests'];
+
+/** The sections a trace before version 7 did not carry, read from one as empty. */
+const ADDED_IN_VERSION_7: readonly TraceSection[] = ['people', 'personIdentities', 'relationships'];
 
 /** One section of a trace. */
 export type TraceSection = (typeof TRACE_SECTIONS)[number];
@@ -82,6 +89,15 @@ export interface TraceRows {
    * it and the result of the one edit that marked its message (12-M; F2 D14).
    */
   replacedRequests: Doc<'replacedDecisionRequests'>[];
+  /**
+   * The owner's people graph as the employee's owner holds it at the export (wave 13, 13-P): every
+   * person with their evidence and standing, proposals and dismissals included, each identity, and
+   * every edge with when it held. Only the exporting owner's: after a handover none of the old
+   * owner's.
+   */
+  people: Doc<'people'>[];
+  personIdentities: Doc<'personIdentities'>[];
+  relationships: Doc<'relationships'>[];
   events: Doc<'events'>[];
 }
 
@@ -355,7 +371,8 @@ export function readAgentTrace(value: unknown): AgentTrace | undefined {
       Array.isArray(carried[section]) ||
       (carried[section] === undefined &&
         ((version === 2 && ADDED_IN_VERSION_3.includes(section)) ||
-          (typeof version === 'number' && version < 6 && ADDED_IN_VERSION_6.includes(section)))),
+          (typeof version === 'number' && version < 6 && ADDED_IN_VERSION_6.includes(section)) ||
+          (typeof version === 'number' && version < 7 && ADDED_IN_VERSION_7.includes(section)))),
   );
   if (!complete) return undefined;
   const filled = Object.fromEntries(
