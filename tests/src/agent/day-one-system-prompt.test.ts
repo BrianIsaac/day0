@@ -90,7 +90,7 @@ describe('dayOneSystemPrompt', (): void => {
   });
 
   it('moves the cache key on with the prompt', (): void => {
-    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v4');
+    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v5');
   });
 });
 
@@ -146,8 +146,9 @@ describe('dayOneTurnNote', (): void => {
       "is still open after the boss's last answer, saying it goes on the charter as an open " +
       'question: a question they asked back, an answer they were not sure of, something they ' +
       'asked to come back to, or anything they raised at the last question; name nothing that ' +
-      'their last answer settled, and nothing when nothing is open. Ask nothing, and promise ' +
-      'nothing but the charter. Then call the dayOneComplete ' +
+      'their last answer settled, and nothing when it says nothing is open. A rule or a limit ' +
+      'the boss stated is settled, never open: it goes on the charter as a rule. Ask nothing, ' +
+      'and promise nothing but the charter. Then call the dayOneComplete ' +
       'tool: its closing line only says you will now draft the charter for their review, and ' +
       'does not thank them again.';
     expect(dayOneTurnNote(7)).toBe(close);
@@ -160,8 +161,8 @@ describe('dayOneTurnNote', (): void => {
         'and what was left open.',
     );
     expect(DAY_ONE_COMPLETE_TOOL.closingLine).toBe(
-      'One short sentence saying you will now draft the charter for their review. It does not ' +
-        'thank them again: the turn has already done so.',
+      'One short sentence saying you will now draft the charter for their review, naming ' +
+        'nothing it will hold. It does not thank them again: the turn has already done so.',
     );
     expect(DAY_ONE_COMPLETE_TOOL.closingLine).not.toMatch(/friendly/i);
   });

@@ -7,9 +7,10 @@ import { clippedEmployeeName } from './employee-name';
  * The provider's prompt-cache key for the Day-1 system prompt. It names the prompt's shape, so a
  * change to the words below moves it on (v2: the employee's own name and the topics' plain
  * titles, 30 September; v3: one question per turn, the one `dayOneTurnNote` names, 1 October;
- * v4: the close as the note says it, with no friendly line of its own, 2 October).
+ * v4: the close as the note says it, with no friendly line of its own, 2 October; v5: a stated
+ * rule is never named open, and the closing line names nothing the charter will hold, 6 October).
  */
-export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v4';
+export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v5';
 
 /**
  * The words of the tool the employee calls to end the one-to-one, said to the model with the
@@ -22,8 +23,8 @@ export const DAY_ONE_COMPLETE_TOOL = {
     'Call this once all seven questions are answered, in the closing turn, after its thanks ' +
     'and what was left open.',
   closingLine:
-    'One short sentence saying you will now draft the charter for their review. It does not ' +
-    'thank them again: the turn has already done so.',
+    'One short sentence saying you will now draft the charter for their review, naming ' +
+    'nothing it will hold. It does not thank them again: the turn has already done so.',
 } as const;
 
 /**
@@ -85,7 +86,9 @@ const NO_PROMISED_RETURN =
  * the boss to settle what was left open), named as the charter's open questions, then the tool, whose line drafts the charter and does not thank again. On the
  * v0.12.0 walk the close thanked twice (the turn, then the tool's "friendly closing line") and
  * named neither thread question 7 had noted. Which replies left something open is the model's
- * reading of the conversation, not a word list (N20).
+ * reading of the conversation, not a word list (N20). On the v0.16.0 redeploy Moss's manager said
+ * nothing was open and its closing line still promised one of the stated rules "noted as an open
+ * question", which the charter, rightly, carried as a rule (13-FD): a stated rule is named settled.
  */
 const CLOSE =
   'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
@@ -93,8 +96,9 @@ const CLOSE =
   "is still open after the boss's last answer, saying it goes on the charter as an open " +
   'question: a question they asked back, an answer they were not sure of, something they ' +
   'asked to come back to, or anything they raised at the last question; name nothing that ' +
-  'their last answer settled, and nothing when nothing is open. Ask nothing, and promise ' +
-  'nothing but the charter. Then call the dayOneComplete ' +
+  'their last answer settled, and nothing when it says nothing is open. A rule or a limit ' +
+  'the boss stated is settled, never open: it goes on the charter as a rule. Ask nothing, ' +
+  'and promise nothing but the charter. Then call the dayOneComplete ' +
   'tool: its closing line only says you will now draft the charter for their review, and ' +
   'does not thank them again.';
 
