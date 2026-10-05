@@ -90,3 +90,9 @@ export type AgreementApprovedVia = (typeof AGREEMENT_APPROVED_VIA)[number];
 
 /** The most characters an agreement's statement keeps. */
 export const AGREEMENT_STATEMENT_LIMIT = 500;
+
+/**
+ * The refusal of an agreement the caller's owner scope does not hold, the same for one that does
+ * not exist (W12-R25).
+ */
+export const AGREEMENT_NOT_YOURS = 'This working agreement is not yours.';

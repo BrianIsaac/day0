@@ -78,6 +78,15 @@ export const RELATIONSHIP_STATUSES = [
 export type RelationshipStatus = (typeof RELATIONSHIP_STATUSES)[number];
 
 /**
+ * The refusal of a person the caller's owner scope does not hold, the same for one that does not
+ * exist (the wave 12 review's W12-R25: one refusal for both, so an id confirms nothing).
+ */
+export const PERSON_NOT_YOURS = 'This person is not in your people.';
+
+/** The refusal of an edge the caller's owner scope does not hold, or one that does not exist. */
+export const RELATIONSHIP_NOT_YOURS = 'This relationship is not in your people.';
+
+/**
  * A person's name as the graph compares it: compatibility forms folded (a full-width letter is
  * its letter), accents dropped, every run of anything but a letter or a digit one space, lower
  * case, trimmed. Two names with one key are a name-only match, which is offered as "possibly the
