@@ -94,7 +94,6 @@ export const MIGRATION_NAMES = [
   'skills-owner-key',
   'surfaces-intake-scope',
   'credentials-organisation-purge',
-  'sync-runs-refs',
   'work-decision-closed',
   'surfaces-kept-identity-since',
   'surfaces-messages-tab',
@@ -162,9 +161,10 @@ const ACCESS_RELEASE = '0.14.0';
 const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 
 /**
- * The release of the work loop and supervision (wave 12): the schema step's narrowing of the
- * sync runs' page refs (12-S3, N10), and the record of the decision close edits claimed before
- * the edit kept its result (12-W's N-3 lease).
+ * The release of the work loop and supervision (wave 12): the record of the decision close edits
+ * claimed before the edit kept its result (12-W's N-3 lease). Its other pass, `sync-runs-refs`,
+ * cleared the sync runs' page refs (12-S3, N10) and left this list with `docSyncRuns.refs` at
+ * 0.17.0 (`RETIRED_DECLARATIONS`).
  */
 const SUPERVISION_RELEASE = '0.16.0';
 
@@ -303,11 +303,6 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'deletes the value of every organisation-held secret revoked more than 24 hours ago that still keeps it (an older revoke kept it, or its scheduled purge was lost), keeping the row and its revoke date; a row whose revocation at the vendor is still pending is left to its own sweep',
     thenRemoves: 'nothing: a revoke holds a secret 24 hours and schedules its purge from here on',
   },
-  'sync-runs-refs': {
-    release: SUPERVISION_RELEASE,
-    does: 'clears the page refs each sync run of a release before 0.6.0 kept, carrying their count into the run’s pagesListed where it kept none; a run that did not complete loses its cursor too, so no sync resumes or finishes a listing it no longer carries and the next reads the source from page one',
-    thenRemoves: 'the docSyncRuns.refs declaration',
-  },
   'work-decision-closed': {
     release: SUPERVISION_RELEASE,
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
@@ -351,15 +346,15 @@ const EVENT_PAGE = 10;
 
 /**
  * Sync runs one page of the unread-record move reads. A run of a release
- * before 0.6.0 lists up to 8,192 page refs, so ten stay well inside the
- * transaction's read limit.
+ * before 0.6.0 listed up to 8,192 page refs until 0.16.0 cleared them, so ten
+ * stayed well inside the transaction's read limit.
  */
 const RUN_PAGE = 10;
 
 /**
  * Rows one page of a migration over large rows reads: a documentation page or
- * its mirror carries a body of up to 768 KiB, and a sync run of a release
- * before 0.6.0 up to 8,192 page refs, so the read is bounded by bytes as well
+ * its mirror carries a body of up to 768 KiB, and a work item its run's output
+ * and plan, so the read is bounded by bytes as well
  * as rows (M23). A page the bound ends early continues from the last row it
  * returned, so no row is skipped.
  */
@@ -674,31 +669,6 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
- * Clear the page refs a sync run of a release before 0.6.0 listed its generation by (12-S3, N10:
- * the first release of the narrowing). From 0.6.0 a listed page is stamped on its
- * `docPageListings` row, and the finish no longer reads a run's refs; their count is kept in
- * `pagesListed`, where the page count reads it. A run that did not complete also loses its cursor:
- * its refs named pages its listing never stamped, so finishing it without them could remove a page
- * it listed, and a run of that age is past every resume already (`runToResume`). The next sync then
- * reads the source from page one and lists every page again. A run carrying no refs is left, so a
- * second run changes nothing. Each run can hold 8,192 refs, so the page is bounded by bytes.
- */
-async function clearRunRefs(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('docSyncRuns').paginate({ ...LARGE_ROWS_READ, cursor });
-  let changed = 0;
-  for (const run of page.page) {
-    if (run.refs === undefined) continue;
-    await ctx.db.patch(run._id, {
-      refs: undefined,
-      pagesListed: run.pagesListed ?? run.refs.length,
-      ...(run.state !== 'completed' ? { cursor: undefined } : {}),
-    });
-    changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
-
-/**
  * Record each decided request's close edit claimed before the close kept its result as made
  * (12-W's N-3 lease; 12-S3): until this release a claim was the only trace of the edit, which the
  * code then took as made, so no release ever sends it again. From this release the edit records
@@ -969,7 +939,6 @@ const MIGRATION_PAGES: Readonly<
   'credentials-issued-by': backfillIssuedBy,
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
-  'sync-runs-refs': clearRunRefs,
   'work-decision-closed': recordClaimedCloses,
   'surfaces-kept-identity-since': async (ctx, cursor) =>
     await markKeptBeforeTheMarkPage(ctx, cursor, Date.now()),

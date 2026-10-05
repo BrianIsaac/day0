@@ -435,17 +435,10 @@ export default defineSchema({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),
     /**
-     * The page refs a run of a release before 0.6.0 listed, which bounded a
-     * generation at Convex's 8,192-entry array. Nothing writes or reads it from
-     * 0.16.0: a listed page is stamped on its `docPageListings` row instead, and
-     * the `sync-runs-refs` migration clears it, carrying its count into
-     * `pagesListed`. The release after that removes this declaration (N10).
-     */
-    refs: v.optional(v.array(v.string())),
-    /**
      * The source's listing this run reads (`docSources.listings`): a sync that
-     * reads from page one starts the next, a resumed one carries it on. Given
-     * lazily to a run begun before 0.6.0.
+     * reads from page one starts the next, a resumed one carries it on. Absent
+     * only on a run begun before 0.6.0, which the `sync-runs-refs` pass (0.16.0)
+     * left with no cursor, so it takes no batch and no finish.
      */
     listing: v.optional(v.number()),
     /** How many page refs the run's listing has named so far, a resumed run's carried. */

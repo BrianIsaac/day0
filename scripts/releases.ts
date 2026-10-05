@@ -271,6 +271,7 @@ export const RETIRED_DECLARATIONS: readonly RetiredDeclaration[] = [
     migration: 'surfaces-single-approval',
     release: '0.6.0',
   },
+  { declaration: 'docSyncRuns.refs', migration: 'sync-runs-refs', release: '0.16.0' },
 ];
 
 /**
@@ -281,9 +282,7 @@ export const RETIRED_DECLARATIONS: readonly RetiredDeclaration[] = [
  * pushes, and its migration runs after the push. Listed now so the removal is
  * one move, which the migration tests hold to the schema and the migrations.
  */
-export const RETIRING_DECLARATIONS: readonly RetiredDeclaration[] = [
-  { declaration: 'docSyncRuns.refs', migration: 'sync-runs-refs', release: '0.16.0' },
-];
+export const RETIRING_DECLARATIONS: readonly RetiredDeclaration[] = [];
 
 /** The most migration rows the check reads; one per migration any release shipped. */
 const MIGRATION_ROWS_READ = 1_000;

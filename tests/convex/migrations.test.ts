@@ -87,7 +87,6 @@ describe('the upgrade migrations', (): void => {
       const completedAt = 1_758_900_000_000;
       await ctx.db.insert('docSyncRuns', {
         sourceId,
-        refs: [],
         credentialRefs: [],
         pageCount: 1,
         redactionCount: 0,
@@ -668,7 +667,6 @@ describe('the unread record move (D D1 (a))', (): void => {
       ): Promise<Id<'docSyncRuns'>> =>
         await ctx.db.insert('docSyncRuns', {
           sourceId,
-          refs: [],
           credentialRefs: [],
           pageCount: 0,
           redactionCount: 0,
@@ -805,6 +803,16 @@ describe('the declarations the schema step retired (N10)', (): void => {
       ).fields;
       expect(fields, declaration).not.toHaveProperty(field);
     }
+  });
+
+  it('retires docSyncRuns.refs with the clearing migration that cleared it at 0.16.0 (13-K)', (): void => {
+    expect(RETIRED_DECLARATIONS).toContainEqual({
+      declaration: 'docSyncRuns.refs',
+      migration: 'sync-runs-refs',
+      release: '0.16.0',
+    });
+    expect(RETIRING_DECLARATIONS.map((row) => row.declaration)).not.toContain('docSyncRuns.refs');
+    expect(MIGRATION_NAMES as readonly string[]).not.toContain('sync-runs-refs');
   });
 
   it('retires surfaces.itApprovedAt with the single-approval migration that cleared it at 0.6.0 (12-S3)', (): void => {
@@ -1611,9 +1619,12 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
     const { completed, endedShort } = await harness.run(async (ctx) => {
       // Re-pinned at 12-S3: the runs carry no page refs. A run whose cursor is a listing cursor
       // began at 0.6.0 or later and never wrote refs, and the sync-runs-refs pass now clears the cursor of a run
-      // that still carries them, so a fixture with both would not be taken over.
+      // that still carries them, so a fixture with both would not be taken over. Re-pinned at 13-K:
+      // each run carries the listing every run since 0.6.0 is given when it begins, which the lazy
+      // listing a run before 0.6.0 got (now retired) used to make up.
       const run = {
         sourceId,
+        listing: 1,
         credentialRefs: ['runbook.md'],
         pageCount: 1,
         redactionCount: 1,
@@ -2704,142 +2715,13 @@ describe('the intake scope backfill (the wave 11 review’s m5; R-S)', (): void 
   });
 });
 
-describe('the sync runs refs clearing (12-S3, N10)', (): void => {
-  /** A sync run of the source, with the fields a test gives it. */
-  async function run(
-    harness: Harness,
-    sourceId: Id<'docSources'>,
-    fields: Partial<WithoutSystemFields<Doc<'docSyncRuns'>>>,
-  ): Promise<Id<'docSyncRuns'>> {
-    return await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('docSyncRuns', {
-          sourceId,
-          credentialRefs: [],
-          pageCount: 0,
-          redactionCount: 0,
-          state: 'completed',
-          createdAt: 1,
-          ...fields,
-        }),
-    );
-  }
-
-  it('is registered at 0.16.0, after the access follow-up passes, and names the declaration the next release removes', (): void => {
-    expect(MIGRATIONS['sync-runs-refs'].release).toBe('0.16.0');
-    // Re-pinned at 13-K: the newest release a migration names moved to 0.17.0, pinned by the
-    // kept identity mark's registration test.
-    expect(MIGRATION_NAMES.indexOf('sync-runs-refs')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('credentials-organisation-purge'),
-    );
-    expect(RETIRING_DECLARATIONS).toContainEqual({
-      declaration: 'docSyncRuns.refs',
-      migration: 'sync-runs-refs',
-      release: '0.16.0',
-    });
-  });
-
-  it("clears every run's refs, keeps its page count, clears the cursor of a run that did not complete so no sync resumes or finishes it, and is safe to run twice", async (): Promise<void> => {
-    const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    const runs = {
-      completed: await run(harness, sourceId, { refs: ['a.md', 'b.md', 'c.md'] }),
-      counted: await run(harness, sourceId, {
-        refs: ['a.md'],
-        pagesListed: 5,
-        listing: 2,
-        state: 'error',
-        cursor: 'finishing:pages',
-        reason: 'The documentation read was interrupted (timeout).',
-      }),
-      later: await run(harness, sourceId, {
-        pagesListed: 4,
-        listing: 3,
-        state: 'error',
-        cursor: 'finishing:pages',
-      }),
-    };
-    const read = async (): Promise<Record<string, unknown>> =>
-      await harness.run(async (ctx) =>
-        Object.fromEntries(
-          await Promise.all(
-            Object.entries(runs).map(async ([name, id]) => {
-              const row = await ctx.db.get(id);
-              return [
-                name,
-                {
-                  refs: row?.refs ?? null,
-                  pagesListed: row?.pagesListed ?? null,
-                  cursor: row?.cursor ?? null,
-                  state: row?.state,
-                },
-              ];
-            }),
-          ),
-        ),
-      );
-    const cleared = {
-      completed: { refs: null, pagesListed: 3, cursor: null, state: 'completed' },
-      counted: { refs: null, pagesListed: 5, cursor: null, state: 'error' },
-      later: { refs: null, pagesListed: 4, cursor: 'finishing:pages', state: 'error' },
-    };
-
-    await runAll(harness);
-
-    expect(await read()).toEqual(cleared);
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'sync-runs-refs')).toMatchObject({
-      release: '0.16.0',
-      read: 3,
-      changed: 2,
-      completedAt: expect.any(Number),
-    });
-    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
-      migrations: [],
-      pending: [],
-    });
-    // The pass itself changes nothing a second time, as on a restored volume that runs it again.
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'sync-runs-refs'))
-        .unique();
-      if (row !== null) await ctx.db.delete(row._id);
-    });
-    await expect(
-      harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' }),
-    ).resolves.toMatchObject({ read: 3, changed: 0, completedAt: expect.any(Number) });
-    expect(await read()).toEqual(cleared);
-  });
-
-  it('reads within its byte bound, so runs that each list 8,192 pages clear inside the transaction read limit', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    // Thirty runs of 8,192 refs of about 80 bytes each are over 19 MB, more than one
-    // transaction may read, so a page bounded by rows alone would fail.
-    const refs = Array.from(
-      { length: 8_192 },
-      (_unused, index) =>
-        `https://wiki.example/space/runbooks/page-${String(index).padStart(6, '0')}`,
-    );
-    const ids: Id<'docSyncRuns'>[] = [];
-    for (let index = 0; index < 30; index += 1) ids.push(await run(harness, sourceId, { refs }));
-
-    await runAll(harness);
-
-    for (const id of ids) {
-      const row = await harness.run(async (ctx) => await ctx.db.get(id));
-      expect(row?.refs, String(id)).toBeUndefined();
-      expect(row?.pagesListed, String(id)).toBe(8_192);
-    }
-  });
-});
-
 describe('the decision close record (12-W, N-3; 12-S3)', (): void => {
-  it('is registered at 0.16.0, after the sync runs refs clearing', (): void => {
+  // Re-pinned at 13-K: the sync runs refs clearing it followed left the list with the declaration
+  // it cleared (`RETIRED_DECLARATIONS`), so the pass now follows the access follow-up passes.
+  it('is registered at 0.16.0, after the access follow-up passes', (): void => {
     expect(MIGRATIONS['work-decision-closed'].release).toBe('0.16.0');
     expect(MIGRATION_NAMES.indexOf('work-decision-closed')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('sync-runs-refs'),
+      MIGRATION_NAMES.indexOf('credentials-organisation-purge'),
     );
   });
 

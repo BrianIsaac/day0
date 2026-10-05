@@ -2044,7 +2044,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const runId = await ctx.db.insert('docSyncRuns', {
         sourceId,
-        refs,
         credentialRefs: [],
         pageCount: refs.length,
         redactionCount: 0,
@@ -2435,7 +2434,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       await ctx.db.insert('docSyncRuns', {
         sourceId,
         cursor: '25',
-        refs: ['read-before.md'],
         credentialRefs: [],
         pageCount: 1,
         redactionCount: 0,
@@ -2463,7 +2461,8 @@ describe('the documentation store under the transaction limits (step 49)', (): v
 
   // Re-pinned at 12-S3: the finish no longer reads a run's refs (legacyListedRefs). The
   // sync-runs-refs pass clears them and the run's cursor, so its finish is refused and nothing it
-  // named is removed; the next sync reads the source from page one.
+  // named is removed; the next sync reads the source from page one. Re-pinned again at 13-K: the
+  // refs declaration and the pass are retired, so the run is seeded as the pass left it.
   it('keeps the page and mirror a run begun before 0.6.0 named once the clearing pass has cleared its cursor, refusing its finish (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -2503,10 +2502,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         sourceRef: 'runbook.md',
         updatedAt: 1,
       });
+      // As the sync-runs-refs pass left it at 0.16.0: its refs counted, its cursor taken.
       const runId = await ctx.db.insert('docSyncRuns', {
         sourceId,
-        cursor: FINISHING_CURSOR,
-        refs: ['runbook.md'],
+        pagesListed: 1,
         credentialRefs: [],
         pageCount: 1,
         redactionCount: 0,
@@ -2517,7 +2516,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       return { sourceId, agentId, runId };
     });
 
-    await harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' });
     await expect(
       harness.action(internal.docSyncActions.syncBatch, {
         sourceId,
@@ -2528,7 +2526,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
 
     const ended = await harness.run(async (ctx) => await ctx.db.get(runId));
     expect(ended).toMatchObject({ pagesListed: 1, state: 'running' });
-    expect(ended?.refs).toBeUndefined();
     expect(ended?.cursor).toBeUndefined();
     const left = await harness.run(async (ctx) => ({
       pages: (
@@ -2549,13 +2546,14 @@ describe('the documentation store under the transaction limits (step 49)', (): v
 
   // Re-pinned at 12-S3: the finish no longer reads a run's refs, and the sync-runs-refs pass clears
   // the cursor of a run begun before 0.6.0, so its checkpoint over the pages themselves is refused
-  // and every page stays until a sync from page one lists the source again.
+  // and every page stays until a sync from page one lists the source again. Re-pinned again at
+  // 13-K: the refs declaration and the pass are retired, so the run is seeded as the pass left it.
   it('refuses the finish of a run begun before 0.6.0 cut off part-way through its pages once the clearing pass has cleared its cursor, and removes nothing (12-S3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
-    const { runId } = await harness.run(async (ctx) => {
+    const { runId, checkpoint } = await harness.run(async (ctx) => {
       for (const ref of ['kept.md', 'stale.md']) {
         await ctx.db.insert('docPages', {
           sourceId,
@@ -2571,10 +2569,10 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         .query('docPages')
         .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
         .paginate({ numItems: 1, cursor: null });
+      // As the sync-runs-refs pass left it at 0.16.0: its two refs counted, its checkpoint taken.
       const runId = await ctx.db.insert('docSyncRuns', {
         sourceId,
-        cursor: finishingCursor({ phase: 'pages', cursor: walked.continueCursor }),
-        refs: ['page.md', 'kept.md'],
+        pagesListed: 2,
         credentialRefs: [],
         pageCount: 2,
         redactionCount: 0,
@@ -2582,11 +2580,12 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         createdAt: Date.now(),
       });
       await ctx.db.patch(sourceId, { activeSyncId: runId });
-      return { runId };
+      return {
+        runId,
+        checkpoint: finishingCursor({ phase: 'pages', cursor: walked.continueCursor }),
+      };
     });
-    const checkpoint = await harness.run(async (ctx) => (await ctx.db.get(runId))?.cursor);
 
-    await harness.mutation(internal.migrations.runMigrationPage, { name: 'sync-runs-refs' });
     await expect(
       harness.action(internal.docSyncActions.syncBatch, { sourceId, runId, cursor: checkpoint }),
     ).resolves.toMatchObject({ ok: false, complete: true });
@@ -2656,6 +2655,76 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(left).toEqual(['page.md']);
   });
 
+  it('prunes more than eight old runs in one pass, now a run carries no list of its pages (13-K)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-28T00:00:00Z'));
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const old = Date.now() - RUN_HISTORY_MS - 1;
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          credentialRefs: [],
+          pageCount: 1,
+          redactionCount: 0,
+          state: 'error',
+          createdAt: old - index,
+          completedAt: old - index,
+        });
+      }
+    });
+    await expect(harness.mutation(internal.docSources.pruneRunHistory, { sourceId })).resolves.toBe(
+      32,
+    );
+  });
+
+  it('refuses a batch for a run that carries no listing rather than giving it one, and writes nothing (13-K)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    // A run begun before 0.6.0 as the sync-runs-refs pass (0.16.0) left it: no listing, no cursor.
+    const runId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        pagesListed: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: id });
+      return id;
+    });
+
+    await expect(
+      harness.mutation(internal.docSources.recordSyncBatch, {
+        sourceId,
+        runId,
+        nextCursor: listingCursor(1, ['late.md']),
+        refs: ['late.md'],
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+      }),
+    ).rejects.toThrow('no listing');
+    const after = await harness.run(async (ctx) => ({
+      run: await ctx.db.get(runId),
+      source: await ctx.db.get(sourceId),
+      listed: await ctx.db
+        .query('docPageListings')
+        .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', 'late.md'))
+        .first(),
+    }));
+    expect(after.run).not.toHaveProperty('listing');
+    expect(after.run?.pageCount).toBe(1);
+    expect(after.source?.listings).toBe(1);
+    expect(after.listed).toBeNull();
+  });
+
   it('prunes a source’s old runs, keeping what it points at and what a migration still reads', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -2670,7 +2739,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       ): Promise<Id<'docSyncRuns'>> =>
         await ctx.db.insert('docSyncRuns', {
           sourceId,
-          refs: ['page.md'],
           credentialRefs: [],
           pageCount: 1,
           redactionCount: 0,
