@@ -1041,14 +1041,113 @@ export type RulePlacement =
   /** A rule no clause carries: the draft left it out, and approving does not keep it. */
   | { readonly kind: 'in-no-clause' }
   /**
-   * A rule bound to the clauses it produced, and whether any of them carries the rule's own words
-   * (`wordingPresent`), the verification the card shows.
+   * A rule bound to the clauses it produced, and whether any of them carries the rule: its
+   * verified wording or the manager's own words (`carriesRule`), the verification the card shows.
    */
   | { readonly kind: 'bound'; readonly clauses: readonly string[]; readonly carriesWords: boolean };
 
+/** Words too common to tell one rule from another, and the pronouns a manager says for themself. */
+const COMMON_WORDS: ReadonlySet<string> = new Set([
+  'about',
+  'all',
+  'also',
+  'and',
+  'any',
+  'are',
+  'but',
+  'can',
+  'don',
+  'each',
+  'every',
+  'for',
+  'from',
+  'has',
+  'have',
+  'into',
+  'its',
+  'just',
+  'may',
+  'myself',
+  'never',
+  'not',
+  'now',
+  'only',
+  'our',
+  'out',
+  'should',
+  'than',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'they',
+  'this',
+  'was',
+  'were',
+  'what',
+  'when',
+  'which',
+  'who',
+  'will',
+  'with',
+  'would',
+  'you',
+  'your',
+  'yourself',
+]);
+
+/**
+ * A word's stem, enough to meet the same word inflected: "booked" and "book", "figures" and
+ * "figure", "replies" and "reply", "going" and "go".
+ */
+function stem(word: string): string {
+  const base =
+    word.endsWith('ies') && word.length > 4
+      ? `${word.slice(0, -3)}y`
+      : word.endsWith('ing') && word.length >= 5
+        ? word.slice(0, -3)
+        : word.endsWith('ed') && word.length > 4
+          ? word.slice(0, -2)
+          : word.endsWith('es') && word.length > 4
+            ? word.slice(0, -2)
+            : word.endsWith('s') && word.length > 3
+              ? word.slice(0, -1)
+              : word;
+  return base.endsWith('e') && base.length > 3 ? base.slice(0, -1) : base;
+}
+
+/** The stems of a text's words of three letters or more, the common ones left out. */
+function contentStems(text: string): Set<string> {
+  return new Set(
+    (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+      .filter((word: string): boolean => word.length >= 3 && !COMMON_WORDS.has(word))
+      .map(stem),
+  );
+}
+
+/**
+ * Whether a clause carries a rule: one of the rule's verified phrases is in it, or it shares the
+ * manager's own words, two of them or all of a sentence that has fewer. The drafter's clause for
+ * "Never edit a booked figure." reads "Edit any booked figure.", which carries no phrase the model
+ * listed but every word the manager said; a clause bound to a rule it has nothing of shares none
+ * (the 13-R bed: 20 of 22 rules carried, the two that reached no clause not).
+ */
+function carriesRule(constraint: CharterConstraint, clause: string): boolean {
+  if (constraint.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
+    return true;
+  }
+  const said = contentStems(constraint.quote);
+  if (said.size === 0) return false;
+  const inClause = contentStems(clause);
+  const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
+  return shared >= Math.min(2, said.size);
+}
+
 /**
  * Where a rule is in the charter: by its words alone (a rule drafted before binds), in no clause,
- * or in the clauses it binds, with whether they carry its words.
+ * or in the clauses it binds, with whether any of them carries the rule (`carriesRule`).
  *
  * @param charter - The charter the rule's binds index, as drafted or as approved.
  * @param constraint - One of its rules.
@@ -1066,9 +1165,7 @@ export function rulePlacement(
   return {
     kind: 'bound',
     clauses,
-    carriesWords: constraint.wording.some((phrase: string): boolean =>
-      wordingPresent(phrase, clauses),
-    ),
+    carriesWords: clauses.some((clause: string): boolean => carriesRule(constraint, clause)),
   };
 }
 

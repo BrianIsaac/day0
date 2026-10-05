@@ -19,6 +19,7 @@ import {
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
 import {
+  BED_DRAFTS_2026_10_05,
   REDEPLOY_WALK_RULES_2026_10_05,
   type WalkRule,
 } from '../../fixtures/charter-paraphrase-2026-09-30';
@@ -1219,7 +1220,8 @@ describe("the v0.16.0 redeploy walk's three rules", (): void => {
       clauses: [
         'If a reply might involve a refund, talk to the manager before promising anything.',
       ],
-      carriesWords: false,
+      // The line carries the manager's own words ("refund", "reply", "promising"), not a phrase.
+      carriesWords: true,
     });
     expect(strikePreview(charter, 0).removedClauses).toEqual([
       'If a reply might involve a refund, talk to the manager before promising anything.',
@@ -1230,5 +1232,33 @@ describe("the v0.16.0 redeploy walk's three rules", (): void => {
     const charter = walkCharter(REDEPLOY_WALK_RULES_2026_10_05.nell);
     expect(rulePlacement(charter, charter.constraints![0]!)).toEqual({ kind: 'in-no-clause' });
     expect(strikePreview(charter, 0).changes).toBe(false);
+  });
+});
+
+describe("verifying a bound clause by the manager's words (the 13-R bed)", (): void => {
+  it("finds the manager's own words in every right bind of the bed's ten drafts, and in neither wrong one", (): void => {
+    const unverified = Object.entries(BED_DRAFTS_2026_10_05).flatMap(([name, charter]) =>
+      (charter.constraints ?? []).flatMap((rule) => {
+        const placement = rulePlacement(charter, rule);
+        return placement.kind === 'bound' && !placement.carriesWords
+          ? [`${name}: ${rule.quote}`]
+          : [];
+      }),
+    );
+    expect(unverified).toEqual([
+      'Moss: Never post revenue figures in a public channel.',
+      'Nell: Never share a password in a ticket comment.',
+    ]);
+  });
+
+  it("reads a paraphrase that keeps the manager's words as carrying the rule", (): void => {
+    const rook = BED_DRAFTS_2026_10_05.Rook!;
+    const rule = (rook.constraints ?? []).find((c) => c.quote === 'Never edit a booked figure.')!;
+    expect(rule.wording).toEqual([]);
+    expect(rulePlacement(rook, rule)).toEqual({
+      kind: 'bound',
+      clauses: ['Edit any booked figure.'],
+      carriesWords: true,
+    });
   });
 });

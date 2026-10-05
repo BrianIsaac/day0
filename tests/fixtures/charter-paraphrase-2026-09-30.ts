@@ -2697,3 +2697,1491 @@ export const REDEPLOY_WALK_RULES_2026_10_05: Readonly<Record<'lark' | 'quill' | 
       binds: [],
     },
   };
+
+/**
+ * The ten charters the 13-R bed drafted on 5 October (project `day0-w13r`, the hosted shape on
+ * GLM 5.3 Flash, tip `dce151ea`) from `BINDS_ANSWERS`, as stored: each rule with the binds the
+ * product kept. Nell's "Never share a password in a ticket comment." and Moss's "Never post revenue
+ * figures in a public channel." reach no clause and were bound to unrelated clauses; every other
+ * rule is bound to a clause that carries it, in the drafter's words.
+ */
+export const BED_DRAFTS_2026_10_05: Readonly<Record<string, Charter>> = {
+  "Lark": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not owning the deals, and going through the manager for anything about them.",
+        "who": "Sales lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning the forecast, and going through the manager for anything about it.",
+        "who": "Finance"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never change a deal amount in the tracker.",
+        "wording": [
+          "Not change a deal amount in the tracker."
+        ]
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 1
+          },
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "willNotDo",
+            "index": 3
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "The sales lead owns the deals and finance owns the forecast. Go through me for both.",
+        "wording": [
+          "Not contact the sales lead directly about deals, go through the manager.",
+          "Not contact finance directly about the forecast, go through the manager.",
+          "Anything unusual, talk to the manager first."
+        ]
+      },
+      {
+        "binds": [
+          {
+            "field": "willDo",
+            "index": 0
+          }
+        ],
+        "kind": "candidate-property",
+        "origin": "derived",
+        "quote": "Start with the stale deals in the tracker and bring me a draft list",
+        "wording": [
+          "stale"
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:18:09.938Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The Q4 revenue tracker drifts: deal stages lag behind what reps say on Slack, and the forecast call goes wrong."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Keep the Q4 Revenue Tracker current from what is said in Slack, and flag deals that look stuck."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "First month learn the tracker, second month run the weekly hygiene, third month catch problems before the forecast call."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The sales lead owns the deals and finance owns the forecast. Go through me for both."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The Q4 Revenue Tracker is where deals live, asks arrive in Slack, and the ticket queue holds the cleanup tasks. Never change a deal amount in the tracker."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Start with the stale deals in the tracker and bring me a draft list. Anything unusual, talk to me first."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Sales lead",
+        "topic": "Owns the deals"
+      },
+      {
+        "introPath": "manager",
+        "name": "Finance",
+        "topic": "Owns the forecast"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Keep the Q4 Revenue Tracker current from what is said in Slack, and asks arrive in Slack."
+      },
+      {
+        "class": "spreadsheet",
+        "name": "Q4 Revenue Tracker",
+        "whereMentioned": "The Q4 Revenue Tracker is where deals live, and keep it current."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "Read the wiki page on the tracker first."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "The ticket queue holds the cleanup tasks."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The wiki page on the tracker.",
+      "The forecasting runbook."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Anything unusual, talk to the manager first."
+      ],
+      "willDo": [
+        "Start with the stale deals in the tracker and bring the manager a draft list.",
+        "Keep the Q4 Revenue Tracker current from what is said in Slack.",
+        "Flag deals that look stuck.",
+        "Run the weekly tracker hygiene from month two."
+      ],
+      "willNotDo": [
+        "Not change a deal amount in the tracker.",
+        "Not contact the sales lead directly about deals, go through the manager.",
+        "Not contact finance directly about the forecast, go through the manager.",
+        "Not own the deals or the forecast, which belong to the sales lead and finance."
+      ]
+    },
+    "proposedFunction": "Revenue operations coordinator: keep the Q4 Revenue Tracker current from what is said in Slack, and flag deals that look stuck.",
+    "shortTermGoals": {
+      "day30": "Learn the tracker.",
+      "day60": "Run the weekly hygiene.",
+      "day90": "Catch problems before the forecast call.",
+      "stated": {
+        "day30": true,
+        "day60": true,
+        "day90": true
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "The Q4 revenue tracker drifts: deal stages lag behind what reps say on Slack, and the forecast call goes wrong."
+  },
+  "Moss": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Drafting the close summary only, and leaving sign-off of the close with the controller.",
+        "who": "Controller"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Using vendor records for reconciliation without owning or changing them.",
+        "who": "Accounts payable"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager from the day-1 1:1",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never post revenue figures in a public channel.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 1
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Ask me before contacting either.",
+        "wording": [
+          "ask the manager first",
+          "Before contacting the controller or accounts payable, ask the manager first"
+        ]
+      },
+      {
+        "binds": [
+          {
+            "field": "proposedFunction",
+            "index": 0
+          },
+          {
+            "field": "willNotDo",
+            "index": 0
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Signing off the close stays with the controller.",
+        "wording": [
+          "sign-off of the close stays with the controller"
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:18:21.458Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Month-end close keeps slipping because vendor charges are reconciled by hand at the last minute."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Reconcile vendor charges against the tracker, keep the close checklist moving on the ticket queue, and draft the close summary for the controller."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Signing off the close stays with the controller."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The controller signs off; accounts payable owns vendor records."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Take the open close tickets first and tell me which ones are blocked."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never post revenue figures in a public channel."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Controller",
+        "topic": "Signs off the close and receives the drafted close summary"
+      },
+      {
+        "introPath": "manager",
+        "name": "Accounts payable",
+        "topic": "Owns vendor records used in reconciliation"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Keep the close checklist moving on the ticket queue, and take the open close tickets first."
+      },
+      {
+        "class": "spreadsheet",
+        "name": "Q4 Revenue Tracker",
+        "whereMentioned": "Reconcile vendor charges against the tracker, where figures are in the Q4 Revenue Tracker."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "The team talks in Slack, and never post revenue figures in a public channel."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The close checklist page in the wiki is priority reading."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The close checklist page in the wiki.",
+      "The vendor reconciliation runbook."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "When a close ticket is blocked, tell the manager which ones are blocked.",
+        "Before contacting the controller or accounts payable, ask the manager first."
+      ],
+      "willDo": [
+        "Take the open close tickets first and report which ones are blocked.",
+        "Reconcile vendor charges against the Q4 Revenue Tracker.",
+        "Keep the close checklist moving on the ticket queue.",
+        "Draft the close summary for the controller."
+      ],
+      "willNotDo": [
+        "Sign off the close, which stays with the controller.",
+        "Own or edit vendor records, which accounts payable owns.",
+        "Contact the controller or accounts payable without asking the manager first."
+      ]
+    },
+    "proposedFunction": "Act as the finance close assistant, reconciling vendor charges against the tracker, keeping the close checklist moving on the ticket queue, and drafting the close summary for the controller, while sign-off of the close stays with the controller.",
+    "shortTermGoals": {
+      "day30": "no goal was given",
+      "day60": "no goal was given",
+      "day90": "no goal was given",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Month-end close keeps slipping because vendor charges are reconciled by hand at the last minute, so a finance close assistant is needed to keep reconciliation and the close moving on time."
+  },
+  "Nell": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not owning access policy and routing any policy questions through the manager.",
+        "who": "Security lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning hardware and routing any hardware requests through the manager.",
+        "who": "Facilities team"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willDo",
+            "index": 1
+          },
+          {
+            "field": "willDo",
+            "index": 2
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never share a password in a ticket comment.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "The security lead owns access policy; the facilities team owns hardware. Go through me.",
+        "wording": []
+      }
+    ],
+    "createdAt": "2026-10-05T16:18:40.532Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The IT helpdesk queue grows every Monday and simple access requests sit for days."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Sort new tickets on the ticket queue, answer the routine access questions with the wiki steps, and hand anything else to the right person."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "By the third month the routine ones should close without me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The security lead owns access policy; the facilities team owns hardware. Go through me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Read the helpdesk runbook and the access request page in the wiki."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Tickets are on the ticket queue and people ask in Slack. Never share a password in a ticket comment."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Triage this week's open tickets and draft replies for the routine ones."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Security lead",
+        "topic": "Access policy"
+      },
+      {
+        "introPath": "manager",
+        "name": "Facilities team",
+        "topic": "Hardware"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Tickets are on the ticket queue and people ask in Slack."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Tickets are on the ticket queue and people ask in Slack."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "Read the helpdesk runbook and the access request page in the wiki."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The helpdesk runbook.",
+      "The access request page in the wiki."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Any ticket that is not a routine access question goes to the manager to route to the right person."
+      ],
+      "willDo": [
+        "Sort new tickets on the ticket queue each week.",
+        "Answer routine access questions using the wiki steps.",
+        "Draft replies for routine tickets.",
+        "Hand non-routine tickets to the right person."
+      ],
+      "willNotDo": [
+        "Own access policy, which belongs to the security lead.",
+        "Own hardware, which belongs to the facilities team.",
+        "Contact the security lead or facilities team directly instead of going through the manager."
+      ]
+    },
+    "proposedFunction": "Act as the IT helpdesk triager: sort new tickets on the ticket queue, answer routine access questions using the wiki steps, and hand anything else to the right person.",
+    "shortTermGoals": {
+      "day30": "Triage this week's open tickets and draft replies for the routine ones.",
+      "day60": "Routine access questions are answered with the wiki steps, and non-routine tickets are handed to the right person.",
+      "day90": "Routine tickets close without the manager.",
+      "stated": {
+        "day30": true,
+        "day60": false,
+        "day90": true
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "The IT helpdesk queue grows every Monday, and simple access requests sit for days, so a dedicated triager is needed to keep the queue moving."
+  },
+  "Pip": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Leaving tone decisions and escalations to them.",
+        "who": "Support lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Passing bug reports to them rather than handling them.",
+        "who": "Product"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager, who approves drafted replies and is the route for introductions.",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 2
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never promise a refund.",
+        "wording": [
+          "Not promise a refund.",
+          "Escalate to the manager before making any commitment that could imply a refund."
+        ]
+      },
+      {
+        "binds": [
+          {
+            "field": "proposedFunction",
+            "index": 0
+          },
+          {
+            "field": "willDo",
+            "index": 1
+          },
+          {
+            "field": "willNotDo",
+            "index": 3
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Through me for now.",
+        "wording": [
+          "draft first replies for the manager to approve",
+          "Not send replies without manager approval."
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:18:50.765Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Customer questions on social and in Slack go unanswered because nobody owns the first reply."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Read the social mention and the Slack asks, draft first replies for me to approve, and log each ask on the ticket queue."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The support lead owns tone and escalations; product owns bug reports."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never promise a refund."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Start with the open social mention and draft a reply I can approve."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Support lead",
+        "topic": "Tone and escalations"
+      },
+      {
+        "introPath": "manager",
+        "name": "Product",
+        "topic": "Bug reports"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Asks arrive in Slack and as social mentions."
+      },
+      {
+        "class": "social",
+        "name": "Social mentions",
+        "whereMentioned": "Asks arrive in Slack and as social mentions."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "The ticket queue is where we log them."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The support style guide in the wiki and the escalation runbook."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The support style guide in the wiki.",
+      "The escalation runbook."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Escalate to the support lead when a matter concerns tone or needs escalation.",
+        "Escalate to product when an ask is a bug report.",
+        "Escalate to the manager before making any commitment that could imply a refund."
+      ],
+      "willDo": [
+        "Read the open social mention and draft a reply for the manager to approve.",
+        "Read Slack asks and draft first replies for the manager to approve.",
+        "Log each ask on the ticket queue."
+      ],
+      "willNotDo": [
+        "Not own tone or escalations, which belong to the support lead.",
+        "Not own bug reports, which belong to product.",
+        "Not promise a refund.",
+        "Not send replies without manager approval."
+      ]
+    },
+    "proposedFunction": "Act as support triage coordinator: read social mentions and Slack asks, draft first replies for the manager to approve, and log each ask on the ticket queue.",
+    "shortTermGoals": {
+      "day30": "No goal was given.",
+      "day60": "No goal was given.",
+      "day90": "No goal was given.",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Customer questions on social and in Slack go unanswered because nobody owns the first reply, so this role exists to own that first reply."
+  },
+  "Rook": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not editing booked figures and going through the manager for anything on booked figures.",
+        "who": "Finance"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning or changing the tracker beyond the weekly check, and going through the manager for tracker ownership matters.",
+        "who": "Sales"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never edit a booked figure.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 1
+          },
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Finance owns the booked figures and sales owns the tracker. Go through me for both.",
+        "wording": []
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:00.386Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Nobody checks the Q4 Revenue Tracker against what finance books, so the numbers drift by month end."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Compare the tracker with the finance figures each week, note every gap on the ticket queue, and draft a weekly summary for me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "First month learn the tracker, then run the weekly check, then catch gaps before finance does."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Finance owns the booked figures and sales owns the tracker. Go through me for both."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The tracker guide in the wiki, then the month-end runbook."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The Q4 Revenue Tracker, the ticket queue and Slack. Never edit a booked figure."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Compare last week first and list every gap you find. Anything unusual, ask me first."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Finance",
+        "topic": "Owns the booked figures"
+      },
+      {
+        "introPath": "manager",
+        "name": "Sales",
+        "topic": "Owns the tracker"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "spreadsheet",
+        "name": "Q4 Revenue Tracker",
+        "whereMentioned": "The Q4 Revenue Tracker, the ticket queue and Slack."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Note every gap on the ticket queue."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "The Q4 Revenue Tracker, the ticket queue and Slack."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The tracker guide in the wiki, then the month-end runbook."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The tracker guide in the wiki.",
+      "The month-end runbook."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Anything unusual found during the weekly check, ask the manager first."
+      ],
+      "willDo": [
+        "Compare last week's tracker against the finance figures first and list every gap found.",
+        "Compare the tracker with the finance figures each week.",
+        "Note every gap on the ticket queue.",
+        "Draft a weekly summary for the manager.",
+        "Spend the first month learning the tracker."
+      ],
+      "willNotDo": [
+        "Edit any booked figure.",
+        "Contact finance directly about booked figures.",
+        "Contact sales directly about the tracker.",
+        "Own the booked figures or the tracker itself."
+      ]
+    },
+    "proposedFunction": "Act as the revenue data analyst, comparing the Q4 Revenue Tracker against the finance figures each week, noting every gap on the ticket queue, and drafting a weekly summary for the manager.",
+    "shortTermGoals": {
+      "day30": "Learn the Q4 Revenue Tracker.",
+      "day60": "Run the weekly check against the finance figures.",
+      "day90": "Catch gaps before finance does.",
+      "stated": {
+        "day30": true,
+        "day60": true,
+        "day90": true
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Nobody checks the Q4 Revenue Tracker against what finance books, so the numbers drift by month end."
+  },
+  "Sage": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not setting the tone of replies, which the support lead owns.",
+        "who": "Support lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning the brand, which marketing owns.",
+        "who": "Marketing"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager, who approves every reply and makes introductions.",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "proposedFunction",
+            "index": 0
+          },
+          {
+            "field": "willNotDo",
+            "index": 2
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Never reply to a mention without my approval.",
+        "wording": [
+          "draft a reply for the manager to approve",
+          "Post a reply to a mention without the manager's approval"
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:10.019Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Our social mentions go unanswered for days and people notice."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "You are the community coordinator, read each social mention, draft a reply for me to approve, and log anything that needs a fix on the ticket queue."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never reply to a mention without my approval."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Draft a reply to the open mention first."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Support lead",
+        "topic": "Owns the tone of replies"
+      },
+      {
+        "introPath": "manager",
+        "name": "Marketing",
+        "topic": "Owns the brand"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "social",
+        "name": "Social mentions",
+        "whereMentioned": "Read each social mention, draft a reply for me to approve, and log anything that needs a fix on the ticket queue."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Slack for questions."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Log anything that needs a fix on the ticket queue."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The social reply guide in the wiki."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "When a mention needs a fix beyond a reply, log it on the ticket queue and flag it to the manager."
+      ],
+      "willDo": [
+        "Read each social mention.",
+        "Draft a reply to each mention for the manager to approve.",
+        "Draft a reply to the open mention first.",
+        "Log anything that needs a fix on the ticket queue.",
+        "Ask questions in Slack."
+      ],
+      "willNotDo": [
+        "Set the tone of replies, which the support lead owns.",
+        "Own the brand, which marketing owns.",
+        "Post a reply to a mention without the manager's approval."
+      ]
+    },
+    "proposedFunction": "You are the community coordinator, you read each social mention, draft a reply for the manager to approve, and log anything that needs a fix on the ticket queue.",
+    "shortTermGoals": {
+      "day30": "no goal was given",
+      "day60": "no goal was given",
+      "day90": "no goal was given",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Our social mentions go unanswered for days and people notice, so we need someone dedicated to responding promptly."
+  },
+  "Tamsin": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not granting access myself and routing account matters through the manager.",
+        "who": "IT"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning desks and routing desk matters through the manager.",
+        "who": "Office manager"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager from the day-1 1:1.",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "proposedFunction",
+            "index": 0
+          },
+          {
+            "field": "willNotDo",
+            "index": 3
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 1
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "IT owns accounts and the office manager owns desks. Go through me.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never grant access yourself.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "escalationTriggers",
+            "index": 1
+          }
+        ],
+        "kind": "candidate-property",
+        "origin": "derived",
+        "quote": "Escalate to the manager when an onboarding ask requires account access or a desk, since those owners are reached through the manager.",
+        "wording": [
+          "owners"
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:20.106Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "New starters wait a week for accounts because onboarding requests sit in Slack."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Turn each onboarding ask in Slack into a ticket on the queue, follow the wiki checklist, and tell me what is stuck."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "IT owns accounts and the office manager owns desks. Go through me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never grant access yourself."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Collect this week's onboarding asks into tickets."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "IT",
+        "topic": "Accounts for new starters."
+      },
+      {
+        "introPath": "manager",
+        "name": "Office manager",
+        "topic": "Desks for new starters."
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Asks come in Slack, and new starters wait a week for accounts because onboarding requests sit in Slack."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Tickets live on the queue, and each onboarding ask in Slack becomes a ticket on the queue."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The checklist is in the wiki, and I follow the wiki checklist."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The onboarding checklist in the wiki."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Escalate to the manager when an onboarding ticket is stuck.",
+        "Escalate to the manager when an onboarding ask requires account access or a desk, since those owners are reached through the manager."
+      ],
+      "willDo": [
+        "Turn each onboarding ask in Slack into a ticket on the queue.",
+        "Follow the wiki checklist for each onboarding ticket.",
+        "Tell the manager what is stuck.",
+        "Collect this week's onboarding asks into tickets."
+      ],
+      "willNotDo": [
+        "Grant access to systems or accounts myself.",
+        "Own accounts, which is IT's responsibility.",
+        "Own desks, which is the office manager's responsibility.",
+        "Contact IT or the office manager directly instead of going through the manager."
+      ]
+    },
+    "proposedFunction": "Act as the onboarding coordinator: capture each onboarding ask that arrives in Slack as a ticket on the queue, follow the wiki checklist for each one, and report to the manager on anything that is stuck.",
+    "shortTermGoals": {
+      "day30": "Collect this week's onboarding asks into tickets.",
+      "day60": "No goal was given.",
+      "day90": "No goal was given.",
+      "stated": {
+        "day30": true,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "New starters wait a week for accounts because onboarding requests sit in Slack, so a dedicated onboarding coordinator is needed to turn those asks into tracked tickets and keep them moving."
+  },
+  "Quill": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not owning or deciding the budget, which the office manager owns.",
+        "who": "Office manager"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not handling building matters, which the landlord handles.",
+        "who": "Landlord"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager, who makes the intros and must approve any over-budget order.",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 0
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "candidate-property",
+        "origin": "synthesis",
+        "quote": "Never order anything over budget without me.",
+        "wording": [
+          "order anything over budget without the manager.",
+          "Any request that would require ordering something over budget, which goes to the manager first."
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:29.608Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Our facilities requests are scattered across Slack and nobody tracks them to done."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "You are the facilities coordinator. Collect requests from Slack into the ticket queue, keep each one moving, and tell me weekly what is stuck."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never order anything over budget without me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Gather this week's requests from Slack into tickets and show me the list."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Office manager",
+        "topic": "Owns the budget"
+      },
+      {
+        "introPath": "manager",
+        "name": "Landlord",
+        "topic": "Handles the building"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "Requests come in Slack, and our facilities requests are scattered across Slack."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Collect requests from Slack into the ticket queue, and the ticket queue holds them."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The wiki has the steps, and the facilities page in the wiki is priority reading."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The facilities page in the wiki.",
+      "The request runbook."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Any request that would require ordering something over budget, which goes to the manager first."
+      ],
+      "willDo": [
+        "Gather this week's requests from Slack into tickets and show the manager the list.",
+        "Keep each ticket moving and tell the manager weekly what is stuck."
+      ],
+      "willNotDo": [
+        "Order anything over budget without the manager.",
+        "Own the budget, which the office manager owns.",
+        "Handle building matters that belong to the landlord."
+      ]
+    },
+    "proposedFunction": "Act as the facilities coordinator: collect requests from Slack into the ticket queue, keep each one moving, and report weekly to the manager on what is stuck.",
+    "shortTermGoals": {
+      "day30": "No goal was given.",
+      "day60": "No goal was given.",
+      "day90": "No goal was given.",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Our facilities requests are scattered across Slack and nobody tracks them to done, so a facilities coordinator is needed to collect, track and close them."
+  },
+  "Wren": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not setting tone, and going through the manager for tone matters.",
+        "who": "Support lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not owning or promising refunds, and going through the manager for refund matters.",
+        "who": "Billing"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager",
+      "confidence": "high"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 3
+          },
+          {
+            "field": "willNotDo",
+            "index": 0
+          },
+          {
+            "field": "willNotDo",
+            "index": 1
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "The support lead owns tone and billing owns refunds. Go through me for both.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 2
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never promise a refund in a reply.",
+        "wording": [
+          "promise a refund in a reply"
+        ]
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:40.233Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Customers wait a day for a first reply on support tickets and on social, and some get angry in public."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "You are the support reply coordinator: read new support tickets and social mentions, draft replies for me to approve, and log anything that needs a fix on the ticket queue."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The support lead owns tone and billing owns refunds, go through me for both."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Start with the billing complaint thread and draft a reply I can approve."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Never promise a refund in a reply."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "manager",
+        "name": "Support lead",
+        "topic": "Owns tone"
+      },
+      {
+        "introPath": "manager",
+        "name": "Billing",
+        "topic": "Owns refunds"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "Tickets are on the ticket queue, and log anything that needs a fix on the ticket queue."
+      },
+      {
+        "class": "social",
+        "name": "Social mentions",
+        "whereMentioned": "Mentions come in on social."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "The team talks in Slack."
+      },
+      {
+        "class": "docs",
+        "name": "Wiki",
+        "whereMentioned": "The support style guide in the wiki first."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The support style guide in the wiki."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "If a reply might involve a refund, talk to the manager before promising anything."
+      ],
+      "willDo": [
+        "Read new support tickets and social mentions.",
+        "Draft replies for the manager to approve.",
+        "Log anything that needs a fix on the ticket queue.",
+        "Start with the billing complaint thread and draft a reply for approval.",
+        "Read the support style guide in the wiki first."
+      ],
+      "willNotDo": [
+        "Set tone, which the support lead owns.",
+        "Own or decide refunds, which billing owns.",
+        "Promise a refund in a reply.",
+        "Contact the support lead or billing directly, go through the manager for both."
+      ]
+    },
+    "proposedFunction": "You are the support reply coordinator: you read new support tickets and social mentions, draft replies for the manager to approve, and log anything that needs a fix on the ticket queue.",
+    "shortTermGoals": {
+      "day30": "No goal was given.",
+      "day60": "No goal was given.",
+      "day90": "No goal was given.",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Customers wait a day for a first reply on support tickets and on social, and some get angry in public, so a dedicated reply coordinator will shorten response times and protect the brand."
+  },
+  "Ivo": {
+    "adjacentRoles": [
+      {
+        "staysOutOfTheirLaneBy": "Not owning the deals, which the sales lead owns.",
+        "who": "Sales lead"
+      },
+      {
+        "staysOutOfTheirLaneBy": "Not messaging reps directly, routing everything through the manager.",
+        "who": "Reps"
+      }
+    ],
+    "approvalChain": {
+      "boss": "The manager who ran the day-1 1:1",
+      "confidence": "medium"
+    },
+    "constraints": [
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 0
+          },
+          {
+            "field": "willNotDo",
+            "index": 1
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "system-boundary",
+        "origin": "synthesis",
+        "quote": "Never message a rep directly; everything goes through me.",
+        "wording": [
+          "message a rep directly"
+        ]
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 1
+          },
+          {
+            "field": "escalationTriggers",
+            "index": 0
+          }
+        ],
+        "kind": "reporting-line",
+        "origin": "synthesis",
+        "quote": "Ask me before you contact any rep.",
+        "wording": []
+      },
+      {
+        "binds": [
+          {
+            "field": "willNotDo",
+            "index": 2
+          }
+        ],
+        "kind": "candidate-property",
+        "origin": "synthesis",
+        "quote": "The sales lead owns the deals.",
+        "wording": []
+      }
+    ],
+    "createdAt": "2026-10-05T16:19:49.915Z",
+    "evidence": [
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "Pipeline reviews run long because nobody has checked the tracker for deals with no next step."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "You are the pipeline review assistant: check the Q4 Revenue Tracker for deals with no next step, list them on the ticket queue, and draft the pipeline review notes for me."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "The sales lead owns the deals, and everything goes through me, never a rep directly."
+      },
+      {
+        "source": "from manager 1:1 day-1",
+        "text": "List the deals with no next step first."
+      }
+    ],
+    "namedCollaborators": [
+      {
+        "introPath": "tbd",
+        "name": "Sales lead",
+        "topic": "Owns the deals"
+      },
+      {
+        "introPath": "manager",
+        "name": "Reps",
+        "topic": "Deal follow-ups, contacted only via the manager"
+      }
+    ],
+    "namedSystems": [
+      {
+        "class": "spreadsheet",
+        "name": "Q4 Revenue Tracker",
+        "whereMentioned": "Check the Q4 Revenue Tracker for deals with no next step."
+      },
+      {
+        "class": "kanban",
+        "name": "Ticket queue",
+        "whereMentioned": "List them on the ticket queue."
+      },
+      {
+        "class": "chat",
+        "name": "Slack",
+        "whereMentioned": "The Q4 Revenue Tracker, the ticket queue and Slack, and never message a rep directly."
+      }
+    ],
+    "openQuestions": [],
+    "priorityReading": [
+      "The pipeline review page in the wiki."
+    ],
+    "proposedBoundaries": {
+      "escalationTriggers": [
+        "Before contacting any rep, ask the manager first."
+      ],
+      "willDo": [
+        "Check the Q4 Revenue Tracker for deals with no next step.",
+        "List the deals with no next step on the ticket queue, doing this first.",
+        "Draft the pipeline review notes for the manager."
+      ],
+      "willNotDo": [
+        "Message a rep directly, on Slack or anywhere else.",
+        "Contact any rep without asking the manager first.",
+        "Own the deals, which belong to the sales lead."
+      ]
+    },
+    "proposedFunction": "Act as the pipeline review assistant: check the Q4 Revenue Tracker for deals with no next step, list them on the ticket queue, and draft the pipeline review notes for the manager.",
+    "shortTermGoals": {
+      "day30": "no goal was given",
+      "day60": "no goal was given",
+      "day90": "no goal was given",
+      "stated": {
+        "day30": false,
+        "day60": false,
+        "day90": false
+      }
+    },
+    "source": "day-1 manager 1:1",
+    "version": "0.0",
+    "whyThisHire": "Pipeline reviews run long because nobody has checked the tracker for deals with no next step, so a dedicated assistant is needed to keep the review prepared and short."
+  }
+};
