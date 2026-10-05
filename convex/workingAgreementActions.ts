@@ -14,7 +14,7 @@ import {
   type CheckedStatement,
 } from '../src/work/agreement-judgements';
 import type { CharterBounds } from '../src/work/agreements';
-import { CHECK_RETRY_DELAYS_MS, type ProposalInputs } from './workingAgreements';
+import { CHECK_RETRY_DELAYS_MS, type CheckInputs, type ProposalInputs } from './workingAgreements';
 
 /*
  * The model passes of working agreements (wave 13, 13-W; F10 and F11): the proposal run over an
@@ -138,6 +138,27 @@ export const proposeFromCorrections = internalAction({
   },
 });
 
+/**
+ * The check of a kept agreement, or `unavailable` when it could not be had: no charter to check
+ * against (it fails closed), the owner's values unreadable, or the redaction or the model failing.
+ */
+async function checkedOrUnavailable(
+  ctx: ActionCtx,
+  inputs: CheckInputs,
+): Promise<CheckedStatement> {
+  const statement = inputs.agreement.statement;
+  if (inputs.charters.length === 0) {
+    return { outcome: 'unavailable', statement, reason: 'no approved charter to check against' };
+  }
+  try {
+    const known = await knownValuesOf(ctx, inputs.agreement.userId);
+    return await checked(statement, inputs.charters, known);
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { outcome: 'unavailable', statement, reason };
+  }
+}
+
 /** The refusal a check answered. */
 type CheckedRefusal = Extract<CheckedStatement, { outcome: 'refused' }>['refusal'];
 
@@ -158,11 +179,7 @@ export const settleKept = internalAction({
       agreementId: args.agreementId,
     });
     if (inputs === null) return;
-    const outcome = await checked(
-      inputs.agreement.statement,
-      inputs.charters,
-      await knownValuesOf(ctx, inputs.agreement.userId),
-    );
+    const outcome = await checkedOrUnavailable(ctx, inputs);
     if (outcome.outcome === 'unavailable') {
       const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
       log.warn('working agreements: a kept agreement waits on its check', {

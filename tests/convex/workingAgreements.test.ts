@@ -597,6 +597,220 @@ describe('keeping an agreement on a card', (): void => {
   });
 });
 
+describe('a keep whose check is slow, doubled or overtaken (second pass)', (): void => {
+  /** An active agreement of Priya's, kept long ago. */
+  async function active(harness: Harness, agentId: Id<'agents'>): Promise<Id<'workingAgreements'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          agentId,
+          kind: 'preference',
+          statement: NO_EMAIL,
+          scope: 'global',
+          sourceType: 'plan-approval',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'plan-approval',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+  }
+
+  it('checks a kept agreement again after each wait while the model is down, then takes effect', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const original = await active(harness, agentId);
+    recorded.refusalDown = true;
+    const { agreementId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.edit, {
+        agreementId: original,
+        agentId,
+        statement: NO_EMAIL_AGAIN,
+      });
+    await drain(harness);
+    expect((await agreementsOf(harness)).find((row) => row._id === agreementId)?.status).toBe(
+      'proposed',
+    );
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(30_000));
+    expect(promptsOf('day0-agreement-refusal').length).toBeGreaterThanOrEqual(2);
+    recorded.refusalDown = false;
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(600_000));
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('active');
+    expect(rows.find((row) => row._id === original)?.status).toBe('superseded');
+  });
+
+  it("checks a kept agreement whose retries were spent at the employee's next stored plan", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const original = await active(harness, agentId);
+    recorded.refusalDown = true;
+    const { agreementId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.edit, {
+        agreementId: original,
+        agentId,
+        statement: NO_EMAIL_AGAIN,
+      });
+    for (let wait = 0; wait < 6; wait += 1) {
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(600_000));
+    }
+    expect((await agreementsOf(harness)).find((row) => row._id === agreementId)?.status).toBe(
+      'proposed',
+    );
+    recorded.refusalDown = false;
+    vi.advanceTimersByTime(60 * 60_000);
+    await planApplying(harness, agentId, 'LOG-7', []);
+    expect((await agreementsOf(harness)).find((row) => row._id === agreementId)?.status).toBe(
+      'active',
+    );
+  });
+
+  it('withdraws a kept agreement still waiting on its check, and a check that answers later changes nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const original = await active(harness, agentId);
+    const owner = harness.withIdentity(OWNER);
+    const { agreementId } = await owner.mutation(api.workingAgreements.edit, {
+      agreementId: original,
+      agentId,
+      statement: NO_EMAIL_AGAIN,
+    });
+    await owner.mutation(api.workingAgreements.dismiss, { agreementId, agentId });
+    await drain(harness);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('dismissed');
+    expect(rows.find((row) => row._id === original)?.status).toBe('active');
+  });
+
+  it('refuses a second change of an agreement while the first waits on its check', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const original = await active(harness, agentId);
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.workingAgreements.edit, {
+      agreementId: original,
+      agentId,
+      statement: NO_EMAIL_AGAIN,
+    });
+    await expect(
+      owner.mutation(api.workingAgreements.edit, {
+        agreementId: original,
+        agentId,
+        statement: 'A second change.',
+      }),
+    ).rejects.toThrow('This working agreement has a change waiting on its check.');
+    await expect(
+      owner.mutation(api.workingAgreements.keep, {
+        agreementId: original,
+        agentId,
+        forEveryEmployee: true,
+        via: 'agreements-card',
+      }),
+    ).rejects.toThrow('This working agreement has a change waiting on its check.');
+  });
+
+  it('does not bring back an agreement retired while its change waited on its check', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const original = await active(harness, agentId);
+    const owner = harness.withIdentity(OWNER);
+    const { agreementId } = await owner.mutation(api.workingAgreements.edit, {
+      agreementId: original,
+      agentId,
+      statement: NO_EMAIL_AGAIN,
+    });
+    await owner.mutation(api.workingAgreements.retire, { agreementId: original, agentId });
+    await drain(harness);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === original)?.status).toBe('retired');
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('dismissed');
+    expect(
+      await harness.query(internal.workingAgreements.selectedForCandidate, {
+        workItemId: await seedItem(harness, agentId, 'LOG-8', 'claimed'),
+      }),
+    ).toEqual([]);
+  });
+
+  it('keeps one agreement for the same note kept twice, and refuses an edit past the limit', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    for (const externalId of ['LOG-1', 'LOG-2']) {
+      const workItemId = await seedItem(harness, agentId, externalId, 'plan-pending');
+      await owner.mutation(api.planApproval.approvePlan, {
+        workItemId,
+        note: 'Use the Delay notice B template.',
+        keepNote: true,
+      });
+    }
+    await drain(harness);
+    expect(await agreementsOf(harness)).toHaveLength(1);
+    const [kept] = await agreementsOf(harness);
+    await expect(
+      owner.mutation(api.workingAgreements.edit, {
+        agreementId: kept!._id,
+        agentId,
+        statement: 'word '.repeat(120),
+      }),
+    ).rejects.toThrow('A working agreement keeps at most 500 characters.');
+  });
+
+  it('refuses a keep that claims the plan approval as its card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await cancelWith(harness, agentId, 'LOG-1', NO_EMAIL);
+    await cancelWith(harness, agentId, 'LOG-2', NO_EMAIL_AGAIN);
+    const [proposal] = await agreementsOf(harness);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+        agreementId: proposal!._id,
+        agentId,
+        forEveryEmployee: false,
+        via: 'plan-approval' as never,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('marks as judged only the corrections whose group was recorded or that grouped with none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const item = await seedItem(harness, agentId, 'LOG-1', 'cancelled');
+    const [c1, c2, c3] = await harness.run(async (ctx) => {
+      const base = {
+        agentId,
+        workItemId: item,
+        kind: 'plan-rejection' as const,
+        itemTitle: 'Exception: LOG-1',
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: 1,
+        appliedTo: [],
+      };
+      return await Promise.all(
+        ['one', 'two', 'three'].map((text) => ctx.db.insert('corrections', { ...base, text })),
+      );
+    });
+    await harness.mutation(internal.workingAgreements.recordProposals, {
+      agentId,
+      judged: [c1!, c2!, c3!],
+      proposals: [
+        { correctionIds: [c1!, c2!], statement: 'two' },
+        { correctionIds: [c2!, c3!], statement: 'three' },
+      ],
+    });
+    const rows = await correctionsOf(harness);
+    expect(rows.find((row) => row._id === c3)?.agreementJudgedAt).toBeUndefined();
+    expect(rows.find((row) => row._id === c1)?.agreementJudgedAt).toEqual(expect.any(Number));
+    expect(await agreementsOf(harness)).toHaveLength(1);
+  });
+});
+
 describe('selection for a candidate', (): void => {
   it('carries at most 8 rows and 2,000 characters, newest kept first, and never another owner', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

@@ -20,10 +20,10 @@ import {
   type CharterBounds,
   type JudgedCorrection,
 } from '../src/work/agreements';
-import { awaitingCheck } from '../src/work/agreement-words';
+import { awaitingCheck, type AgreementView } from '../src/work/agreement-words';
 import {
-  AGREEMENT_APPROVED_VIA,
   AGREEMENT_REFUSAL_REASONS,
+  AGREEMENT_STATEMENT_LIMIT,
   type AgreementApprovedVia,
   type AgreementStatus,
 } from '../src/work/agreement-vocabulary';
@@ -76,7 +76,17 @@ export const AGREEMENTS_REAL_MODE_ONLY = 'Working agreements are kept in real mo
 /** The refusal of an empty statement. */
 export const AGREEMENT_STATEMENT_EMPTY = 'Write the agreement before keeping it.';
 
-const approvedViaValidator = v.union(...AGREEMENT_APPROVED_VIA.map((via) => v.literal(via)));
+/** The refusal of a statement longer than an agreement keeps. */
+export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most ${AGREEMENT_STATEMENT_LIMIT} characters.`;
+
+/** The refusal of a second change of an agreement while its first waits on its check. */
+export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
+
+/** The most items an agreement's `appliedTo` keeps, the newest: the record holds every one. */
+export const AGREEMENT_APPLIED_KEPT = 100;
+
+/** The cards a keep is made on; the plan approval's tick keeps through `approvePlan` alone. */
+const cardValidator = v.union(v.literal('promotion-card'), v.literal('agreements-card'));
 
 /** The agreements of one standing that bind one employee: its own, and every employee's. */
 async function bindingAgreements(
@@ -174,12 +184,13 @@ async function scheduleCheck(
  * Keep the note of a plan approval as a working agreement (the "Keep this note for later work of
  * this kind" tick), in the approval's transaction: for the item's employee, scoped to work on the
  * item's source surface, kept by the manager on the card (A14) and active once the check that the
- * same click schedules answers. Real mode only: nothing reads an agreement in mock mode.
+ * same click schedules answers. Real mode only: nothing reads an agreement in mock mode. The same
+ * note kept again keeps the agreement already in force or waiting, rather than a second one.
  *
  * @param ctx - The approval's mutation context.
  * @param row - The plan-pending work item.
  * @param note - The manager's note, as written.
- * @returns The kept agreement.
+ * @returns The kept agreement, or the one already kept for the same note.
  * @throws ConvexError in mock mode, or for an employee no owner holds.
  */
 export async function keepPlanNoteInTransaction(
@@ -193,6 +204,19 @@ export async function keepPlanNoteInTransaction(
   if (!agent || userId === undefined) throw new ConvexError(AGREEMENT_NOT_THIS_EMPLOYEES);
   const statement = agreementStatement(redactTokenShapes(note));
   if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+  const scopeRef = surfaceSlug(row.sourceSystem);
+  // The same note kept again keeps the agreement already in force, or already waiting on its check.
+  const kept = [
+    ...(await bindingAgreements(ctx, userId, row.agentId, 'active')),
+    ...(await bindingAgreements(ctx, userId, row.agentId, 'proposed')).filter(awaitingCheck),
+  ].find(
+    (agreement) =>
+      agreement.agentId === row.agentId &&
+      agreement.statement === statement &&
+      agreement.scope === 'surface' &&
+      agreement.scopeRef === scopeRef,
+  );
+  if (kept) return kept._id;
   const now = Date.now();
   const agreementId = await ctx.db.insert('workingAgreements', {
     userId,
@@ -200,7 +224,7 @@ export async function keepPlanNoteInTransaction(
     kind: 'preference',
     statement,
     scope: 'surface',
-    scopeRef: surfaceSlug(row.sourceSystem),
+    scopeRef,
     sourceType: 'plan-approval',
     workItemId: row._id,
     status: 'proposed',
@@ -215,7 +239,9 @@ export async function keepPlanNoteInTransaction(
 
 /**
  * Record that a stored plan applied agreements, keeping only the ones that may be: active, of the
- * employee's owner, and binding this employee.
+ * employee's owner, and binding this employee. Each lists the newest `AGREEMENT_APPLIED_KEPT` items
+ * it was applied to, so a row every employee's plans apply stays bounded; the plan itself and its
+ * `work.plan-drafted` event say which agreements it applied.
  *
  * @param ctx - Mutation context.
  * @param row - The work item whose plan is being stored.
@@ -236,7 +262,9 @@ export async function markAgreementsAppliedInTransaction(
     const agreement = await ctx.db.get(id);
     if (!agreement || agreement.status !== 'active' || !binds(agreement, agent)) continue;
     if (!agreement.appliedTo.includes(row._id)) {
-      await ctx.db.patch(id, { appliedTo: [...agreement.appliedTo, row._id] });
+      await ctx.db.patch(id, {
+        appliedTo: [...agreement.appliedTo, row._id].slice(-AGREEMENT_APPLIED_KEPT),
+      });
     }
     kept.push(id);
   }
@@ -266,8 +294,9 @@ async function unproposedCorrections(
 /**
  * Schedule the employee's proposal run when a plan just stored gives it work: a correction the plan
  * applied may now govern a second item, a correction governs one and was not shown (its check could
- * not be had), or a correction the sameness judgement has not read yet (one kept before this
- * release, or one whose judgement failed). Real mode only, as corrections are.
+ * not be had), a correction the sameness judgement has not read yet (one kept before this release,
+ * or one whose judgement failed), or a kept agreement still waits on a check whose retries were
+ * spent. Real mode only, as corrections are.
  *
  * @param ctx - The storing mutation's context, after the plan's corrections were marked applied.
  * @param agentId - The employee.
@@ -278,10 +307,28 @@ export async function scheduleProposalsAfterPlan(
 ): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
   const open = await unproposedCorrections(ctx, agentId);
-  const due = open.some(
-    (correction) => correction.agreementJudgedAt === undefined || itemsGoverned(correction) >= 2,
-  );
+  const due =
+    open.some(
+      (correction) => correction.agreementJudgedAt === undefined || itemsGoverned(correction) >= 2,
+    ) || (await staleChecksOf(ctx, agentId)).length > 0;
   if (due) await scheduleProposals(ctx, agentId);
+}
+
+/**
+ * The agreements binding an employee that were kept and still wait on a check whose retries were
+ * spent: the proposal run checks them again.
+ */
+async function staleChecksOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<Doc<'workingAgreements'>[]> {
+  const agent = await ctx.db.get(agentId);
+  const userId = agent ? employeeOwnerScope(agent) : undefined;
+  if (userId === undefined) return [];
+  const staleBefore = Date.now() - CHECK_STALE_MS;
+  return (await bindingAgreements(ctx, userId, agentId, 'proposed')).filter(
+    (row) => awaitingCheck(row) && (row.approvedAt ?? 0) < staleBefore,
+  );
 }
 
 /**
@@ -325,8 +372,7 @@ export const proposalInputs = internalQuery({
     const charter = await approvedBounds(ctx, agent);
     if (charter === null) return null;
     const corrections = await unproposedCorrections(ctx, args.agentId);
-    const checking = await bindingAgreements(ctx, userId, args.agentId, 'proposed');
-    const staleBefore = Date.now() - CHECK_STALE_MS;
+    const staleChecks = await staleChecksOf(ctx, args.agentId);
     return {
       userId,
       charter,
@@ -339,9 +385,7 @@ export const proposalInputs = internalQuery({
         sourceSystem: correction.sourceSystem,
         itemsGoverned: itemsGoverned(correction),
       })),
-      staleChecks: checking
-        .filter((row) => awaitingCheck(row) && (row.approvedAt ?? 0) < staleBefore)
-        .map((row) => row._id),
+      staleChecks: staleChecks.map((row) => row._id),
     };
   },
 });
@@ -352,9 +396,10 @@ const refusalValidator = v.object({
 });
 
 /**
- * Internal: record the proposal run's outcome. Marks the corrections the sameness judgement read,
- * and keeps each checked proposal as `proposed`, or `refused` with its clause, unless one of its
- * corrections was proposed or retired since the run read it. Each correction then names its
+ * Internal: record the proposal run's outcome. Keeps each checked proposal as `proposed`, or
+ * `refused` with its clause, unless one of its corrections was proposed or retired since the run
+ * read it, and marks the corrections the sameness judgement read, but for those of a proposal so
+ * skipped, which are judged again. Each correction then names its
  * agreement, so it is never proposed twice. Writes `agreement.proposed` or `agreement.refused`.
  */
 export const recordProposals = internalMutation({
@@ -374,13 +419,8 @@ export const recordProposals = internalMutation({
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (!agent || userId === undefined) return { proposed: [] };
     const now = Date.now();
-    for (const id of args.judged) {
-      const correction = await ctx.db.get(id);
-      if (correction && correction.agentId === args.agentId) {
-        await ctx.db.patch(id, { agreementJudgedAt: now });
-      }
-    }
     const proposed: Id<'workingAgreements'>[] = [];
+    const skipped = new Set<Id<'corrections'>>();
     for (const proposal of args.proposals) {
       const corrections = await Promise.all(proposal.correctionIds.map((id) => ctx.db.get(id)));
       const open = corrections.filter(
@@ -390,7 +430,11 @@ export const recordProposals = internalMutation({
           correction.retiredAt === undefined &&
           correction.agreementId === undefined,
       );
-      if (open.length !== proposal.correctionIds.length || proposal.statement === '') continue;
+      if (open.length !== proposal.correctionIds.length || proposal.statement === '') {
+        // Another run proposed one of them first: these are judged again with the next new one.
+        for (const id of proposal.correctionIds) skipped.add(id);
+        continue;
+      }
       const surfaces = new Set(open.map((correction) => surfaceSlug(correction.sourceSystem)));
       const [surface] = [...surfaces];
       const agreementId = await ctx.db.insert('workingAgreements', {
@@ -432,6 +476,13 @@ export const recordProposals = internalMutation({
       );
       if (!proposal.refusal) proposed.push(agreementId);
     }
+    for (const id of args.judged) {
+      if (skipped.has(id)) continue;
+      const correction = await ctx.db.get(id);
+      if (correction && correction.agentId === args.agentId) {
+        await ctx.db.patch(id, { agreementJudgedAt: now });
+      }
+    }
     return { proposed };
   },
 });
@@ -456,8 +507,8 @@ export const checkInputs = internalQuery({
  * Internal: settle a kept agreement once its check answered. Kept: it takes effect, with the
  * statement as redacted, and the agreement it supersedes (an edit, or the employee's own one kept
  * for every employee) gives way. Refused: it is stored refused with the clause, and one it would
- * have superseded stays as it was. Nothing happens to a row that no longer waits on a check (the
- * manager dismissed it meanwhile). Writes `agreement.activated` or `agreement.refused` on the
+ * have superseded stays as it was. A change of an agreement retired meanwhile lapses (`dismissed`).
+ * Nothing happens to a row that no longer waits on a check (the manager withdrew it meanwhile). Writes `agreement.activated` or `agreement.refused` on the
  * employee whose card or item it came from.
  */
 export const settleCheck = internalMutation({
@@ -472,6 +523,12 @@ export const settleCheck = internalMutation({
     if (!row || !awaitingCheck(row)) return {};
     const now = Date.now();
     const everyEmployee = row.agentId === undefined;
+    const replaced = row.supersedes ? await ctx.db.get(row.supersedes) : null;
+    // A change of an agreement the manager retired meanwhile lapses with it, whatever the check says.
+    if (row.supersedes && replaced?.status !== 'active') {
+      await ctx.db.patch(row._id, { status: 'dismissed' });
+      return { status: 'dismissed' };
+    }
     if (args.refusal) {
       await ctx.db.patch(row._id, {
         statement: args.statement,
@@ -491,8 +548,7 @@ export const settleCheck = internalMutation({
       status: 'active',
       effectiveFrom: now,
     });
-    const replaced = row.supersedes ? await ctx.db.get(row.supersedes) : null;
-    if (replaced && replaced.status === 'active') {
+    if (replaced) {
       await ctx.db.patch(replaced._id, { status: 'superseded', effectiveUntil: now });
     }
     await appendEvent(ctx, {
@@ -569,13 +625,39 @@ export async function activeAgreementsOf(
 }
 
 /**
+ * An agreement as the cards read it: what they draw, and not the items it was applied to, which
+ * change with every plan stored.
+ */
+function cardViewOf(row: Doc<'workingAgreements'>): AgreementView {
+  return {
+    _id: row._id,
+    ...(row.agentId !== undefined ? { agentId: row.agentId } : {}),
+    statement: row.statement,
+    status: row.status,
+    sourceType: row.sourceType,
+    ...(row.correctionIds !== undefined ? { correctionIds: row.correctionIds } : {}),
+    ...(row.approvedAt !== undefined ? { approvedAt: row.approvedAt } : {}),
+    ...(row.effectiveFrom !== undefined ? { effectiveFrom: row.effectiveFrom } : {}),
+    createdAt: row.createdAt,
+    ...(row.refusal !== undefined
+      ? {
+          refusal: {
+            reason: row.refusal.reason,
+            ...(row.refusal.clause !== undefined ? { clause: row.refusal.clause } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
  * The agreements on an employee's cards: its own and every employee's, proposed (with those kept
  * and waiting on their check), active and refused, newest first. Public, guarded by
  * `assertOwnsAgent`; writes nothing.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'workingAgreements'>[]> => {
+  handler: async (ctx, args): Promise<AgreementView[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const userId = employeeOwnerScope(agent);
     if (userId === undefined) return [];
@@ -583,7 +665,10 @@ export const listForAgent = query({
     const rows = await Promise.all(
       standings.map(async (status) => await bindingAgreements(ctx, userId, agent._id, status)),
     );
-    return rows.flat().sort((left, right) => right.createdAt - left.createdAt);
+    return rows
+      .flat()
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .map(cardViewOf);
   },
 });
 
@@ -600,6 +685,20 @@ async function ownedOnCard(
   const agent = await assertOwnsAgent(ctx, agentId);
   if (!binds(agreement, agent)) throw new ConvexError(AGREEMENT_NOT_THIS_EMPLOYEES);
   return { agreement, agent };
+}
+
+/** Refuse a change of an active agreement while an earlier change of it waits on its check. */
+async function refuseWhileChangeWaits(
+  ctx: Pick<QueryCtx, 'db'>,
+  agreement: Doc<'workingAgreements'>,
+): Promise<void> {
+  const waiting = await ctx.db
+    .query('workingAgreements')
+    .withIndex('by_user_status', (q) => q.eq('userId', agreement.userId).eq('status', 'proposed'))
+    .take(AGREEMENTS_READ);
+  if (waiting.some((row) => row.supersedes === agreement._id && awaitingCheck(row))) {
+    throw new ConvexError(AGREEMENT_CHANGE_WAITING);
+  }
 }
 
 /** What a replacement of an active agreement changes: whom it binds, its words, the card, when. */
@@ -650,7 +749,7 @@ export const keep = mutation({
     agreementId: v.id('workingAgreements'),
     agentId: v.id('agents'),
     forEveryEmployee: v.boolean(),
-    via: approvedViaValidator,
+    via: cardValidator,
   },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
@@ -665,6 +764,7 @@ export const keep = mutation({
       return { ok: true };
     }
     if (agreement.status === 'active' && agreement.agentId !== undefined && args.forEveryEmployee) {
+      await refuseWhileChangeWaits(ctx, agreement);
       const copy = await ctx.db.insert(
         'workingAgreements',
         replacementOf(agreement, {
@@ -696,8 +796,12 @@ export const edit = mutation({
   handler: async (ctx, args): Promise<{ agreementId: Id<'workingAgreements'> }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
     if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
+    if (args.statement.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
+      throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
+    }
     const statement = agreementStatement(redactTokenShapes(args.statement));
     if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+    await refuseWhileChangeWaits(ctx, agreement);
     const now = Date.now();
     const agreementId = await ctx.db.insert(
       'workingAgreements',
@@ -714,17 +818,16 @@ export const edit = mutation({
 });
 
 /**
- * Set a proposal aside ("Not now"), or dismiss a refusal: it is never shown again, and the
- * corrections it came from are never proposed again. Public, guarded by `assertOwnsAgreement`
+ * Set a proposal aside ("Not now"), withdraw a keep still waiting on its check, or dismiss a
+ * refusal: it is never shown again, never takes effect, and the corrections it came from are never
+ * proposed again. Public, guarded by `assertOwnsAgreement`
  * first and the card's employee after. Writes the status and `agreement.retired` (`dismissed`).
  */
 export const dismiss = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
-    const open =
-      (agreement.status === 'proposed' && agreement.approvedAt === undefined) ||
-      agreement.status === 'refused';
+    const open = agreement.status === 'proposed' || agreement.status === 'refused';
     if (!open) throw new ConvexError(AGREEMENT_MOVED_ON);
     await ctx.db.patch(agreement._id, { status: 'dismissed' });
     await appendEvent(ctx, {
