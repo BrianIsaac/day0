@@ -216,12 +216,13 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
- * Hold a bridge call to the deployment's secret: 503 where the deployment holds none (no bridge is
- * configured, so nothing may call), 401 where the call does not present it, otherwise nothing.
+ * Hold a bridge call to the deployment's secret, before anything of the request is read: 401 where
+ * the call does not present it, and the same 401 where the deployment holds none (an empty secret
+ * matches nothing), so a caller who reaches the site port learns nothing of whether a bridge is
+ * configured (W12-R24); otherwise nothing.
  */
 async function refusal(request: Request): Promise<Response | undefined> {
   const secret = (process.env[SOCKET_BRIDGE_SECRET_VAR] ?? '').trim();
-  if (secret === '') return json({ error: 'no socket bridge is configured' }, 503);
   if (!(await bridgeSecretMatches(request.headers.get('authorization'), secret))) {
     return json({ error: 'unauthorised' }, 401);
   }

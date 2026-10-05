@@ -223,9 +223,15 @@ describe('the Socket Mode bridge routes (wave 12, 12-M; RM7)', (): void => {
       });
       expect(wrong.status).toBe(401);
     }
+    // Re-pinned for W12-R24: a deployment that holds no secret answers as a wrong one does, so
+    // nobody who reaches the site port learns whether a bridge secret is set.
     vi.stubEnv('DAY0_SOCKET_BRIDGE_SECRET', '');
-    expect((await press(harness, seeded, blockActions(seeded))).status).toBe(503);
-    expect((await heartbeat(harness, { apps: [] })).status).toBe(503);
+    for (const authorization of [`Bearer ${SECRET}`, 'Bearer ', 'Bearer not-the-secret']) {
+      const refused = await press(harness, seeded, blockActions(seeded), authorization);
+      expect(refused.status).toBe(401);
+      expect(await refused.json()).toEqual({ error: 'unauthorised' });
+    }
+    expect((await heartbeat(harness, { apps: [] })).status).toBe(401);
     const row = await harness.run(async (ctx) => await ctx.db.get(seeded.workItemId));
     expect(row?.state).toBe('plan-pending');
   });
