@@ -95,11 +95,11 @@ import { leftForCardOf, withoutLeftForCard } from '../src/work/held-close';
 
 /**
  * The output a retry carries from the run it retries: the landed writes as the manager answered
- * them or Day0 recorded them (`landedWritesOf` with `retryAnswersOf`) in `landedWrites`, which the retried run reads as
- * already on the provider, and the writes that run did not send in `unsentWrites`, those answered
- * not sent and those a stopped apply never sent, which it sends afresh (W12-R13, W12-R11) and never
- * counts landed (W12-R4). Not-sent writes an earlier reconciliation carried are replaced: what
- * became of them is in this ledger.
+ * them or Day0 recorded them (`landedWritesOf` with `retryAnswersOf`) in `landedWrites`, which
+ * the retried run reads as already on the provider, and the writes that run did not send in
+ * `unsentWrites`, those answered not sent and those a stopped apply never sent, which it sends
+ * afresh (W12-R13, W12-R11) and never counts landed (W12-R4). Not-sent writes an earlier
+ * reconciliation carried are replaced: what became of them is in this ledger.
  *
  * @param output - The output the retry starts from.
  * @param row - The failed row and its reconciliation.
@@ -277,8 +277,8 @@ const entryAnswerValidator = v.object({
  * a retry, entry by entry (U17 D1): for each write the run's ledger names, whether it landed or
  * was not sent. A write of unknown outcome must be answered; a landed one is owed no answer and
  * stays as Day0 recorded it unless answered otherwise. Writes `providerReconciliation` with the
- * answer of each entry answered, and a `work.provider-reconciled` event, once. Refuses, as a `ConvexError` the card says, a
- * confirmation that leaves a write of unknown outcome unanswered.
+ * answer of each entry answered, and a `work.provider-reconciled` event, once. Refuses, as a
+ * `ConvexError` the card says, a confirmation that leaves a write of unknown outcome unanswered.
  */
 export const reconcileFailed = mutation({
   args: {

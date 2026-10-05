@@ -706,6 +706,34 @@ describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a
     ).toEqual([comment, status]);
   });
 
+  it('carries into the retry, as landed, the writes of a v0.15.0 reconciliation that named only landed writes (W12X-3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      const output = { draft: 'd', notes: '', actions: [comment], applied: [landedComment] };
+      // Confirmed whole at v0.15.0: the entries stored with no answer on any.
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: the closing gate refused the close',
+        output,
+        providerReconciliation: {
+          actor: 'owner',
+          confirmedAt: 5,
+          entries: providerReconciliationEntries(output),
+        },
+      });
+    });
+    expect(reconciliationOwed(await readItem(harness, workItemId))).toBe(false);
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    // The behaviour this release changes for such a row, named: the landed comment is now carried
+    // explicitly, as it is for every reconciliation this release writes; before, nothing was.
+    const carried = (
+      (await readItem(harness, workItemId)).output as {
+        landedWrites?: Array<{ action: unknown; applied: AppliedAction }>;
+      }
+    ).landedWrites;
+    expect(carried?.map((write) => write.action)).toEqual([comment]);
+  });
+
   it('still refuses a confirmation that leaves the unknown write unanswered', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

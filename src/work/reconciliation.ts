@@ -198,7 +198,9 @@ export function answeredEntries(
  * The answers a retry reads from a stored reconciliation: each answer the manager gave, and
  * `landed` for a write Day0 recorded as landed that nobody was asked about, so the retry never
  * sends that write again (W12X-3; the rule `answeredEntries` kept before it stopped storing the
- * answer). An entry of unknown outcome with no answer gives none.
+ * answer). An entry of unknown outcome with no answer gives none. A reconciliation stored at
+ * v0.15.0 or before, which named only landed writes, now carries them as landed too; the same
+ * writes its ledger names.
  *
  * @param entries - The stored reconciliation's entries.
  */
