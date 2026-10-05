@@ -849,6 +849,55 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
   });
 
+  it("offers no reinstall on a Slack card whose own app's creating connection IT revoked, and says what is true before and after IT connects Slack again (W12X-4)", (): void => {
+    // The re-walk on real Slack: Dara's ended card offered "Install Dara's own app again", which
+    // the server refuses (`KEPT_APP_CONNECTION_REVOKED`), and promised "then Dara, through IT's
+    // connection", which the server rules out for that app.
+    const ended = {
+      ...SLACK_CARD,
+      verdict: 'approved',
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 80 * DAY,
+      reason: 'The re-walk ends the bed connection.',
+      keptAppNotReinstalled: true,
+      provisioning: {
+        appId: 'A1',
+        appName: 'Maya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: 'cred-secret',
+        installUrl: 'https://slack.test/install',
+        redirectUrl: 'https://day0.test/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      } as ListedSurface['provisioning'],
+    } as Partial<ListedSurface>;
+    const revoked = render(listed({ ...ended, connectionRevoked: true }), {
+      installRedirectConfigured: true,
+    });
+    const reconnected = render(listed(ended), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).not.toContain("Install Maya's own app again");
+      expect(markup).not.toContain("through IT's connection");
+      expect(fact(markup, 'Acts as')).toBe(
+        "nobody: Maya's own app is not installed again, even once IT connects Slack again",
+      );
+      expect(markup).toContain("Maya's own app is not installed again");
+      expect(markup).toContain(
+        "IT revoked the organisation's Slack connection Maya (Day0) was created with, so Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back, and nothing on this card makes Maya a new app.",
+      );
+      expect(markup).toContain(
+        "Nothing is read or sent through this card: Maya's own app is not installed again.",
+      );
+      expect(markup).not.toMatch(/Renew for/);
+      expect(chip(markup)).not.toBe('Ready to connect');
+    }
+    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);

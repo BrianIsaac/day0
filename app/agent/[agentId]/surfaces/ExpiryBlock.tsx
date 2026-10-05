@@ -94,6 +94,8 @@ export function revokedConnectionWords(system: string): string {
  * @param connectionRevoked - The card's organisation connection was revoked by an administrator,
  *   which ended it: the block says until when it was approved and what brings it back, and offers
  *   no renewal, since none would.
+ * @param revokedWords - What the block says of such a card in place of the connection's words,
+ *   where IT connecting the system again brings nothing back (W12X-4).
  * @returns The block, or nothing for a card whose access has not started.
  */
 export function ExpiryBlock({
@@ -103,6 +105,7 @@ export function ExpiryBlock({
   endedNote,
   move,
   connectionRevoked = false,
+  revokedWords,
 }: {
   surface: ExpirySurface;
   now: number;
@@ -110,6 +113,7 @@ export function ExpiryBlock({
   endedNote?: string;
   move?: MoveOffer;
   connectionRevoked?: boolean;
+  revokedWords?: string;
 }) {
   const zone = useAgentZone();
   const periodId = useId();
@@ -159,7 +163,7 @@ export function ExpiryBlock({
         <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
           <p className="text-[13px] text-[var(--color-muted)]">Approved until</p>
           <p className="text-sm text-[var(--color-warn)]">
-            {end}. {revokedConnectionWords(surface.displayName)}
+            {end}. {revokedWords ?? revokedConnectionWords(surface.displayName)}
           </p>
         </div>
       ) : (

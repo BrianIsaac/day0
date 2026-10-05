@@ -508,6 +508,30 @@ export function actsAsAfterRevokeWords(names: {
 }
 
 /**
+ * Whom a Slack card acts as once its employee's own app was created through a connection IT
+ * revoked: nobody, and IT connecting Slack again does not change it, since Day0 never installs
+ * that app again (W12X-4; `KEPT_APP_CONNECTION_REVOKED`). A draft.
+ *
+ * @param names - The employee's name and the system's.
+ */
+export function actsAsNotReinstalledWords(names: {
+  readonly employee: string;
+  readonly system: string;
+}): string {
+  return `nobody: ${names.employee}'s own app is not installed again, even once IT connects ${names.system} again`;
+}
+
+/**
+ * What such a card says in place of its renewal (W12X-4): nothing goes through it, and renewing
+ * brings nothing back, so none is offered. A draft.
+ *
+ * @param employee - The employee's name.
+ */
+export function notReinstalledAccessWords(employee: string): string {
+  return `Nothing is read or sent through this card: ${employee}'s own app is not installed again.`;
+}
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *

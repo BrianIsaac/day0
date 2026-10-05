@@ -4,6 +4,7 @@ import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   accessStanding,
+  actsAsNotReinstalledWords,
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
@@ -14,6 +15,7 @@ import {
   expectedCredential,
   identityChip,
   moveOfferWords,
+  notReinstalledAccessWords,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -519,6 +521,17 @@ describe('a covered Slack card with no install described (W12V-1, words only)', 
   it('says what is missing and which page would supply it', (): void => {
     expect(slackNoInstallWords('Vela')).toBe(
       'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
+    );
+  });
+});
+
+describe('a Slack card whose own app is not installed again (W12X-4)', (): void => {
+  it('says it acts as nobody, whatever IT connects next, and that nothing goes through it', (): void => {
+    expect(actsAsNotReinstalledWords({ employee: 'Dara', system: 'Slack' })).toBe(
+      "nobody: Dara's own app is not installed again, even once IT connects Slack again",
+    );
+    expect(notReinstalledAccessWords('Dara')).toBe(
+      "Nothing is read or sent through this card: Dara's own app is not installed again.",
     );
   });
 });

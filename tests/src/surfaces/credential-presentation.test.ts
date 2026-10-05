@@ -339,6 +339,37 @@ describe('the dedicated-app procedure on the card', (): void => {
     ).toBe('installed');
   });
 
+  it('offers nothing for a kept app whose creating connection IT revoked, which is never installed again (W12X-4)', (): void => {
+    const installed = {
+      appId: 'A1',
+      appName: 'Leo (Day0)',
+      installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+      installedAt: 1_787_800_000_000,
+    };
+    for (const provisioning of [
+      installed,
+      { ...installed, stateExpiresAt: 1_787_800_900_000 },
+      { ...installed, installedAt: undefined },
+    ]) {
+      const shown = presentProvisioning({
+        credential: oauth,
+        hasPublicUrl: true,
+        provisioning,
+        credentialHeld: false,
+        keptAppNotReinstalled: true,
+        employee: 'Leo',
+      });
+      expect(shown).toMatchObject({
+        stage: 'not-reinstalled',
+        offerProvisioning: false,
+        asksForConfigurationToken: false,
+        title: "Leo's own app is not installed again",
+        note: "IT revoked the organisation's Slack connection Leo (Day0) was created with, so Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back, and nothing on this card makes Leo a new app.",
+      });
+      expect(shown.installUrl).toBeUndefined();
+    }
+  });
+
   it("names why a renewal's install did not complete, and offers it again", (): void => {
     const shown = presentProvisioning({
       credential: oauth,

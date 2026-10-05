@@ -66,6 +66,7 @@ export interface ProvisioningPresentation {
     | 'awaiting-install'
     | 'installed'
     | 'reinstall'
+    | 'not-reinstalled'
     | 'failed';
   title: string;
 }
@@ -109,6 +110,16 @@ export function reinstallLabel(employee: string): string {
   return `Install ${employee}'s own app again`;
 }
 
+/**
+ * Title of the row of a kept app whose creating connection IT revoked, which Day0 never installs
+ * again (W12X-4), naming the employee whose own app it is.
+ *
+ * @param employee - The employee's name.
+ */
+export function notReinstalledTitle(employee: string): string {
+  return `${employee}'s own app is not installed again`;
+}
+
 /** What the presentation is built from: the verdict, the finding, the stored credentials and the provisioning. */
 export interface CredentialPresentationInput {
   verdict?: string;
@@ -131,7 +142,8 @@ export interface CredentialPresentationInput {
  * organisation's Slack connection creates the app, B9), then click the install
  * link, then invite the new app to the channels it should read. An installed
  * app whose access ended is offered again (A26), with what the renewal restores
- * of its channels (RM4).
+ * of its channels (RM4), unless the connection that created it was revoked:
+ * that app is never installed again, so nothing is offered (W12X-4).
  *
  * Args:
  *   input.credential: The credential finding orientation extracted.
@@ -140,6 +152,7 @@ export interface CredentialPresentationInput {
  *     redirect back to.
  *   input.organisationConnected: Whether the organisation's Slack connection is active.
  *   input.credentialHeld: Whether the card holds its credential now.
+ *   input.keptAppNotReinstalled: Whether the kept app's creating connection was revoked.
  *
  * Returns:
  *   The stage, its copy and the install link when there is one to show.
@@ -157,6 +170,12 @@ export function presentProvisioning(input: {
   credentialHeld?: boolean;
   /** The employee's name, which the reinstall's title says; a caller reading only the stage leaves it out. */
   employee?: string;
+  /**
+   * Whether the kept app was created through an organisation connection IT revoked
+   * (`keptAppNotReinstalled` on the listed card): the server never installs it again
+   * (`KEPT_APP_CONNECTION_REVOKED`), so nothing is offered for it (W12X-4).
+   */
+  keptAppNotReinstalled?: boolean;
 }): ProvisioningPresentation {
   if (input.credential?.method !== 'oauth') {
     return {
@@ -168,6 +187,20 @@ export function presentProvisioning(input: {
     };
   }
   const provisioning = input.provisioning;
+  if (provisioning && input.credentialHeld === false && input.keptAppNotReinstalled === true) {
+    const employee = input.employee ?? 'the employee';
+    return {
+      note:
+        `IT revoked the organisation's Slack connection ${provisioning.appName} was created with, ` +
+        "so Day0 does not install it again and cannot delete it: IT deletes it in Slack's app " +
+        'settings. Connecting Slack again does not bring it back, and nothing on this card makes ' +
+        `${employee} a new app.`,
+      offerProvisioning: false,
+      asksForConfigurationToken: false,
+      stage: 'not-reinstalled',
+      title: notReinstalledTitle(employee),
+    };
+  }
   if (provisioning?.installedAt && input.credentialHeld === false) {
     return {
       ...(provisioning.stateExpiresAt !== undefined ? { installUrl: provisioning.installUrl } : {}),

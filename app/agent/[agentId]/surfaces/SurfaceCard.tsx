@@ -44,6 +44,8 @@ import {
   unservedConnectionWords,
   identityChip,
   actsAsAfterRevokeWords,
+  actsAsNotReinstalledWords,
+  notReinstalledAccessWords,
   itsReasonWords,
   reachedWords,
   rejoinWords,
@@ -328,7 +330,11 @@ export function SurfaceCard({
     organisationConnected: slack && covering !== undefined,
     credentialHeld: surface.credentialId !== undefined,
     employee: context.employeeName,
+    keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
   });
+  // The employee's own app was created through a connection IT revoked, so it is never installed
+  // again, whether or not IT has connected Slack since (W12X-4).
+  const notReinstalled = provisioningPresentation.stage === 'not-reinstalled';
   // Whom the card acts as is the backend's answer (`listedCardIdentity`), read as it is.
   const identity = surface.identity;
   const identityNames = { employee: context.employeeName, system: surface.displayName };
@@ -475,10 +481,12 @@ export function SurfaceCard({
           <dl className="grid gap-2.5">
             {showsIdentity ? (
               <Fact label="Acts as">
-                {surface.connectionRevoked
-                  ? actsAsAfterRevokeWords(identityNames)
-                  : actsAsWords(identity, identityNames)}
-                {chipForIdentity !== undefined && !surface.connectionRevoked ? (
+                {notReinstalled
+                  ? actsAsNotReinstalledWords(identityNames)
+                  : surface.connectionRevoked
+                    ? actsAsAfterRevokeWords(identityNames)
+                    : actsAsWords(identity, identityNames)}
+                {chipForIdentity !== undefined && !surface.connectionRevoked && !notReinstalled ? (
                   <>
                     {' '}
                     <Chip tone="warn">{chipForIdentity}</Chip>
@@ -540,12 +548,18 @@ export function SurfaceCard({
           onSetDays={actions.setDays}
           endedNote={
             // The reinstall row says the same rule beside its control (11-AS), so once is enough.
-            slack && identity.kind === 'own-app' && provisioningPresentation.stage !== 'reinstall'
+            slack &&
+            identity.kind === 'own-app' &&
+            provisioningPresentation.stage !== 'reinstall' &&
+            !notReinstalled
               ? slackChannelsGoWords(context.employeeName, 'Renewing')
               : undefined
           }
           move={move}
-          connectionRevoked={surface.connectionRevoked === true}
+          connectionRevoked={surface.connectionRevoked === true || notReinstalled}
+          {...(notReinstalled
+            ? { revokedWords: notReinstalledAccessWords(context.employeeName) }
+            : {})}
         />
         {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
             approved card, as the action refuses one before. */}

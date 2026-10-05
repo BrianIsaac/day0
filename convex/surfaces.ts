@@ -286,6 +286,12 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    */
   readonly connectionRevoked?: true;
   /**
+   * True on a chat card holding no credential whose employee's own app was created through an
+   * organisation connection IT revoked: Day0 never installs that app again, even once IT connects
+   * Slack again (`KEPT_APP_CONNECTION_REVOKED`), so the card offers no reinstall (W12X-4).
+   */
+  readonly keptAppNotReinstalled?: true;
+  /**
    * On a chat card that carries the manager's decision requests: whether they carry Approve and
    * Reject buttons, and why not (wave 12, 12-M; RM3 (a)). Read against this deployment's Socket
    * Mode bridge, which only the server knows of.
@@ -433,10 +439,14 @@ export const listForAgent = query({
       .take(CARD_SURFACE_LIMIT);
     const identities = await identitiesOf(ctx, surfaces);
     const rejoins = await latestRejoins(ctx, args.agentId);
+    // The connections the cards are linked to, and those their employees' own apps were created
+    // through (W12X-4): an app created but never installed is linked to no connection yet.
     const revoked = await revokedConnectionsAmong(
       ctx,
       surfaces.flatMap((surface) =>
-        surface.organisationConnectionId === undefined ? [] : [surface.organisationConnectionId],
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
+          (id): id is Id<'organisationConnections'> => id !== undefined,
+        ),
       ),
     );
     // A system IT has connected again since a revoke is not one the revoke left ended (m2).
@@ -490,6 +500,11 @@ export const listForAgent = query({
         surface.organisationConnectionId !== undefined &&
         revoked.has(surface.organisationConnectionId) &&
         !activeSystems.has(organisationSystemOf(surface) ?? '');
+      const keptAppNotReinstalled =
+        surface.class === 'chat' &&
+        surface.credentialId === undefined &&
+        surface.provisioning?.organisationConnectionId !== undefined &&
+        revoked.has(surface.provisioning.organisationConnectionId);
       const { pendingAuthorisation, ...card } = listed;
       return {
         ...card,
@@ -506,6 +521,7 @@ export const listForAgent = query({
         ...(scopeChange === undefined ? {} : { scopeChange }),
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
+        ...(keptAppNotReinstalled ? { keptAppNotReinstalled: true as const } : {}),
         ...(carriesDecisions(surface)
           ? { decisionButtons: decisionButtonsFor(surface, bridgeConfigured) }
           : {}),
