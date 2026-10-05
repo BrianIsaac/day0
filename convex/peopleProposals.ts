@@ -431,13 +431,11 @@ function charterProposal(
       name: person.name,
       identities: [],
       evidence: [evidence],
-      edges: [
-        {
-          type: person.type,
-          fromAgentId: agentId,
-          ...(person.scope === undefined ? {} : { scope: person.scope }),
-        },
-      ],
+      edges: person.edges.map((edge) => ({
+        type: edge.type,
+        fromAgentId: agentId,
+        ...(edge.scope === undefined ? {} : { scope: edge.scope }),
+      })),
     },
     origin: { source: quote === undefined ? 'charter' : 'one-to-one', sourceRef: charter._id },
   };
