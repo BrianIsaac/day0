@@ -146,3 +146,118 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
     );
   });
 });
+
+describe('a rule bound to the clauses it produced (13-R)', (): void => {
+  const bound = {
+    kind: 'system-boundary' as const,
+    quote: 'Never change a deal amount in the tracker.',
+    wording: ['change a deal amount in the tracker.'],
+    origin: 'synthesis' as const,
+    binds: [{ field: 'willNotDo' as const, index: 0 }],
+  };
+  const strikes = {
+    removedClauses: ['Change a deal amount in the tracker.'],
+    rewrittenClauses: [],
+    changes: true,
+  };
+
+  it('stands confirmed, to be checked, or in no clause by where it is placed', (): void => {
+    const clause = 'Change a deal amount in the tracker.';
+    expect(
+      ruleStanding(bound, strikes, { kind: 'bound', clauses: [clause], carriesWords: true }),
+    ).toBe('confirmed');
+    expect(
+      ruleStanding(bound, strikes, { kind: 'bound', clauses: [clause], carriesWords: false }),
+    ).toBe('check');
+    expect(
+      ruleStanding(
+        { ...bound, wording: [] },
+        { removedClauses: [], rewrittenClauses: [], changes: false },
+        { kind: 'in-no-clause' },
+      ),
+    ).toBe('in-no-clause');
+    expect(ruleStanding({ ...bound, struck: true }, undefined, { kind: 'in-no-clause' })).toBe(
+      'struck',
+    );
+  });
+
+  it('lists the clauses it binds as what it became, with no "not verified" line', (): void => {
+    const html = row({
+      constraint: { ...bound, wording: [] },
+      preview: strikes,
+      placement: {
+        kind: 'bound',
+        clauses: ['Change a deal amount in the tracker.', 'Escalate any amount change.'],
+        carriesWords: true,
+      },
+    });
+    expect(html).toContain('where I may act · in the charter as ');
+    const listed = [...html.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1]);
+    expect(listed).toEqual(['Change a deal amount in the tracker', 'Escalate any amount change.']);
+    expect(html).not.toContain('not verified');
+    expect(html).toMatch(/<span[^>]*>Confirmed<\/span>/);
+    expect(html).toMatch(/>Strike<\/button>/);
+  });
+
+  it("asks the manager to check a bound clause that does not carry the rule's words", (): void => {
+    const html = row({
+      constraint: bound,
+      preview: {
+        removedClauses: ['Draft replies for routine tickets.'],
+        rewrittenClauses: [],
+        changes: true,
+      },
+      placement: {
+        kind: 'bound',
+        clauses: ['Draft replies for routine tickets.'],
+        carriesWords: false,
+      },
+    });
+    expect(html).toMatch(/data-standing="check"/);
+    expect(html).toMatch(/<span[^>]*>Check the clause<\/span>/);
+    expect(html).toContain(
+      'check the clause: your words are not in it, so it may not be the rule you gave',
+    );
+    expect(html).not.toContain('not verified');
+  });
+
+  it('says a rule in no clause is not kept, offers no Strike, and on a draft asks for changes', (): void => {
+    const html = row({
+      constraint: { ...bound, wording: [], binds: [] },
+      preview: { removedClauses: [], rewrittenClauses: [], changes: false },
+      placement: { kind: 'in-no-clause' },
+      name: 'Nell',
+      onKeep: () => undefined,
+    });
+    expect(html).toMatch(/data-standing="in-no-clause"/);
+    expect(html).toMatch(/<span[^>]*>In no clause<\/span>/);
+    expect(html).toContain('where I may act · in no clause: no clause of the charter carries it');
+    expect(html).toContain(
+      'Approving does not keep it. Ask Nell for changes to add it, or approve without it.',
+    );
+    expect(html).toMatch(
+      /<button[^>]*aria-label="Ask for changes to add: Never change a deal amount in the tracker."[^>]*>Ask for changes<\/button>/,
+    );
+    expect(html).not.toContain('>Strike<');
+    expect(html).not.toContain('not verified');
+  });
+
+  it('offers to add a rule in no clause as a clause on the approved record', (): void => {
+    const html = row({
+      constraint: { ...bound, wording: [], binds: [] },
+      preview: undefined,
+      placement: { kind: 'in-no-clause' },
+      record: true,
+      name: 'Nell',
+      onStrike: undefined,
+      onRestore: undefined,
+      onKeep: () => undefined,
+    });
+    expect(html).toContain(
+      'Nell does not keep it. Add it as a clause under will not do to keep it.',
+    );
+    expect(html).toMatch(
+      /<button[^>]*aria-label="Add as a clause: Never change a deal amount in the tracker."[^>]*>Add it as a clause<\/button>/,
+    );
+  });
+});
