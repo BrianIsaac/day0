@@ -5,6 +5,12 @@ import { planDraftedWithoutValidator } from './schema';
 import { assertOwnsWorkItem } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import { markCorrectionsAppliedInTransaction } from './corrections';
+import {
+  AGREEMENT_STATEMENT_EMPTY,
+  keepPlanNoteInTransaction,
+  markAgreementsAppliedInTransaction,
+  scheduleProposalsAfterPlan,
+} from './workingAgreements';
 import { appendEvent } from './eventLog';
 import {
   approvePlanInTransaction,
@@ -51,6 +57,26 @@ async function withAppliedCorrections(
   const { appliedCorrections, ...rest } = plan;
   const applied = await markCorrectionsAppliedInTransaction(ctx, row, appliedCorrections);
   return { plan: applied.length > 0 ? { ...rest, appliedCorrections: applied } : rest, applied };
+}
+
+/**
+ * The plan as stored with the working agreements it applied: only ids the planner was offered
+ * that are still active and bind this employee are kept, and each kept one lists the work item in
+ * `appliedTo`. A plan that names none is stored as it came.
+ *
+ * @param ctx - Mutation context.
+ * @param row - The work item whose plan is being stored.
+ * @param plan - The plan, its corrections already settled.
+ */
+async function withAppliedAgreements(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  plan: ExecutionPlan,
+): Promise<ExecutionPlan> {
+  if (!plan || typeof plan !== 'object' || plan.appliedAgreements === undefined) return plan;
+  const { appliedAgreements, ...rest } = plan;
+  const applied = await markAgreementsAppliedInTransaction(ctx, row, appliedAgreements);
+  return applied.length > 0 ? { ...rest, appliedAgreements: applied } : rest;
 }
 
 /**
@@ -105,7 +131,9 @@ export const setPlan = internalMutation({
         return { stored: false, redrafting: true };
       }
     }
-    const { plan, applied } = await withAppliedCorrections(ctx, row, args.plan);
+    const corrected = await withAppliedCorrections(ctx, row, args.plan);
+    const { applied } = corrected;
+    const plan = await withAppliedAgreements(ctx, row, corrected.plan);
     await ctx.db.patch(args.workItemId, {
       plan,
       state: 'plan-pending',
@@ -135,6 +163,8 @@ export const setPlan = internalMutation({
     // The charter's open questions this plan touches are asked here, before
     // execution, and once per question for the agent.
     await askOpenQuestionsAtPlan(ctx, row, plan);
+    // A correction this plan applied may now govern a second item (13-W).
+    await scheduleProposalsAfterPlan(ctx, row.agentId);
     return { stored: true };
   },
 });
@@ -196,7 +226,11 @@ async function answerPlanQuestions(
 /** The longest manual estimate the plan card takes: a working month. */
 const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
 
-/** Public, owner-guarded: approves an item's plan, answering any charter question the card asked, and schedules the run. */
+/**
+ * Public, owner-guarded (`assertOwnsWorkItem`): approves an item's plan, answering any charter
+ * question the card asked, and schedules the run; with `keepNote`, also keeps the note as a working
+ * agreement and schedules its check, in the same transaction.
+ */
 export const approvePlan = mutation({
   args: {
     workItemId: v.id('workItems'),
@@ -208,6 +242,11 @@ export const approvePlan = mutation({
     note: v.optional(v.string()),
     /** N11: "this would have taken me about N minutes", optional; hours saved sums it. */
     manualEstimateMinutes: v.optional(v.number()),
+    /**
+     * "Keep this note for later work of this kind" (13-W): the note is kept as a working agreement
+     * for this employee in the same click, active once its check against the charter answers.
+     */
+    keepNote: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
@@ -229,6 +268,10 @@ export const approvePlan = mutation({
     // in the same transaction, or none of it happens.
     const answers = await answerPlanQuestions(ctx, row, args.answers ?? [], args.note);
     await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
+    if (args.keepNote === true) {
+      if (!args.note?.trim()) throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+      await keepPlanNoteInTransaction(ctx, row, args.note);
+    }
     return { ok: true };
   },
 });

@@ -21,6 +21,7 @@ import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 import { appendEvent } from './eventLog';
 import { firstRetiredRejection } from './retirements';
+import { scheduleProposals } from './workingAgreements';
 
 /**
  * The manager's corrections, kept per employee and fed back into its later
@@ -240,7 +241,7 @@ export async function keepCorrectionInTransaction(
   words: KeptWords,
 ): Promise<Id<'corrections'> | undefined> {
   if (SURFACE_MODE !== 'real' || words.text.trim() === '') return undefined;
-  return await ctx.db.insert('corrections', {
+  const correctionId = await ctx.db.insert('corrections', {
     agentId: row.agentId,
     workItemId: row._id,
     ...(words.runId ? { runId: words.runId } : {}),
@@ -254,6 +255,9 @@ export async function keepCorrectionInTransaction(
     appliedTo: [],
     origin: words.origin,
   });
+  // A new correction may say what an earlier one said: the employee's proposal run asks (F10).
+  await scheduleProposals(ctx, row.agentId);
+  return correctionId;
 }
 
 /**

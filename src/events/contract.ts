@@ -29,6 +29,11 @@ import type { MessagesTabOpenHow } from '../surfaces/slack-messages-tab';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
+import type {
+  AgreementApprovedVia,
+  AgreementRefusalReason,
+  AgreementSourceType,
+} from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
 import type { ManagerNotificationMode } from '../work/manager-notes';
 import type { PlannerObligations } from '../work/plan-obligations';
@@ -1234,6 +1239,41 @@ export interface WorkCorrectionRetiredPayload extends WorkItemNamed {
   readonly correctionId: Id<'corrections'>;
 }
 
+/** The fields every working agreement's event names (wave 13, 13-W). */
+interface AgreementNamed {
+  readonly agreementId: Id<'workingAgreements'>;
+  /** Whether it binds every employee of the owner rather than this one alone (A10). */
+  readonly everyEmployee: boolean;
+}
+
+/** The payload of `agreement.proposed`: a proposal shown on the Work tab, checked first (F11). */
+export interface AgreementProposedPayload extends AgreementNamed {
+  readonly source: AgreementSourceType;
+  /** The corrections a promotion came from, oldest first. */
+  readonly correctionIds?: Id<'corrections'>[];
+}
+
+/** The payload of `agreement.activated`: the manager kept it on a card and it passed the check. */
+export interface AgreementActivatedPayload extends AgreementNamed {
+  readonly approvedVia: AgreementApprovedVia;
+  /** The agreement it replaced: the one an edit changed, or the one kept for every employee. */
+  readonly supersedes?: Id<'workingAgreements'>;
+  /** The plan approval whose note the manager kept. */
+  readonly workItemId?: WorkItemId;
+}
+
+/** The payload of `agreement.refused`: it would go beyond the charter (F11), with the clause. */
+export interface AgreementRefusedPayload extends AgreementNamed {
+  readonly reason: AgreementRefusalReason;
+  /** The `willNotDo` clause it contradicts, word for word. */
+  readonly clause?: string;
+}
+
+/** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
+export interface AgreementRetiredPayload extends AgreementNamed {
+  readonly how: 'retired' | 'dismissed';
+}
+
 /** The payload of `work.draft-resumed`. */
 export interface WorkDraftResumedPayload extends WorkItemNamed {
   readonly attempt: number;
@@ -1732,6 +1772,10 @@ export interface EventPayloads {
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
+  'agreement.proposed': AgreementProposedPayload;
+  'agreement.activated': AgreementActivatedPayload;
+  'agreement.refused': AgreementRefusedPayload;
+  'agreement.retired': AgreementRetiredPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
   'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
@@ -1917,6 +1961,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',
+  'agreement.proposed',
+  'agreement.activated',
+  'agreement.refused',
+  'agreement.retired',
   'work.draft-resumed',
   'work.execution-resumed',
   'work.plan-held',

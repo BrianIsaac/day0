@@ -1018,6 +1018,22 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.corrections-redaction-limited': (_, subject) =>
     `Kept corrections were read with limited redaction${forItem(subject)}`,
   'work.correction-retired': () => 'A kept correction was retired',
+  'agreement.proposed': (p, subject) =>
+    `${subject.name} proposed a working agreement from ${whose(subject)} ${
+      p.source === 'correction-promotion' ? 'corrections' : 'words'
+    }`,
+  'agreement.activated': (p, subject) =>
+    `${decider(subject)} kept a working agreement${
+      p.everyEmployee === true ? ' for every employee' : ''
+    }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
+  'agreement.refused': (p) =>
+    text(p.clause)
+      ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+      : `A working agreement was refused: it would go beyond the charter`,
+  'agreement.retired': (p, subject) =>
+    p.how === 'dismissed'
+      ? `${decider(subject)} set a proposed working agreement aside`
+      : `${decider(subject)} retired a working agreement`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''

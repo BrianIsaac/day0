@@ -636,6 +636,19 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',
   'work.correction-retired': 'kept correction retired',
+  'agreement.proposed': 'working agreement proposed',
+  'agreement.activated': (payload) =>
+    payload.everyEmployee === true
+      ? 'working agreement kept for every employee'
+      : 'working agreement kept',
+  'agreement.refused': (payload) =>
+    text(payload.clause)
+      ? `working agreement refused: it contradicts “${text(payload.clause)}”`
+      : 'working agreement refused: it would go beyond the charter',
+  'agreement.retired': (payload) =>
+    payload.how === 'dismissed'
+      ? 'proposed working agreement set aside'
+      : 'working agreement retired',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
@@ -791,6 +804,9 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'skill.failed': 'refused',
   'skill.author-failed': 'refused',
   'audit.corrected': 'refused',
+  'agreement.activated': 'landed',
+  'agreement.refused': 'refused',
+  'agreement.retired': 'withheld',
   'work.decision-ignored': 'refused',
   'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
