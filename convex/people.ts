@@ -461,6 +461,16 @@ export const samePerson = mutation({
       }
     }
     await ctx.db.delete(proposal._id);
+    // A confirmed person given an address by the merge is looked up, as at Confirm.
+    if (
+      target.status === 'active' &&
+      target.primaryEmail === undefined &&
+      proposal.primaryEmail !== undefined
+    ) {
+      await ctx.scheduler.runAfter(0, internal.peopleLookupActions.lookUpAddresses, {
+        personIds: [target._id],
+      });
+    }
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'person.confirmed',

@@ -981,4 +981,23 @@ describe('people lookups at Confirm', (): void => {
     await owner.mutation(api.people.confirm, { personId, agentId });
     expect(await lookups(harness)).toEqual([]);
   });
+
+  it('looks a confirmed person up when Same person brings them the address a page gave', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      primaryEmail: 'lee.tan@kestrel.test',
+      possiblySameAs: known,
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    expect((await graphRows(harness)).people[0]).toMatchObject({
+      _id: known,
+      primaryEmail: 'lee.tan@kestrel.test',
+    });
+    expect(await lookups(harness)).toEqual([[{ personIds: [known] }]]);
+  });
 });
