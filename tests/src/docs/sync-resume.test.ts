@@ -13,6 +13,7 @@ function run(fields: Partial<ResumeCandidate> & Pick<ResumeCandidate, 'state'>):
   return {
     _id: `run-${Math.random()}` as Id<'docSyncRuns'>,
     cursor: listingCursor(300, LISTING),
+    listing: 1,
     pageCount: 300,
     createdAt: NOW - 60_000,
     ...fields,
@@ -33,6 +34,12 @@ describe('the run a new documentation sync takes over (step 17)', (): void => {
     expect(runToResume(run({ state: 'completed' }), undefined, NOW)).toBeUndefined();
     expect(runToResume(run({ state: 'error', cursor: undefined }), undefined, NOW)).toBeUndefined();
     expect(runToResume(undefined, undefined, NOW)).toBeUndefined();
+  });
+
+  it('starts from page one after a run that carries no listing, which no batch could stamp under (13-K)', (): void => {
+    expect(
+      runToResume(run({ state: 'error', listing: undefined }), undefined, NOW),
+    ).toBeUndefined();
   });
 
   it('starts from page one when the run is too old to finish a generation with', (): void => {

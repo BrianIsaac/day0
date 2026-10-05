@@ -29,7 +29,7 @@ export const RESUMABLE_RUN_MS = 24 * 60 * 60 * 1000;
 /** The run fields the resume decision reads. */
 export type ResumeCandidate = Pick<
   Doc<'docSyncRuns'>,
-  '_id' | 'state' | 'cursor' | 'pageCount' | 'createdAt'
+  '_id' | 'state' | 'cursor' | 'listing' | 'pageCount' | 'createdAt'
 >;
 
 /**
@@ -38,8 +38,9 @@ export type ResumeCandidate = Pick<
  * @param latest - The source's newest run.
  * @param previous - The run before it.
  * @param now - The clock, in epoch milliseconds.
- * @returns The newest run when it ended short with a cursor a resume can check, is recent,
- *   and was not a resume that got nowhere; undefined when the new sync reads from page one.
+ * @returns The newest run when it ended short with a cursor a resume can check, carries its
+ *   listing, is recent, and was not a resume that got nowhere; undefined when the new sync reads
+ *   from page one.
  */
 export function runToResume<R extends ResumeCandidate>(
   latest: R | undefined,
@@ -49,6 +50,8 @@ export function runToResume<R extends ResumeCandidate>(
   if (latest === undefined || latest.state === 'completed' || latest.cursor === undefined) {
     return undefined;
   }
+  // Only a run begun before 0.6.0 has no listing; its batches cannot be stamped under one (13-K).
+  if (latest.listing === undefined) return undefined;
   if (!isListingCursor(latest.cursor) && finishingStep(latest.cursor) === undefined) {
     return undefined;
   }
