@@ -6,6 +6,7 @@ import {
   type StruckClause,
   listedRules,
   rulePlacement,
+  strikeOutcome,
   strikePreview,
 } from '@/agent/charter-constraints';
 import type { GoalsStated } from '@/agent/charter';
@@ -92,9 +93,13 @@ export function CharterCard({
   const struckCount = listedRules(constraints).filter(({ constraint }) => constraint.struck).length;
   const struck =
     struckCount === 0 ? '' : `${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`;
-  const unplacedCount = listedRules(constraints).filter(
+  // Counted on the charter approval would leave: a rule whose clauses a pending strike takes with
+  // another rule is in no clause once approved.
+  const effective = strikeOutcome(body);
+  const approvedAs = effective.ok ? effective.charter : body;
+  const unplacedCount = listedRules(approvedAs.constraints ?? []).filter(
     ({ constraint }) =>
-      !constraint.struck && rulePlacement(body, constraint).kind === 'in-no-clause',
+      !constraint.struck && rulePlacement(approvedAs, constraint).kind === 'in-no-clause',
   ).length;
 
   function toggleStrike(index: number, strike: boolean): void {
@@ -213,6 +218,11 @@ export function CharterCard({
           </div>
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-5">
+            {unplacedCount > 0 ? (
+              <p className="text-sm font-medium text-[var(--color-fg)]">
+                {unplacedRulesLine(unplacedCount)}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button variant="approve" size="large" onClick={onApprove} disabled={change.busy}>
                 {struck ? `Approve charter, ${struck}` : 'Approve charter'}
@@ -222,7 +232,7 @@ export function CharterCard({
               </Button>
             </div>
             <p className="text-[13px] text-[var(--color-muted)]">
-              {approvalConsequence({ name, struckCount, unplacedCount, autonomous })}
+              {approvalConsequence({ name, struckCount, autonomous })}
             </p>
           </div>
         )}
@@ -233,22 +243,16 @@ export function CharterCard({
 }
 
 /**
- * What approving does, said beside Approve: what the strikes take out, the rules no clause keeps,
- * that the employee starts on the work the charter implies, where its writes go, and that the
- * charter stays amendable.
- *
- * @param unplacedCount - Rules the manager gave that no clause carries, so approving keeps none of
- *   them (13-R, a product call); none when not given.
+ * What approving does, said beside Approve: what the strikes take out, that the employee starts on
+ * the work the charter implies, where its writes go, and that the charter stays amendable.
  */
 export function approvalConsequence({
   name,
   struckCount,
-  unplacedCount = 0,
   autonomous,
 }: {
   name: string;
   struckCount: number;
-  unplacedCount?: number;
   autonomous: boolean;
 }): string {
   const strikes =
@@ -257,16 +261,22 @@ export function approvalConsequence({
       : struckCount === 1
         ? 'The struck rule takes its clauses out of the charter. '
         : `The ${struckCount} struck rules take their clauses out of the charter. `;
-  const unplaced =
-    unplacedCount === 0
-      ? ''
-      : unplacedCount === 1
-        ? '1 rule is in no clause, so approving does not keep it. '
-        : `${unplacedCount} rules are in no clause, so approving does not keep them. `;
   const writes = autonomous
     ? 'Autonomous actions are on, so its writes go ahead without asking.'
     : 'Every write still waits for you.';
-  return `${strikes}${unplaced}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
+  return `${strikes}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
+}
+
+/**
+ * The line above Approve when rules the manager gave are in no clause of the charter approval
+ * would leave (13-R, a product call): the charter does not enforce them, said before the click.
+ *
+ * @param count - Those rules, counted on the charter approval would leave.
+ */
+export function unplacedRulesLine(count: number): string {
+  return count === 1
+    ? '1 rule is in no clause, so the charter will not enforce it.'
+    : `${count} rules are in no clause, so the charter will not enforce them.`;
 }
 
 /**

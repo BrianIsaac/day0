@@ -75,14 +75,14 @@ export function offersStrike(preview: StrikePreview | undefined): boolean {
  * is never drawn on its own fill, which reads under AA (wave 6 A decision 4 (b)).
  */
 const STANDING_CHIP: Readonly<
-  Record<RuleStanding, { label: string; tone: 'ok' | 'muted' | 'you' }>
+  Record<RuleStanding, { label: string; tone: 'ok' | 'muted' | 'warn' | 'you' }>
 > = {
   confirmed: { label: 'Confirmed', tone: 'ok' },
   struck: { label: 'Struck', tone: 'muted' },
   kept: { label: 'Kept', tone: 'you' },
   unverified: { label: 'Not in the clauses', tone: 'muted' },
-  check: { label: 'Check the clause', tone: 'you' },
-  'in-no-clause': { label: 'In no clause', tone: 'you' },
+  check: { label: 'Check the clause', tone: 'warn' },
+  'in-no-clause': { label: 'In no clause', tone: 'warn' },
 };
 
 /** The clause lists by the words the row says them in. */
@@ -134,7 +134,7 @@ export function listedWording(wording: readonly string[]): string[] {
   });
 }
 
-/** The bold clause words a row lists, joined as one list. */
+/** The bold clause words a rule drafted before binds lists, joined as one list. */
 function ClauseWords({ clauses }: { clauses: readonly string[] }) {
   return (
     <>
@@ -142,6 +142,25 @@ function ClauseWords({ clauses }: { clauses: readonly string[] }) {
         <span key={i}>
           {i > 0 ? '; ' : ''}
           <b className="font-semibold text-[var(--color-fg)]">{phrase}</b>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The clauses a bound rule produced, joined as one list in the page's text colour at the row's own
+ * weight: whole sentences, so the rule's quote above them stays the row's headline.
+ */
+function BoundClauses({ clauses }: { clauses: readonly string[] }) {
+  return (
+    <>
+      {listedWording(clauses).map((clause, i) => (
+        <span key={i}>
+          {i > 0 ? '; ' : ''}
+          <span data-clause="" className="text-[var(--color-fg)]">
+            {clause}
+          </span>
         </span>
       ))}
     </>
@@ -174,13 +193,11 @@ function PlacementWords({
       return (
         <>
           {' · in the charter as '}
-          <ClauseWords clauses={placement.clauses} />
+          <BoundClauses clauses={placement.clauses} />
         </>
       );
     case 'in-no-clause':
-      return constraint.struck ? null : (
-        <>{' · in no clause: no clause of the charter carries it'}</>
-      );
+      return constraint.struck ? null : <>{' · in no clause'}</>;
     default: {
       const unknown: never = placement;
       throw new Error(`unknown rule placement ${JSON.stringify(unknown)}`);
@@ -188,28 +205,41 @@ function PlacementWords({
   }
 }
 
-/** The muted line under a row that says what its strike would do, or why it does nothing. */
+/**
+ * The muted line under a row that says what its strike would do, or why it does nothing. On a row
+ * to be checked it says the clauses a strike takes may not be this rule.
+ */
 function StrikeLine({
   constraint,
   placement,
   preview,
+  check,
 }: {
   constraint: CharterConstraint;
   placement: RulePlacement;
   preview: StrikePreview | undefined;
+  check: boolean;
 }) {
   if (preview?.refusal) return <RowNote>cannot be struck: {preview.refusal}</RowNote>;
   if (preview && preview.removedClauses.length > 0) {
+    const one = preview.removedClauses.length === 1;
+    const lead = check
+      ? one
+        ? 'strikes the clause, though it may not be this rule: '
+        : 'strikes the clauses, though they may not be this rule: '
+      : one
+        ? 'strikes the clause: '
+        : 'strikes the clauses: ';
     return (
       <RowNote>
-        {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
+        {lead}
         {quotedClauses(preview.removedClauses)}
       </RowNote>
     );
   }
   if (!preview || preview.changes) return null;
   if (placement.kind === 'bound') {
-    return <RowNote>nothing to strike: another struck rule already takes its clauses</RowNote>;
+    return <RowNote>nothing to strike: striking it would change no clause</RowNote>;
   }
   if (placement.kind === 'by-wording' && constraint.wording.length > 0) {
     return <RowNote>nothing to strike: no clause carries these words any more</RowNote>;
@@ -217,8 +247,19 @@ function StrikeLine({
   return null;
 }
 
-function RowNote({ children }: { children: ReactNode }) {
-  return <p className="mt-1 text-[13px] text-[var(--color-muted)]">{children}</p>;
+/** A line under a row: muted, or in the text colour for what the manager reads before approving. */
+function RowNote({ children, emphasis = false }: { children: ReactNode; emphasis?: boolean }) {
+  return (
+    <p
+      className={
+        emphasis
+          ? 'mt-1.5 text-sm text-[var(--color-fg)]'
+          : 'mt-1 text-[13px] text-[var(--color-muted)]'
+      }
+    >
+      {children}
+    </p>
+  );
 }
 
 /**
@@ -230,8 +271,8 @@ function RowNote({ children }: { children: ReactNode }) {
  * names who added it: "you", or the earlier manager a handover took the employee from.
  *
  * A rule bound to clauses that do not carry its words asks the manager to check them; a rule in
- * no clause says approving does not keep it and, with `onKeep`, offers the way to keep it: on a
- * draft, a request for changes; on the approved record, the rule added as a clause by amendment
+ * no clause says the charter does not enforce it and, with `onKeep`, offers the way to: on a
+ * draft, a request for changes; on the approved record, the rule added to its list by amendment
  * (13-R, a product call).
  */
 export function RuleRow({
@@ -312,19 +353,26 @@ export function RuleRow({
             </>
           ) : null}
         </p>
-        {standing === 'check' ? (
-          <RowNote>
-            check the clause: your words are not in it, so it may not be the rule you gave
+        {standing === 'check' && placement.kind === 'bound' ? (
+          <RowNote emphasis>
+            {placement.clauses.length === 1
+              ? 'This clause does not carry your words.'
+              : 'These clauses do not carry your words.'}
           </RowNote>
         ) : null}
         {standing === 'in-no-clause' ? (
-          <RowNote>
+          <RowNote emphasis>
             {record
-              ? `${name} does not keep it. Add it as a clause under ${keepUnder} to keep it.`
-              : `Approving does not keep it. Ask ${name} for changes to add it, or approve without it.`}
+              ? `The charter does not enforce it. Add it to ${keepUnder} to enforce it.`
+              : `The charter does not enforce it. Ask ${name} for changes to add it, or approve without it.`}
           </RowNote>
         ) : null}
-        <StrikeLine constraint={constraint} placement={placement} preview={preview} />
+        <StrikeLine
+          constraint={constraint}
+          placement={placement}
+          preview={preview}
+          check={standing === 'check'}
+        />
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
               <RowNote key={i}>
@@ -367,11 +415,11 @@ export function RuleRow({
             disabled={busy}
             aria-label={
               record
-                ? `Add as a clause: ${constraint.quote}`
+                ? `Add to ${keepUnder}: ${constraint.quote}`
                 : `Ask for changes to add: ${constraint.quote}`
             }
           >
-            {record ? 'Add it as a clause' : 'Ask for changes'}
+            {record ? `Add to ${keepUnder}` : 'Ask for changes'}
           </Button>
         ) : null}
       </div>

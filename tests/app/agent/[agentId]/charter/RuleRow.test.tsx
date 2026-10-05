@@ -160,6 +160,8 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     rewrittenClauses: [],
     changes: true,
   };
+  const clausesOf = (html: string): string[] =>
+    [...html.matchAll(/<span data-clause=""[^>]*>([^<]*)<\/span>/g)].map((match) => match[1]!);
 
   it('stands confirmed, to be checked, or in no clause by where it is placed', (): void => {
     const clause = 'Change a deal amount in the tracker.';
@@ -181,7 +183,7 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     );
   });
 
-  it('lists the clauses it binds as what it became, with no "not verified" line', (): void => {
+  it('lists the clauses it binds as what it became, in plain weight, with no "not verified" line', (): void => {
     const html = row({
       constraint: { ...bound, wording: [] },
       preview: strikes,
@@ -192,14 +194,17 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       },
     });
     expect(html).toContain('where I may act · in the charter as ');
-    const listed = [...html.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1]);
-    expect(listed).toEqual(['Change a deal amount in the tracker', 'Escalate any amount change.']);
+    expect(clausesOf(html)).toEqual([
+      'Change a deal amount in the tracker',
+      'Escalate any amount change.',
+    ]);
+    expect(html).not.toMatch(/<b[ >]/);
     expect(html).not.toContain('not verified');
     expect(html).toMatch(/<span[^>]*>Confirmed<\/span>/);
     expect(html).toMatch(/>Strike<\/button>/);
   });
 
-  it("asks the manager to check a bound clause that does not carry the rule's words", (): void => {
+  it("asks the manager to check bound clauses that do not carry the rule's words, in the warn tone", (): void => {
     const html = row({
       constraint: bound,
       preview: {
@@ -214,14 +219,32 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       },
     });
     expect(html).toMatch(/data-standing="check"/);
-    expect(html).toMatch(/<span[^>]*>Check the clause<\/span>/);
+    expect(html).toMatch(/<span class="[^"]*color-warn[^"]*">Check the clause<\/span>/);
+    expect(html).toContain('This clause does not carry your words.');
     expect(html).toContain(
-      'check the clause: your words are not in it, so it may not be the rule you gave',
+      'strikes the clause, though it may not be this rule: “Draft replies for routine tickets.”',
     );
     expect(html).not.toContain('not verified');
+    const two = row({
+      constraint: bound,
+      preview: { removedClauses: ['A.', 'B.'], rewrittenClauses: [], changes: true },
+      placement: { kind: 'bound', clauses: ['A.', 'B.'], carriesWords: false },
+    });
+    expect(two).toContain('These clauses do not carry your words.');
+    expect(two).toContain('strikes the clauses, though they may not be this rule: “A.”; “B.”');
   });
 
-  it('says a rule in no clause is not kept, offers no Strike, and on a draft asks for changes', (): void => {
+  it('says a bound rule whose strike would change nothing, without blaming another strike', (): void => {
+    const html = row({
+      constraint: bound,
+      preview: { removedClauses: [], rewrittenClauses: [], changes: false },
+      placement: { kind: 'bound', clauses: ['keep the tracker clean'], carriesWords: true },
+    });
+    expect(html).toContain('nothing to strike: striking it would change no clause');
+    expect(html).not.toContain('>Strike<');
+  });
+
+  it('says a rule in no clause is not enforced, offers no Strike, and on a draft asks for changes', (): void => {
     const html = row({
       constraint: { ...bound, wording: [], binds: [] },
       preview: { removedClauses: [], rewrittenClauses: [], changes: false },
@@ -230,10 +253,10 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       onKeep: () => undefined,
     });
     expect(html).toMatch(/data-standing="in-no-clause"/);
-    expect(html).toMatch(/<span[^>]*>In no clause<\/span>/);
-    expect(html).toContain('where I may act · in no clause: no clause of the charter carries it');
-    expect(html).toContain(
-      'Approving does not keep it. Ask Nell for changes to add it, or approve without it.',
+    expect(html).toMatch(/<span class="[^"]*color-warn[^"]*">In no clause<\/span>/);
+    expect(html).toContain('where I may act · in no clause</p>');
+    expect(html).toMatch(
+      /<p class="[^"]*text-\[var\(--color-fg\)\][^"]*">The charter does not enforce it\. Ask Nell for changes to add it, or approve without it\.<\/p>/,
     );
     expect(html).toMatch(
       /<button[^>]*aria-label="Ask for changes to add: Never change a deal amount in the tracker."[^>]*>Ask for changes<\/button>/,
@@ -242,7 +265,7 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     expect(html).not.toContain('not verified');
   });
 
-  it('offers to add a rule in no clause as a clause on the approved record', (): void => {
+  it('offers to add a rule in no clause to its list on the approved record', (): void => {
     const html = row({
       constraint: { ...bound, wording: [], binds: [] },
       preview: undefined,
@@ -253,11 +276,9 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       onRestore: undefined,
       onKeep: () => undefined,
     });
-    expect(html).toContain(
-      'Nell does not keep it. Add it as a clause under will not do to keep it.',
-    );
+    expect(html).toContain('The charter does not enforce it. Add it to will not do to enforce it.');
     expect(html).toMatch(
-      /<button[^>]*aria-label="Add as a clause: Never change a deal amount in the tracker."[^>]*>Add it as a clause<\/button>/,
+      /<button[^>]*aria-label="Add to will not do: Never change a deal amount in the tracker."[^>]*>Add to will not do<\/button>/,
     );
   });
 });

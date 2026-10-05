@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { PlanExecutionLedger } from '../../../../../app/agent/[agentId]/work/RunDetails';
 import { defaultRuleClause } from '../../../../../app/agent/[agentId]/charter/AmendCharterPanel';
-import { CharterCard } from '../../../../../app/agent/[agentId]/charter/CharterCard';
+import {
+  CharterCard,
+  type CharterCardBody,
+} from '../../../../../app/agent/[agentId]/charter/CharterCard';
 import { ConstraintList } from '../../../../../app/agent/[agentId]/charter/RuleRow';
 import { runThroughBody } from '../../../../fixtures/run-through-charter-2026-09-14';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
@@ -719,15 +722,14 @@ describe('a rule in no clause on the charter card (13-R, a product call)', (): v
     expect(html).toContain('where I may act · in the charter as ');
     expect(html).toMatch(/<span[^>]*>In no clause<\/span>/);
     expect(html).not.toContain('not verified');
-    expect(html).toContain(
-      '1 rule is in no clause, so approving does not keep it. Approving lets Nell read the office',
-    );
+    expect(html).toContain('>1 rule is in no clause, so the charter will not enforce it.</p>');
+    expect(html).toContain('Every write still waits for you.');
   });
 
   it('adds the rule as a clause by amendment once the charter is approved', async (): Promise<void> => {
     backend.results = { 'charters:amend': { charterId: 'charter-nell-1', version: '0.1' } };
     const view = mount(<CharterCard charter={nell(true)} name="Nell" />);
-    await press(view.container, 'Add as a clause: Never share a password in a ticket comment.');
+    await press(view.container, 'Add to will not do: Never share a password in a ticket comment.');
     expect(backend.calls).toEqual([
       {
         name: 'charters:amend',
@@ -748,6 +750,25 @@ describe('a rule in no clause on the charter card (13-R, a product call)', (): v
     ]);
     expect(said(view.container)).toEqual(['Charter amended: version 0.1 is the one in force.']);
     view.unmount();
+  });
+
+  it('counts a rule whose clauses the pending strikes take with another rule', (): void => {
+    const shared = nell(false);
+    const body = shared.body as CharterCardBody;
+    const rules = body.constraints ?? [];
+    const draft = {
+      ...shared,
+      body: {
+        ...body,
+        constraints: [
+          { ...rules[0]!, struck: true },
+          { ...rules[0]!, quote: 'Hardware goes through me.', wording: [] },
+          rules[1]!,
+        ],
+      },
+    } as unknown as Doc<'charters'>;
+    const html = renderToStaticMarkup(<CharterCard charter={draft} name="Nell" />);
+    expect(html).toContain('>2 rules are in no clause, so the charter will not enforce them.</p>');
   });
 
   it('offers the request for changes on a draft', (): void => {
