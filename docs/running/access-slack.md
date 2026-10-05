@@ -67,11 +67,13 @@ place to type. So:
   that connection's ledger; if Slack refuses the update, the card's row stays
   and the next bullet applies.
 - Where Day0 cannot (the app was created with a configuration token pasted on
-  its card, or Slack refused the update), a collaborator on the app opens it:
-  signed in to <https://api.slack.com/apps>, open the app, **App Home**, and
-  under **Messages Tab** tick **Allow users to send Slash commands and messages
-  from the messages tab** (turn **Messages Tab** on first if it is off). Then
-  the manager presses **It is on in Slack** on the employee's Slack card.
+  its card, the connection that created it is marked **Needs IT** on the
+  organisation page, or Slack refused the update), a collaborator on the app
+  opens it: signed in to <https://api.slack.com/apps>, open the app, **App
+  Home**, and under **Messages Tab** tick **Allow users to send Slash commands
+  and messages from the messages tab** (turn **Messages Tab** on first if it is
+  off). Then the manager presses **It is on in Slack** on the employee's Slack
+  card.
 
 A tab turned off altogether refuses more than the typed code: Slack then
 refuses the app's own messages too, so Day0's request to the manager fails
@@ -247,14 +249,14 @@ step 1.4 is the gate.
 
 ## 5. The secret and its lifetime
 
-The configuration token expires 12 hours after it is generated. Day0 cannot tell how old a pair you hand it is, so it renews the pair with its refresh token at its first use, whatever its age; from then on it renews it before any use in its last half hour and an hour before it lapses, and the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.
+The configuration token expires 12 hours after it is generated. Day0 cannot tell how old a pair you hand it is, so it renews the pair with its refresh token at its first use or a quarter of an hour after it lands, whichever comes first (later while the deployment's scheduled jobs are paused); from then on it renews it before any use in its last half hour and an hour before it lapses, and the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.
 
 So hand both to the setup verb together: an install that runs after the
 configuration token has lapsed still lands, and Day0 renews the token with the
 refresh token at its first use. The refresh token keeps the connection usable
-for as long as Day0 keeps renewing it. Day0 renews the pair at its first use,
-so the refresh token you generated is spent then, though the access token you
-generated still works until its 12 hours are up unless it is revoked. An administrator
+for as long as Day0 keeps renewing it. Day0 renews the pair soon after it lands
+(above), so the refresh token you generated is spent then, though the access
+token you generated still works until its 12 hours are up unless it is revoked. An administrator
 rotates or revokes the connection on Day0's organisation page.
 
 A revoke, and a rotation, revokes the configuration token Day0 held at Slack

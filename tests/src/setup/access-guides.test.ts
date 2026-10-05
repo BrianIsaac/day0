@@ -191,7 +191,7 @@ describe('the Slack recipe and the card it describes', (): void => {
     // no live card has an app whose creating connection was revoked.
     expect(text).not.toContain('the connection that created it was revoked');
     expect(text).toContain(
-      'Where Day0 cannot (the app was created with a configuration token pasted on its card, or Slack refused the update), a collaborator on the app opens it',
+      'Where Day0 cannot (the app was created with a configuration token pasted on its card, the connection that created it is marked **Needs IT** on the organisation page, or Slack refused the update), a collaborator on the app opens it',
     );
   });
 

@@ -103,9 +103,11 @@ describe('the Slack recipe', (): void => {
     // The renewal as the code makes it (the wave 11 review's M12 d): an hour before the token
     // lapses, before any use in its last half hour, and after a lapse through the refresh token.
     // Re-pinned for the re-walk on real Slack: a pair IT lands is of unknown age to Day0, so its
-    // first use renews it whatever its age (`configurationRenewal`), which the words left out.
+    // first use renews it whatever its age (`configurationRenewal`), and the landing queues a
+    // renewal a quarter of an hour on (`keepConfigurationCurrentFrom`), deferred while the jobs
+    // are paused; the words said neither.
     expect(perEmployee.secretLifetime.words).toBe(
-      "The configuration token expires 12 hours after it is generated. Day0 cannot tell how old a pair you hand it is, so it renews the pair with its refresh token at its first use, whatever its age; from then on it renews it before any use in its last half hour and an hour before it lapses, and the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.",
+      "The configuration token expires 12 hours after it is generated. Day0 cannot tell how old a pair you hand it is, so it renews the pair with its refresh token at its first use or a quarter of an hour after it lands, whichever comes first (later while the deployment's scheduled jobs are paused); from then on it renews it before any use in its last half hour and an hour before it lapses, and the refresh token also renews a token that has lapsed. Each renewal returns a new pair. A revoke, or the row's Delete on api.slack.com, ends the access token only. Nothing ends a refresh token but its lapse, so keep the service account's sign-in closed: whoever copies a refresh token while its row is listed can mint a token with it until then.",
     );
     expect(perEmployee.secretLifetime.words).not.toContain('each time it creates an app');
     expect(perEmployee.landsAtInstall).toBe(true);
