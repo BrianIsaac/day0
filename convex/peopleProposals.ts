@@ -1,6 +1,11 @@
 import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { employeeOwnerScope, ownerScope } from './ownership';
 import { retireEdgesOf } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -572,3 +577,189 @@ export async function moveGraphInTransaction(
     peopleProposed: outcomes.filter((outcome) => outcome.kind !== 'dismissed').length,
   };
 }
+
+/** The validator of one person a page grounds (`src/people/extraction.ts`). */
+export const extractedPersonValidator = v.object({
+  name: v.string(),
+  ref: v.string(),
+  where: v.string(),
+  quote: v.string(),
+  email: v.optional(v.string()),
+  title: v.optional(v.string()),
+  team: v.optional(v.string()),
+  approves: v.array(v.string()),
+  escalationFor: v.array(v.string()),
+});
+
+/** The source and completed run an extraction is for. */
+const extractionArgs = { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') };
+
+/**
+ * The source and run when the run is the source's newest completed generation, no sync is
+ * running, and its people have not been extracted yet; else null, which makes the extraction moot.
+ */
+async function extractableGeneration(
+  ctx: QueryCtx,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<{ source: Doc<'docSources'>; run: Doc<'docSyncRuns'> } | null> {
+  const [source, run] = await Promise.all([ctx.db.get(sourceId), ctx.db.get(runId)]);
+  if (
+    source === null ||
+    run === null ||
+    source.activeSyncId !== undefined ||
+    source.lastCompletedSyncId !== run._id ||
+    source.peopleExtractionSyncId === run._id ||
+    run.sourceId !== source._id ||
+    run.state !== 'completed'
+  ) {
+    return null;
+  }
+  return { source, run };
+}
+
+/** The most bytes one window of the extraction's read takes, as discovery's. */
+const EXTRACTION_WINDOW_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Internal, for `peopleExtractionActions.extractSource`: one window of a completed generation's
+ * pages, read with the cursor so a source of any size is covered once. Null once a newer
+ * generation, a running sync or an earlier extraction of this run made the read moot.
+ */
+export const extractionContext = internalQuery({
+  args: { ...extractionArgs, cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    source: Doc<'docSources'>;
+    pages: Doc<'docPages'>[];
+    continueCursor: string;
+    isDone: boolean;
+  } | null> => {
+    const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
+    if (generation === null) return null;
+    const window = await ctx.db
+      .query('docPages')
+      .withIndex('by_source', (q) => q.eq('sourceId', args.sourceId))
+      .paginate({
+        cursor: args.cursor,
+        numItems: args.numItems,
+        maximumBytesRead: EXTRACTION_WINDOW_BYTES,
+      });
+    return {
+      source: generation.source,
+      pages: window.page,
+      continueCursor: window.continueCursor,
+      isDone: window.isDone,
+    };
+  },
+});
+
+/** One grounded person of a page as a proposal, with the owner-wide edges its quote states. */
+function documentationProposal(
+  person: Infer<typeof extractedPersonValidator>,
+  sourceId: Id<'docSources'>,
+  now: number,
+): ProposedPerson {
+  return {
+    name: person.name,
+    ...(person.email === undefined ? {} : { email: person.email }),
+    ...(person.title === undefined ? {} : { title: person.title }),
+    ...(person.team === undefined ? {} : { team: person.team }),
+    identities: [],
+    evidence: [{ quote: person.quote, where: person.where, at: now, sourceId, ref: person.ref }],
+    edges: [
+      ...person.approves.map((scope): ProposedEdge => ({ type: 'approval-authority', scope })),
+      ...person.escalationFor.map((scope): ProposedEdge => ({ type: 'escalation-contact', scope })),
+    ],
+  };
+}
+
+/**
+ * Internal, for `peopleExtractionActions.extractSource`: propose the people a completed
+ * generation's pages ground ({@link proposePersonInTransaction}, source `documentation`), each
+ * with its page quote and the owner-wide approval and escalation edges its quote states, and
+ * stamp the source's four extraction fields. Fenced as the read was: nothing for a generation
+ * that is no longer the one to extract.
+ *
+ * @returns Whether it applied, and the people proposed or merged whose address a lookup may match.
+ */
+export const applyExtraction = internalMutation({
+  args: { ...extractionArgs, fingerprint: v.string(), people: v.array(extractedPersonValidator) },
+  returns: v.object({ applied: v.boolean(), withAddress: v.array(v.id('people')) }),
+  handler: async (ctx, args): Promise<{ applied: boolean; withAddress: Id<'people'>[] }> => {
+    const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
+    if (generation === null) return { applied: false, withAddress: [] };
+    const scope = ownerScope({ ownerKey: generation.source.userId });
+    const now = Date.now();
+    const withAddress = new Set<Id<'people'>>();
+    for (const person of args.people) {
+      const outcome = await proposePersonInTransaction(
+        ctx,
+        scope,
+        documentationProposal(person, args.sourceId, now),
+        { source: 'documentation', sourceRef: `${args.sourceId}:${person.ref}` },
+        now,
+      );
+      if (outcome.kind !== 'dismissed' && person.email !== undefined) {
+        withAddress.add(outcome.personId);
+      }
+    }
+    await ctx.db.patch(args.sourceId, {
+      peopleExtractionSyncId: args.runId,
+      peopleExtractionFingerprint: args.fingerprint,
+      lastPeopleExtractionAt: now,
+      lastPeopleExtractionError: undefined,
+      updatedAt: now,
+    });
+    return { applied: true, withAddress: [...withAddress] };
+  },
+});
+
+/**
+ * Internal: stamp a generation whose pages are the ones the last extraction read (the same
+ * fingerprint) as extracted, with no model call.
+ *
+ * @returns Whether it stamped the source.
+ */
+export const markExtractionUnchanged = internalMutation({
+  args: { ...extractionArgs, fingerprint: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
+    if (generation === null) return false;
+    if (generation.source.peopleExtractionFingerprint !== args.fingerprint) return false;
+    const now = Date.now();
+    await ctx.db.patch(args.sourceId, {
+      peopleExtractionSyncId: args.runId,
+      lastPeopleExtractionAt: now,
+      lastPeopleExtractionError: undefined,
+      updatedAt: now,
+    });
+    return true;
+  },
+});
+
+/** The longest failure reason kept on the source. */
+const EXTRACTION_ERROR_LIMIT = 500;
+
+/**
+ * Internal: record why an extraction failed on the source, leaving its sync id where it was so the
+ * next completed generation tries again, and its last proposals standing.
+ *
+ * @returns Whether it recorded the failure.
+ */
+export const recordExtractionFailure = internalMutation({
+  args: { ...extractionArgs, reason: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
+    if (generation === null) return false;
+    await ctx.db.patch(args.sourceId, {
+      lastPeopleExtractionError: args.reason.slice(0, EXTRACTION_ERROR_LIMIT),
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
