@@ -65,6 +65,7 @@ import {
   providerReconciliationEntries,
   reconciliationAnswered,
   reconciliationOwed,
+  retryAnswersOf,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
 import { landedWritesOf, notSentWritesOf } from '../src/work/landed-writes';
@@ -94,7 +95,7 @@ import { leftForCardOf, withoutLeftForCard } from '../src/work/held-close';
 
 /**
  * The output a retry carries from the run it retries: the landed writes as the manager answered
- * them (`landedWritesOf` with the answers) in `landedWrites`, which the retried run reads as
+ * them or Day0 recorded them (`landedWritesOf` with `retryAnswersOf`) in `landedWrites`, which the retried run reads as
  * already on the provider, and the writes that run did not send in `unsentWrites`, those answered
  * not sent and those a stopped apply never sent, which it sends afresh (W12-R13, W12-R11) and never
  * counts landed (W12-R4). Not-sent writes an earlier reconciliation carried are replaced: what
@@ -108,9 +109,7 @@ function carriedIntoRetry(
   output: unknown,
   row: Doc<'workItems'>,
 ): Record<string, unknown> | undefined {
-  const answered = (row.providerReconciliation?.entries ?? []).filter(
-    (entry) => entry.answer !== undefined,
-  );
+  const answered = retryAnswersOf(row.providerReconciliation?.entries ?? []);
   const unsentWrites = notSentWritesOf(row.output, answered);
   if (
     (answered.length === 0 && unsentWrites.length === 0) ||
@@ -276,9 +275,9 @@ const entryAnswerValidator = v.object({
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): records the manager's check of the provider before
  * a retry, entry by entry (U17 D1): for each write the run's ledger names, whether it landed or
- * was not sent. A write of unknown outcome must be answered; a landed one is taken as landed
- * unless answered otherwise. Writes `providerReconciliation` with each entry's `answer` and a
- * `work.provider-reconciled` event, once. Refuses, as a `ConvexError` the card says, a
+ * was not sent. A write of unknown outcome must be answered; a landed one is owed no answer and
+ * stays as Day0 recorded it unless answered otherwise. Writes `providerReconciliation` with the
+ * answer of each entry answered, and a `work.provider-reconciled` event, once. Refuses, as a `ConvexError` the card says, a
  * confirmation that leaves a write of unknown outcome unanswered.
  */
 export const reconcileFailed = mutation({

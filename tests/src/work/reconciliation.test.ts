@@ -9,6 +9,7 @@ import {
   reconcilerOf,
   reconciliationAnswered,
   reconciliationOwed,
+  retryAnswersOf,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 
@@ -55,15 +56,15 @@ describe('the reconciliation answered per entry (U17 D1)', () => {
 
   it('owes an answer for every write of unknown outcome, and none for a landed one', () => {
     expect(answeredEntries([landed, unknown], [])).toEqual({ ok: false, unanswered: [unknown] });
+    // Re-pinned for W12X-3: a landed entry nobody answered was stored with `answer: 'landed'`, so
+    // the card said "You said it landed." of a write the manager was never asked about.
     expect(
       answeredEntries([landed, unknown], [{ phase: 'single', actionIndex: 1, answer: 'not-sent' }]),
     ).toEqual({
       ok: true,
-      entries: [
-        { ...landed, answer: 'landed' },
-        { ...unknown, answer: 'not-sent' },
-      ],
+      entries: [landed, { ...unknown, answer: 'not-sent' }],
     });
+    expect(answeredEntries([landed], [])).toEqual({ ok: true, entries: [landed] });
   });
 
   it('takes the answer given for a landed entry, and reads an answer only at its own place', () => {
@@ -76,6 +77,21 @@ describe('the reconciliation answered per entry (U17 D1)', () => {
         ],
       ),
     ).toEqual({ ok: false, unanswered: [unknown] });
+  });
+
+  it('gives a retry every answer the manager gave, and landed for a write Day0 recorded as landed (W12X-3)', () => {
+    expect(
+      retryAnswersOf([
+        landed,
+        { ...unknown, answer: 'not-sent' },
+        { ...landed, actionIndex: 2, answer: 'not-sent' },
+        { ...unknown, actionIndex: 3 },
+      ]),
+    ).toEqual([
+      { phase: 'single', actionIndex: 0, answer: 'landed' },
+      { phase: 'single', actionIndex: 1, answer: 'not-sent' },
+      { phase: 'single', actionIndex: 2, answer: 'not-sent' },
+    ]);
   });
 });
 

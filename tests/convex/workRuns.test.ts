@@ -496,7 +496,7 @@ describe('the reconciliation answered per entry (U17 D1)', (): void => {
     expect((await readItem(harness, workItemId)).providerReconciliation).toBeUndefined();
   });
 
-  it('stores the answer of every entry, a landed one taking landed unless told otherwise', async (): Promise<void> => {
+  it('stores only the answers the manager gave: a write Day0 recorded as landed carries none (W12X-3)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await stoppedMidApply(harness);
@@ -509,7 +509,9 @@ describe('the reconciliation answered per entry (U17 D1)', (): void => {
     expect(
       recorded?.entries.map((entry) => [entry.actionIndex, entry.outcome, entry.answer]),
     ).toEqual([
-      [0, 'landed', 'landed'],
+      // Re-pinned for W12X-3: the landed write was stored answered `landed`, and the card said
+      // "You said it landed." of a write nobody asked about.
+      [0, 'landed', undefined],
       [1, 'outcome-unknown', 'not-sent'],
     ]);
     const event = await harness.run(
@@ -522,7 +524,47 @@ describe('the reconciliation answered per entry (U17 D1)', (): void => {
     );
     expect(
       (event?.payload as { entries: Array<{ answer?: string }> }).entries.map((e) => e.answer),
-    ).toEqual(['landed', 'not-sent']);
+    ).toEqual([undefined, 'not-sent']);
+  });
+
+  it('owes no answer for a write Day0 recorded as landed, and the retry never sends it again (W12X-3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: the closing gate refused the close',
+        output: { draft: 'd', notes: '', actions: [comment], applied: [landedComment] },
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.reconcileFailed, {
+      workItemId,
+      confirmed: true,
+      answers: [],
+    });
+    const recorded = (await readItem(harness, workItemId)).providerReconciliation;
+    expect(recorded?.entries.map((entry) => [entry.outcome, entry.answer])).toEqual([
+      ['landed', undefined],
+    ]);
+    const event = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.provider-reconciled'))
+          .first(),
+    );
+    expect((event?.payload as { entries: Array<{ answer?: string }> }).entries).toEqual([
+      expect.not.objectContaining({ answer: expect.anything() }),
+    ]);
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    // What the retried run's executor reads as already on the provider: the comment, carried.
+    const carried = (
+      (await readItem(harness, workItemId)).output as {
+        landedWrites?: Array<{ action: unknown; applied: AppliedAction }>;
+      }
+    ).landedWrites;
+    expect(carried?.map((write) => write.action)).toEqual([comment]);
   });
 });
 
@@ -650,8 +692,10 @@ describe('a reconciliation recorded before the per-entry answers (W12-R3, D-9 (a
       answers: [{ phase: 'single', actionIndex: 1, answer: 'landed' }],
     });
     const answered = await readItem(harness, workItemId);
+    // Re-pinned for W12X-3: the landed comment was stored answered `landed`; only the write asked
+    // about carries the manager's answer now, and both still ride into the retry as landed.
     expect(answered.providerReconciliation?.entries.map((entry) => entry.answer)).toEqual([
-      'landed',
+      undefined,
       'landed',
     ]);
     expect(reconciliationOwed(answered)).toBe(false);

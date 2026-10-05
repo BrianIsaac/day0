@@ -165,7 +165,9 @@ export const CONFIRMED_LANDED_REASON =
 
 /**
  * The entries as the manager answered them: an entry whose outcome is unknown takes the answer
- * given for it and is refused without one; a landed entry takes the answer given, or `landed`.
+ * given for it and is refused without one; a landed entry is owed no answer and carries one only
+ * where one was given, so a write Day0 recorded as landed is never stored as the manager's word
+ * (W12X-3). A retry reads it as landed all the same (`retryAnswersOf`).
  *
  * @param entries - The entries the run's ledger names.
  * @param answers - The manager's answers, by phase and index.
@@ -185,8 +187,28 @@ export function answeredEntries(
   if (unanswered.length > 0) return { ok: false, unanswered };
   return {
     ok: true,
-    entries: entries.map((entry) => ({ ...entry, answer: answerOf(entry) ?? 'landed' })),
+    entries: entries.map((entry): ReconciliationEntry => {
+      const answer = answerOf(entry);
+      return answer === undefined ? { ...entry } : { ...entry, answer };
+    }),
   };
+}
+
+/**
+ * The answers a retry reads from a stored reconciliation: each answer the manager gave, and
+ * `landed` for a write Day0 recorded as landed that nobody was asked about, so the retry never
+ * sends that write again (W12X-3; the rule `answeredEntries` kept before it stopped storing the
+ * answer). An entry of unknown outcome with no answer gives none.
+ *
+ * @param entries - The stored reconciliation's entries.
+ */
+export function retryAnswersOf(entries: readonly ReconciliationEntry[]): GivenAnswer[] {
+  return entries.flatMap((entry): GivenAnswer[] => {
+    const answer = entry.answer ?? (entry.outcome === 'landed' ? 'landed' : undefined);
+    return answer === undefined
+      ? []
+      : [{ phase: entry.phase, actionIndex: entry.actionIndex, answer }];
+  });
 }
 
 interface LedgerEntry {

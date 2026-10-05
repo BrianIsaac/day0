@@ -3618,7 +3618,8 @@ describe('the exact-action gate', (): void => {
           effect: 'added audit note',
           providerId: 'comment-17',
           idempotencyKey: 'comment',
-          answer: 'landed',
+          // Re-pinned for W12X-3: a write Day0 recorded as landed carries no answer of the
+          // manager's, who was never asked about it.
         },
         {
           phase: 'single',

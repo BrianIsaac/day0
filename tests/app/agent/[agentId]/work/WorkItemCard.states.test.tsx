@@ -409,23 +409,16 @@ describe('landed (work-landed.html)', (): void => {
     );
     // The writes landed, so a send-back first asks for the provider check (U17 D1). Re-pinned
     // for W12V-14: each write the ledger records as landed is shown as landed and asked nothing,
-    // so the check is one confirmation, and each is recorded as landed.
+    // so the check is one confirmation, and each stays as Day0 recorded it.
     expect(view.text()).toContain('Provider reconciliation required');
     expect(send()?.disabled).toBe(true);
     expect(view.container.querySelectorAll('input[type="radio"]')).toHaveLength(0);
     expect(view.text()).toContain('Each write below landed, as Day0 recorded it from the provider');
     expect(view.text()).not.toContain('answered');
     await press(view.container, 'Confirm reconciliation');
-    expect(view.calls).toEqual([
-      [
-        'reconcile',
-        [
-          { phase: 'single', actionIndex: 0, answer: 'landed' },
-          { phase: 'single', actionIndex: 1, answer: 'landed' },
-          { phase: 'single', actionIndex: 2, answer: 'landed' },
-        ],
-      ],
-    ]);
+    // Re-pinned for W12X-3: the confirmation sent `landed` for each of the three as if the
+    // manager had answered; nobody was asked, so no answer is sent and Day0's record stands.
+    expect(view.calls).toEqual([['reconcile', []]]);
     expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
     view.unmount();
 
