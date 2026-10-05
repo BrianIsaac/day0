@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { query, type QueryCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
+import { activeAgreementsOf } from './workingAgreements';
 import { agentZone } from '../src/lib/zone';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import {
@@ -56,8 +57,9 @@ async function inheritedDocumentation(ctx: QueryCtx, agent: Doc<'agents'>): Prom
 
 /** Every row the projection is made from, read through the employee's indexes and bounded. */
 async function projectionInput(ctx: QueryCtx, agent: Doc<'agents'>): Promise<ProjectionInput> {
-  const [charter, agreements, skills, surfaces, documentation] = await Promise.all([
+  const [charter, agreements, lessons, skills, surfaces, documentation] = await Promise.all([
     approvedCharter(ctx, agent._id),
+    activeAgreementsOf(ctx, agent),
     ctx.db
       .query('corrections')
       .withIndex('by_agent_active_createdAt', (q) =>
@@ -80,7 +82,8 @@ async function projectionInput(ctx: QueryCtx, agent: Doc<'agents'>): Promise<Pro
     managerEmail: agent.bossEmail,
     zone: agentZone(agent),
     charter,
-    agreements: agreements.map((correction) => correction.text),
+    agreements: agreements.slice(0, PROJECTION_ROWS).map((agreement) => agreement.statement),
+    lessons: lessons.map((correction) => correction.text),
     skills: skills.map((skill) => ({ name: skill.name, sourceType: skill.sourceType })),
     surfaces: surfaces.map((surface) => ({
       displayName: surface.displayName,
@@ -94,8 +97,9 @@ async function projectionInput(ctx: QueryCtx, agent: Doc<'agents'>): Promise<Pro
 
 /**
  * The readable projection of what one employee knows: its charter, people, working agreements,
- * skills, connections and documentation, at most 4,000 characters. Public; owner-guarded; reads
- * the employee's rows through their indexes, each read bounded, and writes nothing.
+ * lessons from the manager's corrections, skills, connections and documentation, at most 4,000
+ * characters. Public; owner-guarded; reads the employee's rows through their indexes, each read
+ * bounded, and writes nothing.
  */
 export const forAgent = query({
   args: { agentId: v.id('agents') },

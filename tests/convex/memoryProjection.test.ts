@@ -85,6 +85,23 @@ async function seedEmployee(harness: TestConvex<typeof schema>): Promise<Id<'age
         ...(retiredAt !== undefined ? { retiredAt } : {}),
       });
     }
+    for (const [statement, status, binding] of [
+      ['Thread every reply under the ask.', 'active', agentId],
+      ['Name the ticket in the first line, for every employee.', 'active', undefined],
+      ['A proposal the manager has not kept.', 'proposed', agentId],
+    ] as const) {
+      await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        ...(binding !== undefined ? { agentId: binding } : {}),
+        kind: 'preference',
+        statement,
+        scope: 'global',
+        sourceType: 'plan-approval',
+        status,
+        createdAt: 1,
+        appliedTo: [],
+      });
+    }
     for (const [name, state] of [
       ['see-internal-docs', 'registered'],
       ['chat-thread-reply', 'proposed'],
@@ -104,7 +121,7 @@ async function seedEmployee(harness: TestConvex<typeof schema>): Promise<Id<'age
 }
 
 describe('memoryProjection.forAgent', (): void => {
-  it('projects the approved charter, the kept agreements, the registered skills and the inherited documentation', async (): Promise<void> => {
+  it('projects the approved charter, the kept agreements and corrections, the registered skills and the inherited documentation', async (): Promise<void> => {
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -114,7 +131,11 @@ describe('memoryProjection.forAgent', (): void => {
     expect(cut).toBe(false);
     expect(text).toContain('Charter 0.1, approved 26 Sep 2026: Own triage for tier-2 asks.');
     expect(text).not.toContain('A draft nobody approved.');
-    expect(text).toContain('Working agreements: Name the ticket in every reply.');
+    expect(text.split('\n')).toContain(
+      'Working agreements: Thread every reply under the ask.; Name the ticket in the first line, for every employee.',
+    );
+    expect(text).not.toContain('A proposal the manager has not kept.');
+    expect(text).toContain('Lessons from your corrections: Name the ticket in every reply.');
     expect(text).not.toContain('retired');
     expect(text).toContain('Skills: see-internal-docs (built in)');
     expect(text).not.toContain('chat-thread-reply');
