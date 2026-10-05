@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   documentStrikes,
   goalIsGap,
+  goalNotGiven,
   systemsLine,
 } from '../../../../../app/agent/[agentId]/charter/charter-document';
 import { strikeRefusalBody } from '../../../../fixtures/charter-strike-refusal-2026-09-15';
@@ -46,5 +47,26 @@ describe('the charter document', (): void => {
       changes: kept,
     });
     expect(documentStrikes(drafted, true)).toEqual({ pending: false, changes: [] });
+  });
+});
+
+describe('a goal the model says was not given (C D11)', (): void => {
+  const goals = {
+    day30: 'Learn the tracker.',
+    day60: 'Run the weekly hygiene on the tracker.',
+    day90: 'No milestone given.',
+  };
+
+  it('a goal the model says was not given draws no goal stated, whatever its words', (): void => {
+    const stated = { ...goals, stated: { day30: true, day60: false, day90: true } };
+    expect(goalNotGiven(stated, 'day60')).toBe(true);
+    // The model's word wins over the heuristic both ways.
+    expect(goalNotGiven(stated, 'day90')).toBe(false);
+    expect(goalNotGiven(stated, 'day30')).toBe(false);
+  });
+
+  it('reads a charter drafted before the model said so by the words of its goals, as before', (): void => {
+    expect(goalNotGiven(goals, 'day60')).toBe(false);
+    expect(goalNotGiven(goals, 'day90')).toBe(true);
   });
 });

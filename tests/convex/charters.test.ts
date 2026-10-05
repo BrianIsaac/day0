@@ -15,7 +15,13 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import type { Charter } from '../../src/agent/charter';
+import { DAY_ONE_TOPICS, assemble, charterSchema, type Charter } from '../../src/agent/charter';
+import { MOCK_OFFICE_NAMED_SYSTEMS } from '../../src/surfaces/mock-office';
+import {
+  BINDS_ANSWERS,
+  GLM_BINDS_DRAFTS_2026_10_05,
+  HOSTED_DRAFTS_2026_10_04,
+} from '../fixtures/charter-paraphrase-2026-09-30';
 import { STRIKE_CHANGES_NOTHING } from '../../src/agent/charter-constraints';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { strikeRefusalBody } from '../fixtures/charter-strike-refusal-2026-09-15';
@@ -1214,5 +1220,65 @@ describe('a charter at a handover’s move (D8)', (): void => {
       }),
     ).resolves.toMatchObject({ kind: 'refused' });
     await expect(discard(harness, agentId)).rejects.toBeInstanceOf(ConvexError);
+  });
+});
+
+describe('a strike on a rule bound to its clauses (13-R)', (): void => {
+  /** Rook's draft as the hosted model wrote it on 5 October, assembled as the product assembles it. */
+  function rookDraft(): Charter {
+    const given = BINDS_ANSWERS.Rook!;
+    return assemble(
+      charterSchema.parse(GLM_BINDS_DRAFTS_2026_10_05.Rook),
+      {
+        answers: Object.fromEntries(
+          DAY_ONE_TOPICS.map((topic, at): [string, string] => [topic, given[at]!]),
+        ) as Record<(typeof DAY_ONE_TOPICS)[number], string>,
+        version: '0.0',
+        bossLabel: 'Manager',
+        office: MOCK_OFFICE_NAMED_SYSTEMS,
+      },
+      '2026-10-05T15:47:00.000Z',
+    );
+  }
+
+  it('takes the paraphrased clause out at approval and keeps the other rules bound', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const drafted = rookDraft();
+    const { agentId, charterId } = await seedDraft(harness, drafted);
+    const owner = harness.withIdentity(managerIdentity());
+    const rules = drafted.constraints ?? [];
+    const index = rules.findIndex((rule) => rule.quote.endsWith('Go through me for both.'));
+    expect(
+      await owner.mutation(api.charters.setConstraintStruck, { charterId, index, struck: true }),
+    ).toEqual({ ok: true });
+    await owner.mutation(api.charters.approve, { charterId });
+
+    const body = (await charter(harness, charterId)).body as Charter;
+    expect(body.proposedBoundaries.willNotDo).toEqual(['Edit a booked figure.']);
+    expect(body.struckClauses).toEqual([
+      {
+        field: 'willNotDo',
+        text: 'Contact finance or sales directly instead of going through the manager.',
+      },
+    ]);
+    const booked = body.constraints?.find((rule) => rule.quote === 'Never edit a booked figure.');
+    expect(booked?.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).not.toContain(
+      'Contact finance or sales directly',
+    );
+  });
+
+  it("refuses a strike on a v0.16.0 charter's rule no clause carries, as before", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const lark = HOSTED_DRAFTS_2026_10_04.Lark!;
+    const { charterId } = await seedDraft(harness, lark);
+    const owner = harness.withIdentity(managerIdentity());
+    const index = (lark.constraints ?? []).findIndex(
+      (rule) => rule.quote === 'Never change a deal amount in the tracker',
+    );
+    expect(
+      await owner.mutation(api.charters.setConstraintStruck, { charterId, index, struck: true }),
+    ).toEqual({ ok: false, reason: STRIKE_CHANGES_NOTHING });
+    expect((await charter(harness, charterId)).body).toEqual(lark);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHARTER_SYSTEM_PROMPT,
+  assemble,
   charterSchema,
   normaliseNamedSystems,
   renderCharter,
@@ -20,12 +21,24 @@ import {
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../fixtures/charter-synthesis-notes-2026-09-16';
 import { MOCK_OFFICE_NAMED_SYSTEMS } from '../../../src/surfaces/mock-office';
+import { effectiveCharter } from '../../../src/agent/charter-constraints';
+import {
+  BINDS_ANSWERS,
+  GLM_BINDS_DRAFTS_2026_10_05,
+  GLM_BINDS_PROMPT_2026_10_05,
+} from '../../fixtures/charter-paraphrase-2026-09-30';
 
 const base = {
   whyThisHire: 'Own triage.',
   proposedFunction: 'Revenue operations triage',
   evidence: [],
-  shortTermGoals: { day30: 'Draft', day60: 'Triage', day90: 'Maintain' },
+  // 13-R: the schema asks the model whether each goal was given.
+  shortTermGoals: {
+    day30: 'Draft',
+    day60: 'Triage',
+    day90: 'Maintain',
+    stated: { day30: true, day60: true, day90: true },
+  },
   proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
   namedCollaborators: [],
   priorityReading: [],
@@ -284,5 +297,93 @@ describe('the mock office in the charter draft (round 0141 R-D item 5)', (): voi
     expect(prompt).toContain('[office]');
     expect(prompt).toContain('Ticket queue (kanban)');
     expect(userPrompt(answers)).not.toContain('[office]');
+  });
+});
+
+describe('a rule bound to the clauses it produced (13-R)', (): void => {
+  const args = {
+    answers: Object.fromEntries(
+      DAY_ONE_TOPICS.map((topic): [string, string] => [topic, '']),
+    ) as Parameters<typeof userPrompt>[0],
+    version: '0.0',
+    bossLabel: 'Manager',
+    office: MOCK_OFFICE_NAMED_SYSTEMS,
+  };
+
+  /** The recorded reply for one employee, validated as the product validates it, then assembled. */
+  function recorded(name: string): Charter {
+    return assemble(
+      charterSchema.parse(GLM_BINDS_DRAFTS_2026_10_05[name]),
+      { ...args, answers: answersOf(name) },
+      '2026-10-05T15:47:00.000Z',
+    );
+  }
+
+  function answersOf(name: string): Parameters<typeof userPrompt>[0] {
+    const given = BINDS_ANSWERS[name]!;
+    return Object.fromEntries(
+      DAY_ONE_TOPICS.map((topic, at): [string, string] => [topic, given[at]!]),
+    ) as Parameters<typeof userPrompt>[0];
+  }
+
+  function strike(charter: Charter, quote: string): Charter {
+    return effectiveCharter({
+      ...charter,
+      constraints: (charter.constraints ?? []).map((rule) =>
+        rule.quote === quote ? { ...rule, struck: true } : rule,
+      ),
+    });
+  }
+
+  it('a strike removes its clause on a paraphrasing model', (): void => {
+    // Rook's "Go through me for both." is in no clause in its words: the drafter wrote it as a
+    // will-not-do of its own, and a strike by wording left that clause standing (D3, m42).
+    const rook = recorded('Rook');
+    const rule =
+      'Finance owns the booked figures and sales owns the tracker. Go through me for both.';
+    expect(rook.constraints?.find((c) => c.quote === rule)?.wording).toEqual([]);
+    expect(strike(rook, rule).proposedBoundaries.willNotDo).toEqual(['Edit a booked figure.']);
+    // Ivo's rule is part of a will-not-do: a strike by wording was refused, by reference it goes.
+    const ivo = recorded('Ivo');
+    expect(
+      strike(ivo, 'Never message a rep directly, everything goes through me.').proposedBoundaries
+        .willNotDo,
+    ).toEqual([
+      'Contact any rep without asking the manager first.',
+      'Own or change the deals, the sales lead owns the deals.',
+    ]);
+  });
+
+  it("keeps the model's binds on the recorded draft, and a rule it bound to nothing as in no clause", (): void => {
+    const wren = recorded('Wren');
+    expect(
+      wren.constraints?.find((c) => c.quote === 'Never promise a refund in a reply.')?.binds,
+    ).toEqual([
+      { field: 'willNotDo', index: 2 },
+      { field: 'escalationTriggers', index: 0 },
+    ]);
+  });
+
+  it('keeps the goals the model says were not given', (): void => {
+    expect(recorded('Moss').shortTermGoals.stated).toEqual({
+      day30: false,
+      day60: false,
+      day90: false,
+    });
+    expect(recorded('Nell').shortTermGoals.stated).toEqual({
+      day30: true,
+      day60: false,
+      day90: true,
+    });
+  });
+
+  it("asks for each rule's clauses beside the copy rules, which stay as they were", (): void => {
+    expect(CHARTER_SYSTEM_PROMPT).toContain(
+      'For each constraint, binds lists the clauses the rule produced, by list and position: field is "proposedFunction", "willDo", "willNotDo" or "escalationTriggers", and index is the clause\'s position in that list, counting from 0 (always 0 for proposedFunction). Bind every clause that carries the rule, however you worded it; binds is empty only when no clause carries the rule.',
+    );
+    expect(CHARTER_SYSTEM_PROMPT).toContain(
+      'shortTermGoals.stated says, for each of day30, day60 and day90, whether the manager gave that goal: false when they gave none, and that goal then says no goal was given rather than inventing one.',
+    );
+    expect(CHARTER_SYSTEM_PROMPT).toBe(GLM_BINDS_PROMPT_2026_10_05);
   });
 });

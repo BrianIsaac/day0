@@ -51,6 +51,23 @@ export function goalIsGap(text: string): boolean {
   return NO_MILESTONE.test(text);
 }
 
+/** One of the three goals, by its key on the charter. */
+export type GoalHorizon = 'day30' | 'day60' | 'day90';
+
+/**
+ * Whether the manager gave no goal for a checkpoint: as the drafter said it (C D11), or, on a
+ * charter drafted before the drafter said so, as the goal's words read (`goalIsGap`).
+ *
+ * @param goals - The charter's goals, with what the drafter said of each when it did.
+ * @param horizon - The checkpoint.
+ */
+export function goalNotGiven(
+  goals: CharterCardBody['shortTermGoals'],
+  horizon: GoalHorizon,
+): boolean {
+  return goals.stated === undefined ? goalIsGap(goals[horizon]) : !goals.stated[horizon];
+}
+
 /** The systems the one-to-one named, as one line: each once, with its kind. */
 export function systemsLine(
   systems: ReadonlyArray<{ readonly name: string; readonly class: string }>,

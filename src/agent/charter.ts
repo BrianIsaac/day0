@@ -3,6 +3,7 @@ import { agentJson, makeAgent } from '../lib/mastra';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
 import {
+  CLAUSE_FIELDS,
   CONSTRAINT_KINDS,
   deriveConstraints,
   normaliseConstraints,
@@ -68,6 +69,19 @@ export interface ShortTermGoals {
   day30: string;
   day60: string;
   day90: string;
+  /**
+   * Whether the manager gave each goal, as the drafter said: a goal not given is drawn as a gap,
+   * whatever its words. Absent on a charter drafted before the drafter said so, whose gaps are read
+   * from the goal's words.
+   */
+  stated?: GoalsStated;
+}
+
+/** For each of the three goals, whether the manager gave it. */
+export interface GoalsStated {
+  readonly day30: boolean;
+  readonly day60: boolean;
+  readonly day90: boolean;
 }
 
 /** A work system the manager named, classed for the surface ladder, with where it was mentioned. */
@@ -170,6 +184,8 @@ export const CHARTER_SYSTEM_PROMPT = [
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
   'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
   "For each, quote is the manager's own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.",
+  'For each constraint, binds lists the clauses the rule produced, by list and position: field is "proposedFunction", "willDo", "willNotDo" or "escalationTriggers", and index is the clause\'s position in that list, counting from 0 (always 0 for proposedFunction). Bind every clause that carries the rule, however you worded it; binds is empty only when no clause carries the rule.',
+  'shortTermGoals.stated says, for each of day30, day60 and day90, whether the manager gave that goal: false when they gave none, and that goal then says no goal was given rather than inventing one.',
   'A [changes-requested] section after the answers is the manager, in their own words, on an earlier draft you wrote: apply every change it asks for, and where a change disagrees with an answer, the change wins. A rule it says to leave out appears in no clause and no constraint.',
 ].join('\n');
 
@@ -189,6 +205,11 @@ export const charterSchema = z.object({
     day30: z.string(),
     day60: z.string(),
     day90: z.string(),
+    stated: z.object({
+      day30: z.boolean(),
+      day60: z.boolean(),
+      day90: z.boolean(),
+    }),
   }),
   proposedBoundaries: z.object({
     willDo: z.array(z.string()),
@@ -226,6 +247,12 @@ export const charterSchema = z.object({
       kind: z.enum(CONSTRAINT_KINDS),
       quote: z.string(),
       wording: z.array(z.string()),
+      binds: z.array(
+        z.object({
+          field: z.enum(CLAUSE_FIELDS),
+          index: z.number().int(),
+        }),
+      ),
     }),
   ),
 });
@@ -484,7 +511,20 @@ export function normaliseNamedSystems(
   return rows.map((row: ProductRow): NamedSystem => row.system);
 }
 
-function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
+/**
+ * The charter from the model's validated reply: the clauses cleaned of provenance suffixes, the
+ * named systems collapsed to products, the reply's rules verified against the clauses and the
+ * candidate properties the clauses carry derived beside them.
+ *
+ * @param raw - The reply as `charterSchema` validated it.
+ * @param args - What the synthesis was asked with.
+ * @param createdAt - The draft's ISO time.
+ */
+export function assemble(
+  raw: RawCharterPayload,
+  args: SynthesiseCharterArgs,
+  createdAt: string,
+): Charter {
   // Stripped before the constraints are verified, so wording is matched
   // against the clauses the manager will read.
   const charter: Charter = withoutProvenanceSuffixes({

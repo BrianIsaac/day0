@@ -9,13 +9,20 @@ import {
   listedRules,
   normaliseConstraints,
   removeWording,
+  rulePlacement,
   strikeOutcome,
   strikePreview,
   stripProvenanceSuffix,
   withoutConstraints,
+  withClauseRemoved,
   withoutProvenanceSuffixes,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
+import {
+  BED_DRAFTS_2026_10_05,
+  REDEPLOY_WALK_RULES_2026_10_05,
+  type WalkRule,
+} from '../../fixtures/charter-paraphrase-2026-09-30';
 import { strikeRefusalBody } from '../../fixtures/charter-strike-refusal-2026-09-15';
 import {
   CLEAN_CLAUSES_2026_09_16,
@@ -306,6 +313,12 @@ describe('deriveConstraints', (): void => {
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned', 'prioritized', 'priority'],
         origin: 'derived',
+        // 13-R: a derived rule is bound to the clauses its words were found in.
+        binds: [
+          { field: 'proposedFunction', index: 0 },
+          { field: 'willDo', index: 0 },
+          { field: 'escalationTriggers', index: 0 },
+        ],
       },
     ]);
   });
@@ -806,5 +819,573 @@ describe('what the strikes changed, when a will-do empties', (): void => {
         rewrittenAs: 'Handle tickets.',
       },
     ]);
+  });
+});
+
+describe('binding a rule to the clauses it produced (13-R)', (): void => {
+  /** Lark's draft as the hosted model wrote it on 5 October, the rule paraphrased in the clause. */
+  function larkDraft(constraints: CharterConstraint[] = []): Charter {
+    return {
+      ...runThrough(constraints),
+      proposedFunction: 'Keep the Q4 Revenue Tracker clean and flag deals that look stuck.',
+      proposedBoundaries: {
+        willDo: [
+          'Keep the Q4 Revenue Tracker current from what is said in Slack.',
+          'Never touch a deal amount when updating the tracker.',
+          'Flag deals that look stuck.',
+        ],
+        willNotDo: [
+          'Change a deal amount in the tracker.',
+          'Own the forecast, which belongs to finance.',
+        ],
+        escalationTriggers: ['Anything unusual: talk to the manager first.'],
+      },
+      namedSystems: [],
+    };
+  }
+
+  const amountRule = {
+    kind: 'system-boundary' as const,
+    quote: 'Never change a deal amount in the tracker.',
+  };
+
+  it('keeps a bind only when its clause exists', (): void => {
+    const [rule] = normaliseConstraints(
+      [
+        {
+          ...amountRule,
+          wording: ['Never change a deal amount in the tracker.'],
+          binds: [
+            { field: 'willNotDo', index: 0 },
+            { field: 'willNotDo', index: 7 },
+            { field: 'escalationTriggers', index: -1 },
+            { field: 'proposedFunction', index: 1 },
+            { field: 'willNotDo', index: 0 },
+          ],
+        },
+      ],
+      larkDraft(),
+    );
+    expect(rule!.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+  });
+
+  it('binds the clauses that carry its words when the model named none that exists', (): void => {
+    const [rule] = normaliseConstraints(
+      [
+        {
+          ...amountRule,
+          wording: ['Change a deal amount'],
+          binds: [{ field: 'willDo', index: 9 }],
+        },
+      ],
+      larkDraft(),
+    );
+    expect(rule!.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+  });
+
+  it("verifies a manager's never against the clause that names the act it forbids", (): void => {
+    const [rule] = normaliseConstraints(
+      [
+        {
+          ...amountRule,
+          wording: ['Never change a deal amount in the tracker.'],
+          binds: [{ field: 'willNotDo', index: 0 }],
+        },
+      ],
+      larkDraft(),
+    );
+    expect(rule!.wording).toEqual(['change a deal amount in the tracker.']);
+  });
+
+  it('keeps a rule the model bound to no clause as a rule in no clause', (): void => {
+    expect(
+      normaliseConstraints(
+        [
+          {
+            kind: 'system-boundary',
+            quote: 'Never share a password in a ticket comment.',
+            wording: ['Never share a password in a ticket comment.'],
+            binds: [],
+          },
+        ],
+        larkDraft(),
+      ),
+    ).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: 'Never share a password in a ticket comment.',
+        wording: [],
+        origin: 'synthesis',
+        binds: [],
+      },
+    ]);
+  });
+
+  it('gives a rule drafted without binds none, so it strikes by its wording as before', (): void => {
+    const [rule] = normaliseConstraints(
+      [{ ...amountRule, wording: ['Change a deal amount in the tracker.'] }],
+      larkDraft(),
+    );
+    expect(rule).not.toHaveProperty('binds');
+  });
+
+  it('merges the binds of one sentence listed twice under one kind', (): void => {
+    const result = normaliseConstraints(
+      [
+        { ...amountRule, wording: [], binds: [{ field: 'willNotDo', index: 0 }] },
+        { ...amountRule, wording: [], binds: [{ field: 'willDo', index: 1 }] },
+      ],
+      larkDraft(),
+    );
+    expect(result.map((rule) => rule.binds)).toEqual([
+      [
+        { field: 'willNotDo', index: 0 },
+        { field: 'willDo', index: 1 },
+      ],
+    ]);
+  });
+
+  it("records the clauses a derived rule's words were found in as its binds", (): void => {
+    const derived = deriveConstraints(runThrough(), answers, []);
+    expect(derived[0]!.binds).toEqual([
+      { field: 'proposedFunction', index: 0 },
+      { field: 'willDo', index: 0 },
+      { field: 'escalationTriggers', index: 0 },
+    ]);
+  });
+
+  it('strikes a bound will-not-do and escalation clause whole, whatever words they use', (): void => {
+    const charter = larkDraft([
+      {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [
+          { field: 'willNotDo', index: 0 },
+          { field: 'escalationTriggers', index: 0 },
+        ],
+        struck: true,
+      },
+    ]);
+    const result = effectiveCharter(charter);
+    expect(result.proposedBoundaries.willNotDo).toEqual([
+      'Own the forecast, which belongs to finance.',
+    ]);
+    expect(result.proposedBoundaries.escalationTriggers).toEqual([]);
+    expect(result.proposedBoundaries.willDo).toEqual(charter.proposedBoundaries.willDo);
+  });
+
+  it("strikes a bound will-do minus the rule's words when it carries them, and whole when it does not", (): void => {
+    const minusWords = effectiveCharter(
+      larkDraft([
+        {
+          ...amountRule,
+          wording: ['Never touch a deal amount'],
+          origin: 'synthesis',
+          binds: [{ field: 'willDo', index: 1 }],
+          struck: true,
+        },
+      ]),
+    );
+    expect(minusWords.proposedBoundaries.willDo).toEqual([
+      'Keep the Q4 Revenue Tracker current from what is said in Slack.',
+      'when updating the tracker.',
+      'Flag deals that look stuck.',
+    ]);
+    const whole = effectiveCharter(
+      larkDraft([
+        {
+          ...amountRule,
+          wording: [],
+          origin: 'synthesis',
+          binds: [{ field: 'willDo', index: 1 }],
+          struck: true,
+        },
+      ]),
+    );
+    expect(whole.proposedBoundaries.willDo).toEqual([
+      'Keep the Q4 Revenue Tracker current from what is said in Slack.',
+      'Flag deals that look stuck.',
+    ]);
+  });
+
+  it("takes only the rule's words from a bound function and never the sentence", (): void => {
+    const bound: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Only stuck deals.',
+      wording: ['flag deals that look stuck'],
+      origin: 'synthesis',
+      binds: [{ field: 'proposedFunction', index: 0 }],
+      struck: true,
+    };
+    expect(effectiveCharter(larkDraft([bound])).proposedFunction).toBe(
+      'Keep the Q4 Revenue Tracker clean.',
+    );
+    expect(effectiveCharter(larkDraft([{ ...bound, wording: [] }])).proposedFunction).toBe(
+      'Keep the Q4 Revenue Tracker clean and flag deals that look stuck.',
+    );
+  });
+
+  it("re-indexes the other rules' binds when a strike takes clauses out", (): void => {
+    const forecast: CharterConstraint = {
+      kind: 'reporting-line',
+      quote: 'Finance owns the forecast.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [
+        { field: 'willNotDo', index: 1 },
+        { field: 'escalationTriggers', index: 0 },
+      ],
+    };
+    const result = effectiveCharter(
+      larkDraft([
+        {
+          ...amountRule,
+          wording: [],
+          origin: 'synthesis',
+          binds: [
+            { field: 'willNotDo', index: 0 },
+            { field: 'willDo', index: 1 },
+          ],
+          struck: true,
+        },
+        forecast,
+      ]),
+    );
+    expect(result.constraints?.[1]?.binds).toEqual([
+      { field: 'willNotDo', index: 0 },
+      { field: 'escalationTriggers', index: 0 },
+    ]);
+    expect(result.constraints?.[0]?.binds).toEqual([]);
+  });
+
+  it('lists a bound rule whose words the clauses do not carry, and offers its strike', (): void => {
+    const charter = larkDraft([
+      {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 0 }],
+      },
+    ]);
+    expect(listedRules(charter.constraints ?? []).map(({ index }) => index)).toEqual([0]);
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: ['Change a deal amount in the tracker.'],
+      rewrittenClauses: [],
+      changes: true,
+    });
+  });
+
+  it('previews a rule in no clause as changing nothing, and lists it once', (): void => {
+    const nowhere: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share a password in a ticket comment.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [],
+    };
+    const charter = larkDraft([nowhere, { ...nowhere }]);
+    expect(strikePreview(charter, 0).changes).toBe(false);
+    expect(listedRules(charter.constraints ?? []).map(({ index }) => index)).toEqual([0]);
+  });
+
+  it('refuses a strike that takes the last clause bound to a standing system boundary', (): void => {
+    const charter = larkDraft([
+      {
+        kind: 'candidate-property',
+        quote: 'Deal amounts are finance figures.',
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 0 }],
+        struck: true,
+      },
+      {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 0 }],
+      },
+    ]);
+    expect(strikeOutcome(charter)).toEqual({
+      ok: false,
+      reason:
+        'strike refused: “Change a deal amount in the tracker.” is the only clause that enforces “Never change a deal amount in the tracker.”',
+    });
+  });
+
+  it('says where a rule is placed: by its words, in no clause, or in the clauses it binds', (): void => {
+    const charter = larkDraft();
+    expect(rulePlacement(charter, { ...amountRule, wording: [], origin: 'synthesis' })).toEqual({
+      kind: 'by-wording',
+    });
+    expect(
+      rulePlacement(charter, { ...amountRule, wording: [], origin: 'synthesis', binds: [] }),
+    ).toEqual({ kind: 'in-no-clause' });
+    expect(
+      rulePlacement(charter, {
+        ...amountRule,
+        wording: ['change a deal amount in the tracker.'],
+        origin: 'synthesis',
+        binds: [
+          { field: 'willNotDo', index: 0 },
+          { field: 'willDo', index: 2 },
+        ],
+      }),
+    ).toEqual({
+      kind: 'bound',
+      clauses: ['Change a deal amount in the tracker.', 'Flag deals that look stuck.'],
+      carriesWords: true,
+    });
+    expect(
+      rulePlacement(charter, {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 2 }],
+      }),
+    ).toEqual({ kind: 'bound', clauses: ['Flag deals that look stuck.'], carriesWords: false });
+  });
+
+  it('shifts the binds after a removed clause and drops the binds to it', (): void => {
+    const rules: CharterConstraint[] = [
+      {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [
+          { field: 'willNotDo', index: 0 },
+          { field: 'willNotDo', index: 1 },
+          { field: 'willDo', index: 1 },
+        ],
+      },
+      { ...amountRule, wording: [], origin: 'synthesis' },
+    ];
+    expect(withClauseRemoved(rules, 'willNotDo', 0)).toEqual([
+      {
+        ...rules[0],
+        binds: [
+          { field: 'willNotDo', index: 0 },
+          { field: 'willDo', index: 1 },
+        ],
+      },
+      rules[1],
+    ]);
+  });
+});
+
+describe("the v0.16.0 redeploy walk's three rules", (): void => {
+  /** A charter of only the clauses the walk quotes, with the rule bound as a right reading binds it. */
+  function walkCharter(rule: WalkRule): Charter {
+    const [normalised] = normaliseConstraints(
+      [{ kind: 'system-boundary', quote: rule.quote, wording: [rule.quote], binds: rule.binds }],
+      {
+        ...runThrough(),
+        proposedFunction: 'Work the queue.',
+        proposedBoundaries: {
+          willDo: [...rule.willDo],
+          willNotDo: [...rule.willNotDo],
+          escalationTriggers: [...rule.escalationTriggers],
+        },
+        namedSystems: [],
+      },
+    );
+    return {
+      ...runThrough([normalised!]),
+      proposedFunction: 'Work the queue.',
+      proposedBoundaries: {
+        willDo: [...rule.willDo],
+        willNotDo: [...rule.willNotDo],
+        escalationTriggers: [...rule.escalationTriggers],
+      },
+      namedSystems: [],
+    };
+  }
+
+  it("binds Lark's rule to the will-not-do that carries its words, and its strike takes it", (): void => {
+    const charter = walkCharter(REDEPLOY_WALK_RULES_2026_10_05.lark);
+    expect(rulePlacement(charter, charter.constraints![0]!)).toEqual({
+      kind: 'bound',
+      clauses: ['Change a deal amount in the tracker.'],
+      carriesWords: true,
+    });
+    expect(strikePreview(charter, 0).removedClauses).toEqual([
+      'Change a deal amount in the tracker.',
+    ]);
+  });
+
+  it("binds Quill's rule to the escalation line it reaches, and its strike takes that line", (): void => {
+    const charter = walkCharter(REDEPLOY_WALK_RULES_2026_10_05.quill);
+    expect(rulePlacement(charter, charter.constraints![0]!)).toEqual({
+      kind: 'bound',
+      clauses: [
+        'If a reply might involve a refund, talk to the manager before promising anything.',
+      ],
+      // The line carries the manager's own words ("refund", "reply", "promising"), not a phrase.
+      carriesWords: true,
+    });
+    expect(strikePreview(charter, 0).removedClauses).toEqual([
+      'If a reply might involve a refund, talk to the manager before promising anything.',
+    ]);
+  });
+
+  it("places Nell's rule in no clause, where a strike changes nothing", (): void => {
+    const charter = walkCharter(REDEPLOY_WALK_RULES_2026_10_05.nell);
+    expect(rulePlacement(charter, charter.constraints![0]!)).toEqual({ kind: 'in-no-clause' });
+    expect(strikePreview(charter, 0).changes).toBe(false);
+  });
+});
+
+describe("verifying a bound clause by the manager's words (the 13-R bed)", (): void => {
+  it("finds the manager's own words in every right bind of the bed's ten drafts, and in neither wrong one", (): void => {
+    const unverified = Object.entries(BED_DRAFTS_2026_10_05).flatMap(([name, charter]) =>
+      (charter.constraints ?? []).flatMap((rule) => {
+        const placement = rulePlacement(charter, rule);
+        return placement.kind === 'bound' && !placement.carriesWords
+          ? [`${name}: ${rule.quote}`]
+          : [];
+      }),
+    );
+    expect(unverified).toEqual([
+      'Moss: Never post revenue figures in a public channel.',
+      'Nell: Never share a password in a ticket comment.',
+    ]);
+  });
+
+  it("reads a paraphrase that keeps the manager's words as carrying the rule", (): void => {
+    const rook = BED_DRAFTS_2026_10_05.Rook!;
+    const rule = (rook.constraints ?? []).find((c) => c.quote === 'Never edit a booked figure.')!;
+    expect(rule.wording).toEqual([]);
+    expect(rulePlacement(rook, rule)).toEqual({
+      kind: 'bound',
+      clauses: ['Edit any booked figure.'],
+      carriesWords: true,
+    });
+  });
+});
+
+describe('a rule bound to the proposed function (13-R)', (): void => {
+  const moss = BED_DRAFTS_2026_10_05.Moss!;
+
+  it("shows a function bind as the rule's words in the function, never the whole sentence", (): void => {
+    const rule = (moss.constraints ?? []).find(
+      (c) => c.quote === 'Signing off the close stays with the controller.',
+    )!;
+    expect(rulePlacement(moss, rule)).toEqual({
+      kind: 'bound',
+      clauses: [
+        'sign-off of the close stays with the controller',
+        'Sign off the close, which stays with the controller.',
+      ],
+      carriesWords: true,
+    });
+  });
+
+  it('leaves out a function bind whose words the function does not carry, and does not verify by it', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'reporting-line',
+      quote: 'Keep the close checklist moving.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'proposedFunction', index: 0 }],
+    };
+    expect(rulePlacement(moss, rule)).toEqual({ kind: 'in-no-clause' });
+  });
+});
+
+describe('the second pass on the binding (13-R)', (): void => {
+  const base = (willDo: string[], willNotDo: string[], constraints: CharterConstraint[]) => ({
+    proposedFunction: 'Keep the helpdesk moving.',
+    proposedBoundaries: { willDo, willNotDo, escalationTriggers: [] as string[] },
+    namedSystems: [],
+    constraints,
+  });
+
+  it('does not read a clause that shares two of four words as carrying the rule', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share a password in a ticket comment.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willDo', index: 0 }],
+    };
+    expect(
+      rulePlacement(base(['Add a comment to the ticket when closing.'], [], [rule]), rule),
+    ).toMatchObject({ carriesWords: false });
+  });
+
+  it('reads "access" and "accesses" as one word', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never grant accesses.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
+    };
+    expect(rulePlacement(base([], ['Not grant access.'], [rule]), rule)).toMatchObject({
+      carriesWords: true,
+    });
+  });
+
+  it("verifies a prohibition's act only in a clause that bounds, never in a will-do", (): void => {
+    const [rule] = normaliseConstraints(
+      [
+        {
+          kind: 'reporting-line',
+          quote: 'Never contact the customer directly.',
+          wording: ['Never contact the customer directly'],
+          binds: [],
+        },
+      ],
+      {
+        ...runThrough(),
+        proposedBoundaries: {
+          willDo: ['Contact the customer directly via the manager.'],
+          willNotDo: [],
+          escalationTriggers: [],
+        },
+      },
+    );
+    expect(rule).toMatchObject({ wording: [], binds: [] });
+  });
+
+  it('refuses an edit in place that rewrites the last clause enforcing a bound boundary into another', (): void => {
+    const rule: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Stay out of Salesforce records.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
+    };
+    const before = base([], ['Not touch Salesforce records.'], [rule]);
+    expect(() => assertEditKeepsBoundaries(before, base([], ['Be nice.'], [rule]))).toThrow(
+      'edit refused: “Not touch Salesforce records.” is the only clause that enforces “Stay out of Salesforce records.”',
+    );
+    expect(() =>
+      assertEditKeepsBoundaries(before, base([], ['Never edit Salesforce records.'], [rule])),
+    ).not.toThrow();
+  });
+
+  it('previews a bound will-do taken whole and another trimmed as the strike leaves them', (): void => {
+    const charter = base(
+      ['Draft replies.', 'Take owned tickets.'],
+      [],
+      [
+        {
+          kind: 'candidate-property',
+          quote: 'Only owned tickets.',
+          wording: ['owned'],
+          origin: 'synthesis',
+          binds: [
+            { field: 'willDo', index: 0 },
+            { field: 'willDo', index: 1 },
+          ],
+        },
+      ],
+    );
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: ['Draft replies.'],
+      rewrittenClauses: [{ from: 'Take owned tickets.', to: 'Take tickets.' }],
+      changes: true,
+    });
   });
 });

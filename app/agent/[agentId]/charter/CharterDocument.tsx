@@ -5,7 +5,13 @@ import { managerOpenQuestions } from '@/agent/manager-questions';
 import { clockTime, useAgentZone } from '../../../components/time';
 import type { CharterCardBody } from './CharterCard';
 import { READER_ACTED, type CharterActors } from './charter-actors';
-import { changesTo, goalIsGap, systemsLine, type DocumentStrikes } from './charter-document';
+import {
+  changesTo,
+  goalNotGiven,
+  systemsLine,
+  type DocumentStrikes,
+  type GoalHorizon,
+} from './charter-document';
 
 /** A section of the document: a quiet heading over its prose or list. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -127,8 +133,17 @@ function ClauseList({
 }
 
 /** One of the three goals, or the gap where the manager named none. */
-function Goal({ label, text }: { label: string; text: string }) {
-  const gap = goalIsGap(text);
+function Goal({
+  label,
+  goals,
+  horizon,
+}: {
+  label: string;
+  goals: CharterCardBody['shortTermGoals'];
+  horizon: GoalHorizon;
+}) {
+  const text = goals[horizon];
+  const gap = goalNotGiven(goals, horizon);
   return (
     <div
       data-goal={gap ? 'gap' : 'goal'}
@@ -219,9 +234,9 @@ export function CharterDocument({
         </p>
       </Section>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Goal label="30 days" text={body.shortTermGoals.day30} />
-        <Goal label="60 days" text={body.shortTermGoals.day60} />
-        <Goal label="90 days" text={body.shortTermGoals.day90} />
+        <Goal label="30 days" goals={body.shortTermGoals} horizon="day30" />
+        <Goal label="60 days" goals={body.shortTermGoals} horizon="day60" />
+        <Goal label="90 days" goals={body.shortTermGoals} horizon="day90" />
       </div>
       <Section title="Will do">
         <ClauseList
