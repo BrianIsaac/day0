@@ -22,7 +22,8 @@ import type { Charter } from '../../src/agent/charter';
  *   one. Nell's and Moss's rules reach no clause and the model bound each to unrelated will-do
  *   clauses; that is the recording, kept as the case it is.
  *
- * Data, pinned byte for byte to the recordings: never reworded.
+ * Data, pinned byte for byte to the recordings: never reworded. The wave 6 draft keeps the two em
+ * dashes its model wrote (standard 15.2's exemption for text pinned to recorded runs).
  */
 
 /** The wave 6 review bed's first draft of Mira's charter (30 September). */
