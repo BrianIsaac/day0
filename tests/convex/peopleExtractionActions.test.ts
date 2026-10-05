@@ -209,4 +209,20 @@ describe('peopleExtractionActions.extractSource', (): void => {
     ).resolves.toEqual({ applied: false, people: 0 });
     expect(model.calls).toBe(0);
   });
+
+  it('schedules the lookup of every proposed person whose quote gave an address', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness);
+    model.people = [DANA];
+    await harness.action(internal.peopleExtractionActions.extractSource, { sourceId, runId });
+    const dana = (await graphRows(harness)).people[0]?._id;
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      jobs
+        .filter((job) => job.name === 'peopleLookupActions:lookUpAddresses')
+        .map((job) => job.args),
+    ).toEqual([[{ personIds: [dana] }]]);
+  });
 });

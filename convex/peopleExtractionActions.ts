@@ -175,6 +175,13 @@ async function applyPeople(
     fingerprint,
     people: [...people],
   });
+  // A proposal whose address reached the graph is looked up on the owner's cards, so the card can
+  // say whom it matches (`peopleLookupActions.lookUpAddresses`).
+  if (result.applied && result.withAddress.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.peopleLookupActions.lookUpAddresses, {
+      personIds: result.withAddress,
+    });
+  }
   return { applied: result.applied, people: people.length };
 }
 
