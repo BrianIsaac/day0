@@ -101,6 +101,10 @@ describe('the closing set of a supervised run, told how its held writes land (W1
     expect(told).not.toContain(
       'If a prerequisite failed or was held, do not emit a Done transition',
     );
+    // A write still awaiting approval is not one the manager declined (second pass).
+    expect(told).toContain(
+      'If a prerequisite failed, or the ledger shows a prerequisite write the manager did not approve or Day0 withheld, do not emit a Done transition or claim success.',
+    );
     expect(told).toContain(
       "the writes this response emits wait as one set, and the manager's approval of that set sends them all",
     );
