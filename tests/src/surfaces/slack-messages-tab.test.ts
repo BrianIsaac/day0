@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   manifestTakesMessages,
+  slackRefusalIsDefinite,
   typedCodeReachFor,
   typedCodeReaches,
   withMessagesTabOpen,
@@ -137,5 +138,28 @@ describe('an exported manifest', (): void => {
       messages_tab_enabled: true,
       messages_tab_read_only_enabled: false,
     });
+  });
+});
+
+describe('slackRefusalIsDefinite (13-FS second pass)', (): void => {
+  it('reads Slack’s own refusal of the call as definite, and a failure it may not repeat as not', (): void => {
+    for (const error of [
+      'invalid_manifest',
+      'not_allowed_token_type',
+      'app_not_found',
+      'no_permission',
+    ]) {
+      expect(slackRefusalIsDefinite(error), error).toBe(true);
+    }
+    for (const error of [
+      undefined,
+      'ratelimited',
+      'internal_error',
+      'fatal_error',
+      'service_unavailable',
+      'request_timeout',
+    ]) {
+      expect(slackRefusalIsDefinite(error), String(error)).toBe(false);
+    }
   });
 });

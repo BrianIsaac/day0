@@ -71,6 +71,29 @@ export function typedCodeReachFor(
     : { state: 'day0-opens', appName: app.appName };
 }
 
+/**
+ * Slack's error words for a failure it may not repeat: a limit, a fault on its side or a timeout.
+ * An opening that met one is asked again at the next check rather than recorded as refused.
+ */
+const TRANSIENT_SLACK_ERRORS: ReadonlySet<string> = new Set([
+  'ratelimited',
+  'internal_error',
+  'fatal_error',
+  'service_unavailable',
+  'request_timeout',
+]);
+
+/**
+ * Whether a failed opening is Slack's own refusal of the call, which the card records so its
+ * routine checks stop asking (13-FS): an error word Slack gave that is not one it may not repeat.
+ * A failure with no word (a timeout, a network fault, a page that is not JSON) is not.
+ *
+ * @param slackError - Slack's error word, where the failure carried one.
+ */
+export function slackRefusalIsDefinite(slackError: string | undefined): boolean {
+  return slackError !== undefined && !TRANSIENT_SLACK_ERRORS.has(slackError);
+}
+
 /** Whether a manager can reply with a typed code: only while the app takes messages. */
 export function typedCodeReaches(reach: TypedCodeReach): boolean {
   return reach.state === 'open';

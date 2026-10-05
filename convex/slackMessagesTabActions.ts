@@ -7,12 +7,17 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import {
   callSlack,
   provisionDependencies,
+  slackErrorOf,
   withConfigurationToken,
   type ProvisionDependencies,
 } from './slackProvisionActions';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
-import { manifestTakesMessages, withMessagesTabOpen } from '../src/surfaces/slack-messages-tab';
+import {
+  manifestTakesMessages,
+  slackRefusalIsDefinite,
+  withMessagesTabOpen,
+} from '../src/surfaces/slack-messages-tab';
 
 /*
  * Bringing an app Day0 created before this release over to taking messages (W12V-7). An app Day0
@@ -47,8 +52,9 @@ function exportedManifest(reply: Record<string, unknown>): Record<string, unknow
 /**
  * Open the messages tab of the card's app when Day0 can and it is not open yet, recording each
  * configuration-token call on the connection's ledger and, once the app takes messages, the card's
- * `open` state and `surface.app-messages-open`. A refusal of either call is recorded on the card
- * (`refused`, one more attempt), after which only a person's ask (`asked`) tries again (13-FS).
+ * `open` state and `surface.app-messages-open`. Slack's own refusal of either call is recorded on
+ * the card (`refused`, one more attempt), after which only a person's ask (`asked`) tries again; a
+ * limit, a fault on Slack's side or a timeout is not, so the next check asks again (13-FS).
  *
  * @param surfaceId - The chat card whose app is brought over.
  * @param options.asked - The manager pressed Check the connection, so a refused opening is tried
@@ -90,8 +96,14 @@ export async function runOpenMessagesTab(
       reply = await callSlack(dependencies.fetch, method, { token, form });
     } catch (error: unknown) {
       const reason = safeFailureMessage(error, token, `Slack ${method} failed.`);
-      await ledger(method, reason);
-      await ctx.runMutation(internal.slackMessagesTab.recordRefused, { surfaceId, appId, reason });
+      // Both writes are made whatever the other does: the ledger keeps every call, and only Slack's
+      // own refusal is recorded on the card, so a limit or a fault is asked again next time.
+      await Promise.all([
+        ledger(method, reason),
+        slackRefusalIsDefinite(slackErrorOf(error))
+          ? ctx.runMutation(internal.slackMessagesTab.recordRefused, { surfaceId, appId, reason })
+          : Promise.resolve(null),
+      ]);
       throw error;
     }
     await ledger(method, undefined);

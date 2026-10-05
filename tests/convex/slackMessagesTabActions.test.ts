@@ -330,6 +330,24 @@ describe('an app Day0 created before this release', (): void => {
     });
   });
 
+  it('records no refusal for a failure Slack may not repeat, so the next check asks again (13-FS second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const surfaceId = await employee(harness, 'Iris');
+    const appId = await connect(harness, surfaceId);
+    await asCreatedBeforeThisRelease(harness, surfaceId, appId);
+    for (const transient of ['ratelimited', 'internal_error', 'service_unavailable']) {
+      slack.refusals.set('apps.manifest.export', transient);
+      await harness.action(internal.surfaceActions.probeInternal, { surfaceId, routine: true });
+      expect(await messagesTabOf(harness, surfaceId), transient).toBeUndefined();
+    }
+    expect(callsOf(slack, 'apps.manifest.export')).toHaveLength(3);
+    expect(await reach(harness, surfaceId)).toEqual({
+      state: 'day0-opens',
+      appName: 'Iris (Day0)',
+    });
+  });
+
   it('asks Slack again after a refusal only when a person presses Check the connection', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await landSlack(harness);
