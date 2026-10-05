@@ -377,6 +377,43 @@ describe('where the Featherless key comes from', (): void => {
 });
 
 describe('the order the real-mode helpers run in', (): void => {
+  it('restarts the Slack socket bridge after the push over an existing install, so it runs this checkout’s bridge (13-FS)', (): void => {
+    // The 13-FS bed: `./setup.sh upgrade` from v0.16.0 left the bridge process of v0.16.0 running
+    // (its container's start time unchanged), which reports no heartbeat, so every card read the
+    // buttons as off until something restarted it.
+    for (const input of [
+      { mode: 'real' as const, existing: true, upgrade: true },
+      { mode: 'real' as const, existing: true },
+    ]) {
+      const steps = sequenceSteps('featherless', input);
+      expect(steps.indexOf('slack-socket:restart')).toBe(steps.indexOf('convex:restart') + 1);
+    }
+    // A fresh install starts the bridge from this checkout already; mock mode runs none.
+    expect(sequenceSteps('featherless', { mode: 'real' })).not.toContain('slack-socket:restart');
+    expect(sequenceSteps('key', { existing: true })).not.toContain('slack-socket:restart');
+    expect(
+      stepCommands('slack-socket:restart', {
+        mode: 'real',
+        route: 'featherless',
+        profiles: [],
+        project: 'p',
+      }),
+    ).toEqual([
+      {
+        command: 'pnpm',
+        args: [
+          'exec',
+          'tsx',
+          'scripts/compose.ts',
+          '--profile',
+          'slack-socket',
+          'restart',
+          'slack-socket',
+        ],
+      },
+    ]);
+  });
+
   it('pauses the scheduled jobs of an upgrade once its release is checked, before the push, and releases them after the check', (): void => {
     const steps = sequenceSteps('featherless', { mode: 'real', existing: true, upgrade: true });
     expect(steps.slice(steps.indexOf('admin-key'), steps.indexOf('admin-key') + 4)).toEqual([
