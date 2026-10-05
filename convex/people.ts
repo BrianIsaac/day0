@@ -1,6 +1,12 @@
 import { ConvexError, v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import {
   assertOwnsAgent,
   employeeOwnerScope,
@@ -18,6 +24,7 @@ import {
   edgeInForce,
   resolveMatches,
   scopeCovers,
+  type PersonLookup,
   type PersonResolution,
 } from '../src/people/resolution';
 import {
@@ -595,15 +602,6 @@ const resolutionValidator = v.union(
   v.object({ kind: v.literal('ambiguous'), candidates: v.number() }),
   v.object({ kind: v.literal('unknown') }),
 );
-
-/** What a provider printed for a person: its id there, its display name, or both. */
-export interface PersonLookup {
-  readonly provider: IdentityProvider;
-  readonly externalId?: string;
-  readonly displayName?: string;
-  /** The vendor's workspace the id is unique in, where the caller knows it. */
-  readonly workspaceId?: string;
-}
 
 /** The confirmed people a set of identities names, by id. */
 async function activePeopleOf(
@@ -1220,5 +1218,86 @@ export const forEmployee = query({
   handler: async (ctx, args): Promise<EmployeePeople> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     return await employeePeople(ctx, agent, Date.now());
+  },
+});
+
+/** The validator of one lookup intake asks the graph. */
+const lookupValidator = v.object({
+  provider: identityProviderValidator,
+  externalId: v.optional(v.string()),
+  displayName: v.optional(v.string()),
+  workspaceId: v.optional(v.string()),
+});
+
+/** The first answer of a list of lookups that names somebody, else unknown. */
+async function resolveFirst(
+  ctx: QueryCtx,
+  scope: string,
+  lookups: readonly PersonLookup[],
+): Promise<PersonResolution<Id<'people'>>> {
+  for (const lookup of lookups) {
+    const answer = await resolvePerson(ctx, scope, lookup);
+    if (answer.kind !== 'unknown') return answer;
+  }
+  return { kind: 'unknown' };
+}
+
+/** Whether two resolutions say the same thing. */
+function sameResolution(
+  left: PersonResolution<Id<'people'>> | undefined,
+  right: PersonResolution<Id<'people'>>,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Internal, called by intake's seed once the listed item's row lands (`convex/intakeActions.ts`):
+ * whom the item's requester and owner are in the owner's graph ({@link resolvePerson}, a lookup
+ * and never an insert), written as `requesterPerson` and `ownerPerson` beside the strings, never
+ * in place of them. Fenced as the seed is: nothing once a handover moved the employee to another
+ * owner since the sweep read it. Writes only a field whose answer changed.
+ *
+ * @returns Whether it wrote the row.
+ */
+export const resolveItemPeople = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    sourceSystem: v.string(),
+    externalId: v.string(),
+    startedUnder: v.union(v.string(), v.null()),
+    requester: v.optional(v.array(lookupValidator)),
+    owner: v.optional(v.array(lookupValidator)),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const agent = await ctx.db.get(args.agentId);
+    if (agent === null || (agent.userId ?? null) !== args.startedUnder) return false;
+    const scope = employeeOwnerScope(agent);
+    if (scope === undefined) return false;
+    const item = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_extId', (q) =>
+        q
+          .eq('agentId', agent._id)
+          .eq('sourceSystem', args.sourceSystem)
+          .eq('externalId', args.externalId),
+      )
+      .first();
+    if (item === null) return false;
+    const requesterPerson =
+      args.requester === undefined ? undefined : await resolveFirst(ctx, scope, args.requester);
+    const ownerPerson =
+      args.owner === undefined ? undefined : await resolveFirst(ctx, scope, args.owner);
+    const changes = {
+      ...(requesterPerson === undefined || sameResolution(item.requesterPerson, requesterPerson)
+        ? {}
+        : { requesterPerson }),
+      ...(ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
+        ? {}
+        : { ownerPerson }),
+    };
+    if (Object.keys(changes).length === 0) return false;
+    await ctx.db.patch(item._id, changes);
+    return true;
   },
 });

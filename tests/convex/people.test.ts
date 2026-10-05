@@ -2,7 +2,7 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -690,5 +690,98 @@ describe('people graph readers: the audit six queries', (): void => {
         verified: true,
       },
     ]);
+  });
+});
+
+describe('people.resolveItemPeople: intake writes whom the strings are, beside them', (): void => {
+  /** A listed Linear item of an employee, with the strings intake read. */
+  async function listedItem(harness: Harness, agentId: Id<'agents'>): Promise<Id<'workItems'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'FIN-1',
+          title: 'Post the close note',
+          contentSummary: 'Post the close note.',
+          contentRefs: [],
+          requesterLabel: 'Rowan Hale',
+          requester: 'Rowan Hale',
+          owner: 'Dana Okafor',
+          state: 'discovered',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+  }
+
+  it('resolves the owner by a recorded Linear id and keeps both strings as intake read them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const itemId = await listedItem(harness, agentId);
+    const dana = await seedPerson(harness, 'Dana Okafor');
+    await seedIdentity(harness, dana, {
+      provider: 'linear',
+      externalId: 'lin-dana',
+      displayName: 'Dana Okafor',
+    });
+    expect(
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'FIN-1',
+        startedUnder: 'owner',
+        requester: [{ provider: 'linear', externalId: 'lin-rowan', displayName: 'Rowan Hale' }],
+        owner: [{ provider: 'linear', externalId: 'lin-dana', displayName: 'Dana Okafor' }],
+      }),
+    ).toBe(true);
+    const item = await harness.run(async (ctx) => await ctx.db.get(itemId));
+    expect(item).toMatchObject({
+      requester: 'Rowan Hale',
+      owner: 'Dana Okafor',
+      requesterLabel: 'Rowan Hale',
+      requesterPerson: { kind: 'unknown' },
+      ownerPerson: { kind: 'person', personId: dana },
+    });
+  });
+
+  it('falls back to the address a GraphQL read gave when no Linear identity is recorded', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const itemId = await listedItem(harness, agentId);
+    const dana = await seedPerson(harness, 'Dana Okafor', { primaryEmail: 'dana@kestrel.test' });
+    await harness.mutation(internal.people.resolveItemPeople, {
+      agentId,
+      sourceSystem: 'linear',
+      externalId: 'FIN-1',
+      startedUnder: 'owner',
+      owner: [
+        { provider: 'linear', externalId: 'lin-dana' },
+        { provider: 'email', externalId: 'Dana@Kestrel.test' },
+      ],
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(itemId)))?.ownerPerson).toEqual({
+      kind: 'person',
+      personId: dana,
+    });
+  });
+
+  it('writes nothing once a handover moved the employee since the sweep read it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const itemId = await listedItem(harness, agentId);
+    expect(
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'FIN-1',
+        startedUnder: 'someone-else',
+        owner: [{ provider: 'linear', externalId: 'lin-dana' }],
+      }),
+    ).toBe(false);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(itemId)))?.ownerPerson,
+    ).toBeUndefined();
   });
 });

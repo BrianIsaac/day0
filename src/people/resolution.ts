@@ -1,4 +1,4 @@
-import { personNameKey, type RelationshipStatus } from './vocabulary';
+import { personNameKey, type IdentityProvider, type RelationshipStatus } from './vocabulary';
 
 /*
  * How the people graph's readers answer (wave 13, 13-P; the wave file's section 5.2): whom a set of
@@ -14,6 +14,25 @@ export type PersonResolution<PersonId extends string = string> =
   | { readonly kind: 'person'; readonly personId: PersonId }
   | { readonly kind: 'ambiguous'; readonly candidates: number }
   | { readonly kind: 'unknown' };
+
+/** What a provider printed for a person: its id there, its display name, or both. */
+export interface PersonLookup {
+  readonly provider: IdentityProvider;
+  readonly externalId?: string;
+  readonly displayName?: string;
+  /** The vendor's workspace the id is unique in, where the caller knows it. */
+  readonly workspaceId?: string;
+}
+
+/**
+ * Whom intake asks the graph about for one listed item: the requester and the owner, each as the
+ * lookups to try in order (a Linear id and name, then an address). Read only after the item's
+ * row lands, and written beside its strings, never in place of them.
+ */
+export interface ItemPeopleLookups {
+  readonly requester?: readonly PersonLookup[];
+  readonly owner?: readonly PersonLookup[];
+}
 
 /**
  * The answer a set of matches gives: the person when every match names the same one, ambiguous
