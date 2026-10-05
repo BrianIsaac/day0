@@ -24,7 +24,7 @@ export interface PlanApproval {
  *   decision: The answers and note as the form collected them.
  *
  * Returns:
- *   The arguments for `work.approvePlan`; nothing optional is sent empty.
+ *   The arguments for `planApproval.approvePlan`; nothing optional is sent empty.
  */
 export function planApprovalRequest(
   workItemId: Id<'workItems'>,

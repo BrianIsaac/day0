@@ -22,7 +22,6 @@ import {
   stoppedRowNeedsManager,
   waitingStamp,
 } from '../src/work/needs-manager';
-import { answerQuestionInTransaction } from './managerQuestions';
 import { firstTicketRejection, keepCorrectionInTransaction } from './corrections';
 import {
   APPLY_RECOVERY_MS,
@@ -4948,63 +4947,15 @@ function decidedPatch(
 }
 
 /** One answer the manager gave with plan approval, as the row carries it. */
-type ManagerAnswerRow = NonNullable<Doc<'workItems'>['managerAnswers']>[number];
+export type ManagerAnswerRow = NonNullable<Doc<'workItems'>['managerAnswers']>[number];
 
 /**
- * Record the manager's answers given with the approval, in the same
- * transaction as the approval.
- *
- * An answer to one of the charter's open questions goes through the
- * question's own record, which amends the charter when the question is
- * still open there; the note answers the planner's own risk notes and goes
- * nowhere but this run. Every answer reaches the executor as approved
- * evidence. A question asked on another work item is refused: the manager
- * answers what this plan raised.
- *
- * Args:
- *   ctx: Mutation context.
- *   row: The plan-pending work item.
- *   answers: The answers to the charter's questions asked on this item.
- *   note: The manager's answer to the planner's note, if any.
- *
- * Returns:
- *   The rows to keep on the work item, empty when nothing was answered.
+ * Approve a pending plan in the caller's transaction, by the card or in the manager channel, with
+ * the answers the approval gave, and schedule its run. Internal to the backend: `approvePlan`
+ * (`convex/planApproval.ts`) and the channel's decisions call it. Writes the row's state, its
+ * answers and decision, the request's close and `work.plan-approved`.
  */
-async function answerPlanQuestions(
-  ctx: MutationCtx,
-  row: Doc<'workItems'>,
-  answers: ReadonlyArray<{ questionId: Id<'managerQuestions'>; text: string }>,
-  note: string | undefined,
-): Promise<ManagerAnswerRow[]> {
-  const now = Date.now();
-  const kept: ManagerAnswerRow[] = [];
-  for (const entry of answers) {
-    const record = await ctx.db.get(entry.questionId);
-    if (!record || record.workItemId !== row._id) {
-      throw new Error('that question was not asked on this work item');
-    }
-    await answerQuestionInTransaction(ctx, record, entry.text, 'plan-approval');
-    kept.push({
-      question: record.question,
-      answer: entry.text.replace(/\s+/g, ' ').trim(),
-      answeredAt: now,
-      questionId: record._id,
-    });
-  }
-  const trimmedNote = note?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
-  if (trimmedNote) {
-    const plan = row.plan as { riskNotes?: string } | undefined;
-    const riskNotes = plan?.riskNotes?.trim();
-    kept.push({
-      question: riskNotes ? riskNotes : "the planner's note",
-      answer: trimmedNote,
-      answeredAt: now,
-    });
-  }
-  return kept;
-}
-
-async function approvePlanInTransaction(
+export async function approvePlanInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   via: DecisionVia,
@@ -5041,46 +4992,6 @@ async function approvePlanInTransaction(
   // longer has to be open for it.
   await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
-
-/** The longest manual estimate the plan card takes: a working month. */
-const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
-
-/** Public, owner-guarded: approves an item's plan, answering any charter question the card asked, and schedules the run. */
-export const approvePlan = mutation({
-  args: {
-    workItemId: v.id('workItems'),
-    /** Answers to the charter's open questions asked on this plan; each amends the charter. */
-    answers: v.optional(
-      v.array(v.object({ questionId: v.id('managerQuestions'), text: v.string() })),
-    ),
-    /** The manager's answer to the planner's own note, for this run. */
-    note: v.optional(v.string()),
-    /** N11: "this would have taken me about N minutes", optional; hours saved sums it. */
-    manualEstimateMinutes: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'plan-pending') {
-      throw new Error(`workItem state is ${row.state}; expected plan-pending`);
-    }
-    const estimate = args.manualEstimateMinutes;
-    if (
-      estimate !== undefined &&
-      (!Number.isInteger(estimate) || estimate < 1 || estimate > MANUAL_ESTIMATE_MAX_MINUTES)
-    ) {
-      throw new ConvexError(
-        `The estimate is a whole number of minutes from 1 to ${MANUAL_ESTIMATE_MAX_MINUTES}.`,
-      );
-    }
-    if (estimate !== undefined) await ctx.db.patch(row._id, { manualEstimateMinutes: estimate });
-    // Approve-with-answer is one decision: the answers land, the charter is
-    // amended where a question is still open there, and the plan is approved
-    // in the same transaction, or none of it happens.
-    const answers = await answerPlanQuestions(ctx, row, args.answers ?? [], args.note);
-    await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
-    return { ok: true };
-  },
-});
 
 /**
  * Resend, from the card, the decision request it shows as not delivered.

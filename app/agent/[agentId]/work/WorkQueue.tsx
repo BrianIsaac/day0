@@ -275,7 +275,7 @@ export function WorkQueue({
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
   const executePlan = useAction(api.workActions.executeApprovedPlan);
-  const approvePlan = useMutation(api.work.approvePlan);
+  const approvePlan = useMutation(api.planApproval.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
   const retryFailed = useMutation(api.workRuns.retryFailed);
   const reconcileFailed = useMutation(api.workRuns.reconcileFailed);

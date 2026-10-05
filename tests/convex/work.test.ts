@@ -1255,7 +1255,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
     ).rejects.toThrow('delivered');
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     expect(
       await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
         workItemId,
@@ -1356,7 +1356,7 @@ describe('manager channel request claims', (): void => {
       noticeOwed: false,
     });
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     // Re-pinned for M10 (12-M): the decided request's thread is read for the notice's hour too.
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
       requests: [],
@@ -1943,7 +1943,7 @@ describe('single-use manager decisions', (): void => {
       text: 'Approval gh6npq received. I’m starting the approved plan now.',
     });
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId }),
     ).rejects.toThrow('expected plan-pending');
   });
 
@@ -2473,7 +2473,7 @@ describe('approving a plan with answers', (): void => {
     expect(question.question).toBe('Who owns the Looker pipeline tile.');
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, {
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [
           {
@@ -2535,7 +2535,7 @@ describe('approving a plan with answers', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, question } = await askedAtPlan(harness);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId }),
     ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
@@ -2581,19 +2581,19 @@ describe('approving a plan with answers', (): void => {
     });
     const owner = harness.withIdentity(OWNER);
     await expect(
-      owner.mutation(api.work.approvePlan, {
+      owner.mutation(api.planApproval.approvePlan, {
         workItemId: other,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
     ).rejects.toThrow('not asked on this work item');
     await expect(
-      owner.mutation(api.work.approvePlan, {
+      owner.mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [{ questionId: question._id, text: '   ' }],
       }),
     ).rejects.toThrow('cannot be empty');
     await expect(
-      harness.withIdentity(managerIdentity('stranger')).mutation(api.work.approvePlan, {
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
@@ -6793,10 +6793,10 @@ describe('the manager’s estimate at plan approval (N11)', (): void => {
     const { workItemId } = await seed(harness, 'plan-pending');
     const owner = harness.withIdentity(OWNER);
     await expect(
-      owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
+      owner.mutation(api.planApproval.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
     ).rejects.toThrow('whole number of minutes');
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
-    await owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: 45 });
+    await owner.mutation(api.planApproval.approvePlan, { workItemId, manualEstimateMinutes: 45 });
     expect(await readItem(harness, workItemId)).toMatchObject({
       state: 'plan-approved',
       manualEstimateMinutes: 45,
@@ -6836,7 +6836,7 @@ describe('the resend refusals the card shows (wave 3 review m9)', (): void => {
       'The request was delivered; the manager holds its code.',
     );
 
-    await owner.mutation(api.work.approvePlan, { workItemId });
+    await owner.mutation(api.planApproval.approvePlan, { workItemId });
     const decided = await refusal();
     expect(decided).toBeInstanceOf(ConvexError);
     expect((decided as ConvexError<string>).data).toBe(

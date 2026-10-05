@@ -404,7 +404,9 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect(scopePrompts.length).toBeGreaterThan(0);
     for (const prompt of scopePrompts) expect(prompt).not.toContain(NOTE);
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: ticketTwo });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: ticketTwo });
     await drain(harness);
     const [executorPrompt] = promptsOf(
       (name) => name.includes('-log-2-') && name.endsWith('-initial'),
@@ -912,7 +914,7 @@ describe('retrying a cancelled plan', (): void => {
 
     // The new plan goes back to the manager; once approved, its run reads the
     // reason once, as the item's own feedback, not again as a correction.
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await drain(harness);
     const [executorPrompt] = promptsOf(
       (name) => name.includes('-log-5-') && name.endsWith('-initial'),

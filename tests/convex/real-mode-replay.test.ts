@@ -819,7 +819,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
 
     // The manager approves the plan; phase one holds the whole tile sequence
     // behind the read.
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const executorPrompt = recorded.model.find((call) => call.agent.endsWith('-initial'));
     expect(executorPrompt?.user).toContain(

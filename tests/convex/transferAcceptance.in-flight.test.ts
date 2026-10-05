@@ -941,7 +941,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     ]);
     await handover.harness
       .withIdentity(COLLEAGUE)
-      .mutation(api.work.approvePlan, { workItemId: approved });
+      .mutation(api.planApproval.approvePlan, { workItemId: approved });
     expect(await read(handover.harness, approved)).toMatchObject({ state: 'plan-approved' });
   });
 
