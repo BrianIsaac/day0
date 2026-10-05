@@ -472,7 +472,7 @@ describe('a note on item one changes the plan of item two', (): void => {
         }),
     );
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { ...ticketOnePlan, appliedCorrections: [correction._id] },
     });
@@ -503,7 +503,7 @@ describe('a note on item one changes the plan of item two', (): void => {
         }),
     );
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: ticketOnePlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: ticketOnePlan });
 
     expect((await readItem(harness, workItemId)).plan).toEqual(ticketOnePlan);
     expect(await eventsOf(harness, 'work.corrections-applied')).toEqual([]);

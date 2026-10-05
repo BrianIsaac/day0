@@ -771,7 +771,7 @@ describe('the server drives the work loop in real mode', (): void => {
       workItemId,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
     });
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: {
         summary: 'x',

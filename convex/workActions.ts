@@ -791,7 +791,7 @@ async function draftPlanHandler(
     ),
   );
   if (plan === undefined) return { ok: false, reason: 'the plan draft failed on this item' };
-  const stored = await ctx.runMutation(internal.work.setPlan, {
+  const stored = await ctx.runMutation(internal.planApproval.setPlan, {
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),

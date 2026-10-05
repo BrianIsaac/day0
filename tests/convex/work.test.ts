@@ -648,7 +648,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     const { agentId, workItemId } = await seed(harness, 'claimed');
     const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
     expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
       approved: false,
     });
@@ -667,7 +667,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     });
     const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
     expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
       approved: true,
     });
@@ -694,7 +694,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
       await harness.run(async (ctx) => await ctx.db.patch(workItemId, waiver));
       const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
       expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
         approved: false,
       });
@@ -743,7 +743,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
         ...failedOpen,
       };
 
-      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
       expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
         approved: false,
       });
@@ -768,7 +768,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'claimed', undefined, { autonomousActions: true });
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: {
         summary: 'Check the issue, then update it.',
@@ -794,7 +794,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'claimed');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Use the current mode.', steps: ['decide'] },
     });
@@ -853,7 +853,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     );
     const rejected = await rejectedElsewhere(harness, 'owner');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
     });
@@ -890,7 +890,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     );
     await rejectedElsewhere(harness, 'someone-else');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
     });
@@ -2454,7 +2454,7 @@ describe('approving a plan with answers', (): void => {
           createdAt: 2,
         }),
     );
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [question] = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -2571,7 +2571,7 @@ describe('approving a plan with answers', (): void => {
           createdAt: 1,
         }),
     );
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId: other,
       plan: {
         summary: 'Merge the accounts.',
@@ -5539,7 +5539,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     });
     // The plan the in-flight draft finishes is not stored, so nothing reaches an apply.
     await expect(
-      harness.mutation(internal.work.setPlan, {
+      harness.mutation(internal.planApproval.setPlan, {
         workItemId,
         plan: { summary: 'Reconcile it.', steps: ['reconcile'] },
       }),
@@ -6354,7 +6354,7 @@ describe('a plan drafted while its system was down, when the system is back firs
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'claimed');
     // Linear was down when the draft read it and connected before the plan was stored.
-    const stored = await harness.mutation(internal.work.setPlan, {
+    const stored = await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Close the month.', steps: [] },
       draftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
