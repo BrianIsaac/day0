@@ -300,13 +300,18 @@ const HEARTBEAT_PAGE = 100;
  * `POST /slack-socket/heartbeat` with `{ apps: [{ surfaceId, appId, live, liveSince?, failure? }] }`:
  * the apps the bridge holds and whether each has a live connection (wave 13, 13-FS; D-6 (b)),
  * kept one row per card (`socketHeartbeats`). Secret required and read before the body; 400 for a
- * body that is not a report. Answers how many rows were written.
+ * body that is not a report, or one naming more apps than the bridge's own list holds. Answers how
+ * many rows were written.
  */
 export const bridgeHeartbeat = httpAction(async (ctx, request) => {
   const refused = await refusal(request);
   if (refused !== undefined) return refused;
   const reports = parseHeartbeat(await bodyOf(request));
   if (reports === undefined) return json({ error: 'not a heartbeat' }, 400);
+  // No more apps than the list the bridge reads can name, so one report is bounded.
+  if (reports.length > BRIDGE_PAGE * BRIDGE_PAGES) {
+    return json({ error: 'too many apps in one report' }, 400);
+  }
   let written = 0;
   for (let start = 0; start < reports.length; start += HEARTBEAT_PAGE) {
     const page = await ctx.runMutation(internal.socketHeartbeats.recordHeartbeats, {

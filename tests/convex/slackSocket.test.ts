@@ -593,6 +593,18 @@ describe('the bridge’s heartbeat (wave 13, 13-FS; D-6 (b), W12-R16)', (): void
     ).toEqual({ written: 0 });
   });
 
+  it('refuses a report naming more apps than the bridge’s own list can hold (13-FS second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const apps = Array.from({ length: 40_001 }, (_, index) => ({
+      surfaceId: `s${index}`,
+      appId: 'A0OPS',
+      live: true,
+    }));
+    const response = await heartbeat(harness, { apps });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'too many apps in one report' });
+  });
+
   it('sends a request made while the bridge reports nothing with no buttons, saying how to decide', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const seeded = await seedButtonedRequest(harness, { bridge: 'silent' });
