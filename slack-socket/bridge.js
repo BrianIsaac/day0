@@ -116,6 +116,10 @@ export function createBridge(options) {
   /** A report is on the wire, and whether another was asked for meanwhile. */
   let reporting = false;
   let reportAgain = false;
+  /** The report loop on the wire, which a farewell waits for so it is the last row written. */
+  let reportLoop = Promise.resolve();
+  /** Whether the last report named any app, so a bridge holding none reports nothing again. */
+  let reportedApps = false;
   /** Whether the last report failed, so a backend that takes none is said once, not every sync. */
   let reportFailing = false;
 
@@ -174,21 +178,28 @@ export function createBridge(options) {
   }
 
   /** Report now, or once more after the report on the wire, so one change is never lost. */
-  async function reportSoon() {
+  function reportSoon() {
     if (reporting) {
       reportAgain = true;
-      return;
+      return reportLoop;
     }
     reporting = true;
-    try {
-      do {
-        reportAgain = false;
-        if (stopped) return;
-        await report(heartbeat());
-      } while (reportAgain);
-    } finally {
-      reporting = false;
-    }
+    reportLoop = (async () => {
+      try {
+        do {
+          reportAgain = false;
+          if (stopped) return;
+          const body = heartbeat();
+          // Nothing held and nothing reported last: no row could change.
+          if (body.apps.length === 0 && !reportedApps) continue;
+          reportedApps = body.apps.length > 0;
+          await report(body);
+        } while (reportAgain);
+      } finally {
+        reporting = false;
+      }
+    })();
+    return reportLoop;
   }
 
   async function sync() {
@@ -470,8 +481,14 @@ export function createBridge(options) {
           });
           return;
         }
-        // The backend refused it outright: offering it again gets the same answer.
-        if (answer.status >= 400 && answer.status < 500) {
+        // The backend refused it outright: offering it again gets the same answer. A 408 or a 429
+        // is the backend busy, which a later offer may get past.
+        if (
+          answer.status >= 400 &&
+          answer.status < 500 &&
+          answer.status !== 408 &&
+          answer.status !== 429
+        ) {
           await giveUp(state, payload, attempt, `the backend refused it (${answer.status})`, {
             refused: true,
           });
@@ -506,8 +523,8 @@ export function createBridge(options) {
   }
 
   /**
-   * Post a notice to the press's `response_url`, only where it is Slack's: https on a host under
-   * slack.com, or the host the app's connection came from (a bed's fake Slack).
+   * Post a notice to the press's `response_url`, only where it is Slack's (`hooks.slack.com` over
+   * https), or the host the app's connection came from (a bed's fake Slack); never a redirect.
    *
    * @returns Whether Slack took the message.
    */
@@ -523,6 +540,7 @@ export function createBridge(options) {
           replace_original: false,
           text,
         }),
+        redirect: 'error',
         signal: AbortSignal.timeout(PRESS_NOTICE_TIMEOUT_MS),
       });
       return response.ok;
@@ -560,6 +578,8 @@ export function createBridge(options) {
         close(state);
       }
       apps.clear();
+      // A live report still on the wire would land after the farewell and read the apps live again.
+      await reportLoop;
       if (farewell.apps.length > 0) await report(farewell, FAREWELL_TIMEOUT_MS);
     },
     /** What the health check reports: the last list read and each app's connection. */
@@ -580,8 +600,8 @@ export function createBridge(options) {
 }
 
 /**
- * A press's `response_url`, when it is one the bridge may post to: https on a host under
- * `slack.com`, or the host the app's own connection came from; undefined otherwise.
+ * A press's `response_url`, when it is one the bridge may post to: Slack's own hook host over
+ * https on its default port, or the host the app's own connection came from; undefined otherwise.
  *
  * @param {Record<string, unknown>} payload The press, as Slack sent it.
  * @param {string | undefined} slackHost The host of the app's connection URL.
@@ -596,7 +616,7 @@ export function responseUrlOf(payload, slackHost) {
     // Not a URL: nothing to post to.
     return undefined;
   }
-  const slack = url.protocol === 'https:' && url.hostname.endsWith('.slack.com');
+  const slack = url.protocol === 'https:' && url.hostname === 'hooks.slack.com' && url.port === '';
   return slack || (slackHost !== undefined && url.host === slackHost) ? url : undefined;
 }
 

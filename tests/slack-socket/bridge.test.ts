@@ -21,6 +21,8 @@ interface Backend {
   readonly heartbeats: Array<{ apps: Array<Record<string, unknown>> }>;
   /** What the heartbeat route answers: 404 is a backend from before 0.17.0. */
   heartbeatStatus: number;
+  /** How long the heartbeat route takes to answer a report naming a live app. */
+  liveHeartbeatDelayMs: number;
   /** How many press calls answer 503 before one is taken. */
   failPresses: number;
   /** What a press call answers instead of taking it (a 4xx), when set. */
@@ -56,6 +58,7 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
     opened: 0,
     heartbeats: [] as Backend['heartbeats'],
     heartbeatStatus: 200,
+    liveHeartbeatDelayMs: 0,
   };
   const server: Server = createServer((request, response): void => {
     void (async (): Promise<void> => {
@@ -84,7 +87,12 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
       }
       if (request.url === '/slack-socket/heartbeat') {
         if (state.heartbeatStatus !== 200) return reply(state.heartbeatStatus, {});
-        state.heartbeats.push(body as Backend['heartbeats'][number]);
+        const report = body as Backend['heartbeats'][number];
+        if (report.apps.some((app) => app.live === true) && state.liveHeartbeatDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, state.liveHeartbeatDelayMs));
+        }
+        // Kept in the order the backend finishes them, as its rows would be written.
+        state.heartbeats.push(report);
         return reply(200, { written: 1 });
       }
       if (request.url === '/slack-socket/press') {
@@ -478,6 +486,21 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     );
   });
 
+  it('offers a press again when the backend answers 429 or 408, which a later offer may get past (13-FS second pass)', async (): Promise<void> => {
+    backend.refusePresses = 429;
+    const running = start({ pressRetryWindowMs: 200 });
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    expect(await postAndPress('approve')).toMatchObject({ delivered: true, acknowledged: true });
+    await until(async () => (await proof()).responses.length === 1, 'the notice');
+    expect((await proof()).responses[0]?.text).toBe(
+      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.',
+    );
+    expect(
+      logged.filter((line) => line.message === 'press not handed over').length,
+    ).toBeGreaterThan(0);
+  });
+
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {
     const running = start({ maxConnectionMs: 200 });
     await running.start();
@@ -545,6 +568,26 @@ describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): v
     expect(lastReport()).toMatchObject({ surfaceId: 'surface-mateo', live: false });
   });
 
+  it('sends its farewell only after a report already on the wire, so the last row written is down (13-FS second pass)', async (): Promise<void> => {
+    backend.liveHeartbeatDelayMs = 300;
+    const running = start();
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    // The greeting's live report is now on the wire, slower to answer than the farewell.
+    await running.stop();
+    bridge = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(lastReport()).toMatchObject({ surfaceId: 'surface-mateo', live: false });
+  });
+
+  it('reports nothing while it holds no app, rather than an empty list every sync (13-FS second pass)', async (): Promise<void> => {
+    backend.apps = [];
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(backend.heartbeats).toEqual([]);
+  });
+
   it('says once, not at every sync, that a backend from before 0.17.0 takes no heartbeat', async (): Promise<void> => {
     backend.heartbeatStatus = 404;
     const running = start({ syncIntervalMs: 50 });
@@ -566,6 +609,9 @@ describe('responseUrlOf (W12-R22)', (): void => {
     expect(at('https://hooks.slack.com/actions/T0/1/abc')).toBe(
       'https://hooks.slack.com/actions/T0/1/abc',
     );
+    // Only Slack's own hook host, on its default port (13-FS second pass).
+    expect(at('https://example.slack.com/actions/T0/1/abc')).toBeUndefined();
+    expect(at('https://hooks.slack.com:8443/actions/T0/1/abc')).toBeUndefined();
     expect(at('http://hooks.slack.com/actions/T0/1/abc')).toBeUndefined();
     expect(at('https://hooks.slack.com.example/actions')).toBeUndefined();
     expect(at('https://example.com/actions')).toBeUndefined();

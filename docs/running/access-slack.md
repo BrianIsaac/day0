@@ -129,8 +129,8 @@ that issues an app-level token, so a person generates one per app:
      nothing) the card says "Buttons: off until the Slack socket service
      connects" and each new request goes without buttons, decided by its typed
      code or in Day0: at once when the component stops cleanly, and within three
-     minutes of its last report when it dies unseen. `./setup.sh upgrade` restarts the component, so it runs the new
-     release's code at once.
+     minutes of its last report when it dies unseen. `./setup.sh upgrade`
+     restarts the component, so it runs the new release's code at once.
    - A press the component took from Slack and could not hand to Day0 is
      answered to the person who pressed, and only to them: "Day0 did not
      receive this press, so nothing was decided. Press it again in a minute, or
