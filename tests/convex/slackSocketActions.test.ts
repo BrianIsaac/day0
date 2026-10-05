@@ -222,7 +222,7 @@ describe('landing an employee app’s app-level token (wave 12, 12-M; RM3 (a))',
         .withIdentity(managerIdentity())
         .action(api.slackSocketActions.landAppLevelToken, { surfaceId, token: TOKEN }),
     ).rejects.toThrow(
-      "This card's own Slack app is not installed again: IT revoked the organisation's connection it was created with, so it takes no app-level token.",
+      "Day0 takes no app-level token for this card's own Slack app: IT revoked the organisation's connection that created it, so the app is not installed again.",
     );
     expect(calls).toEqual([]);
   });

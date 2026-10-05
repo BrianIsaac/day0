@@ -660,7 +660,7 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
     expect(checked).toEqual({
       verdict: 'skipped',
       reason:
-        "This card's own app was created through the organisation's connection IT revoked and is not installed again, so there is nothing to check; IT's reason stays on the card.",
+        "IT revoked the organisation's connection that created this card's own app, and Day0 does not install that app again, so there is nothing to check. IT's reason stays on the card.",
     });
     expect(await reasonOf()).toBe('The re-walk ends the bed connection.');
     restoreSurfaceMode();
@@ -710,7 +710,7 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
     ).resolves.toEqual({
       verdict: 'skipped',
       reason:
-        "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again; IT's reason stays on the card.",
+        "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again. IT's reason stays on the card.",
     });
     expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.reason).toBe('moving');
     restoreSurfaceMode();

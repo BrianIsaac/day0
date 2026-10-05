@@ -30,4 +30,4 @@ export function keptAppNotReinstalled(card: KeptAppCard, creatorRevoked: boolean
 
 /** Why a card IT's revoke ended takes no app-level token (13-FS, W12X-4). */
 export const KEPT_APP_TAKES_NO_TOKEN =
-  "This card's own Slack app is not installed again: IT revoked the organisation's connection it was created with, so it takes no app-level token.";
+  "Day0 takes no app-level token for this card's own Slack app: IT revoked the organisation's connection that created it, so the app is not installed again.";

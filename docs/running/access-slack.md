@@ -118,19 +118,27 @@ that issues an app-level token, so a person generates one per app:
 4. In Day0, the employee's **Slack** card, **App-level token**: paste it and
    press **Turn on buttons**. Day0 checks it by opening a Socket Mode connection
    with it, keeps it encrypted and held by the organisation, and never shows it
-   again. The `slack-socket` component dials the app and reports a live
-   connection for it, within seconds. The card then says "Decisions in Slack:
-   buttons are on", and each new request carries the buttons, beside its typed code where the app
-   takes messages; a request asked before the token landed carries no buttons.
-   While the component reports no live connection for the app (stopped, unable
-   to reach Slack, or from a release before v0.17.0, which reports nothing) the
-   card says "Buttons: off until the Slack socket service connects" and each new
-   request goes without buttons, decided by its typed code or in Day0: at once
-   when the component stops cleanly, and within three minutes of its last report
-   when it dies unseen. A press the component took from Slack and could not hand
-   to Day0 (Day0 refused it, or did not answer for a minute) is answered to the
-   person who pressed, and only to them: "Day0 did not receive this press, so
-   nothing was decided. Press it again, or decide in day0."
+   again. Then:
+   - The `slack-socket` component dials the app and reports a live connection
+     for it, within seconds. The card then says "Decisions in Slack: buttons are
+     on", and each new request carries the buttons, beside its typed code where
+     the app takes messages; a request asked before the token landed carries no
+     buttons.
+   - While the component reports no live connection for the app (stopped,
+     unable to reach Slack, or from a release before v0.17.0, which reports
+     nothing) the card says "Buttons: off until the Slack socket service
+     connects" and each new request goes without buttons, decided by its typed
+     code or in Day0: at once when the component stops cleanly, and within three
+     minutes of its last report when it dies unseen. The card reads the last
+     report when the page loads; reload it to see a component that has just
+     died. `./setup.sh upgrade` restarts the component, so it runs the new
+     release's code at once.
+   - A press the component took from Slack and could not hand to Day0 is
+     answered to the person who pressed, and only to them: "Day0 did not
+     receive this press, so nothing was decided. Press it again in a minute, or
+     decide in day0." when Day0 did not answer for a minute, and "Day0 could
+     not take this press, so nothing was decided. Decide in day0." when Day0
+     refused it.
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page; presses then

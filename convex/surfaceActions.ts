@@ -1208,9 +1208,9 @@ const PROBE_REFUSED: Readonly<Record<ProbeRefusal, string>> = {
   'access-ended': "The card's access has ended; only the manager's renewal probes it again.",
   'in-flight': 'A probe of this card is already running; this routine re-probe was not made.',
   'kept-app-ended':
-    "This card's own app was created through the organisation's connection IT revoked and is not installed again, so there is nothing to check; IT's reason stays on the card.",
+    "IT revoked the organisation's connection that created this card's own app, and Day0 does not install that app again, so there is nothing to check. IT's reason stays on the card.",
   'connection-revoked':
-    "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again; IT's reason stays on the card.",
+    "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again. IT's reason stays on the card.",
 };
 
 /**

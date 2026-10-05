@@ -8,6 +8,7 @@ export declare const PRESS_RETRY_FIRST_MS: number;
 export declare const BACKEND_TIMEOUT_MS: number;
 export declare const FAREWELL_TIMEOUT_MS: number;
 export declare const PRESS_NOT_RECEIVED: string;
+export declare const PRESS_REFUSED: string;
 export declare const PRESS_NOTICE_TIMEOUT_MS: number;
 
 /** How a bridge is made: where the backend is, its secret, and the seams a test replaces. */

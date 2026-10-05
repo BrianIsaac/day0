@@ -412,7 +412,8 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     const words = decisionButtonsWords({ available: true }, 'Mateo (Day0)');
     expect(words.title).toBe('Decisions in Slack: buttons are on');
     expect(words.note).toBe(
-      'The Slack socket service holds a live connection for Mateo (Day0), so each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
+      // Re-worded for the design pass: the card reads the bridge's last report, not a live one.
+      'The Slack socket service last reported a live connection for Mateo (Day0), so each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -440,7 +441,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     expect(words.note).toBe(
       // Re-worded on the bed: a bridge that stops cleanly reports the app down at once, so the note
       // says what the card knows (no live connection reported lately), not a fixed window.
-      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so requests reach you with a typed code only. Buttons come back on each new request once it does. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
+      'The app-level token of Mateo (Day0) is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so requests reach you with a typed code only. Buttons come back on new requests once the service reports one again. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.',
     );
     expect(words.asksForToken).toBe(false);
     expect(words.offersReplacement).toBe(true);
@@ -473,7 +474,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
     const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
     expect(on.note).toBe(
-      'The Slack socket service holds a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+      'The Slack socket service last reported a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
     );
     const noToken = decisionButtonsWords(
       { available: false, why: 'no-app-level-token' },
@@ -533,7 +534,8 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
       }),
     ).toEqual({
       title: 'Typed code: off until this app takes messages',
-      note: 'Slack refused to open the messages tab of Iris (Day0) (Slack apps.manifest.update failed: invalid_manifest), so no typed code reaches it. Day0 tries again only when you press Check the connection. Otherwise someone who manages Iris (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”, and you say so here.',
+      // Re-worded for the design pass: no doubled brackets, and the two ways out side by side.
+      note: 'Slack would not let Day0 open the messages tab of Iris (Day0), so no typed code reaches it. Slack’s answer: Slack apps.manifest.update failed: invalid_manifest. Press Check the connection for Day0 to try again, or have someone who manages Iris (Day0) in Slack turn on App Home, “Allow users to send Slash commands and messages from the messages tab”, and say so here.',
       confirm: 'It is on in Slack',
     });
   });

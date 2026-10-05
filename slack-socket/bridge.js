@@ -34,10 +34,17 @@ export const PRESS_RETRY_CAP_MS = 10_000;
 export const BACKEND_TIMEOUT_MS = 15_000;
 /**
  * What the person who pressed is told, through the press's own `response_url`, when the bridge
- * acknowledged a press and could not hand it to Day0 (W12-R22): only them, and the request stays.
+ * acknowledged a press and could not hand it to Day0 in time (W12-R22): only them, and the request
+ * stays, so a press a minute later may get through.
  */
 export const PRESS_NOT_RECEIVED =
-  'Day0 did not receive this press, so nothing was decided. Press it again, or decide in day0.';
+  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.';
+/**
+ * What the person who pressed is told when Day0 answered the press with a refusal, which another
+ * press would meet again (W12-R22).
+ */
+export const PRESS_REFUSED =
+  'Day0 could not take this press, so nothing was decided. Decide in day0.';
 /** How long telling the person may take. */
 export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
 /**
@@ -465,14 +472,16 @@ export function createBridge(options) {
         }
         // The backend refused it outright: offering it again gets the same answer.
         if (answer.status >= 400 && answer.status < 500) {
-          await giveUp(state, payload, attempt, `the backend refused it (${answer.status})`);
+          await giveUp(state, payload, attempt, `the backend refused it (${answer.status})`, {
+            refused: true,
+          });
           return;
         }
         throw new Error(`the backend answered ${answer.status}`);
       } catch (error) {
         const wait = Math.min(pressRetryFirstMs * 2 ** (attempt - 1), PRESS_RETRY_CAP_MS);
         if (stopped || Date.now() + wait > until) {
-          await giveUp(state, payload, attempt, reasonOf(error));
+          await giveUp(state, payload, attempt, reasonOf(error), { refused: false });
           return;
         }
         log({
@@ -491,18 +500,18 @@ export function createBridge(options) {
    * A press Slack was told arrived and Day0 never took (W12-R22): logged, and the person who pressed
    * told through the press's own `response_url`, since Slack shows them nothing went wrong.
    */
-  async function giveUp(state, payload, attempt, reason) {
-    const told = await tellPresser(state, payload);
+  async function giveUp(state, payload, attempt, reason, { refused }) {
+    const told = await tellPresser(state, payload, refused ? PRESS_REFUSED : PRESS_NOT_RECEIVED);
     log({ level: 'error', message: 'press given up', appId: state.appId, attempt, reason, told });
   }
 
   /**
-   * Post {@link PRESS_NOT_RECEIVED} to the press's `response_url`, only where it is Slack's: https
-   * on a host under slack.com, or the host the app's connection came from (a bed's fake Slack).
+   * Post a notice to the press's `response_url`, only where it is Slack's: https on a host under
+   * slack.com, or the host the app's connection came from (a bed's fake Slack).
    *
    * @returns Whether Slack took the message.
    */
-  async function tellPresser(state, payload) {
+  async function tellPresser(state, payload, text) {
     const target = responseUrlOf(payload, state.slackHost);
     if (target === undefined) return false;
     try {
@@ -512,7 +521,7 @@ export function createBridge(options) {
         body: JSON.stringify({
           response_type: 'ephemeral',
           replace_original: false,
-          text: PRESS_NOT_RECEIVED,
+          text,
         }),
         signal: AbortSignal.timeout(PRESS_NOTICE_TIMEOUT_MS),
       });

@@ -456,7 +456,9 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
       ts: expect.any(String),
       response_type: 'ephemeral',
       replace_original: false,
-      text: 'Day0 did not receive this press, so nothing was decided. Press it again, or decide in day0.',
+      // Re-worded for the design pass: a press the backend refused gets the same answer again, so
+      // the presser is not told to press again.
+      text: 'Day0 could not take this press, so nothing was decided. Decide in day0.',
     });
     expect(logged).toContainEqual(
       expect.objectContaining({ message: 'press given up', appId: 'A_DAY0_FAKE', told: true }),
@@ -471,6 +473,9 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     expect(await postAndPress('reject')).toMatchObject({ delivered: true, acknowledged: true });
     await until(async () => (await proof()).responses.length === 1, 'the notice');
     expect(backend.presses).toEqual([]);
+    expect((await proof()).responses[0]?.text).toBe(
+      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.',
+    );
   });
 
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {
