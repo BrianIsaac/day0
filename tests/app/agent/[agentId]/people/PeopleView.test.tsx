@@ -908,6 +908,8 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     expect(proposed.textContent).toContain(
       'Evidence: “Finance systems owner: Dana Okafor approves NetLedger access” (Kestrel Supply onboarding, 5 Oct 2026, 06:00).',
     );
+    expect(proposed.textContent).toContain('Approver: NetLedger access.');
+    expect(proposed.textContent).toContain('Collaborator.');
     expect(proposed.textContent).toContain('Matches Slack user @sara.');
     expect(proposed.textContent).toContain('Possibly the same as Priya Shah.');
     expect(buttonNames(proposed)).toEqual([

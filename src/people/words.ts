@@ -178,6 +178,18 @@ export function waitingLine(noun: string, scope: string | undefined): string {
 }
 
 /**
+ * What a proposed person would be to the employee, under the proposal ("Collaborator: Linear
+ * access and workflow.").
+ *
+ * @param noun - The edge's noun ({@link RELATIONSHIP_NOUNS}).
+ * @param scope - What it covers, when the source said.
+ */
+export function proposedEdgeLine(noun: string, scope: string | undefined): string {
+  const named = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
+  return scope === undefined ? `${named}.` : `${named}: ${scope.replace(/[.!?]+$/, '')}.`;
+}
+
+/**
  * When the manager confirmed a person, as the Confirmed card says it.
  *
  * @param when - The time, as the page writes one.

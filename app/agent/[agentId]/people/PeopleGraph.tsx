@@ -15,6 +15,7 @@ import {
   identityLabel,
   matchesSlackLine,
   possiblySameLine,
+  proposedEdgeLine,
   proposedEmpty,
   proposedInMock,
   proposedLead,
@@ -151,16 +152,16 @@ function ProposalRow({
           {evidenceLine(item.quote, item.where, clockTime(item.at, zone))}
         </p>
       ))}
-      {proposal.status === 'active'
-        ? proposal.waiting.map((edge) => (
-            <p
-              key={`${edge.type}-${edge.scope ?? ''}`}
-              className="text-[13px] text-[var(--color-muted)]"
-            >
-              {waitingLine(RELATIONSHIP_NOUNS[edge.type], edge.scope)}
-            </p>
-          ))
-        : null}
+      {proposal.waiting.map((edge) => (
+        <p
+          key={`${edge.type}-${edge.scope ?? ''}`}
+          className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]"
+        >
+          {proposal.status === 'active'
+            ? waitingLine(RELATIONSHIP_NOUNS[edge.type], edge.scope)
+            : proposedEdgeLine(RELATIONSHIP_NOUNS[edge.type], edge.scope)}
+        </p>
+      ))}
       {proposal.match !== undefined ? (
         <p className="text-[13px] text-[var(--color-fg-2)]">
           {matchesSlackLine(proposal.match.handle)}
