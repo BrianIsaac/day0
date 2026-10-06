@@ -14,7 +14,11 @@ vi.mock('convex/react', () => ({
 import { CharterView } from '../../../../../app/agent/[agentId]/charter/CharterView';
 import { APPROVED_CHARTER, asEmployee } from '../../../../fixtures/dom/employee';
 import { strikeRefusalBody } from '../../../../fixtures/charter-strike-refusal-2026-09-15';
-import { AGREEMENTS_IN_MOCK, AGREEMENTS_TITLE } from '../../../../../src/work/agreement-words';
+import {
+  AGREEMENTS_IN_MOCK,
+  AGREEMENTS_META,
+  AGREEMENTS_TITLE,
+} from '../../../../../src/work/agreement-words';
 
 describe('CharterView', () => {
   it('shows the charter card for the charter the page has', () => {
@@ -51,9 +55,13 @@ describe('CharterView', () => {
     );
     expect(mock).toContain(AGREEMENTS_TITLE);
     expect(mock).toContain(AGREEMENTS_IN_MOCK);
+    // Re-pinned in the second pass: a correction given twice is proposed for the manager to keep
+    // (the Work tab's promotion card), never made an agreement on its own, as the first words said.
     expect(AGREEMENTS_IN_MOCK).toBe(
-      'The hosted office keeps no working agreements. In a deployment of your own, a note you keep when you approve a plan, or a correction you give twice, becomes one here once Day0 checks it against the charter.',
+      'The hosted office keeps no working agreements. In a deployment of your own, a note you keep when you approve a plan becomes one here once Day0 checks it against the charter, and a correction you give twice is proposed on the Work tab for you to keep.',
     );
+    // The meta says what an agreement does, which the hosted office's card keeps none of.
+    expect(mock).not.toContain(AGREEMENTS_META);
     const real = renderToStaticMarkup(
       asEmployee(<CharterView />, { charter, surfaceMode: 'real' }),
     );

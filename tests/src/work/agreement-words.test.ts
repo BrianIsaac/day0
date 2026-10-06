@@ -99,7 +99,7 @@ describe('what the cards say of a working agreement', (): void => {
 describe('the Agreements card in the hosted office (13-FD)', (): void => {
   it('says the hosted office keeps none and where a deployment of your own keeps them, with no dash', (): void => {
     expect(AGREEMENTS_IN_MOCK).toMatch(/^The hosted office keeps no working agreements\. /);
-    expect(AGREEMENTS_IN_MOCK).toContain('checks it against the charter.');
+    expect(AGREEMENTS_IN_MOCK).toContain('proposed on the Work tab for you to keep.');
     expect(AGREEMENTS_IN_MOCK).not.toMatch(/[\u2013\u2014]/);
   });
 });

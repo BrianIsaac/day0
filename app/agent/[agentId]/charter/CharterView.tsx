@@ -101,8 +101,9 @@ export function CharterView() {
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
         actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />
+      {/* No meta here: what an agreement does is said of the agreements this office does not keep. */}
       {charter.approved && surfaceMode === 'mock' ? (
-        <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META}>
+        <Card title={AGREEMENTS_TITLE}>
           <p className="text-sm text-[var(--color-muted)]">{AGREEMENTS_IN_MOCK}</p>
         </Card>
       ) : null}
