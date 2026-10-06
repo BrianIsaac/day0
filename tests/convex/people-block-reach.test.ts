@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import type { ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -24,6 +25,7 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 const HEADING = '--- People ---';
 const LEAD = 'People the manager confirmed, by name and role.';
+const STATEMENT = 'Copy Lee on every access change you make for them.';
 const IDENTITIES = ['lee.tan@kestrel.test', 'U07LEE12345', 'sara@kestrel.test', 'lin_user_lee'];
 
 const recorded = vi.hoisted(() => ({
@@ -373,5 +375,49 @@ describe('where the People block reaches', (): void => {
     const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
     expect(plannerPrompt).toContain('\nFrom: lin_user_lee\n');
     expect(plannerPrompt).not.toContain(HEADING);
+  }, 30_000);
+});
+
+describe('a working agreement scoped to a person', (): void => {
+  it("reaches the planner of the item whose requester resolves to that person, and no other item's", async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, 'Priya');
+    const lee = await seedGraph(harness, priya);
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: STATEMENT,
+          scope: 'person',
+          personId: lee,
+          sourceType: 'manager-card',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'agreements-card',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+
+    const theirs = await seedTicket(harness, priya, 'LOG-5', { kind: 'person', personId: lee });
+    await drain(harness);
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain('--- Working agreements ---');
+    expect(plannerPrompt).toContain(STATEMENT);
+    expect(plannerPrompt).toContain('\nFrom: Lee Tan (Work management administrator)\n');
+    const drafted = await harness.run(async (ctx) => await ctx.db.get(theirs));
+    expect((drafted?.plan as ExecutionPlan).appliedAgreements).toEqual([agreementId]);
+    for (const prompt of promptsOf((name) => name === 'day0-scope-judgement')) {
+      expect(prompt).not.toContain(STATEMENT);
+    }
+
+    recorded.model.length = 0;
+    await seedTicket(harness, priya, 'LOG-6', { kind: 'unknown' });
+    await drain(harness);
+    for (const prompt of promptsOf((name) => name === 'day0-plan')) {
+      expect(prompt).not.toContain(STATEMENT);
+    }
   }, 30_000);
 });
