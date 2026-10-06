@@ -468,6 +468,31 @@ describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', ()
   });
 });
 
+describe('an MCP write that landed (the bed, beside wave 13 item 5)', (): void => {
+  it('names the landed comment by what its action does, not by the provider’s raw answer', (): void => {
+    const output = DRAWN.landed.output as { applied: Array<Record<string, unknown>> };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...output,
+        applied: output.applied.map((row, index) =>
+          index === 2
+            ? {
+                ...row,
+                effect:
+                  'save_comment on linear · {"id":"comment-41","body":"The Looker pipeline coverage tile is stale."}',
+              }
+            : row,
+        ),
+      },
+    });
+    expect(view.text()).not.toContain('save_comment on linear');
+    expect(view.text()).toContain('Landed: Comment on REVOPS-202: "The Looker pipeline');
+    expect(view.text()).toContain('id comment-41');
+    view.unmount();
+  });
+});
+
 describe('landed partial (work-landed-partial.html)', (): void => {
   it('keeps the withheld action in the record beside what landed', (): void => {
     const view = card(DRAWN.landedPartial);

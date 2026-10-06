@@ -63,7 +63,7 @@ import {
   type PhasedLedgerRow,
   type RunOutput,
   notDoneOnCard,
-  providerAnswerStatus,
+  isProviderAnswer,
   waitingLine,
 } from './work-item';
 import { closeAgainstWordsOf } from '@/work/work-done';
@@ -256,11 +256,11 @@ export function WorkItemCard({
           }
         : row;
     });
-  // A documented API's write keeps the provider's raw answer as its effect, which the evidence
-  // check reads; the card names it by what its action does instead (12-J item 5c).
+  // A documented API's or an MCP tool's write keeps the provider's raw answer as its effect, which
+  // the evidence check reads; the card names it by what its action does instead (12-J item 5c).
   const landed = places.map((place) => {
     const row = ledger[place]!;
-    const shown = providerAnswerStatus(row.effect) === undefined ? row : named([row])[0]!;
+    const shown = isProviderAnswer(row.effect) ? named([row])[0]! : row;
     return { ...shown, place };
   });
   const held = named(ledger.filter((row) => row.held && !row.awaitingApproval));
