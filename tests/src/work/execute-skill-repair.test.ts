@@ -1712,6 +1712,36 @@ describe('a first read refused by the tool’s schema (W12V-12, wave 13 item 3)'
     });
   });
 
+  it('never leaves out a filter the repaired call was refused for, so a read is never taken wider than asked (the second pass)', async (): Promise<void> => {
+    const scoped = { ...FIELDS_AS_STRING_ARGS, state: 'Backlog' };
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(scoped) });
+    const sent: string[] = [];
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (action: MockAction, index: number): Promise<AppliedAction> => {
+        sent.push(action.args.toolArgsJson ?? '');
+        return {
+          tool: 'mcp.call',
+          ok: false,
+          reason: `Tool input validation failed for linear_list_issues. Please fix the following errors and try again:
+- state: must be equal to one of the allowed values
+
+Provided arguments: ${JSON.stringify(scoped)}`,
+          idempotencyKey: `wi:run:${index}`,
+        };
+      },
+    });
+    // The refusal named a filter: the repaired call's failure stands, and no third call is made.
+    expect(sent).toEqual([JSON.stringify(scoped)]);
+    expect(result.applied[0]).toMatchObject({ ok: false });
+  });
+
   it('leaves a second refusal that names no argument of the call as it stands', async (): Promise<void> => {
     recorded.outputs.push({ toolArgsJson: JSON.stringify(FIELDS_AS_STRING_ARGS) });
     const result = await repairFailedReads({

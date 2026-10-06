@@ -3655,8 +3655,16 @@ export async function repairToolArguments(
 const FAULTED_ARGUMENT = /(?:^|\s)-\s+([A-Za-z_][A-Za-z0-9_]*)(?:[.[][^:\s]*)?:\s/g;
 
 /**
- * The top-level arguments of a call that a validation refusal names, in the client's format
- * ("- fields.1: must be equal to one of the allowed values"); only arguments the call carries.
+ * The arguments that only select which fields of a record come back, which a read may leave out
+ * and still read what it was asked (`fields` on `list_issues`). A filter (`state`, `project`)
+ * scopes what is read: leaving one out would read wider than asked, so it is never left out.
+ */
+const FIELD_SELECTION = /^(?:fields|select|expand|include[A-Z]\w*)$/;
+
+/**
+ * The top-level field-selection arguments of a call that a validation refusal names, in the
+ * client's format ("- fields.1: must be equal to one of the allowed values"); only arguments the
+ * call carries, and only those that select fields ({@link FIELD_SELECTION}).
  *
  * Args:
  *   reason: The refusal's words.
@@ -3672,7 +3680,9 @@ function faultedArguments(reason: string | undefined, action: MockAction): strin
   const named = [...reason.split(/\n\s*\n/, 1)[0]!.matchAll(FAULTED_ARGUMENT)].map(
     (match) => match[1]!,
   );
-  return [...new Set(named)].filter((name) => Object.hasOwn(carried, name));
+  return [...new Set(named)].filter(
+    (name) => Object.hasOwn(carried, name) && FIELD_SELECTION.test(name),
+  );
 }
 
 /** A call's arguments as an object, or undefined when they do not parse as one. */
@@ -3750,8 +3760,9 @@ export async function repairFailedReads(
     let action = replacement;
     let outcome = await args.apply(action, row.index);
     let reason = row.reason;
-    // The second shape (W12V-12): a repaired read refused again for arguments the provider names
-    // is taken once more without them; a read left wider than asked changes nothing.
+    // The second shape (W12V-12): a repaired read refused again for field-selection arguments the
+    // provider names is taken once more without them; the fields a list returns change nothing it
+    // reads. A refused filter is left as it stands, so no read is taken wider than asked.
     const faulted = outcome.ok ? [] : faultedArguments(outcome.reason, action);
     if (faulted.length > 0) {
       action = withoutArguments(action, faulted);
