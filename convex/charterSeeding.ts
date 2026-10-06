@@ -44,20 +44,27 @@ async function seedingEvents(
   ctx: Pick<QueryCtx, 'db'>,
   agentId: Id<'agents'>,
 ): Promise<SeedingEvent[]> {
-  const [failed, requested, derived] = await Promise.all(
-    (['charter.seeding-failed', 'charter.seeding-requested', 'work.charter-derived'] as const).map(
+  const [failed, requested, seeded, derived] = await Promise.all(
+    (
+      [
+        'charter.seeding-failed',
+        'charter.seeding-requested',
+        'charter.seeded',
+        'work.charter-derived',
+      ] as const
+    ).map(
       async (type) =>
         await eventsOfType(ctx, agentId, type).order('desc').take(SEEDING_EVENTS_READ),
     ),
   );
-  return [...failed!, ...requested!, ...derived!]
+  return [...failed!, ...requested!, ...seeded!, ...derived!]
     .sort((a, b) => b._creationTime - a._creationTime)
     .flatMap((event): SeedingEvent[] => {
       const payload = event.payload as { charterId?: string; reason?: string; retrying?: boolean };
       if (event.type === 'work.charter-derived') return [{ type: 'work.charter-derived' }];
       if (typeof payload.charterId !== 'string') return [];
-      if (event.type === 'charter.seeding-requested') {
-        return [{ type: 'charter.seeding-requested', charterId: payload.charterId }];
+      if (event.type === 'charter.seeding-requested' || event.type === 'charter.seeded') {
+        return [{ type: event.type, charterId: payload.charterId }];
       }
       return [
         {

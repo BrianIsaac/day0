@@ -28,6 +28,7 @@ export type SeedingEvent =
       readonly retrying: boolean;
     }
   | { readonly type: 'charter.seeding-requested'; readonly charterId: string }
+  | { readonly type: 'charter.seeded'; readonly charterId: string }
   | { readonly type: 'work.charter-derived' };
 
 /**
@@ -55,7 +56,13 @@ export function seedingStanding(
   const newest = events.find(
     (event) => event.type === 'work.charter-derived' || event.charterId === charterId,
   );
-  if (newest === undefined || newest.type === 'work.charter-derived') return undefined;
+  if (
+    newest === undefined ||
+    newest.type === 'work.charter-derived' ||
+    newest.type === 'charter.seeded'
+  ) {
+    return undefined;
+  }
   if (newest.type === 'charter.seeding-requested') return { state: 'finding' };
   return newest.retrying
     ? { state: 'retrying', reason: newest.reason }

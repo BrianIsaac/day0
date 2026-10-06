@@ -438,6 +438,14 @@ export interface CharterSeedingRequestedPayload {
   readonly charterId: CharterId;
 }
 
+/**
+ * The payload of `charter.seeded` (wave 13): real mode's seeding of an approved charter finished,
+ * its named systems declared and their orientation started (mock mode records `work.charter-derived`).
+ */
+export interface CharterSeededPayload {
+  readonly charterId: CharterId;
+}
+
 /** How a person came to be proposed: the employee's approved charter, or the one a handover brought. */
 export type PersonProposedVia = 'charter' | 'handover';
 
@@ -1746,6 +1754,7 @@ export interface EventPayloads {
   'charter.evidence-rejected': CharterEvidenceRejectedPayload;
   'charter.seeding-failed': CharterSeedingFailedPayload;
   'charter.seeding-requested': CharterSeedingRequestedPayload;
+  'charter.seeded': CharterSeededPayload;
   'work.charter-derived': WorkCharterDerivedPayload;
   'person.proposed': PersonProposedPayload;
   'person.confirmed': PersonConfirmedPayload;
@@ -1944,6 +1953,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'charter.evidence-rejected',
   'charter.seeding-failed',
   'charter.seeding-requested',
+  'charter.seeded',
   'work.charter-derived',
   'person.proposed',
   'person.confirmed',

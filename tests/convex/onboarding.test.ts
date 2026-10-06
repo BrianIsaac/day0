@@ -285,6 +285,31 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     });
   });
 
+  it('in real mode ends "finding" once Find work again seeds the charter, so the tab never sticks on it (the second pass)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    const original = await harness.run(async (ctx) => (await ctx.db.get(charterId))!.body);
+    await breakNamedSystems(harness, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const owner = harness.withIdentity(managerIdentity());
+    expect(await owner.query(api.charterSeeding.standing, { agentId })).toMatchObject({
+      state: 'stopped',
+    });
+
+    await harness.run(async (ctx) => await ctx.db.patch(charterId, { body: original }));
+    await owner.mutation(api.charterSeeding.findWorkAgain, { agentId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await owner.query(api.charterSeeding.standing, { agentId })).toBeNull();
+    const events = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).map(
+      (event) => event.type,
+    );
+    expect(events).toContain('charter.seeded');
+  });
+
   it("seeds all of the generator's items or none, so a retry never adds a second batch beside a partial first (U9 D4)", async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());

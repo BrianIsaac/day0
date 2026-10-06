@@ -56,6 +56,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'charter.evidence-rejected': ['charter', 'refused'],
   'charter.seeding-failed': CHARTER,
   'charter.seeding-requested': ['charter', 'decisions'],
+  'charter.seeded': CHARTER,
   'work.charter-derived': CHARTER,
   'person.proposed': CHARTER,
   'person.confirmed': DECISIONS,

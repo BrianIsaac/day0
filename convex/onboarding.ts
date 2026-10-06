@@ -723,6 +723,8 @@ async function seedApprovedCharter(
       namedSystems: charterBody.namedSystems ?? [],
     });
     await ctx.runAction(internal.orientationActions.run, { agentId });
+    // Nothing else marks a real-mode seeding finished, and the Work tab reads how it stands.
+    await logEvent(ctx, { agentId, type: 'charter.seeded', payload: { charterId } });
     return { workItemsGenerated: 0 };
   }
 

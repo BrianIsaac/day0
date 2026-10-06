@@ -396,6 +396,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       payload.retrying === true ? ' · trying again' : ' · gave up'
     }`,
   'charter.seeding-requested': () => 'finding work again from the approved charter',
+  'charter.seeded': () => 'approved charter set up: its systems are being oriented',
   'person.proposed': (payload) =>
     `person proposed: ${text(payload.person) ?? 'from the charter'}${
       payload.via === 'handover' ? ' · from the charter the handover brought' : ''
