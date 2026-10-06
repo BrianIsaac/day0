@@ -207,6 +207,7 @@ describe('SkillsView', () => {
     // Nothing stopped and a press would only be held again: the row offers no Retry and no hint.
     expect(html).not.toContain('Retry chat-thread-reply');
     expect(html).not.toContain('with the reason it stopped');
+    expect(html).not.toContain('What Retry does');
   });
 
   it('leaves an adoption in flight, stopped short or failed to the adoption card, so Not callable offers no Retry on it (the wave 10 review, M3 and B1)', () => {
