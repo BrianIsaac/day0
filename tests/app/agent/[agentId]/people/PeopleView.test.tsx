@@ -210,9 +210,10 @@ describe('PeopleView', () => {
     // An amendment can add a person, so the line never claims the one-to-one named them.
     expect(html).not.toContain('From your one-to-one');
     // 13-P: in mock mode the graph is not kept, and the Proposed card says what a deployment of
-    // the manager's own does, where it said the tab proposed nobody yet.
+    // the manager's own does, where it said the tab proposed nobody yet. Re-pinned by 13-FD: said
+    // as every other mock-mode sentence says it, of "the hosted office", where it said "this demo".
     expect(html).toContain(
-      'Mira proposes people from the one-to-one and your documentation in a deployment of your own.',
+      'In a deployment of your own, Mira proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.',
     );
     expect(html).not.toMatch(/<button[^>]*>(Confirm|Dismiss|A different person)/);
     expect(html).toMatch(/<button[^>]*>Hand over<\/button>/);
@@ -220,6 +221,17 @@ describe('PeopleView', () => {
     expect(html).not.toContain('Change manager');
     // Every manager-facing word says employee (N29); a link's address is not a word.
     expect(html.replace(/<[^>]*>/g, ' ')).not.toMatch(/\bagent\b/i);
+  });
+
+  it("says in the hosted office that the employee reads the charter's names, as no graph is kept there (13-FD)", () => {
+    const mock = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'mock' }));
+    expect(mock).toContain(
+      'The hosted office keeps no graph, so Mira reads the people only as its charter names them.',
+    );
+    expect(mock).not.toContain('regenerated when the graph changes');
+    const real = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(real).toContain('regenerated when the graph changes');
+    expect(real).not.toContain('The hosted office keeps no graph');
   });
 
   it('says the one-to-one asks who the employee works with when the charter names nobody', () => {

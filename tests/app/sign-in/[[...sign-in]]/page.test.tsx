@@ -54,11 +54,15 @@ describe('the sign-in page', () => {
     // The new manager's first steps are not this visitor's (the second pass's design reader).
     expect(returning).not.toContain('Give your first employee a name.');
     expect(await render('/sign-in')).toContain('Give your first employee a name.');
-    for (const home of ['https://dayzer0.dev/', 'https://dayzer0.dev/home', '/']) {
-      expect(await render('/sign-in', { redirect_url: home })).toMatch(
+    for (const landing of ['https://dayzer0.dev/', '/']) {
+      expect(await render('/sign-in', { redirect_url: landing })).toMatch(
         /<h1[^>]*>Sign in to deploy an employee<\/h1>/,
       );
     }
+    // Re-pinned by 13-FD (the v0.16.0 redeploy's finding 5): `/home` is a returning manager's.
+    expect(await render('/sign-in', { redirect_url: 'https://dayzer0.dev/home' })).toMatch(
+      /<h1[^>]*>Sign in to continue<\/h1>/,
+    );
     expect(await render('/sign-in', { redirect_url: 'not an address' })).toMatch(
       /<h1[^>]*>Sign in to deploy an employee<\/h1>/,
     );

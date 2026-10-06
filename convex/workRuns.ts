@@ -75,6 +75,7 @@ import {
   landedWork,
   managerStopReason,
   stopDetail,
+  type StopRunAnswer,
 } from '../src/work/stop';
 import { landedNoteText } from '../src/work/manager-notes';
 import type { WithheldRow, WorkActionsAutoApplyingPayload } from '../src/events/contract';
@@ -1163,16 +1164,15 @@ async function cancelQueuedStep(ctx: MutationCtx, row: Doc<'workItems'>): Promis
  * cleared, so every later write of the run is refused at its fence; an apply in flight keeps
  * every row it reported and records the rest as outcome unknown, never as not sent. The item is
  * `failed` under the stopped prefix with the manager's reason, and Retry stands. Writes a
- * `work.stopped` event naming the manager. Refuses, as a `ConvexError` the card says, an item no
- * longer under way.
+ * `work.stopped` event naming the manager. An item no longer under way (the run moved on while
+ * the manager decided) is answered `moved-on` and left as it is: an expected outcome, not an
+ * error (13-FD).
  */
 export const stopRun = mutation({
   args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
-  handler: async (ctx, args): Promise<{ ok: true }> => {
+  handler: async (ctx, args): Promise<StopRunAnswer> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (!isStoppableItem(row)) {
-      throw new ConvexError('Only work under way can be stopped; this item has moved on.');
-    }
+    if (!isStoppableItem(row)) return { ok: false, refused: 'moved-on' };
     const identity = await getCallerOrThrow(ctx);
     const note = managerText(args.reason);
     const applyInFlight = row.applyAttemptId !== undefined && row.pendingRunId !== undefined;

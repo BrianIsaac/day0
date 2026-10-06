@@ -14,6 +14,7 @@ import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
+import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 
 /**
@@ -1137,7 +1138,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
   'work.dependent-authoring-claimed': (_, subject) =>
     `The closing phase${forItem(subject)} started`,
-  'work.completed': (_, subject) => `${subject.name} finished ${itemOf(subject)}`,
+  'work.completed': (p, subject) => {
+    const end = finishedAs(p.output);
+    return end === 'done'
+      ? `${subject.name} finished ${itemOf(subject)}`
+      : `${subject.name} ended ${itemOf(subject)} ${end}; its card says why`;
+  },
   'work.failed': (p, subject) =>
     p.stopped === true
       ? `The run${forItem(subject)} stopped`

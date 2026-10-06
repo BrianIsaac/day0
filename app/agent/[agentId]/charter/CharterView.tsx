@@ -9,7 +9,12 @@ import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
 import { employeeTabHref } from '../employee-tabs';
 import { AgreementsCard } from './AgreementsCard';
-import { AGREEMENTS_LOADING, AGREEMENTS_META, AGREEMENTS_TITLE } from '@/work/agreement-words';
+import {
+  AGREEMENTS_IN_MOCK,
+  AGREEMENTS_LOADING,
+  AGREEMENTS_META,
+  AGREEMENTS_TITLE,
+} from '@/work/agreement-words';
 import { actorAt, CharterAside } from './CharterAside';
 import { CharterCard } from './CharterCard';
 import { charterActors } from './charter-actors';
@@ -19,7 +24,8 @@ import { charterActors } from './charter-actors';
  * (`charter-review.html`) and as the record of what the employee works under once approved, with
  * its amendments (`agent-charter.html`). The transcript it was drafted from is kept beside it,
  * until a handover: the old manager's words leave with them, and the tab says whose they were.
- * Beside it in real mode, the working agreements kept with it (A18).
+ * Beside it in real mode, the working agreements kept with it (A18); in the hosted office, a line
+ * saying a deployment of the manager's own keeps them there (13-FD).
  */
 export function CharterView() {
   const { agent, charter, arriving, reportSentBack, surfaceMode } = useEmployee();
@@ -95,6 +101,12 @@ export function CharterView() {
         approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
         actors={charterActors(versions, actor, charter.approvedAt ?? charter.createdAt)}
       />
+      {/* No meta here: what an agreement does is said of the agreements this office does not keep. */}
+      {charter.approved && surfaceMode === 'mock' ? (
+        <Card title={AGREEMENTS_TITLE}>
+          <p className="text-sm text-[var(--color-muted)]">{AGREEMENTS_IN_MOCK}</p>
+        </Card>
+      ) : null}
       {charter.approved && surfaceMode === 'real' && agreements === undefined ? (
         <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META}>
           <p aria-busy="true" className="text-sm text-[var(--color-muted)]">

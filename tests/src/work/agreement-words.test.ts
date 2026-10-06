@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
+  AGREEMENTS_IN_MOCK,
   awaitingCheck,
   awaitingManager,
   bindingWords,
@@ -92,5 +93,13 @@ describe('what the cards say of a working agreement', (): void => {
     expect(keepNoteHint('Priya')).toBe(
       'Your answer above becomes a working agreement for Priya once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.',
     );
+  });
+});
+
+describe('the Agreements card in the hosted office (13-FD)', (): void => {
+  it('says the hosted office keeps none and where a deployment of your own keeps them, with no dash', (): void => {
+    expect(AGREEMENTS_IN_MOCK).toMatch(/^The hosted office keeps no working agreements\. /);
+    expect(AGREEMENTS_IN_MOCK).toContain('proposed on the Work tab for you to keep.');
+    expect(AGREEMENTS_IN_MOCK).not.toMatch(/[\u2013\u2014]/);
   });
 });

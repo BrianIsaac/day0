@@ -62,6 +62,14 @@ export const PROPOSALS_TITLE = 'Proposed working agreements';
 /** The promotion card once its last row is decided, while the outcome is still said. */
 export const PROPOSALS_DONE = 'Nothing else waits on you here.';
 
+/**
+ * The Agreements card in the hosted office, where no working agreement is kept (13-W: real mode
+ * only): what a deployment of the manager's own keeps here, so a visitor learns they exist
+ * (13-FD; wording draft).
+ */
+export const AGREEMENTS_IN_MOCK =
+  'The hosted office keeps no working agreements. In a deployment of your own, a note you keep when you approve a plan becomes one here once Day0 checks it against the charter, and a correction you give twice is proposed on the Work tab for you to keep.';
+
 /** The Agreements card while its query has not answered. */
 export const AGREEMENTS_LOADING = 'Reading the working agreements.';
 

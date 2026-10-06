@@ -11,6 +11,7 @@ import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
 import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
+import { finishedAs } from './work/work-item';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -707,7 +708,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',
-  'work.completed': 'done',
+  'work.completed': (payload) => finishedAs(payload.output),
   'work.failed': (payload) =>
     payload.stopped === true ? 'run stopped' : `run failed${because(payload.reason)}`,
   'work.actions-auto-applying': (payload) =>

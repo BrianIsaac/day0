@@ -24,7 +24,7 @@ import {
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
-import { approvedNotStarted, isStoppableItem, isStopped } from '@/work/stop';
+import { approvedNotStarted, isStoppableItem, isStopped, type StopRunAnswer } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
@@ -201,7 +201,7 @@ export function WorkItemCard({
   /** Dismiss a failed item (N7); a card offers no Dismiss without it. */
   onDismiss?: () => Promise<unknown>;
   /** Stop a run under way with the manager's reason (wave 12); a working card offers no Stop without it. */
-  onStop?: (reason: string) => Promise<unknown>;
+  onStop?: (reason: string) => Promise<StopRunAnswer>;
   /** Close a failed item with nothing to reconcile without a retry (E-8); none offered without it. */
   onCloseWithoutRetry?: () => Promise<unknown>;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */

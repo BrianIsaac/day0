@@ -41,7 +41,7 @@ We are the Revenue Operations team at Acme Co. We sit between Sales and Finance,
 ## Working surfaces
 
 - Google Sheets: Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is \`q4-revenue-tracker\`.
-- Slack: \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep).
+- Slack: \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep), \`#office-asks\` (the company-wide channel for IT, office and customer asks).
 - Linear: internal team tickets (project: REVOPS).
 - Looker: published dashboards.
 `,
@@ -130,6 +130,57 @@ Welcome to RevOps. The first week is light by design.
 - Start contributing drafts on real asks.
 - Attend Monday standup + Tuesday committee meeting.
 - Cold-start posture: draft → manager review → ship.
+`,
+  },
+  {
+    slug: 'it-access',
+    title: 'IT access and passwords',
+    body: `# IT access and passwords
+
+Asks about access arrive in #office-asks, and the steps below answer the common one in the ask's thread.
+
+## Shared drive says access denied after a password change
+
+1. Sign out of the drive app on every device.
+2. Sign back in with the new password.
+3. Wait 15 minutes: the new password takes that long to reach the drive.
+
+If it still says access denied after that, the IT lead, Mei, re-grants access. Ask her in #office-asks, naming the drive folder.
+
+## Passwords
+
+Never ask for, share or repeat a password in a ticket, a channel or a message. A password reset is self-service from the sign-in page.
+`,
+  },
+  {
+    slug: 'office-supplies',
+    title: 'Office supplies and repairs',
+    body: `# Office supplies and repairs
+
+## Spare equipment
+
+Spare monitors, keyboards, mice and desk lamps are in the supply cupboard next to the kitchen. Anyone may take one to replace a broken one at their own desk; no request or approval is needed.
+
+Say what you took in #office-asks, so the office manager, Dev, can restock.
+
+## Anything else
+
+Furniture, building repairs and anything that costs more than 200 dollars go to Dev, who orders them.
+`,
+  },
+  {
+    slug: 'billing-replies',
+    title: 'Customer billing replies',
+    body: `# Customer billing replies
+
+Customer asks about billing reach us through #office-asks. Post the first reply in the ask's thread, for whoever forwarded it to send on.
+
+## The first reply to a duplicate charge
+
+- Thank the customer and name the invoice.
+- Say that billing reviews duplicate charges within two business days and writes back with the outcome.
+- Ask them to keep the payment receipt until then.
+- Never promise a refund: refunds are billing's decision.
 `,
   },
 ];
@@ -307,6 +358,9 @@ export const seedMockEnvironment = internalMutation({
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
         .unique();
       const payload = { title, body, category, updatedAt: Date.now() };
+      // A page the manager's own documentation mirrors under this slug is theirs: the seed never
+      // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
+      if (existing?.sourceId !== undefined) return;
       if (existing) {
         await ctx.db.patch(existing._id, payload);
         return;
@@ -393,6 +447,7 @@ export const seedMockEnvironment = internalMutation({
     await ensureChannel('dm-manager', 'DM · Manager', 'dm');
     await ensureChannel('dm-priya', 'DM · Priya', 'dm');
     await ensureChannel('dm-aman', 'DM · Aman', 'dm');
+    await ensureChannel('office-asks', '#office-asks', 'channel');
 
     // Initial Slack messages - set the scene
     const seedMessage = async (
@@ -432,6 +487,29 @@ export const seedMockEnvironment = internalMutation({
       'Manager',
       'manager',
       "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker: Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
+    );
+    // Asks from across the company, each answered by a team document above, so an employee in any
+    // role has work the office lets it finish (13-FD: on the v0.16.0 redeploy no first ticket could).
+    await seedMessage(
+      'office-asks',
+      'thread-drive-access',
+      'Kofi',
+      'requester',
+      'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
+    );
+    await seedMessage(
+      'office-asks',
+      'thread-spare-monitor',
+      'Sara',
+      'requester',
+      'The monitor at desk 14 has died. Where can I get a spare, and does anyone need to know I took one?',
+    );
+    await seedMessage(
+      'office-asks',
+      'thread-double-charge',
+      'Hana',
+      'requester',
+      'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
     );
 
     // Tweet
@@ -490,12 +568,15 @@ export const seedMockEnvironment = internalMutation({
       'open',
       'P3',
     );
+    // The closed-won deals from Friday's standup are asked for in the manager's DM above, and an
+    // employee files its own ticket for them; a seeded ticket for the same three deals stayed open
+    // beside the closed one (13-FD), so this one is the team's other backlog.
     await ensureTicket(
       'REVOPS-203',
-      'Add Friday standup closed-won deals to Q4 Revenue Tracker',
-      "Manager filed: append Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k) to the closed-won tab from last Friday's standup. Close once the rows are in.",
+      'Backfill Q2 closed-won deals missing from the Q2 tracker',
+      'Deals that closed in the last week of Q2 never reached the Q2 tracker. Pull them from Salesforce and append them to its closed-won tab.',
       'open',
-      'P1',
+      'P3',
     );
 
     return { ok: true };

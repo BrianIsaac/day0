@@ -98,12 +98,12 @@ export function proposedEmpty(employee: string): string {
 
 /**
  * The Proposed card in mock mode, where the graph is not kept (13-K: `ensureOwner` writes nothing)
- * and no proposal is ever made.
+ * and no proposal is ever made; said of "the hosted office", as every mock-mode sentence is (13-FD).
  *
  * @param employee - The employee's name.
  */
 export function proposedInMock(employee: string): string {
-  return `${employee} proposes people from the one-to-one and your documentation in a deployment of your own. This demo keeps the names the one-to-one gave the charter, below.`;
+  return `In a deployment of your own, ${employee} proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.`;
 }
 
 /**
@@ -202,6 +202,17 @@ export function moreEvidence(count: number): string {
  */
 export const READS_FROM_THIS =
   'Names and roles, at most eight lines, regenerated when the graph changes. Never identities or credentials.';
+
+/**
+ * The aside's words in the hosted office, where no graph is kept (13-K: `ensureOwner` writes
+ * nothing) and the employee reads its people only as the charter it works under names them
+ * (13-FD; wording draft).
+ *
+ * @param employee - The employee's name.
+ */
+export function readsInMock(employee: string): string {
+  return `The hosted office keeps no graph, so ${employee} reads the people only as its charter names them.`;
+}
 
 /** The People tab's line while the graph is read. */
 export const READING_PEOPLE = 'Reading your people.';

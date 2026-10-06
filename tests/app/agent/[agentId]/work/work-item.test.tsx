@@ -4,6 +4,7 @@ import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   failedItemReason,
+  finishedAs,
   justLanded,
   landedPlaces,
   TICKET_REREAD_STOP,
@@ -249,5 +250,23 @@ describe('what the card says was not done follows the run’s answer (12-D)', ()
       statements: [words],
     });
     expect(notDoneOnCard({ draft: 'Reconciled all three.', notes: '' })).toBeUndefined();
+  });
+});
+
+describe('what the record says a finished run came to follows its card (13-FD)', (): void => {
+  it('says done, partly done or not done by the run’s answer, the old reading with no answer, and done with no output', (): void => {
+    expect(
+      finishedAs({ draft: 'Done.', notes: '', workDone: 'done', workDoneWhy: 'All in.' }),
+    ).toBe('done');
+    expect(
+      finishedAs({ draft: 'Done.', notes: '', workDone: 'partial', workDoneWhy: 'One left.' }),
+    ).toBe('partly done');
+    expect(
+      finishedAs({ draft: 'Done.', notes: '', workDone: 'not-done', workDoneWhy: 'No data.' }),
+    ).toBe('not done');
+    expect(
+      finishedAs({ draft: 'I could not find the vendor charges in the tracker.', notes: '' }),
+    ).toBe('not done');
+    expect(finishedAs(undefined)).toBe('done');
   });
 });
