@@ -636,6 +636,70 @@ export function reusedLedger(
   });
 }
 
+/** The note on a ledger row that reused a message or comment this run's first phase sent. */
+export function reusedThisRunNote(
+  providerId: string | undefined,
+  kind: 'comment' | 'message',
+): string {
+  return `reused ${kind} ${providerId ?? '(no provider id)'}: this run's first phase already sent the same ${kind} here; not sent again`;
+}
+
+/**
+ * Whether a write puts words somewhere, and which kind: a ticket comment, or a message (the
+ * manager's DM among them, which has no reuse target across runs). Its payload names the place,
+ * so two of identical payload say the same thing in the same place.
+ *
+ * @param action - The action.
+ */
+function wordedWriteKind(action: MockAction): 'comment' | 'message' | undefined {
+  const parsed = parsedWrite(action);
+  if (!parsed || isStatusChange(parsed)) return undefined;
+  if (isAuditComment(parsed)) return 'comment';
+  return messageTexts(action).length > 0 && messageTarget(parsed) ? 'message' : undefined;
+}
+
+/**
+ * The ledger rows a closing set's comments and messages reuse from this run's own first phase: one
+ * of identical payload, to the same place, to one that phase landed, each landed row once (W12V-13:
+ * REVOPS-6's report DM landed twice in one run, once from each phase, both on the manager's
+ * standing grant). A comment or message with other words on the same target is the plan's and is
+ * sent, as before; a status change, a browser write and a read are never reused here.
+ *
+ * @param actions - The closing set's actions.
+ * @param thisRun - The writes this run's first phase recorded (`thisRunWrites`).
+ * @param run - The run the reused rows take their identity from.
+ * @returns A reused row for each action that has one, undefined elsewhere.
+ */
+export function reusedFromThisRun(
+  actions: readonly MockAction[],
+  thisRun: readonly LandedWrite[],
+  run: { workItemId: string; runId: string; actionIndexOffset: number },
+): Array<ReusedAppliedAction | undefined> {
+  const sent = thisRun.flatMap((source) => {
+    const kind = landedEntry(source.applied) ? wordedWriteKind(source.action) : undefined;
+    return kind ? [{ source, kind, payload: payload(source.action) }] : [];
+  });
+  const taken = new Set<LandedWrite>();
+  return actions.map((action, index) => {
+    if (wordedWriteKind(action) === undefined) return undefined;
+    const same = payload(action);
+    const prior = sent.find(
+      (row) => !taken.has(row.source) && row.payload !== undefined && row.payload === same,
+    );
+    if (!prior) return undefined;
+    taken.add(prior.source);
+    return reuseOf(
+      prior.source.applied,
+      reusedThisRunNote(prior.source.applied.providerId, prior.kind),
+      actionIdempotencyKey({
+        workItemId: run.workItemId,
+        runId: run.runId,
+        actionIndex: run.actionIndexOffset + index,
+      }),
+    );
+  });
+}
+
 /**
  * The rows the prompt shows within its cap: every comment or message (the
  * rows the rule is about) as far as the cap allows, newest first when it

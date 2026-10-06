@@ -149,6 +149,7 @@ import {
   lastLandedState,
   isReusedRow,
   reusedFrom,
+  reusedFromThisRun,
   reusedLedger,
   unsentWritesOf,
   withReusedRunNumbers,
@@ -3098,8 +3099,10 @@ function priorPhasesLedger(
  * The rows this phase reuses instead of sending: on a resumed closing set,
  * the previous attempt's landed rows by payload or target; in any phase,
  * the writes earlier runs of this item landed, by target. This run's own
- * phase one is not a source: the closing phase authors from that ledger
- * and a second comment it puts on the same ticket is the plan's, as when
+ * phase one is a source only for a comment or message of identical payload
+ * to one it landed (W12V-13, `reusedFromThisRun`): the closing phase authors
+ * from that ledger and a second comment with other words on the same ticket
+ * is the plan's, as when
  * phase one landed a fixed-payload comment and the audit comment follows
  * the reads, though a status change it landed ends any reuse of an earlier
  * run's state on that ticket. The manager's note on the retry decides
@@ -3118,7 +3121,34 @@ async function reusedRows(
   const earlier: LandedWrite[] =
     (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
-  if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
+  // A closing set's message identical to one its own first phase landed is that message (W12V-13).
+  const fromThisRun = dependent
+    ? reusedFromThisRun(output.actions, thisRunWrites(output.initial, run), run)
+    : output.actions.map(() => undefined);
+  const rows =
+    earlier.length === 0 && !resumed
+      ? fromThisRun
+      : await reusedFromEarlier(ctx, output, surfaces, run, fromThisRun);
+  if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
+  const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
+  return withReusedRunNumbers(rows, runIds);
+}
+
+/**
+ * The rows {@link reusedRows} takes from earlier runs and from a resumed set's previous attempt,
+ * beside what it takes from this run's first phase.
+ */
+async function reusedFromEarlier(
+  ctx: ActionCtx,
+  output: LedgerOutput | DependentPendingOutput,
+  surfaces: readonly SurfaceRecord[],
+  run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
+  fromThisRun: ReadonlyArray<AppliedAction | undefined>,
+): Promise<Array<AppliedAction | undefined>> {
+  const dependent = isDependentPendingOutput(output);
+  const earlier: LandedWrite[] =
+    (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  const resumed = dependent && output.initial.resumedClosing;
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
   const options = {
     surfaces,
@@ -3140,12 +3170,9 @@ async function reusedRows(
     ...options,
     thisRun: dependent ? thisRunWrites(output.initial, run) : [],
   });
-  const rows = output.actions.map((action, index) =>
-    isRead(action) ? undefined : (fromResume[index] ?? fromEarlier[index]),
+  return output.actions.map((action, index) =>
+    isRead(action) ? undefined : (fromResume[index] ?? fromThisRun[index] ?? fromEarlier[index]),
   );
-  if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
-  const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
-  return withReusedRunNumbers(rows, runIds);
 }
 
 /**

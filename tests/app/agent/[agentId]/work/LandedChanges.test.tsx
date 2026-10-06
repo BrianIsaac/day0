@@ -56,6 +56,26 @@ describe('what reached the work environment', (): void => {
     expect(markup.replace(/<[^>]+>/g, '')).toContain('id 1787817600.000001 · reused from run 1');
   });
 
+  it('says a row reused from this run’s first phase was already sent in this run (W12V-13)', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[
+          {
+            ...row(0, 'Sent you a DM in Slack'),
+            providerId: '1791151039.077839',
+            idempotencyKey: 'w:run2:3',
+            reusedFrom: 'w:run2:0',
+            reusedFromRun: 2,
+          },
+        ]}
+        fresh={new Set()}
+      />,
+    );
+    const text = markup.replace(/<[^>]+>/g, '');
+    expect(text).toContain('id 1791151039.077839 · already sent earlier in this run');
+    expect(text).not.toContain('reused from run 2');
+  });
+
   it('raises only the rows that just landed, beneath the rows already there (M7)', (): void => {
     const markup = renderToStaticMarkup(
       <LandedChanges
