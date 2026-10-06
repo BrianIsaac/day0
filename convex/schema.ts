@@ -408,8 +408,9 @@ export default defineSchema({
       v.literal('credential-not-landed'),
       /**
        * A sync the deployment's pause held before it read anything (wave 13, 13-K for the
-       * documentation fix; W12V-2, W12-R28): it tried nothing, so it did not fail. Until its writer
-       * lands, a hold is still written as `error` with `SYNC_HELD_REASON`.
+       * documentation fix; W12V-2, W12-R28): it tried nothing, so it did not fail. Written by
+       * `failSync` (13-FS); a source held before that writer landed reads `error` with
+       * `SYNC_HELD_REASON`.
        */
       v.literal('held'),
     ),
@@ -454,8 +455,8 @@ export default defineSchema({
       /**
        * Ended at its cursor by the deployment's pause rather than a failure (wave 13, 13-K for the
        * documentation fix; W12-R27): a resume carries it on like an `error` run, and a second run
-       * held at the same cursor is not one that got nowhere. Written as `error` until its writer
-       * lands.
+       * held at the same cursor is not one that got nowhere. Written by `failSync` (13-FS); a run
+       * held before that writer landed reads `error`.
        */
       v.literal('held'),
     ),

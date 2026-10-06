@@ -318,7 +318,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: PEOPLE_RELEASE,
     does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card’s reader can read it off the row once every writer writes it (13-FS); a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
     thenRemoves:
-      'nothing in the schema: the event read in typedCodeReachOf goes once every writer of the opening writes the field too',
+      'nothing: typedCodeReachOf reads the card’s own field, which every writer of the opening writes (13-FS); the record’s lines stay as the record',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,

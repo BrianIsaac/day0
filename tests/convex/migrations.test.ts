@@ -856,6 +856,21 @@ describe('the declarations the next release retires (N10, Q D2)', (): void => {
   });
 });
 
+describe('the messages tab pass, described as the tree stands (13-FS Findings 6, 13-J)', (): void => {
+  it('names nothing left to remove: the typed-code reader reads the card alone', async (): Promise<void> => {
+    const described = MIGRATIONS['surfaces-messages-tab'];
+    expect(described.thenRemoves).not.toMatch(/event read in typedCodeReachOf goes/);
+    expect(described.thenRemoves).toMatch(/^nothing: /);
+    const { readFile } = await import('node:fs/promises');
+    const reader = await readFile(
+      new URL('../../convex/slackMessagesTab.ts', import.meta.url),
+      'utf8',
+    );
+    const body = reader.slice(reader.indexOf('export async function typedCodeReachOf'));
+    expect(body.slice(0, body.indexOf('\n}\n'))).not.toContain('eventsOfType');
+  });
+});
+
 describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
   it('gives an agent stored under a handle-keyed avatar id the face the dashboard shows for it, and leaves a listed one', async (): Promise<void> => {
     const harness = limitedHarness();
