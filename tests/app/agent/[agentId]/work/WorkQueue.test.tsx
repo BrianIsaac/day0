@@ -403,3 +403,69 @@ describe("the mock office's own loop (round 0141 R-D item 1, the bed walk)", ():
     view.unmount();
   });
 });
+
+describe('an empty queue whose seeding did not finish (12-J item 6, option C; 12-FX)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+    backend.results = {};
+    backend.refusals = {};
+    backend.calls = [];
+  });
+
+  const queue = () => (
+    <WorkQueue
+      agentId={'a1' as Id<'agents'>}
+      workItems={[]}
+      openQuestions={[]}
+      surfaces={[]}
+      registeredSkillCount={0}
+      charterApproved={true}
+      autonomousActions={false}
+      surfaceMode="mock"
+      employeeName="Nola"
+    />
+  );
+
+  it('says the seeding stopped and why, and finds work again on the manager’s press', async (): Promise<void> => {
+    backend.queries = {
+      'charterSeeding:standing': {
+        state: 'stopped',
+        reason: 'it ran past the 10 minutes it is given',
+        line: 'Day0 could not find work for Nola: it ran past the 10 minutes it is given.',
+      },
+    };
+    const view = mount(queue());
+    expect(view.container.textContent).toContain(
+      'Day0 could not find work for Nola: it ran past the 10 minutes it is given.',
+    );
+    expect(view.container.textContent).not.toContain('Nothing has come in yet');
+    expect(button(view.container, 'Find work again').className).toMatch(/\bmin-h-11\b/);
+    await press(view.container, 'Find work again');
+    expect(backend.calls).toContainEqual({
+      name: 'charterSeeding:findWorkAgain',
+      args: { agentId: 'a1' },
+    });
+    expect(said(view.container)).toEqual(['Finding work again. It appears here as it is found.']);
+    view.unmount();
+  });
+
+  it('says a seeding that is being tried again, with no control', (): void => {
+    backend.queries = {
+      'charterSeeding:standing': {
+        state: 'retrying',
+        reason: 'the model call reached its 300000ms budget',
+        line: 'Finding work for Nola did not finish: the model call reached its 300000ms budget. Day0 tries again shortly.',
+      },
+    };
+    const markup = renderToStaticMarkup(queue());
+    expect(markup).toContain('Day0 tries again shortly.');
+    expect(markup).not.toContain('Find work again');
+  });
+
+  it('keeps the usual words while nothing is wrong', (): void => {
+    backend.queries = { 'charterSeeding:standing': null };
+    expect(renderToStaticMarkup(queue())).toContain(
+      'Nothing has come in yet. New work appears here as it is found.',
+    );
+  });
+});

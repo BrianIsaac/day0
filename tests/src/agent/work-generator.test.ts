@@ -3,11 +3,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const prompts = vi.hoisted(() => [] as string[]);
 /** The drafts the fake model returns, one per call, oldest first; an empty batch once they run out. */
 const drafts = vi.hoisted(() => [] as unknown[][]);
+/** Each call's time limit, and what the fake model does before it answers (12-J item 6, option A). */
+const calls = vi.hoisted(() => ({
+  timeouts: [] as Array<number | undefined>,
+  before: undefined as ((call: number) => void) | undefined,
+}));
 
 vi.mock('../../../src/lib/mastra', () => ({
+  MODEL_CALL_TIMEOUT_MS: 300_000,
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async ({ user }: { user: string }): Promise<{ items: unknown[] }> => {
+  agentJson: async ({
+    user,
+    timeoutMs,
+  }: {
+    user: string;
+    timeoutMs?: number;
+  }): Promise<{ items: unknown[] }> => {
     prompts.push(user);
+    calls.timeouts.push(timeoutMs);
+    calls.before?.(calls.timeouts.length);
     return { items: drafts.shift() ?? [] };
   },
 }));
@@ -16,6 +30,7 @@ import type { Charter } from '../../../src/agent/charter';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
+  GENERATION_BUDGET_MS,
   WORK_GEN_SYSTEM,
   generateWorkItemsFromCharter,
 } from '../../../src/agent/work-generator';
@@ -23,6 +38,9 @@ import {
 afterEach((): void => {
   prompts.length = 0;
   drafts.length = 0;
+  calls.timeouts.length = 0;
+  calls.before = undefined;
+  vi.useRealTimers();
 });
 
 /** The office the drafts are read against: one tracker, whose slug the action ticket names. */
@@ -444,5 +462,59 @@ describe('the punctuation of the requests the generator drafts (13-FD, the v0.16
   it('states the house copy rule to the generator, whose quoted requests carried an em dash on the hosted office', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(PLAIN_PUNCTUATION_IN_EVERY_FIELD);
     expect(WORK_GEN_SYSTEM).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
+describe('the generation inside one seeding attempt (12-J item 6, option A)', (): void => {
+  it('keeps every draft inside one budget under the platform’s ten minutes, each call given what is left', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    // Each draft takes 200 s; the out-of-scope item reads as the role, so it is asked three times.
+    calls.before = (): void => {
+      vi.setSystemTime(Date.now() + 200_000);
+    };
+    drafts.push(
+      [READ, ACTION, BEYOND, SAYS_OUT_OF_SCOPE],
+      [READ, ACTION, BEYOND, SAYS_OUT_OF_SCOPE],
+      [READ, ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+    );
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(GENERATION_BUDGET_MS).toBeLessThan(600_000);
+    expect(calls.timeouts).toEqual([300_000, 280_000, 80_000]);
+  });
+
+  it('keeps the draft in hand when a later draft runs out of the budget', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    calls.before = (call: number): void => {
+      vi.setSystemTime(Date.now() + 250_000);
+      if (call === 2) {
+        const spent = new Error(
+          'agentJson(day0-work-generator): the model call reached its budget',
+        );
+        spent.name = 'TimeoutError';
+        throw spent;
+      }
+    };
+    drafts.push([READ, ACTION, BEYOND, SAYS_OUT_OF_SCOPE]);
+    const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(calls.timeouts).toHaveLength(2);
+    // The first draft is taken as the last one is: its out-of-scope item still reads as the role.
+    expect(items.map((item) => item.title)).toEqual([
+      "Where is the team's onboarding guide kept?",
+      'Close out the routine tickets this week',
+      'Match the routine tickets against the CRM export before close',
+    ]);
+  });
+
+  it('fails the attempt when its first draft runs out of the budget, so the seeding records it and tries again', async (): Promise<void> => {
+    calls.before = (): void => {
+      const spent = new Error('agentJson(day0-work-generator): the model call reached its budget');
+      spent.name = 'TimeoutError';
+      throw spent;
+    };
+    await expect(generateWorkItemsFromCharter(HYGIENE, OFFICE as never)).rejects.toThrow(
+      'reached its budget',
+    );
   });
 });

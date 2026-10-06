@@ -21,6 +21,8 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { attemptsSpent } from '@/work/needs-manager';
+import { heldStartLine } from '@/work/held-starts';
+import type { RunHold } from '@/work/item-display';
 import { stalledReason, stalledWords } from '@/work/skill-adoption';
 import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
@@ -75,12 +77,30 @@ export function retryVerifiesSavedDraft(
 export function unregisteredState(
   skill: Doc<'skills'>,
   now: number,
+  hold?: RunHold,
 ): { readonly label: string; readonly tone: Tone } {
   if (holdsLiveAuthoringClaim(skill, now)) return { label: 'Being written', tone: 'accent' };
+  if (heldAuthoring(skill, now, hold)) return { label: 'Held', tone: 'muted' };
   if (skill.authoringRunId) return { label: 'Run stopped', tone: 'warn' };
   if (skill.state === 'failed') return { label: 'Failed its check', tone: 'warn' };
   if (skill.state === 'verified') return { label: 'Not registered', tone: 'warn' };
   return { label: 'Waiting for a check', tone: 'warn' };
+}
+
+/**
+ * Whether a pause holds this row's authoring (D-8 (b)): an approved row no run holds, while the
+ * employee or the deployment's scheduled work is paused.
+ *
+ * @param hold - Whose pause holds the employee's starts, if any.
+ */
+function heldAuthoring(skill: Doc<'skills'>, now: number, hold: RunHold | undefined): boolean {
+  return hold !== undefined && skill.state === 'approved' && !holdsLiveAuthoringClaim(skill, now);
+}
+
+/** The status line of a row a pause holds: when its authoring starts, as a sentence. */
+function heldRowLine(hold: RunHold): string {
+  const line = heldStartLine(hold, 'authoring');
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`;
 }
 
 /**
@@ -135,6 +155,8 @@ export function RegisteredSkillsPanel({
   skills,
   unregistered,
   authoringFailure,
+  authoringHeld = null,
+  authoringHold,
   registered = null,
   onAuthoringAttempt,
   surfaceMode,
@@ -162,6 +184,10 @@ export function RegisteredSkillsPanel({
    * it from sitting above a row that says something else.
    */
   authoringFailure: string | null;
+  /** The most recent attempt a pause held, as a sentence saying when it starts (D-8 (b)). */
+  authoringHeld?: string | null;
+  /** Whose pause holds the employee's authoring now, if any (D-8 (b)). */
+  authoringHold?: RunHold;
   /** The skill the manager's last attempt registered, said once its row is registered. */
   registered?: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
@@ -245,6 +271,7 @@ export function RegisteredSkillsPanel({
               name,
               reason:
                 result.reason ?? (revise ? 'revision did not succeed' : 'retry did not succeed'),
+              ...(result.held === true ? { held: true } : {}),
             },
       );
     } catch (err) {
@@ -295,6 +322,10 @@ export function RegisteredSkillsPanel({
 
   // A revision is listed with the rows not callable yet, and named on the row it revises.
   const revising = new Set(unregistered.flatMap((row) => row.revisionOf ?? []));
+  // What Retry does is said only beside a row that offers it: a held row and a spent one do not.
+  const offersRetry = unregistered.some(
+    (row) => !attemptsSpent(row) && !heldAuthoring(row, now, authoringHold),
+  );
 
   return (
     <>
@@ -308,6 +339,8 @@ export function RegisteredSkillsPanel({
             <p className="mb-3 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn)]/10 px-3 py-2 text-[13px] text-[var(--color-fg)]">
               Authoring did not finish: {authoringFailure}
             </p>
+          ) : authoringHeld ? (
+            <p className="mb-3 text-[13px] text-[var(--color-fg-2)]">{authoringHeld}</p>
           ) : registered ? (
             <p className="mb-3 text-[13px] text-[var(--color-ok)]">
               {registered} is registered: it passed the check and is callable.
@@ -433,10 +466,12 @@ export function RegisteredSkillsPanel({
         <Card title="Not callable" meta={`${unregistered.length}`}>
           <ul className="grid gap-4">
             {unregistered.map((s) => {
-              const state = unregisteredState(s, now);
+              const state = unregisteredState(s, now, authoringHold);
               const attempt = s.state === 'failed' ? attemptLine(s.authoringAttempts) : undefined;
               const spent = attemptsSpent(s);
               const withReasons = retriesWithReasons(s);
+              // A held row's line says when it starts; Retry would only be held again.
+              const held = heldAuthoring(s, now, authoringHold);
               return (
                 <li
                   key={s._id}
@@ -474,24 +509,28 @@ export function RegisteredSkillsPanel({
                       text={
                         holdsLiveAuthoringClaim(s, now)
                           ? 'authoring now · a run holds this skill'
-                          : s.authoringRunId
-                            ? 'a run stopped without reporting · Retry takes the skill over'
-                            : parkedLine(s)
+                          : held && authoringHold !== undefined
+                            ? heldRowLine(authoringHold)
+                            : s.authoringRunId
+                              ? 'a run stopped without reporting · Retry takes the skill over'
+                              : parkedLine(s)
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
-                    <p
-                      id={`${describedBy}-${s._id}`}
-                      className="mt-1 text-xs text-[var(--color-muted)]"
-                    >
-                      {spent
-                        ? attemptsSpentSentence(s.revisionOf !== undefined)
-                        : retryHint(s, now)}
-                    </p>
+                    {held ? null : (
+                      <p
+                        id={`${describedBy}-${s._id}`}
+                        className="mt-1 text-xs text-[var(--color-muted)]"
+                      >
+                        {spent
+                          ? attemptsSpentSentence(s.revisionOf !== undefined)
+                          : retryHint(s, now)}
+                      </p>
+                    )}
                     <RefusedDraft skill={s} />
                   </div>
                   <div className="flex max-w-full flex-wrap gap-2">
-                    {spent ? null : (
+                    {spent || held ? null : (
                       <Button
                         variant="retry"
                         size="small"
@@ -547,20 +586,22 @@ export function RegisteredSkillsPanel({
               sandbox is the operator's step, not the manager's: the card says whom to ask, as
               the stalled adoption card does (A-m6), and the operator's commands stay in the
               running guide (docs/running/components.md). */}
-          <div className="mt-3">
-            <Disclosure summary="What Retry does">
-              <p className="text-xs leading-relaxed text-[var(--color-muted)]">
-                Retry picks a skill up where it stopped. One parked because the check never ran (the
-                sandbox was busy, not running, or failed) keeps its body and smoke test and is
-                checked again as it stands, with no second authoring call; one the gate or the check
-                itself turned down is authored again, with the reason fed back. Either way it has to
-                pass the check before it is callable. If no sandbox was running, ask whoever runs
-                this Day0 installation to start one, then press Retry. Only one authoring run holds
-                a skill at a time, so a retry while one is still running is refused until that run
-                finishes or its claim lapses.
-              </p>
-            </Disclosure>
-          </div>
+          {offersRetry ? (
+            <div className="mt-3">
+              <Disclosure summary="What Retry does">
+                <p className="text-xs leading-relaxed text-[var(--color-muted)]">
+                  Retry picks a skill up where it stopped. One parked because the check never ran
+                  (the sandbox was busy, not running, or failed) keeps its body and smoke test and
+                  is checked again as it stands, with no second authoring call; one the gate or the
+                  check itself turned down is authored again, with the reason fed back. Either way
+                  it has to pass the check before it is callable. If no sandbox was running, ask
+                  whoever runs this Day0 installation to start one, then press Retry. Only one
+                  authoring run holds a skill at a time, so a retry while one is still running is
+                  refused until that run finishes or its claim lapses.
+                </p>
+              </Disclosure>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 

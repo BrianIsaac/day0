@@ -237,9 +237,18 @@ export function landedWritesOf(
   // and are still two changes (M3). A reuse is the row it reused, so it is
   // kept only when that row is not carried; a reuse persisted before reuses
   // named their source is matched by its provider id, as it always was.
-  const seen = new Set<string>();
-  const seenProviders = new Set<string>();
-  return [...earlier, ...own].filter((row) => {
+  // A reuse folded into its row keeps its own words on it (`reusedAs`), when they are other words.
+  const kept = new Map<string, LandedWrite>();
+  const keptProviders = new Map<string, LandedWrite>();
+  const landed: LandedWrite[] = [];
+  const fold = (into: LandedWrite, row: LandedWrite): void => {
+    const words = payload(row.action);
+    const known = [into.action, ...(into.reusedAs ?? [])].some(
+      (action) => payload(action) === words,
+    );
+    if (!known) into.reusedAs = [...(into.reusedAs ?? []), row.action];
+  };
+  for (const row of [...earlier, ...own]) {
     const surface = parseSurfaceAction(row.action);
     const provider = row.applied.providerId
       ? `${surface.ok ? surface.action.surface : row.action.tool}|${row.applied.providerId}`
@@ -248,14 +257,23 @@ export function landedWritesOf(
       (legacyReuse(row.applied) ? provider : undefined) ??
       reusedFrom(row.applied) ??
       (row.applied.idempotencyKey || JSON.stringify(row.action));
-    if (seen.has(key)) return false;
-    seen.add(key);
-    if (provider) {
-      if (legacyReuse(row.applied) && seenProviders.has(provider)) return false;
-      seenProviders.add(provider);
+    const sameKey = kept.get(key);
+    if (sameKey) {
+      fold(sameKey, row);
+      continue;
     }
-    return true;
-  });
+    const sameProvider =
+      provider && legacyReuse(row.applied) ? keptProviders.get(provider) : undefined;
+    if (sameProvider) {
+      fold(sameProvider, row);
+      continue;
+    }
+    const write: LandedWrite = { ...row, ...(row.reusedAs ? { reusedAs: [...row.reusedAs] } : {}) };
+    kept.set(key, write);
+    if (provider && !keptProviders.has(provider)) keptProviders.set(provider, write);
+    landed.push(write);
+  }
+  return landed;
 }
 
 /**
@@ -485,8 +503,11 @@ function canonical(value: unknown): string {
 interface LandedOnTarget {
   readonly applied: AppliedAction;
   readonly kind: 'comment' | 'message';
-  /** The canonical payload it was sent with, which a write must match on a part-landed target. */
-  readonly payload: string | undefined;
+  /**
+   * The canonical payloads it stands for, which a write must match on a part-landed target: the
+   * one it was sent with, and those of the later writes in other words that reused it (`reusedAs`).
+   */
+  readonly payloads: readonly string[];
 }
 
 function payload(action: MockAction): string | undefined {
@@ -578,7 +599,13 @@ export function reusedLedger(
     if (target) {
       byTarget.set(target.key, [
         ...(byTarget.get(target.key) ?? []),
-        { applied: source.applied, kind: target.kind, payload: payload(source.action) },
+        {
+          applied: source.applied,
+          kind: target.kind,
+          payloads: [source.action, ...(source.reusedAs ?? [])].flatMap(
+            (action) => payload(action) ?? [],
+          ),
+        },
       ]);
     }
   }
@@ -627,12 +654,76 @@ export function reusedLedger(
     const sent = payload(action);
     const prior = partLanded
       ? landedThere.find(
-          (row) => !taken.has(row.applied) && row.payload !== undefined && row.payload === sent,
+          (row) => !taken.has(row.applied) && sent !== undefined && row.payloads.includes(sent),
         )
       : landedThere[0];
     if (!prior) return undefined;
     if (partLanded) taken.add(prior.applied);
     return reuseOf(prior.applied, reusedLandedNote(prior.applied.providerId, prior.kind), identity);
+  });
+}
+
+/** The note on a ledger row that reused a message or comment this run's first phase sent. */
+export function reusedThisRunNote(
+  providerId: string | undefined,
+  kind: 'comment' | 'message',
+): string {
+  return `reused ${kind} ${providerId ?? '(no provider id)'}: this run's first phase already sent the same ${kind} here; not sent again`;
+}
+
+/**
+ * Whether a write puts words somewhere, and which kind: a ticket comment, or a message (the
+ * manager's DM among them, which has no reuse target across runs). Its payload names the place,
+ * so two of identical payload say the same thing in the same place.
+ *
+ * @param action - The action.
+ */
+function wordedWriteKind(action: MockAction): 'comment' | 'message' | undefined {
+  const parsed = parsedWrite(action);
+  if (!parsed || isStatusChange(parsed)) return undefined;
+  if (isAuditComment(parsed)) return 'comment';
+  return messageTexts(action).length > 0 && messageTarget(parsed) ? 'message' : undefined;
+}
+
+/**
+ * The ledger rows a closing set's comments and messages reuse from this run's own first phase: one
+ * of identical payload, to the same place, to one that phase landed, each landed row once (W12V-13:
+ * REVOPS-6's report DM landed twice in one run, once from each phase, both on the manager's
+ * standing grant). A comment or message with other words on the same target is the plan's and is
+ * sent, as before; a status change, a browser write and a read are never reused here.
+ *
+ * @param actions - The closing set's actions.
+ * @param thisRun - The writes this run's first phase recorded (`thisRunWrites`).
+ * @param run - The run the reused rows take their identity from.
+ * @returns A reused row for each action that has one, undefined elsewhere.
+ */
+export function reusedFromThisRun(
+  actions: readonly MockAction[],
+  thisRun: readonly LandedWrite[],
+  run: { workItemId: string; runId: string; actionIndexOffset: number },
+): Array<ReusedAppliedAction | undefined> {
+  const sent = thisRun.flatMap((source) => {
+    const kind = landedEntry(source.applied) ? wordedWriteKind(source.action) : undefined;
+    return kind ? [{ source, kind, payload: payload(source.action) }] : [];
+  });
+  const taken = new Set<LandedWrite>();
+  return actions.map((action, index) => {
+    if (wordedWriteKind(action) === undefined) return undefined;
+    const same = payload(action);
+    const prior = sent.find(
+      (row) => !taken.has(row.source) && row.payload !== undefined && row.payload === same,
+    );
+    if (!prior) return undefined;
+    taken.add(prior.source);
+    return reuseOf(
+      prior.source.applied,
+      reusedThisRunNote(prior.source.applied.providerId, prior.kind),
+      actionIdempotencyKey({
+        workItemId: run.workItemId,
+        runId: run.runId,
+        actionIndex: run.actionIndexOffset + index,
+      }),
+    );
   });
 }
 

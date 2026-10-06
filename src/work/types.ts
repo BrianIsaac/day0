@@ -336,6 +336,12 @@ export interface ManagerAnswer {
 export interface LandedWrite {
   action: MockAction;
   applied: AppliedAction;
+  /**
+   * Later writes in other words that reused this one and stand for it (wave 13 item 8): a reuse is
+   * folded into the row it reused, one row per write the provider holds, and keeps its own words
+   * here, so a retry's copy in those words on a part-landed target is reused rather than sent.
+   */
+  reusedAs?: MockAction[];
 }
 
 /**

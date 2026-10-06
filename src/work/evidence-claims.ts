@@ -1,7 +1,11 @@
 import {
+  HELD_WITH_REPORTED_WRITES,
   actionIntent,
+  isAuditComment,
+  isStatusChange,
   isSurfaceTool,
   parseSurfaceAction,
+  type ActionVerdict,
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -258,7 +262,11 @@ function asks(sentence: string): boolean {
   return /\?\s*$/.test(sentence) && QUESTION_OPENING.test(sentence.trim());
 }
 
-function supported(sentence: string, prepared: PreparedEvidence): boolean {
+function supported(
+  sentence: string,
+  prepared: PreparedEvidence,
+  earlier: readonly MockAction[] = [],
+): boolean {
   if (HEDGED.test(sentence) || asks(sentence)) return true;
   if (
     quotedSpans(sentence).some((span) =>
@@ -270,7 +278,234 @@ function supported(sentence: string, prepared: PreparedEvidence): boolean {
   if (runsOf(sentence).some((run) => prepared.ledgerRuns.has(run))) return true;
   const tokens = distinctiveTokens(sentence);
   if (tokens.some((token) => prepared.ledgerTokens.has(token))) return true;
-  return repeatsTheItem(sentence, tokens, prepared);
+  return (
+    repeatsTheItem(sentence, tokens, prepared) ||
+    reportsOwnWrites(sentence, tokens, prepared, earlier)
+  );
+}
+
+/** Verbs that report a message the set wrote: a post, a DM, a reply. */
+const MESSAGE_VERBS = 'posted|sent|shared|messaged|replied|announced|wrote|written';
+/** The verb that reports a ticket comment and nothing else. */
+const COMMENT_VERBS = 'commented';
+/** Verbs that report a ticket's state change. */
+const STATE_VERBS = 'moved|closed|marked|resolved|reopened';
+/** Verbs that report a write of any kind. */
+const WRITE_VERBS =
+  'updated|saved|created|added|recorded|filed|logged|entered|changed|applied|landed';
+
+/**
+ * A report verb in the forms a sentence reports its own work by, the forms `SETTLED_STATE`
+ * reads: opening the sentence or after its subject ("Posted both notes", "I posted"), perfect
+ * ("have posted"), with a verb of being ("were posted") or telegraphic ("notes posted"). The same
+ * verb describing something else ("Last updated by revops at 19:21") reports nothing of the set.
+ */
+function reportForm(verbs: string): RegExp {
+  return new RegExp(
+    [
+      `(?:^|\\b(?:i|we|it|they|this|that|which|and|so|then|also)\\s+)(?:${verbs})\\b`,
+      `\\b(?:has|have|had|(?:i|we|they|you)'ve)\\s+(?:now\\s+|already\\s+|just\\s+|also\\s+)?(?:${verbs})\\b`,
+      `\\b(?:is|are|was|were|has been|have been|now|all|both)\\s+(?:now\\s+|fully\\s+|all\\s+)?(?:${verbs})\\b`,
+      `\\b(?:comments?|notes?|replies|reply|messages?|dms?|posts?|updates?|tickets?|issues?)\\s+(?:${verbs})\\b`,
+    ].join('|'),
+    'i',
+  );
+}
+
+const MESSAGE_REPORT = reportForm(MESSAGE_VERBS);
+const COMMENT_REPORT = reportForm(COMMENT_VERBS);
+const STATE_REPORT = reportForm(STATE_VERBS);
+const WRITE_REPORT = reportForm(WRITE_VERBS);
+/** The nouns a report names a message's kind by: a comment is a ticket's, a post a chat's. */
+const COMMENT_NOUN = /\bcomments?\b/i;
+const CHAT_NOUN = /\b(?:posts?|messages?|replies|reply|dms?|announcements?)\b/i;
+const NOTE_NOUN = /\bnotes?\b/i;
+/** Words that name no particular write: the report verbs and the counts a report gives. */
+const REPORT_WORDS = new Set(
+  [
+    ...[MESSAGE_VERBS, COMMENT_VERBS, STATE_VERBS, WRITE_VERBS].join('|').split('|'),
+    'both',
+    'every',
+    'each',
+  ].map(stem),
+);
+
+/** What a write is, as a report names it. */
+type WriteKind = 'comment' | 'chat' | 'state' | 'other';
+
+/** The stems a report or a write names, without the report verbs and the common words. */
+function namingStems(text: string): Set<string> {
+  return new Set([...stemsOf(text)].filter((word) => !REPORT_WORDS.has(word)));
+}
+
+/** A write's kind and its own words (the values of its arguments, not their keys); undefined for anything else. */
+function writeOf(action: MockAction): { kind: WriteKind; text: string } | undefined {
+  if (!isSurfaceTool(action.tool)) return undefined;
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok || actionIntent(parsed.action) !== 'write') return undefined;
+  const args =
+    parsed.action.kind === 'mcp.call'
+      ? parsed.action.toolArgs
+      : { body: parsed.action.bodyJson ?? parsed.action.body };
+  const kind: WriteKind = isAuditComment(parsed.action)
+    ? 'comment'
+    : isStatusChange(parsed.action)
+      ? 'state'
+      : messageTexts(action).length > 0
+        ? 'chat'
+        : 'other';
+  return { kind, text: argumentStrings(args).join('\n') };
+}
+
+/**
+ * The kinds of write a report's words allow: its verbs say whether it reports a message, a state
+ * change or any write, and a noun that names a message's kind narrows a message verb to it.
+ */
+function reportableKinds(sentence: string): Set<WriteKind> {
+  const kinds = new Set<WriteKind>();
+  if (WRITE_REPORT.test(sentence))
+    for (const kind of ['comment', 'chat', 'state', 'other'] as const) kinds.add(kind);
+  if (STATE_REPORT.test(sentence)) kinds.add('state');
+  if (COMMENT_REPORT.test(sentence)) kinds.add('comment');
+  if (MESSAGE_REPORT.test(sentence)) {
+    const comment = COMMENT_NOUN.test(sentence);
+    const chat = CHAT_NOUN.test(sentence);
+    const either = NOTE_NOUN.test(sentence) || (!comment && !chat);
+    if (comment || either) kinds.add('comment');
+    if (chat || either) kinds.add('chat');
+  }
+  return kinds;
+}
+
+/** Whether a sentence names a message's kind ("the comment", "both notes"), which names the write by itself. */
+function namesMessageKind(sentence: string): boolean {
+  return COMMENT_NOUN.test(sentence) || CHAT_NOUN.test(sentence) || NOTE_NOUN.test(sentence);
+}
+
+/**
+ * The earlier writes of the same set a sentence reports: its verb reports a write of that kind,
+ * and it names the write, by the kind of message it is or by something the write carries. Only a
+ * write before the message counts, since the apply sends a message that reports its set's writes
+ * only once every write before it has landed.
+ */
+function reportedWrites(sentence: string, earlier: readonly MockAction[]): MockAction[] {
+  return reportedWriteIndexes(sentence, earlier).map((index) => earlier[index]!);
+}
+
+/** The places in `earlier` of the writes a sentence reports ({@link reportedWrites}). */
+function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]): number[] {
+  const kinds = reportableKinds(sentence);
+  if (kinds.size === 0) return [];
+  const named = namingStems(sentence);
+  const keys = distinctiveTokens(sentence);
+  const byKind = namesMessageKind(sentence);
+  return earlier.flatMap((action, index): number[] => {
+    const write = writeOf(action);
+    if (!write || !kinds.has(write.kind)) return [];
+    if (byKind && (write.kind === 'comment' || write.kind === 'chat')) return [index];
+    const carried = namingStems(write.text);
+    const carriedKeys = new Set(distinctiveTokens(write.text));
+    return [...named].some((word) => carried.has(word)) || keys.some((key) => carriedKeys.has(key))
+      ? [index]
+      : [];
+  });
+}
+
+/**
+ * Whether a sentence reports writes its own set made before it, every value it gives carried by
+ * them, the ledger or the item: the set lands together, and the apply holds the message back
+ * unless those writes landed (W12X-2, 5 October: "Posted both stop-drill notes in #revops."
+ * beside the two posts it reports was withheld, while the same set answered that the work was
+ * done).
+ */
+function reportsOwnWrites(
+  sentence: string,
+  tokens: readonly string[],
+  prepared: PreparedEvidence,
+  earlier: readonly MockAction[],
+): boolean {
+  const reported = reportedWrites(sentence, earlier);
+  if (reported.length === 0) return false;
+  const carried = new Set(
+    reported.flatMap((action) => distinctiveTokens(writeOf(action)?.text ?? '')),
+  );
+  return tokens.every(
+    (token) =>
+      carried.has(token) || prepared.ledgerTokens.has(token) || prepared.itemTokens.has(token),
+  );
+}
+
+/**
+ * The verdicts with every message that reports a held write of its own set held beside it. A
+ * manager DM applies on its own while the writes it reports wait for the manager, so it would
+ * report them before they land, and untrue if the manager declines them (W12V-8); held, it is
+ * decided with them and sent after them.
+ *
+ * Args:
+ *   actions: The set as the executor emitted it.
+ *   verdicts: The gate's verdicts, one per action.
+ *
+ * Returns:
+ *   The verdicts, each such message's `auto` turned to `held` with the reason.
+ */
+export function heldWithReportedWrites(
+  actions: readonly MockAction[],
+  verdicts: readonly ActionVerdict[],
+): ActionVerdict[] {
+  return verdicts.map((verdict, index): ActionVerdict => {
+    if (verdict.disposition !== 'auto') return verdict;
+    const action = actions[index];
+    if (!action) return verdict;
+    // Only a held write the message reports keeps it waiting; another held write is not its own.
+    const waiting = reportedEarlierWrites(action, actions.slice(0, index)).some(
+      (at) => verdicts[at]?.disposition === 'held',
+    );
+    return waiting ? { disposition: 'held', reason: HELD_WITH_REPORTED_WRITES } : verdict;
+  });
+}
+
+/**
+ * Whether a message reports a write its own set made before it, which binds the two at the
+ * apply: the message is sent only once every write before it in the set has landed, and is held
+ * back with them when one was not approved, failed or was stopped.
+ *
+ * Args:
+ *   action: The message as the executor emitted it.
+ *   earlier: The actions before it in the same set.
+ *
+ * Returns:
+ *   True when one of its sentences reports such a write.
+ */
+export function reportsEarlierWrite(action: MockAction, earlier: readonly MockAction[]): boolean {
+  return reportedEarlierWrites(action, earlier).length > 0;
+}
+
+/**
+ * The places in `earlier` of the writes a message reports as made, each once, in order: the
+ * writes it is bound to at the apply and in the hold review.
+ *
+ * Args:
+ *   action: The message as the executor emitted it.
+ *   earlier: The actions before it in the same set.
+ *
+ * Returns:
+ *   The reported writes' indexes in `earlier`; empty when it reports none.
+ */
+export function reportedEarlierWrites(
+  action: MockAction,
+  earlier: readonly MockAction[],
+): number[] {
+  // Any sentence that reports such a write as made binds the message, whether or not the check
+  // read it as a claim ("Commented the audit note." is not one); a hedge or a condition reports
+  // nothing made.
+  const reported = messageTexts(action).flatMap((text) =>
+    sentencesOf(text).flatMap((sentence) =>
+      HEDGED.test(sentence)
+        ? []
+        : reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier),
+    ),
+  );
+  return [...new Set(reported)].sort((a, b) => a - b);
 }
 
 /**
@@ -302,9 +537,18 @@ function repeatsTheItem(
  *   Each unsupported sentence, in order; empty when the message may stand.
  */
 export function unsupportedClaims(text: string, evidence: ClaimEvidence): string[] {
+  return unsupportedBeside(text, evidence, []);
+}
+
+/** As `unsupportedClaims`, with the writes before the message in its own set as evidence too. */
+function unsupportedBeside(
+  text: string,
+  evidence: ClaimEvidence,
+  earlier: readonly MockAction[],
+): string[] {
   const prepared = prepare(evidence);
   return sentencesOf(text).filter(
-    (sentence: string): boolean => claims(sentence) && !supported(sentence, prepared),
+    (sentence: string): boolean => claims(sentence) && !supported(sentence, prepared, earlier),
   );
 }
 
@@ -685,7 +929,7 @@ export function unsupportedClaimFindings(
       ledger: [evidence.ledger, ...beside].join('\n'),
     };
     for (const text of messageTexts(action)) {
-      for (const claim of unsupportedClaims(text, withResponse)) {
+      for (const claim of unsupportedBeside(text, withResponse, actions.slice(0, index))) {
         findings.push({
           index,
           issue: `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,

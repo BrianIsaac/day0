@@ -34,6 +34,11 @@ import {
   type TileDriverCall,
 } from '../../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_ACTION } from '../../fixtures/refused-ticket-create-2026-09-19';
+import {
+  NOTE_1,
+  NOTE_2,
+  OWN_WRITES_COMMENT,
+} from '../../fixtures/work/revops-6-own-writes-2026-10-05';
 
 const now = Date.UTC(2026, 7, 29, 9);
 const ctx = {} as ActionCtx;
@@ -2147,5 +2152,104 @@ describe('a browser session across the apply invocations of one run', (): void =
       expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD });
       expect(recorded.http).toEqual([]);
     });
+  });
+});
+
+describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)', (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const set = [NOTE_1, NOTE_2, OWN_WRITES_COMMENT];
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+
+  it('sends the comment after the two posts it reports, once both landed', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, set, {
+      deps: deps(recorded),
+      grants: both,
+      approvedIndexes: new Set([0, 1, 2]),
+      now,
+    });
+    expect(applied.map((row) => [row.ok, row.held])).toEqual([
+      [true, undefined],
+      [true, undefined],
+      [true, undefined],
+    ]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('holds the comment back when the manager approved it and not a post it reports', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, set, {
+      deps: deps(recorded),
+      grants: both,
+      approvedIndexes: new Set([0, 2]),
+      now,
+    });
+    expect(applied[1]).toMatchObject({ ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(applied[2]).not.toHaveProperty('authority');
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http).toHaveLength(1);
+  });
+
+  it('binds the message only to the writes it reports, not to an unrelated one left unapproved (the second pass)', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const moved: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', state: 'In Progress' }),
+      },
+    };
+    const report: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-6',
+          body: 'Posted the drill-start note in #revops.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, moved, report],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[1]).toMatchObject({ ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(applied[2]).toMatchObject({ ok: true });
+    expect(applied[2]!.held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('sends a message that reports none of the writes before it whatever became of them', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const question: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-6',
+          body: 'Who owns the stop-drill page? I could not find it.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, question],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([1]), now },
+    );
+    expect(applied[1]).toMatchObject({ ok: true });
+    expect(applied[1]!.held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 });

@@ -13,6 +13,16 @@ import { skillBodyHash } from './skill-body';
 export const MAX_AUTHORING_ATTEMPTS = 3;
 
 /**
+ * Where an authoring run may start. `approved` is the boss's first go-ahead; `authoring`,
+ * `verified` and `failed` are retries of a skill that never registered, so re-authoring cannot
+ * pull the ground out from under an executor already calling it.
+ *
+ * `registered` and `rejected` are absent on purpose. Both are decisions, one the sandbox made, one
+ * the boss made, and a run that could reopen either is the race the claim exists to close.
+ */
+export const AUTHORING_CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
+
+/**
  * The re-check reason the library backfill stamps on every holder of a version registered before
  * the passing smoke test was kept (K3): nothing can re-run its check until Re-check writes one.
  */

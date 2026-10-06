@@ -10,6 +10,8 @@ export interface AuthoringAttempt {
   name: string;
   /** Why it did not finish; absent when the attempt registered the skill. */
   reason?: string;
+  /** A pause held it (D-8 (b)): the reason says when it starts, and it has not failed. */
+  held?: boolean;
 }
 
 /** What an authoring attempt is filed as when neither its result nor its error carries words. */

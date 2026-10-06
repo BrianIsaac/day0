@@ -10,6 +10,7 @@ import {
   TICKET_REREAD_STOP,
   notDoneOnCard,
   unfinishedInOwnWords,
+  landedHeadline,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   ticketRereadStopReason,
@@ -241,13 +242,16 @@ describe('what the card says was not done follows the run’s answer (12-D)', ()
     ).toBeUndefined();
     expect(
       notDoneOnCard({ draft: words, notes: '', workDone: 'partial', workDoneWhy: 'Two remain.' }),
-    ).toEqual({ answer: 'partial', statements: ['Two remain.'] });
+    ).toEqual({ answer: 'partial', statements: ['Two remain.'], closed: [] });
+    // Re-pinned for 12-D's Minor 5: the answer now carries the tickets the run closed all the
+    // same (none here), so the card can name a close beside it.
     expect(
       notDoneOnCard({ draft: 'Done.', notes: '', workDone: 'not-done', workDoneWhy: 'No list.' }),
-    ).toEqual({ answer: 'not-done', statements: ['No list.'] });
+    ).toEqual({ answer: 'not-done', statements: ['No list.'], closed: [] });
     expect(notDoneOnCard({ draft: words, notes: '' })).toEqual({
       answer: 'not-done',
       statements: [words],
+      closed: [],
     });
     expect(notDoneOnCard({ draft: 'Reconciled all three.', notes: '' })).toBeUndefined();
   });
@@ -268,5 +272,22 @@ describe('what the record says a finished run came to follows its card (13-FD)',
       finishedAs({ draft: 'I could not find the vendor charges in the tracker.', notes: '' }),
     ).toBe('not done');
     expect(finishedAs(undefined)).toBe('done');
+  });
+});
+
+describe('the landed headline (W12V-13, wave 13 item 8)', (): void => {
+  it('counts a message the closing set reused from its own run once, as it reached Slack once', (): void => {
+    expect(
+      landedHeadline([
+        { idempotencyKey: 'wi:run1:0' },
+        { idempotencyKey: 'wi:run1:1' },
+        { idempotencyKey: 'wi:run1:2', reusedFrom: 'wi:run1:0' },
+        { idempotencyKey: 'wi:run1:3' },
+      ]),
+    ).toBe('3 actions reached the work environment');
+    // A row reused from an earlier run is still counted, as before: this card lists it as landed.
+    expect(landedHeadline([{ idempotencyKey: 'wi:run2:0', reusedFrom: 'wi:run1:0' }])).toBe(
+      '1 action reached the work environment',
+    );
   });
 });

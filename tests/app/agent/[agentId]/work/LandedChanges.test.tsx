@@ -56,6 +56,26 @@ describe('what reached the work environment', (): void => {
     expect(markup.replace(/<[^>]+>/g, '')).toContain('id 1787817600.000001 · reused from run 1');
   });
 
+  it('says a row reused from this run’s first phase was already sent in this run (W12V-13)', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[
+          {
+            ...row(0, 'Sent you a DM in Slack'),
+            providerId: '1791151039.077839',
+            idempotencyKey: 'w:run2:3',
+            reusedFrom: 'w:run2:0',
+            reusedFromRun: 2,
+          },
+        ]}
+        fresh={new Set()}
+      />,
+    );
+    const text = markup.replace(/<[^>]+>/g, '');
+    expect(text).toContain('id 1791151039.077839 · already sent earlier in this run');
+    expect(text).not.toContain('reused from run 2');
+  });
+
   it('raises only the rows that just landed, beneath the rows already there (M7)', (): void => {
     const markup = renderToStaticMarkup(
       <LandedChanges
@@ -99,5 +119,33 @@ describe('what was held and never sent', (): void => {
     );
     expect(markup).toContain('<span class="sr-only">Not sent: </span>DM to you');
     expect(renderToStaticMarkup(<NotSentLedger rows={[]} />)).toBe('');
+  });
+});
+
+describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', (): void => {
+  it('reads the line the card wrote from the action, the provider’s status in the small print, never its raw answer', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[
+          {
+            tool: 'http.request',
+            ok: true,
+            place: 0,
+            effect: 'HTTP 200 · {"ok":true,"channel":"C0BSQTE1H7E","ts":"1791181288.687059"}',
+            providerId: '1791181288.687059',
+            summary: 'Post to Slack channel <#C0BSQTE1H7E>: “Close week, note 1 of 2”',
+          },
+        ]}
+        fresh={new Set()}
+      />,
+    );
+    const text = markup.replace(/<[^>]+>/g, '');
+    expect(text).toContain(
+      'Landed: Post to Slack channel &lt;#C0BSQTE1H7E&gt;: “Close week, note 1 of 2”',
+    );
+    expect(text).toContain('id 1791181288.687059');
+    // The transport's status is not the manager's: the second pass dropped it from the small print.
+    expect(text).not.toContain('HTTP 200');
+    expect(text).not.toContain('{&quot;ok&quot;:true');
   });
 });

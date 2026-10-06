@@ -18,9 +18,13 @@ import {
   UNVERIFIED_FOR_TRANSFER,
 } from '../../src/agent/manager-transfer';
 import {
+  CHARTER_NOT_YOURS,
   EMPLOYEE_GONE,
   EMPLOYEE_NOT_YOURS,
   isEmployeeNotYours,
+  ONE_TO_ONE_NOT_YOURS,
+  SKILL_NOT_YOURS,
+  WORK_ITEM_NOT_YOURS,
 } from '../../src/agent/employee-access';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -206,6 +210,64 @@ describe('the row guards (the anonymous-caller guard, 12-G)', (): void => {
           await guard(ctx as unknown as MutationCtx);
         }),
       ).rejects.toMatchObject({ data: notAuthenticatedMessage() });
+    }
+  });
+});
+
+describe('the row guards: one refusal for a missing row and another owner’s (W12-R25)', (): void => {
+  it('answer a signed-in caller alike for an id that is gone and a live row of an employee it does not own', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const ownership = await import('../../convex/ownership');
+    const rows = await harness.run(async (ctx) => {
+      const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+      const insert = async () => ({
+        workItem: await insertMinimalRow(fixtureCtx, 'workItems', agentId),
+        charter: await insertMinimalRow(fixtureCtx, 'charters', agentId),
+        skill: await insertMinimalRow(fixtureCtx, 'skills', agentId),
+        voiceSession: await insertMinimalRow(fixtureCtx, 'voiceSessions', agentId),
+      });
+      const live = await insert();
+      const gone = await insert();
+      for (const id of Object.values(gone)) await ctx.db.delete(id as Id<'workItems'>);
+      return { live, gone };
+    });
+    const guards = (ids: typeof rows.live) =>
+      [
+        [
+          WORK_ITEM_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsWorkItem(ctx, ids.workItem as Id<'workItems'>),
+        ],
+        [
+          CHARTER_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsCharter(ctx, ids.charter as Id<'charters'>),
+        ],
+        [
+          SKILL_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsSkill(ctx, ids.skill as Id<'skills'>),
+        ],
+        [
+          ONE_TO_ONE_NOT_YOURS,
+          (ctx: MutationCtx) =>
+            ownership.assertOwnsVoiceSession(ctx, ids.voiceSession as Id<'voiceSessions'>),
+        ],
+      ] as const;
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    for (const ids of [rows.live, rows.gone]) {
+      for (const [words, guard] of guards(ids)) {
+        await expect(
+          stranger.run(async (ctx) => {
+            await guard(ctx as unknown as MutationCtx);
+          }),
+        ).rejects.toMatchObject({ data: words });
+      }
+    }
+    // The owner reads its own live rows as before.
+    for (const [, guard] of guards(rows.live)) {
+      await expect(
+        owner.run(async (ctx) => await guard(ctx as unknown as MutationCtx)),
+      ).resolves.toBeDefined();
     }
   });
 });

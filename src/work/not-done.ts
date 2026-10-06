@@ -131,11 +131,16 @@ export function runOwnWords(output: RunWords): string[] {
   return [...draft, ...(output.actions ?? []).flatMap((action) => messageTexts(action))];
 }
 
-/** The states that say the work is finished. */
-const CLOSING_STATE = /^(?:done|complete|completed|closed|resolved|finished)$/i;
+/**
+ * The states that close a ticket: those that say the work is finished, and those that close it
+ * without finishing it (cancelled, a duplicate) or past finishing it (released), which a run that
+ * answers its work was not all done may not land either (12-D's Minor 5).
+ */
+const CLOSING_STATE =
+  /^(?:done|complete|completed|closed|resolved|finished|cancell?ed|duplicate|released)$/i;
 
 /**
- * Whether a ticket state says the work is finished.
+ * Whether a ticket state closes the ticket: the work finished, cancelled, a duplicate or released.
  *
  * @param state - A status a change sets ("done", "Done", "In Progress").
  */

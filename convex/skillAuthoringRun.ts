@@ -75,6 +75,8 @@ import {
 export interface AuthoringResult {
   readonly ok: boolean;
   readonly reason?: string;
+  /** A pause held the run at its claim (D-8 (b)): it starts at the resume, and has not failed. */
+  readonly held?: true;
 }
 
 /** The author's answer: the SKILL.md body and its smoke test. */
@@ -151,7 +153,9 @@ export async function authorAndRegister(
   const claim = await ctx.runMutation(internal.skills.claimAuthoringRun, {
     skillId: skillId,
   });
-  if (!claim.claimed) return { ok: false, reason: claim.reason };
+  if (!claim.claimed) {
+    return { ok: false, reason: claim.reason, ...(claim.held === true ? { held: true } : {}) };
+  }
 
   const surfaceRows: Doc<'surfaces'>[] = await ctx.runQuery(
     internal.orientationData.surfacesForAgent,

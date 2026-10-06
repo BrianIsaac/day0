@@ -70,7 +70,7 @@ function populated(): Record<string, unknown> {
       }),
       skill('chat-thread-reply', { state: 'registered', registeredAt: 1, useCount: 1 }),
     ],
-    'skillControls:pendingRevisions': [
+    'skillControls:notYetWritten': [
       skill('kanban-comment-and-close-revision', {
         name: 'kanban-comment-and-close',
         state: 'approved',

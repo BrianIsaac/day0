@@ -5,6 +5,7 @@ import {
   correctionRequested,
   landedWriteLines,
   landedWritesOf,
+  reusedFromThisRun,
   reusedLedger,
   notSentWritesOf,
   withReusedRunNumbers,
@@ -729,5 +730,114 @@ describe('the writes earlier runs landed', () => {
     expect(line).not.toContain(token);
     expect(line).toContain('<redacted>');
     expect(line).toContain('Tile refreshed');
+  });
+});
+
+describe("a closing set's message this run's first phase already sent (W12V-13, wave 13 item 8)", () => {
+  const thisRun = { workItemId: 'work', runId: 'run', actionIndexOffset: 2 };
+  const sent: LandedWrite = {
+    action: dm,
+    applied: row({
+      tool: 'http.request',
+      providerId: '1791151039.077839',
+      idempotencyKey: 'work:run:0',
+    }),
+  };
+
+  it('reuses the same DM rather than sending it twice, naming this run, each landed row once', () => {
+    const ledger = reusedFromThisRun([dm, dm], [sent], thisRun);
+    expect(ledger[0]).toMatchObject({
+      ok: true,
+      reusedFrom: 'work:run:0',
+      providerId: '1791151039.077839',
+      idempotencyKey: 'work:run:2',
+      reason:
+        "reused message 1791151039.077839: this run's first phase already sent the same message here; not sent again",
+    });
+    // A second copy in the set is a further write, and is sent.
+    expect(ledger[1]).toBeUndefined();
+  });
+
+  it('sends a message or comment with other words to the same place, which is the plan’s', () => {
+    const later = post({
+      channel: 'D0MANAGER',
+      text: 'The notes are posted and the ticket is closed.',
+    });
+    const other = call('linear', 'save_comment', {
+      issueId: 'REVOPS-5',
+      body: 'Audit note, second form.',
+    });
+    const landedComment: LandedWrite = {
+      action: comment,
+      applied: row({ idempotencyKey: 'work:run:1' }),
+    };
+    expect(reusedFromThisRun([later, other], [sent, landedComment], thisRun)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('reuses nothing the first phase held, failed or only read, and no status change', () => {
+    const held: LandedWrite = {
+      action: dm,
+      applied: row({ idempotencyKey: 'work:run:0', held: true }),
+    };
+    const failed: LandedWrite = {
+      action: dm,
+      applied: row({ idempotencyKey: 'work:run:0', ok: false }),
+    };
+    const moved: LandedWrite = { action: done, applied: row({ idempotencyKey: 'work:run:1' }) };
+    expect(reusedFromThisRun([dm], [held], thisRun)).toEqual([undefined]);
+    expect(reusedFromThisRun([dm], [failed], thisRun)).toEqual([undefined]);
+    expect(reusedFromThisRun([done, read], [moved], thisRun)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('a reworded copy of a landed write on a part-landed target (the pre-tag, wave 13 item 8)', () => {
+  // Run 1 landed comment A; run 2 wrote two comments with other words on the same ticket, and
+  // both were reused from A, as a ticket that already carries one is never commented twice.
+  const first = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note.' });
+  const second = call('linear', 'save_comment', {
+    issueId: 'REVOPS-5',
+    body: 'Audit note, as asked.',
+  });
+  const third = call('linear', 'save_comment', {
+    issueId: 'REVOPS-5',
+    body: 'The deal list is missing.',
+  });
+  const landedA: LandedWrite = {
+    action: first,
+    applied: row({ providerId: 'comment-1', idempotencyKey: 'work:run1:0' }),
+  };
+  const reuseOfA = (index: number): AppliedAction =>
+    row({
+      providerId: 'comment-1',
+      idempotencyKey: `work:run2:${index}`,
+      reusedFrom: 'work:run1:0',
+    } as Partial<AppliedAction>);
+  const run2 = {
+    landedWrites: [landedA],
+    actions: [second, third],
+    applied: [reuseOfA(0), reuseOfA(1)],
+  };
+  // The manager checked the ticket before the retry: the second stands as landed, the third not sent.
+  const answers = [
+    { phase: 'single' as const, actionIndex: 0, answer: 'landed' as const },
+    { phase: 'single' as const, actionIndex: 1, answer: 'not-sent' as const },
+  ];
+
+  it("reuses the landed comment for a retry's copy in the reused row's own words, never sending it twice", () => {
+    const carried = landedWritesOf(run2, answers);
+    const unsent = notSentWritesOf(run2, answers);
+    const ledger = reusedLedger([second, third], carried, run, { surfaces, unsent });
+    expect(ledger[0]).toMatchObject({ reusedFrom: 'work:run1:0' });
+    // The not-sent comment is sent afresh.
+    expect(ledger[1]).toBeUndefined();
+  });
+
+  it('keeps one landed row per write in the carried list, so the figures count nothing twice', () => {
+    expect(landedWritesOf(run2, answers).map((write) => write.applied.idempotencyKey)).toEqual([
+      'work:run1:0',
+    ]);
   });
 });

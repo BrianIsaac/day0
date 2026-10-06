@@ -433,6 +433,19 @@ export interface CharterSeedingFailedPayload {
   readonly retrying: boolean;
 }
 
+/** The payload of `charter.seeding-requested` (wave 13): the manager asked Day0 to find work again. */
+export interface CharterSeedingRequestedPayload {
+  readonly charterId: CharterId;
+}
+
+/**
+ * The payload of `charter.seeded` (wave 13): real mode's seeding of an approved charter finished,
+ * its named systems declared and their orientation started (mock mode records `work.charter-derived`).
+ */
+export interface CharterSeededPayload {
+  readonly charterId: CharterId;
+}
+
 /** How a person came to be proposed: the employee's approved charter, or the one a handover brought. */
 export type PersonProposedVia = 'charter' | 'handover';
 
@@ -660,6 +673,15 @@ export interface SkillAuthoringSupersededPayload extends SkillNamed {
   readonly heldForMs: number;
 }
 
+/**
+ * The payload of `skill.authoring-held` (wave 13, D-8 (b)): a pause held the skill's authoring at
+ * its claim; the reason is the step's (`stepHoldReason`).
+ */
+export type SkillAuthoringHeldPayload = SkillReason;
+
+/** The payload of `skill.authoring-resumed` (wave 13, D-8 (b)): the authoring a pause held goes on. */
+export type SkillAuthoringResumedPayload = SkillNamed;
+
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
@@ -782,6 +804,18 @@ export interface SurfaceProposalRequestedPayload extends SurfaceNamed {
 
 /** The payload of `surface.orientation-failed`. */
 export type SurfaceOrientationFailedPayload = SurfaceReason;
+
+/**
+ * The payload of `surface.orientation-held` (wave 13, D-8 (b)): a pause held the system's
+ * orientation before it read anything; the reason is the step's (`stepHoldReason`).
+ */
+export interface SurfaceOrientationHeldPayload extends SurfaceReason {
+  /** The manager asked for this system's card by hand, so the resume asks for it the same way. */
+  readonly requested: boolean;
+}
+
+/** The payload of `surface.orientation-resumed` (wave 13, D-8 (b)): the orientation a pause held goes on. */
+export type SurfaceOrientationResumedPayload = SurfaceNamed;
 
 /** The payload of `surface.app-provisioned`. */
 export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
@@ -1719,6 +1753,8 @@ export interface EventPayloads {
   'charter.question-answered': CharterQuestionAnsweredPayload;
   'charter.evidence-rejected': CharterEvidenceRejectedPayload;
   'charter.seeding-failed': CharterSeedingFailedPayload;
+  'charter.seeding-requested': CharterSeedingRequestedPayload;
+  'charter.seeded': CharterSeededPayload;
   'work.charter-derived': WorkCharterDerivedPayload;
   'person.proposed': PersonProposedPayload;
   'person.confirmed': PersonConfirmedPayload;
@@ -1746,6 +1782,8 @@ export interface EventPayloads {
   'skill.rechecked': SkillRecheckedPayload;
   'skill.superseded': SkillSupersededPayload;
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
+  'skill.authoring-held': SkillAuthoringHeldPayload;
+  'skill.authoring-resumed': SkillAuthoringResumedPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
@@ -1763,6 +1801,8 @@ export interface EventPayloads {
   'surface.oriented': SurfaceOrientedPayload;
   'surface.proposal-requested': SurfaceProposalRequestedPayload;
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
+  'surface.orientation-held': SurfaceOrientationHeldPayload;
+  'surface.orientation-resumed': SurfaceOrientationResumedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
   'surface.app-messages-open': SurfaceAppMessagesOpenPayload;
@@ -1912,6 +1952,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'charter.question-answered',
   'charter.evidence-rejected',
   'charter.seeding-failed',
+  'charter.seeding-requested',
+  'charter.seeded',
   'work.charter-derived',
   'person.proposed',
   'person.confirmed',
@@ -1939,6 +1981,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.rechecked',
   'skill.superseded',
   'skill.authoring-superseded',
+  'skill.authoring-held',
+  'skill.authoring-resumed',
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
@@ -1956,6 +2000,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.oriented',
   'surface.proposal-requested',
   'surface.orientation-failed',
+  'surface.orientation-held',
+  'surface.orientation-resumed',
   'surface.app-provisioned',
   'surface.socket-token-landed',
   'surface.app-messages-open',

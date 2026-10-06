@@ -19,7 +19,12 @@ import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { HELD_CLOSE_AGAINST_WORDS, HELD_NOT_APPROVED, HELD_WRITE } from '../../src/surfaces/policy';
+import {
+  HELD_CLOSE_AGAINST_WORDS,
+  HELD_NOT_APPROVED,
+  HELD_WITH_REPORTED_WRITES,
+  HELD_WRITE,
+} from '../../src/surfaces/policy';
 import { eventTypesIn } from '../../src/events/record-filters';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -1186,5 +1191,81 @@ describe('a close the tripwire sent to the manager (12-D, decision D-1 (b))', ()
       { disposition: 'held', reason: HELD_WRITE },
       { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
     ]);
+  });
+});
+
+describe('a manager DM that reports a held write of its set (W12X-2, W12V-8)', (): void => {
+  /** Slack beside Linear, with the manager DM channel and the grants a DM applies on its own under. */
+  async function withSlack(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      for (const scope of ['slack:read', 'slack:write']) {
+        await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        managerDmChannelId: 'D0MANAGER',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+  }
+
+  const dm = (text: string) => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: 'chat.postMessage',
+      body: JSON.stringify({ channel: 'D0MANAGER', text }),
+    },
+  });
+
+  it('holds the DM with the comment it reports, so neither goes before the manager decides', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output: {
+        draft: 'Commented on REVOPS-1.',
+        notes: '',
+        actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+      },
+    });
+    const row = await readItem(harness, ids.workItemId);
+    expect(row.state).toBe('actions-pending');
+    expect(row.actionVerdicts?.[1]).toEqual({
+      disposition: 'held',
+      reason: HELD_WITH_REPORTED_WRITES,
+    });
+  });
+
+  it('lets a DM that reports nothing of the set go on its own, as before', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output: {
+        draft: 'Asked the manager.',
+        notes: '',
+        actions: [comment, dm('Which project should the audit note name?')],
+      },
+    });
+    const row = await readItem(harness, ids.workItemId);
+    expect(row.actionVerdicts?.[1]).toEqual({ disposition: 'auto' });
   });
 });

@@ -1223,6 +1223,36 @@ describe('checking for new work on demand', (): void => {
       mock.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId: mockAgent }),
     ).rejects.toThrow(/real-mode/);
   });
+
+  it('refuses a paused employee in words, polling nothing and spending no minute (W12-R29)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId }),
+    ).rejects.toMatchObject({
+      data: 'Priya is paused, so Day0 does not look for new work: resume Priya on the Manage tab first.',
+    });
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs.filter((job) => job.name === 'intakeActions:pollSurface')).toEqual([]);
+    const checks = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'work.check-requested',
+      ),
+    );
+    expect(checks).toEqual([]);
+
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    expect(
+      await harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId }),
+    ).toMatchObject({ scheduled: 2 });
+    await harness.finishInProgressScheduledFunctions();
+  });
 });
 
 describe('what an outage leaves (P7-18)', (): void => {
