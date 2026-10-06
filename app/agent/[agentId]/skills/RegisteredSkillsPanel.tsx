@@ -466,6 +466,8 @@ export function RegisteredSkillsPanel({
               const attempt = s.state === 'failed' ? attemptLine(s.authoringAttempts) : undefined;
               const spent = attemptsSpent(s);
               const withReasons = retriesWithReasons(s);
+              // A held row's line says when it starts; Retry would only be held again.
+              const held = heldAuthoring(s, now, authoringHold);
               return (
                 <li
                   key={s._id}
@@ -503,7 +505,7 @@ export function RegisteredSkillsPanel({
                       text={
                         holdsLiveAuthoringClaim(s, now)
                           ? 'authoring now · a run holds this skill'
-                          : authoringHold !== undefined && heldAuthoring(s, now, authoringHold)
+                          : held && authoringHold !== undefined
                             ? heldRowLine(authoringHold)
                             : s.authoringRunId
                               ? 'a run stopped without reporting · Retry takes the skill over'
@@ -511,18 +513,20 @@ export function RegisteredSkillsPanel({
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
-                    <p
-                      id={`${describedBy}-${s._id}`}
-                      className="mt-1 text-xs text-[var(--color-muted)]"
-                    >
-                      {spent
-                        ? attemptsSpentSentence(s.revisionOf !== undefined)
-                        : retryHint(s, now)}
-                    </p>
+                    {held ? null : (
+                      <p
+                        id={`${describedBy}-${s._id}`}
+                        className="mt-1 text-xs text-[var(--color-muted)]"
+                      >
+                        {spent
+                          ? attemptsSpentSentence(s.revisionOf !== undefined)
+                          : retryHint(s, now)}
+                      </p>
+                    )}
                     <RefusedDraft skill={s} />
                   </div>
                   <div className="flex max-w-full flex-wrap gap-2">
-                    {spent ? null : (
+                    {spent || held ? null : (
                       <Button
                         variant="retry"
                         size="small"

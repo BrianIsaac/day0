@@ -204,6 +204,9 @@ describe('SkillsView', () => {
     expect(html).toContain('>Not callable</h2>');
     expect(html).toContain('>Held<');
     expect(html).toContain('Held while Mira is paused: writing it starts when you resume Mira.');
+    // Nothing stopped and a press would only be held again: the row offers no Retry and no hint.
+    expect(html).not.toContain('Retry chat-thread-reply');
+    expect(html).not.toContain('with the reason it stopped');
   });
 
   it('leaves an adoption in flight, stopped short or failed to the adoption card, so Not callable offers no Retry on it (the wave 10 review, M3 and B1)', () => {
