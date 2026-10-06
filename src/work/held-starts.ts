@@ -40,5 +40,5 @@ export function heldStartLine(hold: RunHold, start: HeldStart): string {
  * @param name - The employee's name.
  */
 export function pausedCheckRefusal(name: string): string {
-  return `${name} is paused: nothing is checked until you resume ${name} on Manage.`;
+  return `${name} is paused, so Day0 does not look for new work: resume ${name} on the Manage tab first.`;
 }

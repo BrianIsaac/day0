@@ -133,7 +133,7 @@ describe('the empty Work tab’s seeding standing and Find work again (option C)
     const manager = harness.withIdentity(managerIdentity());
     expect(await manager.query(api.charterSeeding.standing, { agentId })).toBeNull();
     await expect(manager.mutation(api.charterSeeding.findWorkAgain, { agentId })).rejects.toThrow(
-      "No seeding of Nola's charter failed: there is nothing to try again.",
+      'Finding work for Nola did not fail: there is nothing to try again.',
     );
     await harness.mutation(internal.charterSeeding.checkAttempt, {
       agentId,

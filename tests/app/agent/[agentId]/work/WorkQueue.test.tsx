@@ -430,13 +430,13 @@ describe('an empty queue whose seeding did not finish (12-J item 6, option C; 12
     backend.queries = {
       'charterSeeding:standing': {
         state: 'stopped',
-        reason: 'the seeding did not finish within the ten minutes it is given',
-        line: 'Day0 could not find work for Nola: the seeding did not finish within the ten minutes it is given.',
+        reason: 'it ran past the 10 minutes it is given',
+        line: 'Day0 could not find work for Nola: it ran past the 10 minutes it is given.',
       },
     };
     const view = mount(queue());
     expect(view.container.textContent).toContain(
-      'Day0 could not find work for Nola: the seeding did not finish within the ten minutes it is given.',
+      'Day0 could not find work for Nola: it ran past the 10 minutes it is given.',
     );
     expect(view.container.textContent).not.toContain('Nothing has come in yet');
     expect(button(view.container, 'Find work again').className).toMatch(/\bmin-h-11\b/);

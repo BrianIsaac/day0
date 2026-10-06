@@ -62,7 +62,7 @@ describe('how the seeding of an approved charter stands (12-J item 6)', (): void
     );
     expect(stillFindingWork('Nola')).toBe('Day0 is still finding work for Nola.');
     expect(nothingToFindAgain('Nola')).toBe(
-      "No seeding of Nola's charter failed: there is nothing to try again.",
+      'Finding work for Nola did not fail: there is nothing to try again.',
     );
   });
 

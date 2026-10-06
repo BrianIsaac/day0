@@ -463,7 +463,7 @@ describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', ()
     });
     expect(view.text()).not.toContain('{"ok":true');
     expect(view.text()).toContain('Landed: Reply in');
-    expect(view.text()).toContain('HTTP 200 · id 1790000000.000300');
+    expect(view.text()).toContain('id 1790000000.000300');
     view.unmount();
   });
 });
@@ -776,7 +776,7 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     } as unknown as Doc<'workItems'>);
     expect(view.text()).toContain('Partly done, in Mira’s own words');
     expect(view.text()).toContain(
-      'REVOPS-202 was moved to Done in this run. Reopen it if the work is not finished.',
+      'Mira moved REVOPS-202 to Done in this run, though the work is not all done: reopen it if it should stay open.',
     );
     view.unmount();
   });

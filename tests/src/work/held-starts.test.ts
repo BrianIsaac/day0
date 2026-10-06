@@ -22,7 +22,7 @@ describe('the words of a start a pause holds (D-8, wave 13 item 6)', (): void =>
 
   it('refuses a check for new work on a paused employee in words that say how to go on', (): void => {
     expect(pausedCheckRefusal('Priya')).toBe(
-      'Priya is paused: nothing is checked until you resume Priya on Manage.',
+      'Priya is paused, so Day0 does not look for new work: resume Priya on the Manage tab first.',
     );
   });
 });

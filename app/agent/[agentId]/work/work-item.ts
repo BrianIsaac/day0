@@ -275,7 +275,7 @@ export function justLanded(before: string | undefined, now: readonly number[]): 
 }
 
 /** A documented API's answer as the HTTP adapter keeps it: the status, then the provider's own words. */
-const PROVIDER_ANSWER = /^(HTTP \d{3})\b/;
+const PROVIDER_ANSWER = /^HTTP \d{3}\b/;
 
 /** An MCP tool's answer as the MCP adapter keeps it: the tool, its surface, then the provider's words. */
 const MCP_ANSWER = /^[\w.-]+ on [\w.-]+ · /;
@@ -289,16 +289,6 @@ const MCP_ANSWER = /^[\w.-]+ on [\w.-]+ · /;
  */
 export function isProviderAnswer(effect: string | undefined): boolean {
   return effect !== undefined && (PROVIDER_ANSWER.test(effect) || MCP_ANSWER.test(effect));
-}
-
-/**
- * The status of a row whose effect is a documented API's raw answer ("HTTP 200 · {...}"); undefined
- * for a row whose effect is already words (12-J item 5c).
- *
- * @param effect - The row's effect as the ledger keeps it.
- */
-export function providerAnswerStatus(effect: string | undefined): string | undefined {
-  return effect === undefined ? undefined : PROVIDER_ANSWER.exec(effect)?.[1];
 }
 
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */

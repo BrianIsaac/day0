@@ -395,8 +395,9 @@ export function WorkItemCard({
           )}
           {notDone.closed.map((close) => (
             <p key={`${close.ticket}:${close.state}`} className="mt-1.5 text-[15px]">
-              {close.ticket} was moved to {close.state} in this run. Reopen it if the work is not
-              finished.
+              {employeeName} moved {close.ticket} to {close.state} in this run, though the work is
+              {notDone.answer === 'partial' ? ' not all done' : ' not done'}: reopen it if it should
+              stay open.
             </p>
           ))}
         </Note>

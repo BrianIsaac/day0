@@ -37,8 +37,8 @@ afterEach((): void => {
 const AGENT = 'a1' as Id<'agents'>;
 const STOPPED = {
   state: 'stopped',
-  reason: 'the seeding did not finish within the ten minutes it is given',
-  line: 'Day0 could not find work for Nola: the seeding did not finish within the ten minutes it is given.',
+  reason: 'it ran past the 10 minutes it is given',
+  line: 'Day0 could not find work for Nola: it ran past the 10 minutes it is given.',
 };
 
 describe('the empty Work tab (12-J item 6, option C)', (): void => {

@@ -17,8 +17,7 @@ export const CHARTER_SEEDING_RETRY_MS = 60_000;
 export const CHARTER_SEEDING_CHECK_MS = 11 * 60 * 1000;
 
 /** The reason the check records for an attempt the platform ended. */
-export const SEEDING_DID_NOT_FINISH =
-  'the seeding did not finish within the ten minutes it is given';
+export const SEEDING_DID_NOT_FINISH = 'it ran past the 10 minutes it is given';
 
 /** One event the standing is read from, newest first. */
 export type SeedingEvent =
@@ -112,5 +111,5 @@ export function stillFindingWork(name: string): string {
 
 /** The refusal of "Find work again" when no seeding failed: it finished, or it is under way. */
 export function nothingToFindAgain(name: string): string {
-  return `No seeding of ${name}'s charter failed: there is nothing to try again.`;
+  return `Finding work for ${name} did not fail: there is nothing to try again.`;
 }

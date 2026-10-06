@@ -143,7 +143,9 @@ describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', ()
     expect(text).toContain(
       'Landed: Post to Slack channel &lt;#C0BSQTE1H7E&gt;: “Close week, note 1 of 2”',
     );
-    expect(text).toContain('HTTP 200 · id 1791181288.687059');
+    expect(text).toContain('id 1791181288.687059');
+    // The transport's status is not the manager's: the second pass dropped it from the small print.
+    expect(text).not.toContain('HTTP 200');
     expect(text).not.toContain('{&quot;ok&quot;:true');
   });
 });

@@ -1234,7 +1234,7 @@ describe('checking for new work on demand', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId }),
     ).rejects.toMatchObject({
-      data: 'Priya is paused: nothing is checked until you resume Priya on Manage.',
+      data: 'Priya is paused, so Day0 does not look for new work: resume Priya on the Manage tab first.',
     });
     const jobs = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
