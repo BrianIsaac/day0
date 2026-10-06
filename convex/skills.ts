@@ -484,7 +484,8 @@ export const retireUnshaped = internalMutation({
  * verification (`purpose: 'verify-stored'`, `storedVerification.verifyStoredSkill`)
  * writes no body and counts nothing; it may also take a registered row, for a
  * re-check, which stays registered and keeps running its verified body while
- * the check runs.
+ * the check runs. While a pause holds the employee's steps, an authoring claim is refused as held
+ * and recorded, and the resume starts it (`heldStarts.ts`, D-8 (b)).
  */
 export const claimAuthoringRun = internalMutation({
   args: {

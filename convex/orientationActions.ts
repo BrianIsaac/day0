@@ -1455,7 +1455,7 @@ export function selectEvidence(
  * card lists it for the manager to propose by hand.
  */
 export interface OrientationOutcome {
-  outcome: 'proposed' | 'absent' | 'skipped' | 'failed' | 'not-in-charter';
+  outcome: 'proposed' | 'absent' | 'skipped' | 'failed' | 'not-in-charter' | 'held';
   surfaceId: Id<'surfaces'>;
 }
 
@@ -1742,6 +1742,13 @@ export async function orientSurface(
 export const orientOne = internalAction({
   args: { surfaceId: v.id('surfaces'), requested: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<OrientationOutcome> => {
+    // A pause holds an orientation as it holds a step (D-8 (b)): nothing is read, the card says
+    // why, and the resume orients it as it was asked for (`heldStarts.ts`).
+    const { held } = await ctx.runMutation(internal.heldStarts.holdOrientation, {
+      surfaceId: args.surfaceId,
+      requested: args.requested === true,
+    });
+    if (held) return { outcome: 'held', surfaceId: args.surfaceId };
     try {
       return await orientSurface(ctx, args.surfaceId, orientationDependencies, {
         requested: args.requested === true,

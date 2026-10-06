@@ -3,7 +3,12 @@ import type { MutationCtx } from './_generated/server';
 import { appendEvent } from './eventLog';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
-import { countsAsAuthoringAttempt, MAX_AUTHORING_ATTEMPTS } from '../src/work/skill-library';
+import { recordAuthoringHeld, startHoldOf } from './heldStarts';
+import {
+  AUTHORING_CLAIMABLE_STATES,
+  countsAsAuthoringAttempt,
+  MAX_AUTHORING_ATTEMPTS,
+} from '../src/work/skill-library';
 
 /*
  * The exclusive, fenced authoring run (`convex/skills.ts`'s state machine): which states a run
@@ -12,23 +17,11 @@ import { countsAsAuthoringAttempt, MAX_AUTHORING_ATTEMPTS } from '../src/work/sk
  */
 
 /**
- * Where an authoring run may start. `approved` is the boss's first go-ahead;
- * `authoring`, `verified` and `failed` are retries of a skill that never
- * registered, so re-authoring cannot pull the ground out from under an executor
- * already calling it.
- *
- * `registered` and `rejected` are absent on purpose. Both are decisions -
- * one the sandbox made, one the boss made - and a run that could reopen either
- * is the race this claim exists to close.
- */
-const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
-
-/**
  * Where a stored body's verification may start (`storedVerification.verifyStoredSkill`): the claimable
  * states, for an adoption approved and a retry of one, and `registered`, for a re-check of a
  * callable skill, which is checked again without being taken out of use.
  */
-const STORED_VERIFICATION_STATES = [...CLAIMABLE_STATES, 'registered'] as const;
+const STORED_VERIFICATION_STATES = [...AUTHORING_CLAIMABLE_STATES, 'registered'] as const;
 
 /**
  * Why a claim found a row in a state it may not take, in the words the run reports.
@@ -61,7 +54,12 @@ function unclaimableReason(
 /** A claim's answer: the run's id and the skill as it took it, or why it did not. */
 export type AuthoringClaim =
   | { claimed: true; runId: Id<'events'>; skill: Doc<'skills'> }
-  | { claimed: false; reason: string };
+  | {
+      claimed: false;
+      reason: string;
+      /** A pause held the authoring (D-8 (b)): it starts at the resume, and has not failed. */
+      held?: true;
+    };
 
 /**
  * The fence. A run's write is applied only while the skill still carries that
@@ -110,7 +108,7 @@ export async function claimAuthoringRunInTransaction(
   const verifying = args.purpose === 'verify-stored';
   const claimable: readonly Doc<'skills'>['state'][] = verifying
     ? STORED_VERIFICATION_STATES
-    : CLAIMABLE_STATES;
+    : AUTHORING_CLAIMABLE_STATES;
   if (!claimable.includes(row.state)) {
     return { claimed: false, reason: unclaimableReason(row.state, claimable) };
   }
@@ -140,6 +138,15 @@ export async function claimAuthoringRunInTransaction(
       payload: { skillId: args.skillId, name: row.name, heldForMs: heldFor },
       createdAt: Date.now(),
     });
+  }
+  // A pause holds a skill's authoring as it holds a step (D-8 (b)): no claim and no attempt,
+  // recorded, and started again at the resume (`heldStarts.ts`). A stored version's check is a
+  // manager's press on a body already written, and runs.
+  if (!verifying) {
+    const held = await startHoldOf(ctx.db, row.agentId);
+    if (held !== undefined) {
+      return { claimed: false, reason: await recordAuthoringHeld(ctx, row, held), held: true };
+    }
   }
   const runId = await appendEvent(ctx, {
     agentId: row.agentId,

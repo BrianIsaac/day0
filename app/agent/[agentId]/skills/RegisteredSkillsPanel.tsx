@@ -135,6 +135,7 @@ export function RegisteredSkillsPanel({
   skills,
   unregistered,
   authoringFailure,
+  authoringHeld = null,
   registered = null,
   onAuthoringAttempt,
   surfaceMode,
@@ -162,6 +163,8 @@ export function RegisteredSkillsPanel({
    * it from sitting above a row that says something else.
    */
   authoringFailure: string | null;
+  /** The most recent attempt a pause held, as a sentence saying when it starts (D-8 (b)). */
+  authoringHeld?: string | null;
   /** The skill the manager's last attempt registered, said once its row is registered. */
   registered?: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
@@ -245,6 +248,7 @@ export function RegisteredSkillsPanel({
               name,
               reason:
                 result.reason ?? (revise ? 'revision did not succeed' : 'retry did not succeed'),
+              ...(result.held === true ? { held: true } : {}),
             },
       );
     } catch (err) {
@@ -308,6 +312,8 @@ export function RegisteredSkillsPanel({
             <p className="mb-3 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn)]/10 px-3 py-2 text-[13px] text-[var(--color-fg)]">
               Authoring did not finish: {authoringFailure}
             </p>
+          ) : authoringHeld ? (
+            <p className="mb-3 text-[13px] text-[var(--color-fg-2)]">{authoringHeld}</p>
           ) : registered ? (
             <p className="mb-3 text-[13px] text-[var(--color-ok)]">
               {registered} is registered: it passed the check and is callable.

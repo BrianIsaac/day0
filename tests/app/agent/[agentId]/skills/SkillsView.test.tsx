@@ -109,6 +109,28 @@ describe('SkillsView', () => {
     );
   });
 
+  it('says an authoring a pause held is held, not that it did not finish (D-8 (b), wave 13 item 6)', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:get': { _id: 'skill-1', name: 'refresh-the-tile', state: 'approved' },
+    };
+    const html = renderToStaticMarkup(
+      asEmployee(<SkillsView />, {
+        lastAttempt: {
+          skillId: 'skill-1' as Id<'skills'>,
+          name: 'refresh-the-tile',
+          reason: 'held while Priya is paused: writing it starts when you resume Priya',
+          held: true,
+        },
+      }),
+    );
+    expect(html).toContain(
+      'refresh-the-tile is held while Priya is paused: writing it starts when you resume Priya.',
+    );
+    expect(html).not.toContain('Authoring did not finish');
+  });
+
   it('hides the last verdict once its skill was retired or replaced by its revision (10-C)', () => {
     for (const state of ['retired', 'superseded'] as const) {
       backend.queries = {

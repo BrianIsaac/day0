@@ -68,12 +68,19 @@ export function SkillsView() {
   // verdict, and each of them makes it a lie. A claim whose run died is none
   // of them: it is left on the row by a run that never came back, so it is
   // exactly the case the verdict is describing and must not hide it.
-  const authoringFailure =
+  const verdictStands =
     lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
-    !VERDICT_SETTLED_STATES.has(attemptedSkill.state)
+    !VERDICT_SETTLED_STATES.has(attemptedSkill.state);
+  // An attempt a pause held has not failed: it says so, and when it starts (D-8 (b)).
+  const authoringFailure =
+    verdictStands && lastAttempt.held !== true
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
+      : null;
+  const authoringHeld =
+    verdictStands && lastAttempt.held === true
+      ? `${lastAttempt.name} is ${lastAttempt.reason}.`
       : null;
   // A registration the manager started is said once the row says it too.
   const authoringRegistered =
@@ -102,6 +109,7 @@ export function SkillsView() {
           ...(failedSkills ?? []),
         ].filter((skill) => skill.offeredVersionId === undefined)}
         authoringFailure={authoringFailure}
+        authoringHeld={authoringHeld}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
         surfaceMode={surfaceMode}

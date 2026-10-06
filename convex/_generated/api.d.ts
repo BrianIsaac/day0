@@ -32,6 +32,7 @@ import type * as eventLog from '../eventLog.js';
 import type * as events from '../events.js';
 import type * as exportActions from '../exportActions.js';
 import type * as handoverFence from '../handoverFence.js';
+import type * as heldStarts from '../heldStarts.js';
 import type * as http from '../http.js';
 import type * as intakeActions from '../intakeActions.js';
 import type * as intakeIdentity from '../intakeIdentity.js';
@@ -142,6 +143,7 @@ declare const fullApi: ApiFromModules<{
   events: typeof events;
   exportActions: typeof exportActions;
   handoverFence: typeof handoverFence;
+  heldStarts: typeof heldStarts;
   http: typeof http;
   intakeActions: typeof intakeActions;
   intakeIdentity: typeof intakeIdentity;

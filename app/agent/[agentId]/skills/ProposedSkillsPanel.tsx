@@ -17,6 +17,8 @@ import { useEmployee } from '../employee-context';
 import { AdoptionCard, type Adoption } from './AdoptionCard';
 import { plainSkillName, ScopeChips } from './skill-parts';
 import { rationaleBesideItem } from '@/work/skill-rationale';
+import { heldStartLine } from '@/work/held-starts';
+import { runHoldOf } from '@/work/item-display';
 
 /** A skill's name and the item that first needs it, as the panel's rows open. */
 function ProposalHead({
@@ -78,7 +80,14 @@ export function ProposedSkillsPanel({
   /** The employee's work item titles by id, for the item that first needs each skill. */
   itemTitles: ReadonlyMap<string, string>;
 }) {
-  const { agent } = useEmployee();
+  const { agent, surfaceMode, scheduledWorkPaused } = useEmployee();
+  // A pause holds the authoring an approval starts (D-8 (b)), so the approval says so.
+  const authoringHold = runHoldOf({
+    real: surfaceMode === 'real',
+    employeeName: name,
+    employeePaused: agent.pausedAt !== undefined,
+    scheduledWorkPaused,
+  });
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
   const adopt = useMutation(api.skillAdoption.adopt);
@@ -122,20 +131,29 @@ export function ProposedSkillsPanel({
 
   // The authoring an approval starts runs for minutes and files its verdict with the Skills card.
   function startAuthoring(skill: Pick<Doc<'skills'>, '_id' | 'name'>): void {
-    const file = (reason?: string): void =>
-      onAuthoringAttempt({ skillId: skill._id, name: skill.name, ...(reason ? { reason } : {}) });
+    const file = (reason?: string, held?: boolean): void =>
+      onAuthoringAttempt({
+        skillId: skill._id,
+        name: skill.name,
+        ...(reason ? { reason } : {}),
+        ...(held === true ? { held } : {}),
+      });
     onAuthoringAttempt(null);
     // Discarded because both outcomes are handled here and filed as the
     // attempt the Skills card shows in its live region.
     void author({ skillId: skill._id }).then(
-      (result) => file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED)),
+      (result) =>
+        file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED), result.held),
       (err: unknown) => file(refusalText(err, AUTHORING_UNFINISHED)),
     );
   }
 
   function onApprove(skill: Doc<'skills'>): void {
     change.run(() => approve({ skillId: skill._id }), {
-      done: `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
+      done:
+        authoringHold === undefined
+          ? `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`
+          : `Approved ${skill.name}. It is ${heldStartLine(authoringHold, 'authoring')}.`,
       refused: `${skill.name} was not approved.`,
       after: () => startAuthoring(skill),
     });

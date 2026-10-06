@@ -7,7 +7,7 @@ import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { firstNeededSentence } from '../../../../../src/work/skill-rationale';
 import { ProposedSkillsPanel } from '../../../../../app/agent/[agentId]/skills/ProposedSkillsPanel';
 import { axeViolations } from '../../../../fixtures/dom/axe';
-import { asEmployee } from '../../../../fixtures/dom/employee';
+import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import { focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
 
@@ -136,6 +136,38 @@ describe('ProposedSkillsPanel', (): void => {
       'Approve · author and verify kanban-comment-and-close',
     ]);
     view.unmount();
+  });
+
+  it('says an approval a pause holds is held, and files the held attempt as held (D-8 (b))', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const reason = 'held while Mira is paused: writing it starts when you resume Mira';
+    backend.results = {
+      'skillActions:authorAndRegisterSkill': { ok: false, reason, held: true },
+    };
+    const attempts: unknown[] = [];
+    const view = mount(
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+        />,
+        { surfaceMode: 'real', agent: { ...EMPLOYEE_ROW, pausedAt: 5 } },
+      ),
+    );
+    await press(view.container, 'Approve · author and verify refresh-the-tile');
+
+    expect(said(view.container)).toEqual([
+      'Approved refresh-the-tile. It is held while Mira is paused: writing it starts when you resume Mira.',
+    ]);
+    expect(attempts).toEqual([
+      null,
+      { skillId: 'skill-1', name: 'refresh-the-tile', reason, held: true },
+    ]);
+    view.unmount();
+    backend.results = {};
   });
 
   it('says an approval, then files what the authoring it started came to', async (): Promise<void> => {
