@@ -7,8 +7,9 @@ import {
   stoppedOutcome,
   stopWhy,
   type StopMoment,
+  movedOnOutcome,
 } from '../../../../../app/agent/[agentId]/work/StopDialog';
-import { STOP_MOVED_ON, type StopRunAnswer } from '../../../../../src/work/stop';
+import { type StopRunAnswer } from '../../../../../src/work/stop';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 
@@ -74,12 +75,23 @@ describe('StopDialog', (): void => {
   it('hands the card what happened when the item moved on before the Stop arrived (13-FD)', async (): Promise<void> => {
     const view = opened({ answer: { ok: false, refused: 'moved-on' } });
     await press(document.body, 'Stop the run');
+    // What happened, not a rule (the second pass: "Only work under way can be stopped; this item
+    // has moved on." read as a refusal and named neither the outcome nor where to look).
+    const words =
+      'Not stopped: the item had moved on before your Stop arrived. Its card shows where it is now.';
+    expect(movedOnOutcome()).toBe(words);
     expect(view.calls).toEqual([
       ['stop', ''],
-      ['done', STOP_MOVED_ON],
+      ['done', words],
     ]);
-    expect(said(document.body)).toEqual([STOP_MOVED_ON]);
+    expect(said(document.body)).toEqual([words]);
     view.unmount();
+  });
+
+  it('says an approval the item moved past was not taken back (13-FD second pass)', (): void => {
+    expect(movedOnOutcome('approved')).toBe(
+      'Approval not taken back: the item had moved on before your Stop arrived. Its card shows where it is now.',
+    );
   });
 
   it('has no axe violation and gives every control a 44 px target', async (): Promise<void> => {

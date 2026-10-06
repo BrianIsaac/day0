@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { MANAGER_FEEDBACK_MAX_CHARS } from '@/work/manager-channel';
-import { STOP_MOVED_ON, type StopRunAnswer } from '@/work/stop';
+import type { StopRunAnswer } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -64,6 +64,19 @@ export function stoppedOutcome(title: string, moment: StopMoment = 'working'): s
 }
 
 /**
+ * The words a Stop that arrived after the item moved on comes to, for the card's live region
+ * (13-FD; wording draft): nothing was stopped, and the card already shows where the item is. The
+ * brief's "Only work under way can be stopped; this item has moved on." read as a refusal in the
+ * second pass, and said nothing of an approval taken back.
+ *
+ * @param moment - Where the item was when the dialog opened; taking an approval back says so.
+ */
+export function movedOnOutcome(moment: StopMoment = 'working'): string {
+  const outcome = moment === 'approved' ? 'Approval not taken back' : 'Not stopped';
+  return `${outcome}: the item had moved on before your Stop arrived. Its card shows where it is now.`;
+}
+
+/**
  * The Stop dialog of a working card (wave 12, 12-W, over the shared `Dialog`): it asks before a
  * run under way is stopped, says what stopping does and what it cannot undo, and takes an optional
  * reason kept with the item. Keep working holds focus; an error is said inside the dialog and
@@ -114,7 +127,7 @@ export function StopDialog({
           event.preventDefault();
           if (change.busy) return;
           const said = (answer: StopRunAnswer): string =>
-            answer.ok ? stoppedOutcome(title, moment) : STOP_MOVED_ON;
+            answer.ok ? stoppedOutcome(title, moment) : movedOnOutcome(moment);
           change.run(() => onStop(reason.trim()), {
             done: said,
             refused: 'The run was not stopped.',

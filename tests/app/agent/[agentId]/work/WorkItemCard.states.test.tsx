@@ -22,7 +22,7 @@ import {
 } from '../../../../fixtures/work/drawn-states';
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
-import { STOP_MOVED_ON, type StopRunAnswer } from '../../../../../src/work/stop';
+import { type StopRunAnswer } from '../../../../../src/work/stop';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -255,7 +255,9 @@ describe('Stop on a working card (wave 12)', (): void => {
     await press(document.body, 'Stop the run');
     expect(view.calls).toEqual([['stop', '']]);
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(said(view.container)).toEqual([STOP_MOVED_ON]);
+    expect(said(view.container)).toEqual([
+      'Not stopped: the item had moved on before your Stop arrived. Its card shows where it is now.',
+    ]);
   });
 
   it('closes with nothing stopped when Keep working is pressed', async (): Promise<void> => {

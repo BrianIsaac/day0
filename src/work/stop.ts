@@ -39,12 +39,6 @@ export const STOPPED_PREFIX = 'stopped: ';
 /** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
 export const MANAGER_STOP = 'stopped by the manager';
 
-/**
- * What a Stop the manager confirmed after the item moved on comes to, said on the card (wave 13,
- * 13-FD; wording draft): the run had already reached a state no Stop applies to.
- */
-export const STOP_MOVED_ON = 'Only work under way can be stopped; this item has moved on.';
-
 /** A Stop that stopped the run, or took back an approval whose writes had not started. */
 export interface StopRunStopped {
   readonly ok: true;
