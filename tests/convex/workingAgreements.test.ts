@@ -890,4 +890,65 @@ describe('selection for a candidate', (): void => {
     ]);
     expect(selected.some((row) => row.userId !== 'owner')).toBe(false);
   });
+
+  it('applies a person-scoped agreement through the confirmed person the requester or owner resolves to, and no other (13-J)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const [ana, dee] = await harness.run(async (ctx) => {
+      const person = async (displayName: string, status: 'active' | 'dismissed') =>
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName,
+          nameKey: displayName.toLowerCase(),
+          status,
+          source: 'manager',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      return [await person('Ana Ruiz', 'active'), await person('Dee Dismissed', 'dismissed')];
+    });
+    await harness.run(async (ctx) => {
+      for (const [personId, statement] of [
+        [ana, 'Thank Ana Ruiz by name.'],
+        [dee, 'Thank Dee by name.'],
+      ] as const) {
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          agentId,
+          kind: 'preference',
+          statement,
+          scope: 'person',
+          personId,
+          sourceType: 'manager-card',
+          status: 'active',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        });
+      }
+    });
+    let tickets = 0;
+    const statementsFor = async (fields: Partial<Doc<'workItems'>>): Promise<string[]> => {
+      tickets += 1;
+      const workItemId = await seedItem(harness, agentId, `LOG-${tickets}`, 'claimed');
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, fields);
+      });
+      const selected = await harness.query(internal.workingAgreements.selectedForCandidate, {
+        workItemId,
+      });
+      return selected.map((row) => row.statement);
+    };
+
+    expect(await statementsFor({ requesterPerson: { kind: 'person', personId: ana } })).toEqual([
+      'Thank Ana Ruiz by name.',
+    ]);
+    expect(await statementsFor({ ownerPerson: { kind: 'person', personId: ana } })).toEqual([
+      'Thank Ana Ruiz by name.',
+    ]);
+    expect(await statementsFor({ requesterPerson: { kind: 'person', personId: dee } })).toEqual([]);
+    expect(await statementsFor({ requesterPerson: { kind: 'unknown' } })).toEqual([]);
+    expect(await statementsFor({})).toEqual([]);
+  });
 });

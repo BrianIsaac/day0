@@ -246,13 +246,15 @@ export function AmendCharterPanel({
   const disclosure = useRef<HTMLDetailsElement>(null);
   const summary = useRef<HTMLElement>(null);
   // Reached at its anchor (the Work tab's Amend the charter, 13-J), the disclosure opens itself
-  // and takes focus; the browser alone would only scroll to a closed summary.
+  // and takes focus; the browser alone would only scroll to a closed summary. It covers the page's
+  // load at the anchor and a hash change; a client link to the anchor from this same page, which
+  // fires no hash change, would need its own call.
   useEffect((): (() => void) => {
     const openAtAnchor = (): void => {
       if (window.location.hash !== `#${AMEND_CHARTER_ANCHOR}` || !disclosure.current) return;
       disclosure.current.open = true;
       disclosure.current.scrollIntoView({ block: 'start' });
-      summary.current?.focus();
+      summary.current?.focus({ preventScroll: true });
     };
     openAtAnchor();
     window.addEventListener('hashchange', openAtAnchor);
