@@ -17,6 +17,13 @@ import {
   type PlannerCorrection,
 } from './corrections';
 import { appliedAgreementIds, plannerAgreementLines, type PromptAgreement } from './agreements';
+import {
+  PEOPLE_HEADING,
+  peopleBlockLines,
+  personNamed,
+  type PromptNamed,
+  type PromptPeople,
+} from '../people/prompt-block';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 import {
@@ -815,6 +822,24 @@ export interface DraftPlanArgs {
   agreements?: readonly PromptAgreement[];
   /** Set when the agreements were scrubbed without the span model; the plan records it. */
   agreementsRedaction?: 'structural-only';
+  /**
+   * The people the employee works with, from the owner's graph (13-J, the People block); real mode
+   * only, the mock prompt never carries them, and the scope judgement never reads them.
+   */
+  people?: PromptPeople;
+  /**
+   * The confirmed person the candidate's requester resolves to (13-P's `requesterPerson`), named
+   * on the From line in place of the label; real mode only. Absent for an ambiguous or unknown
+   * requester, whose label stays.
+   */
+  requester?: PromptNamed;
+}
+
+/** The candidate's From line: the confirmed requester by name and role in real mode, else the label. */
+function fromLine(args: Pick<DraftPlanArgs, 'candidate' | 'requester' | 'surfaceMode'>): string {
+  const named =
+    args.surfaceMode === 'real' && args.requester ? personNamed(args.requester) : undefined;
+  return `From: ${named ?? args.candidate.requesterLabel ?? '(unknown)'}`;
 }
 
 /**
@@ -867,7 +892,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
-    `From: ${candidate.requesterLabel ?? '(unknown)'}`,
+    fromLine(args),
     ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
@@ -886,6 +911,8 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
       renderPlanSurfaces(args.surfaces, args.now ?? Date.now()),
     );
   }
+  const people = args.surfaceMode === 'real' ? peopleBlockLines(args.people) : [];
+  if (people.length > 0) lines.push('', PEOPLE_HEADING, ...people);
   if (args.documents) {
     lines.push(
       '',

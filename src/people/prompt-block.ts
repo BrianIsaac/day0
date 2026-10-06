@@ -22,11 +22,15 @@ export interface PromptEdge {
   readonly scope?: string;
 }
 
-/** A confirmed person the employee works beside, with every edge in force to them. */
-export interface PromptPerson {
+/** A confirmed person by name and role, as the graph holds them. */
+export interface PromptNamed {
   readonly displayName: string;
   readonly title?: string;
   readonly team?: string;
+}
+
+/** A confirmed person the employee works beside, with every edge in force to them. */
+export interface PromptPerson extends PromptNamed {
   readonly edges: readonly PromptEdge[];
 }
 
@@ -112,11 +116,7 @@ function roleOf(person: { readonly title?: string; readonly team?: string }): st
  *
  * @param person - The person as the graph holds them.
  */
-export function personNamed(person: {
-  readonly displayName: string;
-  readonly title?: string;
-  readonly team?: string;
-}): string | undefined {
+export function personNamed(person: PromptNamed): string | undefined {
   const name = withoutIdentities(person.displayName);
   if (name === '') return undefined;
   const role = roleOf(person);

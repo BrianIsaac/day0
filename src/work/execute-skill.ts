@@ -45,6 +45,7 @@ import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
+import { peopleBlockLines, type PromptPeople } from '../people/prompt-block';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   isChatMessage,
@@ -1071,6 +1072,12 @@ export interface RunSkillArgs {
    */
   appliedAgreements?: readonly PromptAgreement[];
   /**
+   * The people the employee works with, from the owner's graph, read at this run; real mode only
+   * (13-J, the People block). Names and roles: they take the place of the charter's named
+   * collaborators in the charter lines, and never decide a write.
+   */
+  people?: PromptPeople;
+  /**
    * The reads made for this work item before its plan was drafted, redacted
    * as their events stored them; real mode only. Evidence for what the
    * employee says about the item and nothing else: never in a prompt, and
@@ -1087,24 +1094,44 @@ export interface RunSkillArgs {
  */
 export const CURRENT_MANAGER_UNNAMED = 'the manager this employee reports to now';
 
+/** A charter list as one prompt line's value: the clauses joined, or "(none)". */
+function clauseList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(' | ') : '(none)';
+}
+
+/**
+ * The People block, or the charter's own named collaborators line when the graph has no one for
+ * the employee (13-J).
+ */
+function peopleOrCollaborators(charter: Charter, people: PromptPeople | undefined): string[] {
+  const block = peopleBlockLines(people);
+  if (block.length > 0) return block;
+  return [
+    `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+  ];
+}
+
 /**
  * The charter as an executor prompt reads it. The mock prompt keeps the role
  * and the two boundary lists it always had; the real prompt adds the
  * escalation triggers, the adjacent roles, the named systems and
  * collaborators, who approves, and the questions the manager has answered,
  * so both phases see the whole contract they are told to stay inside (P8-9).
- * The constraints are not repeated: their wording lives in the clauses.
+ * The constraints are not repeated: their wording lives in the clauses. The
+ * People block (13-J) takes the place of the charter's named collaborators
+ * when the owner's graph has anyone for the employee: the people the manager
+ * confirmed, never a second list beside the charter's.
  *
  * @param charter - The approved charter.
  * @param mode - The deployment's surface mode.
- * @param currentManager - The manager the employee reports to now, named as who approves; the
- *   role ({@link CURRENT_MANAGER_UNNAMED}) without one.
+ * @param reader - The manager the employee reports to now, named as who approves (the role,
+ *   {@link CURRENT_MANAGER_UNNAMED}, without one), and the people the graph confirms.
  * @returns The prompt lines.
  */
 export function executorCharterLines(
   charter: Charter,
   mode: SurfaceMode,
-  currentManager?: string,
+  reader: { readonly currentManager?: string; readonly people?: PromptPeople } = {},
 ): string[] {
   const boundaries = charter.proposedBoundaries;
   const lines = [
@@ -1114,15 +1141,13 @@ export function executorCharterLines(
     `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
   ];
   if (mode !== 'real') return lines;
-  const clauses = (values: readonly string[]): string =>
-    values.length > 0 ? values.join(' | ') : '(none)';
   return [
     ...lines,
-    `Charter escalationTriggers: ${clauses(boundaries.escalationTriggers)}`,
-    `Charter adjacentRoles: ${clauses((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
-    `Charter namedSystems: ${clauses((charter.namedSystems ?? []).map((system) => system.name))}`,
-    `Charter namedCollaborators: ${clauses((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
-    `Charter approvalChain: ${currentManager ?? CURRENT_MANAGER_UNNAMED}`,
+    `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
+    `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
+    ...peopleOrCollaborators(charter, reader.people),
+    `Charter approvalChain: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
     ...answeredQuestionLines(charter),
   ];
 }
@@ -3030,7 +3055,10 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan, mode);
 
   const userPrompt = [
-    ...executorCharterLines(charter, mode, args.currentManager),
+    ...executorCharterLines(charter, mode, {
+      currentManager: args.currentManager,
+      ...(mode === 'real' && args.people ? { people: args.people } : {}),
+    }),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -3839,7 +3867,10 @@ async function authorDependentSkillRun(
   });
   const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
-    ...executorCharterLines(charter, mode, args.currentManager),
+    ...executorCharterLines(charter, mode, {
+      currentManager: args.currentManager,
+      ...(mode === 'real' && args.people ? { people: args.people } : {}),
+    }),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
