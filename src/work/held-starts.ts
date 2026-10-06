@@ -11,7 +11,8 @@ export type HeldStart = 'authoring' | 'orientation';
 
 /**
  * The line a held start leaves where the manager looks for it: the Skills card's attempt line for
- * an authoring, the system's card for an orientation.
+ * an authoring (a clause the card sets in its own sentence), the system's card for an orientation
+ * (a sentence of its own).
  *
  * @param hold - Whose pause holds it ({@link RunHold}).
  * @param start - What it holds.
@@ -26,8 +27,9 @@ export function heldStartLine(hold: RunHold, start: HeldStart): string {
   switch (start) {
     case 'authoring':
       return `${held}: writing it starts ${when}`;
+    // The system's card shows this line on its own, so it is a sentence.
     case 'orientation':
-      return `orientation ${held}: it starts ${when}`;
+      return `Orientation ${held}: it starts ${when}.`;
   }
 }
 

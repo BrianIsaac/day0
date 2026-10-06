@@ -10,13 +10,13 @@ describe('the words of a start a pause holds (D-8, wave 13 item 6)', (): void =>
 
   it('says the deployment holds an orientation, and when it starts', (): void => {
     expect(heldStartLine({ by: 'deployment' }, 'orientation')).toBe(
-      "orientation held while this deployment's scheduled work is paused: it starts once that work runs again",
+      "Orientation held while this deployment's scheduled work is paused: it starts once that work runs again.",
     );
   });
 
   it('names the employee on an orientation its own pause holds', (): void => {
     expect(heldStartLine({ by: 'employee', employeeName: 'Priya' }, 'orientation')).toBe(
-      'orientation held while Priya is paused: it starts when you resume Priya',
+      'Orientation held while Priya is paused: it starts when you resume Priya.',
     );
   });
 

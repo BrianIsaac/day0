@@ -211,7 +211,7 @@ describe("a paused employee's orientation (D-8 (b))", (): void => {
     ).toEqual({ outcome: 'held', surfaceId });
     expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toMatchObject({
       verdict: 'declared',
-      reason: 'orientation held while Priya is paused: it starts when you resume Priya',
+      reason: 'Orientation held while Priya is paused: it starts when you resume Priya.',
     });
     expect(await eventsOf(harness, 'surface.orientation-held')).toEqual([
       { surfaceId, reason: EMPLOYEE_PAUSED_REASON, requested: true },
