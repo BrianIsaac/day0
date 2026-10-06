@@ -259,7 +259,7 @@ export function AmendCharterPanel({
     return (): void => window.removeEventListener('hashchange', openAtAnchor);
   }, []);
   return (
-    <details id={AMEND_CHARTER_ANCHOR} ref={disclosure} className="text-sm scroll-mt-4">
+    <details id={AMEND_CHARTER_ANCHOR} ref={disclosure} className="text-sm scroll-mt-24">
       <summary ref={summary} className={DISCLOSURE_SUMMARY}>
         Amend this charter · next version v{next}
       </summary>

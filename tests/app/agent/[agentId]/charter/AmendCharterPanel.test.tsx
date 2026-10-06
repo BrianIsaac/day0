@@ -200,6 +200,9 @@ describe('amending an approved charter from the card', (): void => {
       const disclosure = view.container.querySelector('details');
       expect(disclosure?.id).toBe('amend-charter');
       expect(disclosure?.open).toBe(true);
+      // Scrolled clear of the sticky header, as every anchored card is (found on the bed: at
+      // scroll-mt-4 the focused summary sat under the header at 1440 and 390).
+      expect(disclosure?.className).toContain('scroll-mt-24');
       expect(scrolled).toEqual(['amend-charter']);
       expect(focusedName()).toBe('Amend this charter · next version v0.2');
       view.unmount();
