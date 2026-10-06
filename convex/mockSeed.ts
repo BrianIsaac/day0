@@ -565,12 +565,15 @@ export const seedMockEnvironment = internalMutation({
       'open',
       'P3',
     );
+    // The closed-won deals from Friday's standup are asked for in the manager's DM above, and an
+    // employee files its own ticket for them; a seeded ticket for the same three deals stayed open
+    // beside the closed one (13-FD), so this one is the team's other backlog.
     await ensureTicket(
       'REVOPS-203',
-      'Add Friday standup closed-won deals to Q4 Revenue Tracker',
-      "Manager filed: append Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k) to the closed-won tab from last Friday's standup. Close once the rows are in.",
+      'Backfill Q2 closed-won deals missing from the Q2 tracker',
+      'Deals that closed in the last week of Q2 never reached the Q2 tracker. Pull them from Salesforce and append them to its closed-won tab.',
       'open',
-      'P1',
+      'P3',
     );
 
     return { ok: true };

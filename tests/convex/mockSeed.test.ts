@@ -107,4 +107,35 @@ describe('the seeded mock office', (): void => {
     expect(doc('billing-replies')?.body).toContain('within two business days');
     expect(doc('team-overview')?.body).toContain('`#office-asks`');
   });
+
+  it("files no ticket for an ask a seeded message already makes, which an employee's own ticket would repeat (13-FD)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'manager@day0.local',
+          name: 'Lark',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const seeded = await harness.run(async (ctx) => ({
+      messages: await ctx.db.query('mockSlackMessages').collect(),
+      tickets: await ctx.db.query('mockTickets').collect(),
+    }));
+    // The manager's DM asks for the three closed-won deals; on the bed both Lark and Moss filed it
+    // as REVOPS-204 and closed it, while a seeded REVOPS-203 for the same three deals stayed open.
+    const ask = seeded.messages.find((message) => message.channelSlug === 'dm-manager');
+    expect(ask?.body).toContain('Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k)');
+    for (const ticket of seeded.tickets) {
+      expect(`${ticket.title} ${ticket.body}`, ticket.slug).not.toMatch(/Acme|Beta Corp|Gamma LLC/);
+    }
+    expect(seeded.tickets.map((ticket) => [ticket.slug, ticket.status])).toEqual([
+      ['REVOPS-201', 'open'],
+      ['REVOPS-202', 'open'],
+      ['REVOPS-203', 'open'],
+    ]);
+  });
 });
