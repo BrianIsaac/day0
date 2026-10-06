@@ -65,4 +65,24 @@ describe('how the seeding of an approved charter stands (12-J item 6)', (): void
       "No seeding of Nola's charter failed: there is nothing to try again.",
     );
   });
+
+  it('says a model call that ran out of time in the manager’s words, never the error’s (the bed)', (): void => {
+    expect(
+      seedingLine(
+        {
+          state: 'retrying',
+          reason: 'agentJson(day0-work-generator): the model call reached its 300000ms budget',
+        },
+        'Dee',
+      ),
+    ).toBe(
+      'Finding work for Dee did not finish: the model did not answer within 5 minutes. Day0 tries again shortly.',
+    );
+    expect(
+      seedingLine(
+        { state: 'stopped', reason: 'agentJson(day0-work-generator): provider returned 503' },
+        'Dee',
+      ),
+    ).toBe('Day0 could not find work for Dee: provider returned 503.');
+  });
 });

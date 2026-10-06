@@ -63,6 +63,25 @@ export function seedingStanding(
     : { state: 'stopped', reason: newest.reason };
 }
 
+/** A model call's own label before its error ("agentJson(day0-work-generator): "). */
+const CALL_LABEL = /^agentJson\([^)]*\):\s*/;
+
+/** The model client's budget error ("the model call reached its 300000ms budget"). */
+const BUDGET_SPENT = /the model call reached its (\d+)ms budget/;
+
+/**
+ * A seeding's recorded reason as the manager reads it (the bed): a model call that ran out of time
+ * in minutes, and any other error without the call's own label.
+ *
+ * @param reason - The reason the failure recorded.
+ */
+function reasonWords(reason: string): string {
+  const budget = BUDGET_SPENT.exec(reason);
+  if (budget)
+    return `the model did not answer within ${Math.round(Number(budget[1]) / 60_000)} minutes`;
+  return reason.replace(CALL_LABEL, '');
+}
+
 /**
  * What the empty Work tab says of a seeding that did not finish (12-FX's "an empty queue with
  * nothing said").
@@ -76,9 +95,9 @@ export function seedingLine(standing: SeedingStanding, name: string): string {
     case 'finding':
       return `Day0 is finding work for ${name} again. It appears here as it is found.`;
     case 'retrying':
-      return `Finding work for ${name} did not finish: ${standing.reason}. Day0 tries again shortly.`;
+      return `Finding work for ${name} did not finish: ${reasonWords(standing.reason)}. Day0 tries again shortly.`;
     case 'stopped':
-      return `Day0 could not find work for ${name}: ${standing.reason}.`;
+      return `Day0 could not find work for ${name}: ${reasonWords(standing.reason)}.`;
     default: {
       const unknown: never = standing;
       throw new Error(`unhandled seeding standing ${String(unknown)}`);
