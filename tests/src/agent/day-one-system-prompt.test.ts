@@ -90,9 +90,18 @@ describe('dayOneSystemPrompt', (): void => {
   });
 
   it('moves the cache key on with the prompt', (): void => {
-    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v5');
+    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v6');
   });
 });
+
+/**
+ * What the last question and the close both say of a stated rule (13-FD): on the bed, Moss's
+ * manager said "Ask me before contacting either", the last question named "who I should contact
+ * first" as left open, and the close carried it to the charter as an open question.
+ */
+const STATED_RULE_SETTLED =
+  'A rule or a limit the boss stated is settled, never open, and so is how you keep it: it goes ' +
+  'on the charter as a rule.';
 
 /** The line every note before the close ends with (the wave 9 review's decision 3). */
 const NO_PROMISED_RETURN =
@@ -129,7 +138,9 @@ describe('dayOneTurnNote', (): void => {
         "In this turn, acknowledge the boss's last reply in at most one short sentence. Then, " +
         "before the last question, name in one short sentence each thing the boss's earlier " +
         'replies left open: a question they asked back, an answer they were not sure of, or ' +
-        'something they asked to come back to; name nothing when nothing was left open. Then ask ' +
+        'something they asked to come back to; name nothing when nothing was left open. ' +
+        STATED_RULE_SETTLED +
+        ' Then ask ' +
         `question 7 (${DAY_ONE_TOPIC_TITLES[last.topic]}) in your own words: ` +
         questionBody(last.question) +
         NO_PROMISED_RETURN,
@@ -146,9 +157,9 @@ describe('dayOneTurnNote', (): void => {
       "is still open after the boss's last answer, saying it goes on the charter as an open " +
       'question: a question they asked back, an answer they were not sure of, something they ' +
       'asked to come back to, or anything they raised at the last question; name nothing that ' +
-      'their last answer settled, and nothing when it says nothing is open. A rule or a limit ' +
-      'the boss stated is settled, never open: it goes on the charter as a rule. Ask nothing, ' +
-      'and promise nothing but the charter. Then call the dayOneComplete ' +
+      'their last answer settled, and nothing when it says nothing is open. ' +
+      STATED_RULE_SETTLED +
+      ' Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
       'tool: its closing line only says you will now draft the charter for their review, and ' +
       'does not thank them again.';
     expect(dayOneTurnNote(7)).toBe(close);
@@ -161,9 +172,12 @@ describe('dayOneTurnNote', (): void => {
         'and what was left open.',
     );
     expect(DAY_ONE_COMPLETE_TOOL.closingLine).toBe(
-      'One short sentence saying you will now draft the charter for their review, naming ' +
-        'nothing it will hold. It does not thank them again: the turn has already done so.',
+      'One short sentence that only says you will now draft the charter for their review. It ' +
+        'does not thank them again: the turn has already done so.',
     );
+    // "Naming nothing it will hold" came back as the line itself on the 13-FD bed: "I will now
+    // draft the charter for your review, holding nothing named in it."
+    expect(DAY_ONE_COMPLETE_TOOL.closingLine).not.toMatch(/hold/i);
     expect(DAY_ONE_COMPLETE_TOOL.closingLine).not.toMatch(/friendly/i);
   });
 

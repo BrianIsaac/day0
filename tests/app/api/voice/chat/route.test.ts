@@ -286,7 +286,7 @@ describe('the Day-1 chat route', (): void => {
       // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles;
       // from v2: it asks only the question each turn's note names (the v0.11.0 walk); from v4:
       // the closing line names nothing the charter will hold (13-FD).
-      prompt_cache_key: 'day0-day1-system-v5',
+      prompt_cache_key: 'day0-day1-system-v6',
     });
   });
 

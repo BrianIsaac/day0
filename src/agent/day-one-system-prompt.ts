@@ -8,9 +8,11 @@ import { clippedEmployeeName } from './employee-name';
  * change to the words below moves it on (v2: the employee's own name and the topics' plain
  * titles, 30 September; v3: one question per turn, the one `dayOneTurnNote` names, 1 October;
  * v4: the close as the note says it, with no friendly line of its own, 2 October; v5: a stated
- * rule is never named open, and the closing line names nothing the charter will hold, 6 October).
+ * rule is never named open, and the closing line names nothing the charter will hold, 6 October;
+ * v6: the last question says a stated rule is settled too, and the closing line only says the
+ * charter is next, 6 October).
  */
-export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v5';
+export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v6';
 
 /**
  * The words of the tool the employee calls to end the one-to-one, said to the model with the
@@ -22,9 +24,11 @@ export const DAY_ONE_COMPLETE_TOOL = {
   description:
     'Call this once all seven questions are answered, in the closing turn, after its thanks ' +
     'and what was left open.',
+  // "Naming nothing it will hold" came back as the line itself on the 13-FD bed ("I will now
+  // draft the charter for your review, holding nothing named in it."), so it says only this.
   closingLine:
-    'One short sentence saying you will now draft the charter for their review, naming ' +
-    'nothing it will hold. It does not thank them again: the turn has already done so.',
+    'One short sentence that only says you will now draft the charter for their review. It ' +
+    'does not thank them again: the turn has already done so.',
 } as const;
 
 /**
@@ -76,6 +80,17 @@ export function dayOneSystemPrompt(employeeName: string): string {
   ].join('\n');
 }
 
+/**
+ * What the last question and the close both say of a rule the boss stated (13-FD): it is settled,
+ * and so is how the employee keeps it. On the v0.16.0 redeploy and again on the 13-FD bed, Moss's
+ * manager said "Ask me before contacting either"; the last question named "who I should contact
+ * first" as left open, the manager's "Nothing else is open" did not settle it, and the close
+ * carried it to the charter as an open question the charter, rightly, held as a rule.
+ */
+const STATED_RULE_SETTLED =
+  'A rule or a limit the boss stated is settled, never open, and so is how you keep it: it goes ' +
+  'on the charter as a rule.';
+
 /** The end of every note before the close: the employee never promises a return it cannot keep. */
 const NO_PROMISED_RETURN =
   ' Never promise to come back to a question or say you will circle back to it: anything the ' +
@@ -96,17 +111,21 @@ const CLOSE =
   "is still open after the boss's last answer, saying it goes on the charter as an open " +
   'question: a question they asked back, an answer they were not sure of, something they ' +
   'asked to come back to, or anything they raised at the last question; name nothing that ' +
-  'their last answer settled, and nothing when it says nothing is open. A rule or a limit ' +
-  'the boss stated is settled, never open: it goes on the charter as a rule. Ask nothing, ' +
-  'and promise nothing but the charter. Then call the dayOneComplete ' +
+  'their last answer settled, and nothing when it says nothing is open. ' +
+  STATED_RULE_SETTLED +
+  ' Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
   'tool: its closing line only says you will now draft the charter for their review, and ' +
   'does not thank them again.';
 
-/** What the last question's note asks first: the open threads of the earlier replies, named. */
+/**
+ * What the last question's note asks first: the open threads of the earlier replies, named, and
+ * never a rule the boss stated (13-FD).
+ */
 const LEFT_OPEN_FIRST =
   "before the last question, name in one short sentence each thing the boss's earlier replies " +
   'left open: a question they asked back, an answer they were not sure of, or something they ' +
-  'asked to come back to; name nothing when nothing was left open.';
+  'asked to come back to; name nothing when nothing was left open. ' +
+  STATED_RULE_SETTLED;
 
 /**
  * Where the one-to-one stands, said to the model as the last message of every turn: the one
