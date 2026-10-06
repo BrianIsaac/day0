@@ -2945,6 +2945,15 @@ export function executorInstructions(args: {
 }
 
 /**
+ * What a resumed closing set is told of the previous attempt's failure: it is that attempt's, and
+ * a write it names that this set carries is sent again, so the set answers for the run as it will
+ * stand once it lands (wave 13 item 8; Wren's second Retry answered `partial` from the failure line
+ * although its own re-sent post landed).
+ */
+const RESUMED_FAILURE_IS_EARLIER =
+  "That failure is the previous attempt's, not this set's: a write it names that is in this set is sent again with it, so answer workDone as the run will stand once this set lands.";
+
+/**
  * How a supervised real run's writes land (W12V-11, the walk on real Slack): with autonomous
  * actions off, the writes one response emits wait for the manager as one set and land together
  * when the manager approves it. A run told only that its writes are "held", and to answer whether
@@ -3854,6 +3863,8 @@ async function authorDependentSkillRun(
       ? [
           '',
           `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`,
+          // A resumed set read the earlier failure as its own outcome (Wren's second Retry).
+          ...(args.resumedClosing ? [RESUMED_FAILURE_IS_EARLIER] : []),
         ]
       : []),
     ...(args.refusedClosing ? ['', ...refusedClosingLines(args.refusedClosing)] : []),

@@ -60,9 +60,15 @@ beforeEach((): void => {
 });
 
 /** REVOPS-6's closing set, its model answering with the recorded set each time it is asked. */
-async function closingSet(answer: unknown): Promise<Awaited<ReturnType<typeof runDependentSkill>>> {
+async function closingSet(
+  answer: unknown,
+  resumed: { readonly initialFailure: string } | undefined = undefined,
+): Promise<Awaited<ReturnType<typeof runDependentSkill>>> {
   recorded.outputs.push(answer, answer);
   return await runDependentSkill({
+    ...(resumed === undefined
+      ? {}
+      : { resumedClosing: true, initialFailure: resumed.initialFailure }),
     skill: { name: 'kanban-comment', description: 'Post and comment.', body: '# Skill' },
     plan: REVOPS_6_PLAN,
     candidate: REVOPS_6,
@@ -149,5 +155,26 @@ describe('a write withheld after its set was authored (W12X-2)', (): void => {
     expect(withReportsOfWithheld([NOTE_1, question], [{ index: 0, reason: 'withheld' }])).toEqual([
       { index: 0, reason: 'withheld' },
     ]);
+  });
+});
+
+describe("a resumed closing set (Wren's second Retry, wave 13 item 8)", (): void => {
+  it('reads the previous attempt’s failure as that attempt’s, and answers for the set as it will stand once it lands', async (): Promise<void> => {
+    await closingSet(OWN_WRITES_CLOSING, {
+      initialFailure:
+        'http.request failed: not_in_channel (the bot is not a member of that channel)',
+    });
+    const user = recorded.users[0] ?? '';
+    expect(user).toContain(
+      'Previous closing attempt failure (prerequisites succeeded; retry the closing set): http.request failed: not_in_channel (the bot is not a member of that channel)',
+    );
+    expect(user).toContain(
+      "That failure is the previous attempt's, not this set's: a write it names that is in this set is sent again with it, so answer workDone as the run will stand once this set lands.",
+    );
+  });
+
+  it('says nothing of the kind for a phase-one failure, which no write of this set sends again', async (): Promise<void> => {
+    await closingSet(OWN_WRITES_CLOSING);
+    expect(recorded.users[0] ?? '').not.toContain("That failure is the previous attempt's");
   });
 });
