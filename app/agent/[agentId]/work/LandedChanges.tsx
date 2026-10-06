@@ -10,6 +10,7 @@ import {
   clipLedgerRow,
   landedHeadline,
   providerAnswerStatus,
+  reusedInThisRun,
   type PhasedLedgerRow,
 } from './work-item';
 
@@ -109,17 +110,6 @@ function rowMeta(row: PhasedLedgerRow): ReactNode {
   }
   // The parts are set apart, as every ledger line's small print is: never run together.
   return parts.flatMap((part, index) => (index === 0 ? [part] : [' · ', part]));
-}
-
-/**
- * Whether a reused row reuses a write of its own run (W12V-13): keys are
- * `workItemId:runId:actionIndex`, and neither id holds a colon.
- *
- * @param row - A reused ledger row.
- */
-function reusedInThisRun(row: Pick<PhasedLedgerRow, 'idempotencyKey' | 'reusedFrom'>): boolean {
-  const runOf = (key: string | undefined): string | undefined => key?.split(':')[1];
-  return runOf(row.reusedFrom) !== undefined && runOf(row.reusedFrom) === runOf(row.idempotencyKey);
 }
 
 /**

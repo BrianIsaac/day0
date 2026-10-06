@@ -9,6 +9,7 @@ import {
   TICKET_REREAD_STOP,
   notDoneOnCard,
   unfinishedInOwnWords,
+  landedHeadline,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   ticketRereadStopReason,
@@ -252,5 +253,22 @@ describe('what the card says was not done follows the run’s answer (12-D)', ()
       closed: [],
     });
     expect(notDoneOnCard({ draft: 'Reconciled all three.', notes: '' })).toBeUndefined();
+  });
+});
+
+describe('the landed headline (W12V-13, wave 13 item 8)', (): void => {
+  it('counts a message the closing set reused from its own run once, as it reached Slack once', (): void => {
+    expect(
+      landedHeadline([
+        { idempotencyKey: 'wi:run1:0' },
+        { idempotencyKey: 'wi:run1:1' },
+        { idempotencyKey: 'wi:run1:2', reusedFrom: 'wi:run1:0' },
+        { idempotencyKey: 'wi:run1:3' },
+      ]),
+    ).toBe('3 actions reached the work environment');
+    // A row reused from an earlier run is still counted, as before: this card lists it as landed.
+    expect(landedHeadline([{ idempotencyKey: 'wi:run2:0', reusedFrom: 'wi:run1:0' }])).toBe(
+      '1 action reached the work environment',
+    );
   });
 });

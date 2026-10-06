@@ -163,10 +163,33 @@ export interface PlanObligationsRow {
  *   `3 actions reached the work environment · 3 applied autonomously`, or without the tail.
  *   Reads and writes alike, so a read is never called a change (the re-walk, row 8).
  */
-export function landedHeadline(landed: ReadonlyArray<{ authority?: ActionAuthority }>): string {
-  const autonomous = landed.filter((row) => row.authority === 'autonomous').length;
-  const head = `${landed.length} ${landed.length === 1 ? 'action' : 'actions'} reached the work environment`;
+export function landedHeadline(
+  landed: ReadonlyArray<{
+    authority?: ActionAuthority;
+    idempotencyKey?: string;
+    reusedFrom?: string;
+  }>,
+): string {
+  // A row the closing set reused from its own run is a message that reached once (W12V-13).
+  const reached = landed.filter((row) => !reusedInThisRun(row));
+  const autonomous = reached.filter((row) => row.authority === 'autonomous').length;
+  const head = `${reached.length} ${reached.length === 1 ? 'action' : 'actions'} reached the work environment`;
   return autonomous > 0 ? `${head} · ${autonomous} applied autonomously` : head;
+}
+
+/**
+ * Whether a reused row reuses a write of its own run (W12V-13): keys are
+ * `workItemId:runId:actionIndex`, and neither id holds a colon.
+ *
+ * @param row - A ledger row.
+ */
+export function reusedInThisRun(row: { idempotencyKey?: string; reusedFrom?: string }): boolean {
+  const runOf = (key: string | undefined): string | undefined => key?.split(':')[1];
+  return (
+    row.reusedFrom !== undefined &&
+    runOf(row.reusedFrom) !== undefined &&
+    runOf(row.reusedFrom) === runOf(row.idempotencyKey)
+  );
 }
 
 /**
