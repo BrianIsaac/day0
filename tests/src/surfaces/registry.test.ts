@@ -2192,6 +2192,41 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
     expect(recorded.http).toHaveLength(1);
   });
 
+  it('binds the message only to the writes it reports, not to an unrelated one left unapproved (the second pass)', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const moved: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', state: 'In Progress' }),
+      },
+    };
+    const report: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-6',
+          body: 'Posted the drill-start note in #revops.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, moved, report],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[1]).toMatchObject({ ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(applied[2]).toMatchObject({ ok: true });
+    expect(applied[2]!.held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
   it('sends a message that reports none of the writes before it whatever became of them', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const question: MockAction = {

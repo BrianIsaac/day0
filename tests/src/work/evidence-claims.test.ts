@@ -775,6 +775,33 @@ describe('the verdict of a message that reports a held write of its set (W12X-2,
     ]);
   });
 
+  it('leaves a DM to apply when the held write beside it is not one it reports (the second pass)', (): void => {
+    const moved: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', state: 'In Progress' }),
+      },
+    };
+    const report: MockAction = {
+      ...dm,
+      args: {
+        ...dm.args,
+        body: JSON.stringify({
+          channel: 'D0C6MMVTY06',
+          text: 'Posted the drill-start note in #revops.',
+        }),
+      },
+    };
+    expect(
+      heldWithReportedWrites(
+        [NOTE_1, moved, report],
+        [{ disposition: 'auto' }, held, { disposition: 'auto' }],
+      ),
+    ).toEqual([{ disposition: 'auto' }, held, { disposition: 'auto' }]);
+  });
+
   it('leaves a DM that reports nothing, or writes that go ahead themselves, as they were', (): void => {
     const question: MockAction = {
       ...dm,

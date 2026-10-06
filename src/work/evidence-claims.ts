@@ -389,18 +389,25 @@ function namesMessageKind(sentence: string): boolean {
  * only once every write before it has landed.
  */
 function reportedWrites(sentence: string, earlier: readonly MockAction[]): MockAction[] {
+  return reportedWriteIndexes(sentence, earlier).map((index) => earlier[index]!);
+}
+
+/** The places in `earlier` of the writes a sentence reports ({@link reportedWrites}). */
+function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]): number[] {
   const kinds = reportableKinds(sentence);
   if (kinds.size === 0) return [];
   const named = namingStems(sentence);
   const keys = distinctiveTokens(sentence);
   const byKind = namesMessageKind(sentence);
-  return earlier.filter((action) => {
+  return earlier.flatMap((action, index): number[] => {
     const write = writeOf(action);
-    if (!write || !kinds.has(write.kind)) return false;
-    if (byKind && (write.kind === 'comment' || write.kind === 'chat')) return true;
+    if (!write || !kinds.has(write.kind)) return [];
+    if (byKind && (write.kind === 'comment' || write.kind === 'chat')) return [index];
     const carried = namingStems(write.text);
     const carriedKeys = new Set(distinctiveTokens(write.text));
-    return [...named].some((word) => carried.has(word)) || keys.some((key) => carriedKeys.has(key));
+    return [...named].some((word) => carried.has(word)) || keys.some((key) => carriedKeys.has(key))
+      ? [index]
+      : [];
   });
 }
 
@@ -448,10 +455,11 @@ export function heldWithReportedWrites(
   return verdicts.map((verdict, index): ActionVerdict => {
     if (verdict.disposition !== 'auto') return verdict;
     const action = actions[index];
-    if (!action || !reportsEarlierWrite(action, actions.slice(0, index))) return verdict;
-    const waiting = verdicts
-      .slice(0, index)
-      .some((earlier, at) => earlier.disposition === 'held' && writeOf(actions[at]!) !== undefined);
+    if (!action) return verdict;
+    // Only a held write the message reports keeps it waiting; another held write is not its own.
+    const waiting = reportedEarlierWrites(action, actions.slice(0, index)).some(
+      (at) => verdicts[at]?.disposition === 'held',
+    );
     return waiting ? { disposition: 'held', reason: HELD_WITH_REPORTED_WRITES } : verdict;
   });
 }
@@ -469,16 +477,35 @@ export function heldWithReportedWrites(
  *   True when one of its sentences reports such a write.
  */
 export function reportsEarlierWrite(action: MockAction, earlier: readonly MockAction[]): boolean {
+  return reportedEarlierWrites(action, earlier).length > 0;
+}
+
+/**
+ * The places in `earlier` of the writes a message reports as made, each once, in order: the
+ * writes it is bound to at the apply and in the hold review.
+ *
+ * Args:
+ *   action: The message as the executor emitted it.
+ *   earlier: The actions before it in the same set.
+ *
+ * Returns:
+ *   The reported writes' indexes in `earlier`; empty when it reports none.
+ */
+export function reportedEarlierWrites(
+  action: MockAction,
+  earlier: readonly MockAction[],
+): number[] {
   // Any sentence that reports such a write as made binds the message, whether or not the check
   // read it as a claim ("Commented the audit note." is not one); a hedge or a condition reports
   // nothing made.
-  return messageTexts(action).some((text) =>
-    sentencesOf(text).some(
-      (sentence) =>
-        !HEDGED.test(sentence) &&
-        reportedWrites(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier).length > 0,
+  const reported = messageTexts(action).flatMap((text) =>
+    sentencesOf(text).flatMap((sentence) =>
+      HEDGED.test(sentence)
+        ? []
+        : reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier),
     ),
   );
+  return [...new Set(reported)].sort((a, b) => a - b);
 }
 
 /**

@@ -2,7 +2,7 @@ import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
-import { reportsEarlierWrite } from '../work/evidence-claims';
+import { reportedEarlierWrites } from '../work/evidence-claims';
 import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
@@ -335,21 +335,19 @@ function writeDidNotLand(
 }
 
 /**
- * Whether a write earlier in the set did not land: refused, failed, held back (not approved,
- * withheld, held by a claim) or with its outcome unknown. A carried row that landed counts as
- * landed.
+ * Whether one of the earlier writes a message reports did not land: refused, failed, held back
+ * (not approved, withheld, held by a claim) or with its outcome unknown. A carried row that landed
+ * counts as landed; a write the message does not report is not its business.
+ *
+ * @param reported - The places of the writes the message reports (`reportedEarlierWrites`).
  */
-function earlierWriteNotLanded(
+function reportedWriteNotLanded(
   applied: readonly AppliedAction[],
-  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
-  actions: readonly MockAction[],
+  reported: readonly number[],
 ): boolean {
-  return applied.some((row, index) => {
-    const action = parsed[index];
-    const write = action
-      ? actionIntent(action) === 'write'
-      : isSurfaceTool(actions[index]?.tool ?? '');
-    return write && (!row.ok || row.held === true || row.outcomeUnknown === true);
+  return reported.some((index) => {
+    const row = applied[index];
+    return row === undefined || !row.ok || row.held === true || row.outcomeUnknown === true;
   });
 }
 
@@ -768,12 +766,11 @@ export async function applySurfaceActions(
         continue;
       }
       // A message that reports a write of its own set is bound to the writes
-      // before it (the evidence check counted them as its evidence): one held
+      // it reports (the evidence check counted them as its evidence): one held
       // back (not approved, held by a claim) leaves its report untrue too.
       if (
         isMessage(parsed.action, surface) &&
-        reportsEarlierWrite(action, actions.slice(0, index)) &&
-        earlierWriteNotLanded(applied, parsedByIndex, actions)
+        reportedWriteNotLanded(applied, reportedEarlierWrites(action, actions.slice(0, index)))
       ) {
         await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
         continue;
