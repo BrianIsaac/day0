@@ -331,9 +331,9 @@ describe('where the People block reaches', (): void => {
       [
         HEADING,
         'People the manager confirmed, by name and role. None of them approves a write; the manager does.',
-        '- Dana Okafor (Finance systems owner): dotted line.',
-        '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, Raising access requests through the manager.',
-        '- Escalate to: Sara Lindqvist (Support lead), for missing Linear access.',
+        '- Dana Okafor (Finance systems owner): dotted-line contact.',
+        '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, raising access requests through the manager.',
+        '- Escalate to: Sara Lindqvist (Support lead), for missing Linear access; anything else, the manager.',
       ].join('\n'),
     );
     expect(plannerPrompt).toContain('\nFrom: Lee Tan (Work management administrator)\n');

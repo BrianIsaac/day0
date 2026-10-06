@@ -97,9 +97,9 @@ const people: PromptPeople = {
 
 const BLOCK = [
   'People the manager confirmed, by name and role. None of them approves a write; the manager does.',
-  '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, Raising access requests through the manager.',
-  '- Dana Okafor (Finance systems owner): dotted line.',
-  '- Escalate to: Sara Lindqvist, for missing Linear access.',
+  '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, raising access requests through the manager.',
+  '- Dana Okafor (Finance systems owner): dotted-line contact.',
+  '- Escalate to: Sara Lindqvist, for missing Linear access; anything else, the manager.',
 ].join('\n');
 
 const CHARTER_LINE = 'Charter namedCollaborators: Lee Tan (Linear access)';
@@ -139,7 +139,7 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     recorded.outputs.length = 0;
   });
 
-  it('replaces the charter namedCollaborators line in phase one, inside the charter lines', async (): Promise<void> => {
+  it('replaces the charter namedCollaborators line in phase one, under its own heading at the end of the charter lines', async (): Promise<void> => {
     recorded.outputs.push(phaseOne);
     await runSkill({
       skill,
@@ -152,10 +152,10 @@ describe('the People block in the executor prompts (13-J)', (): void => {
       people,
     });
     const user = recorded.users[0]!;
-    expect(user).toContain(BLOCK);
+    expect(user).toContain(`\n\n--- People ---\n${BLOCK}\n`);
     expect(user).not.toContain('Charter namedCollaborators');
-    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Charter namedSystems'));
-    expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Charter approvalChain'));
+    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Charter approvalChain'));
+    expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Approved plan:'));
   });
 
   it('replaces it in the closing phase too', async (): Promise<void> => {
@@ -173,9 +173,10 @@ describe('the People block in the executor prompts (13-J)', (): void => {
       initialLedger: [],
     });
     const user = recorded.users[0]!;
-    expect(user).toContain(BLOCK);
+    expect(user).toContain(`\n\n--- People ---\n${BLOCK}\n`);
     expect(user).not.toContain('Charter namedCollaborators');
-    expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Charter approvalChain'));
+    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Charter approvalChain'));
+    expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Approved plan:'));
   });
 
   it("keeps the charter's own line when the graph has no one for the employee", async (): Promise<void> => {
@@ -194,6 +195,23 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     expect(recorded.users[0]).toContain(CHARTER_LINE);
     expect(recorded.users[0]).not.toContain('People the manager confirmed');
     expect(recorded.users[0]).toBe(recorded.users[1]);
+  });
+
+  it("keeps the charter's collaborators line beside a block that confirms only an escalation contact", async (): Promise<void> => {
+    recorded.outputs.push(phaseOne);
+    await runSkill({
+      skill,
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      people: { people: [], escalation: { kind: 'person', displayName: 'Sara Lindqvist' } },
+    });
+    const user = recorded.users[0]!;
+    expect(user).toContain(CHARTER_LINE);
+    expect(user).toContain('- Escalate to: Sara Lindqvist.');
   });
 
   it("names a confirmed requester on phase one's From line, in real mode only", async (): Promise<void> => {

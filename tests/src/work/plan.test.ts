@@ -1408,8 +1408,8 @@ describe('the People block in the planner (13-J)', (): void => {
       [
         '--- People ---',
         'People the manager confirmed, by name and role. None of them approves a write; the manager does.',
-        '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, Raising access requests through the manager.',
-        '- Escalate to: Sara Lindqvist, for missing Linear access.',
+        '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, raising access requests through the manager.',
+        '- Escalate to: Sara Lindqvist, for missing Linear access; anything else, the manager.',
       ].join('\n'),
     );
   });

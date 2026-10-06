@@ -47,6 +47,8 @@ import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
 import {
   fromLine,
+  namesAnyone,
+  PEOPLE_HEADING,
   peopleBlockLines,
   type PromptNamed,
   type PromptPeople,
@@ -1110,27 +1112,16 @@ function clauseList(values: readonly string[]): string {
 }
 
 /**
- * The People block, or the charter's own named collaborators line when the graph has no one for
- * the employee (13-J).
- */
-function peopleOrCollaborators(charter: Charter, people: PromptPeople | undefined): string[] {
-  const block = peopleBlockLines(people);
-  if (block.length > 0) return block;
-  return [
-    `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
-  ];
-}
-
-/**
  * The charter as an executor prompt reads it. The mock prompt keeps the role
  * and the two boundary lists it always had; the real prompt adds the
  * escalation triggers, the adjacent roles, the named systems and
  * collaborators, who approves, and the questions the manager has answered,
  * so both phases see the whole contract they are told to stay inside (P8-9).
  * The constraints are not repeated: their wording lives in the clauses. The
- * People block (13-J) takes the place of the charter's named collaborators
- * when the owner's graph has anyone for the employee: the people the manager
- * confirmed, never a second list beside the charter's.
+ * People block (13-J) follows the charter's lines under its own heading, and
+ * takes the place of the charter's named collaborators once it names anyone
+ * the employee works beside: the people the manager confirmed, never a second
+ * list beside the charter's.
  *
  * @param charter - The approved charter.
  * @param mode - The deployment's surface mode.
@@ -1151,14 +1142,20 @@ export function executorCharterLines(
     `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
   ];
   if (mode !== 'real') return lines;
+  const people = peopleBlockLines(reader.people);
   return [
     ...lines,
     `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
     `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
     `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
-    ...peopleOrCollaborators(charter, reader.people),
+    ...(namesAnyone(reader.people)
+      ? []
+      : [
+          `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+        ]),
     `Charter approvalChain: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
     ...answeredQuestionLines(charter),
+    ...(people.length > 0 ? ['', PEOPLE_HEADING, ...people] : []),
   ];
 }
 

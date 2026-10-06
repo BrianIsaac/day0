@@ -4,6 +4,7 @@ import {
   PEOPLE_BLOCK_MAX_LINES,
   PEOPLE_HEADING,
   fromLine,
+  namesAnyone,
   peopleBlockLines,
   personNamed,
   withoutIdentities,
@@ -49,9 +50,9 @@ describe('the People block', (): void => {
   it('prints each confirmed person once, by name and role, with every edge in the manager words', (): void => {
     expect(peopleBlockLines(graph)).toEqual([
       PEOPLE_BLOCK_LEAD,
-      '- Dana Okafor (Finance systems owner): dotted line.',
-      '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, Raising access and workflow requests through the manager.',
-      '- Escalate to: Sara Lindqvist (Support lead), for missing Linear access.',
+      '- Dana Okafor (Finance systems owner): dotted-line contact.',
+      '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, raising access and workflow requests through the manager.',
+      '- Escalate to: Sara Lindqvist (Support lead), for missing Linear access; anything else, the manager.',
     ]);
   });
 
@@ -62,7 +63,7 @@ describe('the People block', (): void => {
 
   it('names the manager as the escalation when people are confirmed and no contact is', (): void => {
     expect(peopleBlockLines({ ...graph, escalation: { kind: 'manager' } }).at(-1)).toBe(
-      '- Escalate to: your manager.',
+      '- Escalate to: the manager.',
     );
   });
 
@@ -86,18 +87,39 @@ describe('the People block', (): void => {
     ).toBe('- Mo Reyes (Accounts payable): works with you.');
   });
 
-  it('keeps to eight lines below the lead, saying how many it left out', (): void => {
+  it('keeps to eight lines, the lead among them, saying how many it left out', (): void => {
     const people = Array.from({ length: 12 }, (_, index) => ({
       displayName: `Person ${String(index + 1).padStart(2, '0')}`,
       edges: [{ type: 'collaborator' as const }],
     }));
     const lines = peopleBlockLines({ people, escalation: { kind: 'manager' } });
-    expect(lines).toHaveLength(PEOPLE_BLOCK_MAX_LINES + 1);
-    expect(lines.slice(1, 7)).toEqual(
-      people.slice(0, 6).map((person) => `- ${person.displayName}: works with you.`),
+    expect(lines).toHaveLength(PEOPLE_BLOCK_MAX_LINES);
+    expect(lines.slice(1, 6)).toEqual(
+      people.slice(0, 5).map((person) => `- ${person.displayName}: works with you.`),
     );
-    expect(lines[7]).toBe('- 6 more the manager confirmed, not listed here.');
-    expect(lines[8]).toBe('- Escalate to: your manager.');
+    expect(lines[6]).toBe('- 7 more people the manager confirmed are not listed here.');
+    expect(lines[7]).toBe('- Escalate to: the manager.');
+    // Six people fit with the escalation line; a seventh does not.
+    expect(
+      peopleBlockLines({ people: people.slice(0, 6), escalation: { kind: 'manager' } }),
+    ).toHaveLength(PEOPLE_BLOCK_MAX_LINES);
+  });
+
+  it('lower-cases a scope that opens on an ordinary word, and leaves a proper noun alone', (): void => {
+    const phrase = (scope: string): string =>
+      peopleBlockLines({
+        people: [{ displayName: 'Lee Tan', edges: [{ type: 'adjacent-role', scope }] }],
+        escalation: { kind: 'manager' },
+      })[1]!;
+    expect(phrase('Raising access requests')).toBe(
+      '- Lee Tan: neighbouring role, raising access requests.',
+    );
+    expect(phrase('Billing tickets in Linear')).toBe(
+      '- Lee Tan: neighbouring role, billing tickets in Linear.',
+    );
+    expect(phrase('The finance close')).toBe('- Lee Tan: neighbouring role, the finance close.');
+    expect(phrase('Linear access')).toBe('- Lee Tan: neighbouring role, Linear access.');
+    expect(phrase('SOX sign-off')).toBe('- Lee Tan: neighbouring role, SOX sign-off.');
   });
 
   it('truncates a long scope to one clause', (): void => {
@@ -146,7 +168,9 @@ describe('the People block', (): void => {
     }
     expect(text).toContain('- Lee Tan (Admin): works with you on Linear access, ask or via.');
     expect(text).not.toContain('dotted line');
-    expect(text).toContain('- Escalate to: Sara Lindqvist, for anything urgent.');
+    expect(text).toContain(
+      '- Escalate to: Sara Lindqvist, for anything urgent; anything else, the manager.',
+    );
   });
 
   it('heads the planner section with its own heading', (): void => {
@@ -180,5 +204,74 @@ describe('fromLine', (): void => {
     expect(fromLine('Lee', undefined)).toBe('From: Lee');
     expect(fromLine('Lee', { displayName: 'lee@kestrel.test' })).toBe('From: Lee');
     expect(fromLine(undefined, undefined)).toBe('From: (unknown)');
+  });
+});
+
+describe('the People block after the second pass (13-J)', (): void => {
+  it('strips a handle in brackets, a link with no scheme, an address with no domain and the stop it leaves', (): void => {
+    expect(withoutIdentities('Jane (@jane.doe) and [@jane]')).toBe('Jane and');
+    expect(withoutIdentities('profile at linear.app/acme/profiles/lee')).toBe('profile at');
+    expect(withoutIdentities('write to jane@acme')).toBe('write to');
+    expect(withoutIdentities('jane@acme.com.')).toBe('');
+    expect(withoutIdentities('id _U01ABCDEF2 here')).toBe('id _ here');
+  });
+
+  it('keeps an upper-case word with digits that is not shaped like a Slack id', (): void => {
+    for (const word of ['BILLING2024 questions', 'DEPT12345 owner', 'CDB12345', 'WORKSPACE1']) {
+      expect(withoutIdentities(word)).toBe(word);
+    }
+  });
+
+  it('keeps a clause whole across an abbreviation, and cuts at a long dash', (): void => {
+    const phrase = (scope: string): string =>
+      peopleBlockLines({
+        people: [{ displayName: 'Lee Tan', edges: [{ type: 'adjacent-role', scope }] }],
+        escalation: { kind: 'manager' },
+      })[1]!;
+    expect(phrase('Acme Inc. invoices over the limit')).toBe(
+      '- Lee Tan: neighbouring role, Acme Inc. invoices over the limit.',
+    );
+    expect(phrase('Invoices over 5k e.g. travel')).toBe(
+      '- Lee Tan: neighbouring role, Invoices over 5k e.g. travel.',
+    );
+    expect(phrase('Vendor invoices \u2014 never the payroll run')).toBe(
+      '- Lee Tan: neighbouring role, Vendor invoices.',
+    );
+  });
+
+  it('bounds a long name and role at a word', (): void => {
+    const [, line] = peopleBlockLines({
+      people: [
+        {
+          displayName: `Lee ${'Tan '.repeat(30)}`.trim(),
+          title: `Administrator ${'of everything '.repeat(20)}`.trim(),
+          edges: [{ type: 'collaborator' }],
+        },
+      ],
+      escalation: { kind: 'manager' },
+    });
+    expect(line!.length).toBeLessThan(170);
+    expect(line).toMatch(
+      /^- Lee Tan( Tan)*\.\.\. \(Administrator( of everything)*( of)?\.\.\.\): works with you\.$/,
+    );
+  });
+
+  it('prints no escalation line for a contact named only by an address, never the manager in their place', (): void => {
+    const contact = { kind: 'person' as const, displayName: 'sara@acme.test' };
+    expect(
+      peopleBlockLines({
+        people: [{ displayName: 'Lee Tan', edges: [{ type: 'collaborator' }] }],
+        escalation: contact,
+      }),
+    ).toEqual([PEOPLE_BLOCK_LEAD, '- Lee Tan: works with you.']);
+    expect(peopleBlockLines({ people: [], escalation: contact })).toEqual([]);
+  });
+
+  it('says whether the block names anyone the employee works beside', (): void => {
+    expect(namesAnyone(graph)).toBe(true);
+    expect(namesAnyone({ people: [], escalation: { kind: 'person', displayName: 'Sara' } })).toBe(
+      false,
+    );
+    expect(namesAnyone(undefined)).toBe(false);
   });
 });
