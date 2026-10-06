@@ -6,6 +6,7 @@ import {
   possiblySameLine,
   proposedEdgeLine,
   proposedInMock,
+  readsInMock,
   relationshipNoun,
   waitingLine,
 } from '../../../src/people/words';
@@ -59,5 +60,14 @@ describe('the Proposed card in the hosted office (13-FD)', (): void => {
       'In a deployment of your own, Mira proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.',
     );
     expect(proposedInMock('Mira')).not.toMatch(/this demo|[\u2013\u2014]/i);
+  });
+});
+
+describe('what the employee reads from People in the hosted office (13-FD)', (): void => {
+  it('says the employee reads the people as its charter names them, where no graph is kept', (): void => {
+    expect(readsInMock('Mira')).toBe(
+      'The hosted office keeps no graph, so Mira reads the people only as its charter names them.',
+    );
+    expect(readsInMock('Mira')).not.toMatch(/regenerated|[\u2013\u2014]/);
   });
 });

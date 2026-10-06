@@ -223,6 +223,17 @@ describe('PeopleView', () => {
     expect(html.replace(/<[^>]*>/g, ' ')).not.toMatch(/\bagent\b/i);
   });
 
+  it("says in the hosted office that the employee reads the charter's names, as no graph is kept there (13-FD)", () => {
+    const mock = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'mock' }));
+    expect(mock).toContain(
+      'The hosted office keeps no graph, so Mira reads the people only as its charter names them.',
+    );
+    expect(mock).not.toContain('regenerated when the graph changes');
+    const real = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(real).toContain('regenerated when the graph changes');
+    expect(real).not.toContain('The hosted office keeps no graph');
+  });
+
   it('says the one-to-one asks who the employee works with when the charter names nobody', () => {
     expect(renderToStaticMarkup(asEmployee(<PeopleView />))).toContain(
       'The charter names nobody yet.',

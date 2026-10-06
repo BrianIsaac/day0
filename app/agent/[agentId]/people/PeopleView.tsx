@@ -39,7 +39,7 @@ import { clockTime, useAgentZone } from '../../../components/time';
 import { actorAt } from '../charter/CharterAside';
 import { CancelHandoverDialog, HandOverDialog, MakeItYou } from './HandOver';
 import { ConfirmedPeopleCard, ProposedPeopleCard } from './PeopleGraph';
-import { READS_FROM_THIS } from '@/people/words';
+import { READS_FROM_THIS, readsInMock } from '@/people/words';
 
 /** How the employee reaches a person the charter names, as the one-to-one settled it. */
 export type IntroPath = 'manager' | 'self' | 'tbd';
@@ -123,7 +123,8 @@ export function provenanceLine(
  * is not the owner's (section 11.2); the people the graph proposes, each confirmed or dismissed on
  * the card (A1, A14, C5), and the confirmed people the employee's edges reach, with their
  * identities and edges; and the people the charter names from the one-to-one. Mock mode keeps no
- * graph, so its Proposed card says what a deployment of the manager's own does.
+ * graph, so its Proposed card says what a deployment of the manager's own does, and its aside that
+ * the employee reads the people as the charter names them (13-FD).
  */
 export function PeopleView() {
   const { agent, charter, surfaceMode, arriving } = useEmployee();
@@ -147,9 +148,14 @@ export function PeopleView() {
       arriving={arriving}
       aside={
         <>
-          <Card title={`What ${agent.name} reads from this`}>
-            <p className="text-sm text-[var(--color-fg-2)]">{READS_FROM_THIS}</p>
-          </Card>
+          {/* What is read depends on the mode, so the card waits until the mode is known. */}
+          {surfaceMode === undefined ? null : (
+            <Card title={`What ${agent.name} reads from this`}>
+              <p className="text-sm text-[var(--color-fg-2)]">
+                {surfaceMode === 'mock' ? readsInMock(agent.name) : READS_FROM_THIS}
+              </p>
+            </Card>
+          )}
           <EmployeeRail />
         </>
       }

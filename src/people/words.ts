@@ -203,6 +203,17 @@ export function moreEvidence(count: number): string {
 export const READS_FROM_THIS =
   'Names and roles, at most eight lines, regenerated when the graph changes. Never identities or credentials.';
 
+/**
+ * The aside's words in the hosted office, where no graph is kept (13-K: `ensureOwner` writes
+ * nothing) and the employee reads its people only as the charter it works under names them
+ * (13-FD; wording draft).
+ *
+ * @param employee - The employee's name.
+ */
+export function readsInMock(employee: string): string {
+  return `The hosted office keeps no graph, so ${employee} reads the people only as its charter names them.`;
+}
+
 /** The People tab's line while the graph is read. */
 export const READING_PEOPLE = 'Reading your people.';
 
