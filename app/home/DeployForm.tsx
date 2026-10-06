@@ -16,6 +16,12 @@ import { log } from '@/lib/logger';
 import { AvatarPicker } from './AvatarPicker';
 import { AgentPixelAvatar } from './PixelAvatar';
 
+/**
+ * What the form says when it is submitted with a name made only of spaces, which the field's own
+ * `required` check lets through (the 13-FD second pass; wording draft).
+ */
+const NAME_NEEDED = 'Give your employee a name before you deploy it.';
+
 /** Where a new employee works, by the deployment's surface mode. */
 const WORKS_IN = {
   mock: 'the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
@@ -106,8 +112,13 @@ export function DeployForm({
 
   async function onDeploy(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    // The button is held in both cases; Enter in the name field still submits.
-    if (!trimmed || !managerAddress) return;
+    if (!trimmed) {
+      setError(NAME_NEEDED);
+      nameInput.current?.focus();
+      return;
+    }
+    // The button is held while the address loads; Enter in the name field still submits.
+    if (!managerAddress) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -176,7 +187,11 @@ export function DeployForm({
             // The bed rehearsal's driver finds the field by this placeholder (scripts/bed/rehearsal/driver.ts).
             placeholder="worker 1"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              setName(event.target.value);
+              // A name being typed answers the form's ask for one; any other error stays.
+              setError((current) => (current === NAME_NEEDED ? null : current));
+            }}
             aria-describedby={nameHelpId}
             className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />

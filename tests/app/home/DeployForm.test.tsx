@@ -174,6 +174,23 @@ describe('DeployForm, deploying', (): void => {
     expect(deploy).not.toHaveBeenCalled();
   });
 
+  it('says a name made only of spaces is no name, and deploys no one (the second pass)', async (): Promise<void> => {
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
+    const field = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+    act(() => type(field, '   '));
+    // The field's own check passes spaces, so the form is submitted and must answer itself.
+    await act(async () => {
+      host.querySelector('form')!.requestSubmit();
+    });
+    expect(deploy).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      'Give your employee a name before you deploy it.',
+    );
+    expect(document.activeElement).toBe(field);
+    act(() => type(field, 'Mira'));
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('deploys the named employee with the chosen face and the unticked sources, then opens its page', async (): Promise<void> => {
     deploy.mockResolvedValue('agent-mira');
     act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
