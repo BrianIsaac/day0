@@ -562,7 +562,7 @@ describe('skillControls', (): void => {
         harness
           .withIdentity(managerIdentity('someone-else'))
           .mutation(api.skillControls.retire, { skillId: office.priyaSkill }),
-      ).rejects.toThrow('This employee is not yours.');
+      ).rejects.toThrow('This skill is not yours.');
       await harness
         .withIdentity(OWNER)
         .mutation(api.skillControls.retire, { skillId: office.priyaSkill });
@@ -1251,17 +1251,17 @@ describe('skillControls', (): void => {
       const stranger = harness.withIdentity(managerIdentity('someone-else'));
       const skillId = office.priyaSkill;
       await expect(stranger.mutation(api.skillControls.withdraw, { skillId })).rejects.toThrow(
-        'This employee is not yours.',
+        'This skill is not yours.',
       );
       await expect(stranger.mutation(api.skillControls.recheckNow, { skillId })).rejects.toThrow(
-        'This employee is not yours.',
+        'This skill is not yours.',
       );
       await expect(stranger.mutation(api.skillControls.giveUp, { skillId })).rejects.toThrow(
-        'This employee is not yours.',
+        'This skill is not yours.',
       );
       await expect(
         stranger.mutation(api.skillControls.askForRevision, { skillId }),
-      ).rejects.toThrow('This employee is not yours.');
+      ).rejects.toThrow('This skill is not yours.');
       await expect(
         stranger.query(api.skillControls.pendingRevisions, { agentId: office.priya }),
       ).rejects.toThrow('This employee is not yours.');

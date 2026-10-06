@@ -537,7 +537,7 @@ describe('skillVersions: lookups are the owner’s', (): void => {
       harness
         .withIdentity(managerIdentity('rival'))
         .query(api.skillVersions.forSkill, { skillId: first.skillId }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This skill is not yours.');
   });
 });
 

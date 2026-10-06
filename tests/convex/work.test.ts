@@ -377,7 +377,7 @@ describe('batched decisions', (): void => {
           { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
         ],
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
   });
 
   it('refuses a caller with no identity before it reads the batch, an empty one included (12-G)', async (): Promise<void> => {
@@ -1288,7 +1288,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(managerIdentity('stranger')).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(
@@ -3163,7 +3163,7 @@ describe('the exact-action gate', (): void => {
         pendingRunId: runId,
         approvedIndexes: [0],
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -3594,7 +3594,7 @@ describe('the exact-action gate', (): void => {
         workItemId,
         confirmed: true,
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
 
     // The write whose response was lost is answered entry by entry (U17 D1, wave 12).
     await expect(
@@ -7525,7 +7525,7 @@ describe('workRuns.dismissFailed (N7)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.workRuns.dismissFailed, { workItemId }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
     const refusal = harness
       .withIdentity(OWNER)
@@ -7588,7 +7588,7 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
   });
 });
 
