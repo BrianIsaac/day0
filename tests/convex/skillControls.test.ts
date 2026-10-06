@@ -1263,9 +1263,33 @@ describe('skillControls', (): void => {
         stranger.mutation(api.skillControls.askForRevision, { skillId }),
       ).rejects.toThrow('This skill is not yours.');
       await expect(
-        stranger.query(api.skillControls.pendingRevisions, { agentId: office.priya }),
+        stranger.query(api.skillControls.notYetWritten, { agentId: office.priya }),
       ).rejects.toThrow('This employee is not yours.');
       expect((await skill(harness, skillId)).state).toBe('registered');
+    });
+
+    it('lists every approved skill not yet being written, a revision and an authoring a pause holds alike (D-8 (b))', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const held = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: 'chat-thread-reply',
+            description: 'Threaded reply.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'approved',
+            createdAt: 1,
+          }),
+      );
+      const { revisionId } = await harness
+        .withIdentity(OWNER)
+        .mutation(api.skillControls.askForRevision, { skillId: office.priyaSkill });
+      const rows = await harness
+        .withIdentity(OWNER)
+        .query(api.skillControls.notYetWritten, { agentId: office.priya });
+      expect(rows.map((row) => row._id).sort()).toEqual([held, revisionId].sort());
     });
 
     it('says a built-in skill is not withdrawn or re-checked, in each control’s words', async (): Promise<void> => {

@@ -21,6 +21,8 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { attemptsSpent } from '@/work/needs-manager';
+import { heldStartLine } from '@/work/held-starts';
+import type { RunHold } from '@/work/item-display';
 import { stalledReason, stalledWords } from '@/work/skill-adoption';
 import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
@@ -75,12 +77,30 @@ export function retryVerifiesSavedDraft(
 export function unregisteredState(
   skill: Doc<'skills'>,
   now: number,
+  hold?: RunHold,
 ): { readonly label: string; readonly tone: Tone } {
   if (holdsLiveAuthoringClaim(skill, now)) return { label: 'Being written', tone: 'accent' };
+  if (heldAuthoring(skill, now, hold)) return { label: 'Held', tone: 'muted' };
   if (skill.authoringRunId) return { label: 'Run stopped', tone: 'warn' };
   if (skill.state === 'failed') return { label: 'Failed its check', tone: 'warn' };
   if (skill.state === 'verified') return { label: 'Not registered', tone: 'warn' };
   return { label: 'Waiting for a check', tone: 'warn' };
+}
+
+/**
+ * Whether a pause holds this row's authoring (D-8 (b)): an approved row no run holds, while the
+ * employee or the deployment's scheduled work is paused.
+ *
+ * @param hold - Whose pause holds the employee's starts, if any.
+ */
+function heldAuthoring(skill: Doc<'skills'>, now: number, hold: RunHold | undefined): boolean {
+  return hold !== undefined && skill.state === 'approved' && !holdsLiveAuthoringClaim(skill, now);
+}
+
+/** The status line of a row a pause holds: when its authoring starts, as a sentence. */
+function heldRowLine(hold: RunHold): string {
+  const line = heldStartLine(hold, 'authoring');
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`;
 }
 
 /**
@@ -136,6 +156,7 @@ export function RegisteredSkillsPanel({
   unregistered,
   authoringFailure,
   authoringHeld = null,
+  authoringHold,
   registered = null,
   onAuthoringAttempt,
   surfaceMode,
@@ -165,6 +186,8 @@ export function RegisteredSkillsPanel({
   authoringFailure: string | null;
   /** The most recent attempt a pause held, as a sentence saying when it starts (D-8 (b)). */
   authoringHeld?: string | null;
+  /** Whose pause holds the employee's authoring now, if any (D-8 (b)). */
+  authoringHold?: RunHold;
   /** The skill the manager's last attempt registered, said once its row is registered. */
   registered?: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
@@ -439,7 +462,7 @@ export function RegisteredSkillsPanel({
         <Card title="Not callable" meta={`${unregistered.length}`}>
           <ul className="grid gap-4">
             {unregistered.map((s) => {
-              const state = unregisteredState(s, now);
+              const state = unregisteredState(s, now, authoringHold);
               const attempt = s.state === 'failed' ? attemptLine(s.authoringAttempts) : undefined;
               const spent = attemptsSpent(s);
               const withReasons = retriesWithReasons(s);
@@ -480,9 +503,11 @@ export function RegisteredSkillsPanel({
                       text={
                         holdsLiveAuthoringClaim(s, now)
                           ? 'authoring now · a run holds this skill'
-                          : s.authoringRunId
-                            ? 'a run stopped without reporting · Retry takes the skill over'
-                            : parkedLine(s)
+                          : authoringHold !== undefined && heldAuthoring(s, now, authoringHold)
+                            ? heldRowLine(authoringHold)
+                            : s.authoringRunId
+                              ? 'a run stopped without reporting · Retry takes the skill over'
+                              : parkedLine(s)
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />

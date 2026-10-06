@@ -858,19 +858,18 @@ export const askForRevision = mutation({
 });
 
 /**
- * Public, guarded by `assertOwnsAgent`: the employee's revisions not yet being written, which no
- * other list on the Skills tab shows (an `approved` row whose run has not started, or whose run
- * stopped before it claimed). Reads only.
+ * Public, guarded by `assertOwnsAgent`: the employee's approved skills not yet being written, which
+ * no other list on the Skills tab shows: a revision, and a skill whose authoring has not started
+ * (a pause holds it, D-8 (b), or its run stopped before it claimed). Reads only.
  */
-export const pendingRevisions = query({
+export const notYetWritten = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const approved = await ctx.db
+    return await ctx.db
       .query('skills')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'approved'))
       .collect();
-    return approved.filter((row) => row.revisionOf !== undefined);
   },
 });
 
