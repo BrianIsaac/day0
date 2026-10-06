@@ -248,7 +248,7 @@ export function AgreementProposals({
 }: {
   agreements: readonly AgreementView[];
   employeeName: string;
-  /** The Charter tab, where the charter is amended. */
+  /** The Charter tab's amend disclosure, where the charter is amended. */
   charterHref: string;
   onKeep: (agreementId: AgreementView['_id'], forEveryEmployee: boolean) => Promise<unknown>;
   onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;

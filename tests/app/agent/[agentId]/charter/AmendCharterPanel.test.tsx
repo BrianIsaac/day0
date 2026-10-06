@@ -181,6 +181,55 @@ describe('amending an approved charter from the card', (): void => {
     expect(strikes).toEqual([sentence]);
   });
 
+  /** Mounts the panel at an address, with the browser's scroll recorded (jsdom has none). */
+  function atAddress(path: string, scrolled: string[]): ReturnType<typeof mount> {
+    window.history.replaceState(null, '', path);
+    Element.prototype.scrollIntoView = function (this: Element): void {
+      scrolled.push(this.id);
+    };
+    return mount(
+      <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
+    );
+  }
+
+  it('opens, scrolls to and takes focus when the page is reached at its anchor, as the Work tab links it (13-J)', (): void => {
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    const scrolled: string[] = [];
+    try {
+      const view = atAddress('/agent/agent-1/charter#amend-charter', scrolled);
+      const disclosure = view.container.querySelector('details');
+      expect(disclosure?.id).toBe('amend-charter');
+      expect(disclosure?.open).toBe(true);
+      expect(scrolled).toEqual(['amend-charter']);
+      expect(focusedName()).toBe('Amend this charter · next version v0.2');
+      view.unmount();
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+      window.history.replaceState(null, '', '/');
+    }
+  });
+
+  it('stays closed without the anchor, and opens when the anchor is followed later (13-J)', (): void => {
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    const scrolled: string[] = [];
+    try {
+      const view = atAddress('/agent/agent-1/charter', scrolled);
+      const disclosure = view.container.querySelector('details');
+      expect(disclosure?.open).toBe(false);
+      expect(scrolled).toEqual([]);
+      act((): void => {
+        window.history.replaceState(null, '', '/agent/agent-1/charter#amend-charter');
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      });
+      expect(disclosure?.open).toBe(true);
+      expect(scrolled).toEqual(['amend-charter']);
+      view.unmount();
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+      window.history.replaceState(null, '', '/');
+    }
+  });
+
   it('is absent from a charter awaiting approval', (): void => {
     const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={draft} />);

@@ -15,7 +15,7 @@ import {
   keptCorrectionsTitle,
   type KeptCorrection,
 } from '../corrections-panel';
-import { employeeTabHref } from '../employee-tabs';
+import { amendCharterHref } from '../employee-tabs';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { StateGlossary } from './StateGlossary';
@@ -69,7 +69,7 @@ export function WorkView() {
             <AgreementProposals
               agreements={agreements ?? []}
               employeeName={agent.name}
-              charterHref={employeeTabHref(agentId, 'charter')}
+              charterHref={amendCharterHref(agentId)}
               onKeep={(agreementId, forEveryEmployee) =>
                 keepAgreement({ agreementId, agentId, forEveryEmployee, via: 'promotion-card' })
               }
