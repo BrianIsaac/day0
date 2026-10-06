@@ -237,9 +237,18 @@ export function landedWritesOf(
   // and are still two changes (M3). A reuse is the row it reused, so it is
   // kept only when that row is not carried; a reuse persisted before reuses
   // named their source is matched by its provider id, as it always was.
-  const seen = new Set<string>();
-  const seenProviders = new Set<string>();
-  return [...earlier, ...own].filter((row) => {
+  // A reuse folded into its row keeps its own words on it (`reusedAs`), when they are other words.
+  const kept = new Map<string, LandedWrite>();
+  const keptProviders = new Map<string, LandedWrite>();
+  const landed: LandedWrite[] = [];
+  const fold = (into: LandedWrite, row: LandedWrite): void => {
+    const words = payload(row.action);
+    const known = [into.action, ...(into.reusedAs ?? [])].some(
+      (action) => payload(action) === words,
+    );
+    if (!known) into.reusedAs = [...(into.reusedAs ?? []), row.action];
+  };
+  for (const row of [...earlier, ...own]) {
     const surface = parseSurfaceAction(row.action);
     const provider = row.applied.providerId
       ? `${surface.ok ? surface.action.surface : row.action.tool}|${row.applied.providerId}`
@@ -248,14 +257,23 @@ export function landedWritesOf(
       (legacyReuse(row.applied) ? provider : undefined) ??
       reusedFrom(row.applied) ??
       (row.applied.idempotencyKey || JSON.stringify(row.action));
-    if (seen.has(key)) return false;
-    seen.add(key);
-    if (provider) {
-      if (legacyReuse(row.applied) && seenProviders.has(provider)) return false;
-      seenProviders.add(provider);
+    const sameKey = kept.get(key);
+    if (sameKey) {
+      fold(sameKey, row);
+      continue;
     }
-    return true;
-  });
+    const sameProvider =
+      provider && legacyReuse(row.applied) ? keptProviders.get(provider) : undefined;
+    if (sameProvider) {
+      fold(sameProvider, row);
+      continue;
+    }
+    const write: LandedWrite = { ...row, ...(row.reusedAs ? { reusedAs: [...row.reusedAs] } : {}) };
+    kept.set(key, write);
+    if (provider && !keptProviders.has(provider)) keptProviders.set(provider, write);
+    landed.push(write);
+  }
+  return landed;
 }
 
 /**
@@ -485,8 +503,11 @@ function canonical(value: unknown): string {
 interface LandedOnTarget {
   readonly applied: AppliedAction;
   readonly kind: 'comment' | 'message';
-  /** The canonical payload it was sent with, which a write must match on a part-landed target. */
-  readonly payload: string | undefined;
+  /**
+   * The canonical payloads it stands for, which a write must match on a part-landed target: the
+   * one it was sent with, and those of the later writes in other words that reused it (`reusedAs`).
+   */
+  readonly payloads: readonly string[];
 }
 
 function payload(action: MockAction): string | undefined {
@@ -578,7 +599,13 @@ export function reusedLedger(
     if (target) {
       byTarget.set(target.key, [
         ...(byTarget.get(target.key) ?? []),
-        { applied: source.applied, kind: target.kind, payload: payload(source.action) },
+        {
+          applied: source.applied,
+          kind: target.kind,
+          payloads: [source.action, ...(source.reusedAs ?? [])].flatMap(
+            (action) => payload(action) ?? [],
+          ),
+        },
       ]);
     }
   }
@@ -627,7 +654,7 @@ export function reusedLedger(
     const sent = payload(action);
     const prior = partLanded
       ? landedThere.find(
-          (row) => !taken.has(row.applied) && row.payload !== undefined && row.payload === sent,
+          (row) => !taken.has(row.applied) && sent !== undefined && row.payloads.includes(sent),
         )
       : landedThere[0];
     if (!prior) return undefined;

@@ -792,3 +792,52 @@ describe("a closing set's message this run's first phase already sent (W12V-13, 
     expect(reusedFromThisRun([done, read], [moved], thisRun)).toEqual([undefined, undefined]);
   });
 });
+
+describe('a reworded copy of a landed write on a part-landed target (the pre-tag, wave 13 item 8)', () => {
+  // Run 1 landed comment A; run 2 wrote two comments with other words on the same ticket, and
+  // both were reused from A, as a ticket that already carries one is never commented twice.
+  const first = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note.' });
+  const second = call('linear', 'save_comment', {
+    issueId: 'REVOPS-5',
+    body: 'Audit note, as asked.',
+  });
+  const third = call('linear', 'save_comment', {
+    issueId: 'REVOPS-5',
+    body: 'The deal list is missing.',
+  });
+  const landedA: LandedWrite = {
+    action: first,
+    applied: row({ providerId: 'comment-1', idempotencyKey: 'work:run1:0' }),
+  };
+  const reuseOfA = (index: number): AppliedAction =>
+    row({
+      providerId: 'comment-1',
+      idempotencyKey: `work:run2:${index}`,
+      reusedFrom: 'work:run1:0',
+    } as Partial<AppliedAction>);
+  const run2 = {
+    landedWrites: [landedA],
+    actions: [second, third],
+    applied: [reuseOfA(0), reuseOfA(1)],
+  };
+  // The manager checked the ticket before the retry: the second stands as landed, the third not sent.
+  const answers = [
+    { phase: 'single' as const, actionIndex: 0, answer: 'landed' as const },
+    { phase: 'single' as const, actionIndex: 1, answer: 'not-sent' as const },
+  ];
+
+  it("reuses the landed comment for a retry's copy in the reused row's own words, never sending it twice", () => {
+    const carried = landedWritesOf(run2, answers);
+    const unsent = notSentWritesOf(run2, answers);
+    const ledger = reusedLedger([second, third], carried, run, { surfaces, unsent });
+    expect(ledger[0]).toMatchObject({ reusedFrom: 'work:run1:0' });
+    // The not-sent comment is sent afresh.
+    expect(ledger[1]).toBeUndefined();
+  });
+
+  it('keeps one landed row per write in the carried list, so the figures count nothing twice', () => {
+    expect(landedWritesOf(run2, answers).map((write) => write.applied.idempotencyKey)).toEqual([
+      'work:run1:0',
+    ]);
+  });
+});
