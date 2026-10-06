@@ -41,7 +41,7 @@ We are the Revenue Operations team at Acme Co. We sit between Sales and Finance,
 ## Working surfaces
 
 - Google Sheets: Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is \`q4-revenue-tracker\`.
-- Slack: \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep), \`#office-asks\` (asks from across the company: IT, the office and customers).
+- Slack: \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep), \`#office-asks\` (the company-wide channel for IT, office and customer asks).
 - Linear: internal team tickets (project: REVOPS).
 - Looker: published dashboards.
 `,
@@ -137,7 +137,7 @@ Welcome to RevOps. The first week is light by design.
     title: 'IT access and passwords',
     body: `# IT access and passwords
 
-Asks about access arrive in #office-asks. Answer them with these steps in the ask's thread.
+Asks about access arrive in #office-asks, and the steps below answer the common one in the ask's thread.
 
 ## Shared drive says access denied after a password change
 
@@ -145,7 +145,7 @@ Asks about access arrive in #office-asks. Answer them with these steps in the as
 2. Sign back in with the new password.
 3. Wait 15 minutes: the new password takes that long to reach the drive.
 
-If it still says access denied after that, the IT lead re-grants access. Ask them in #office-asks, naming the drive folder.
+If it still says access denied after that, the IT lead, Mei, re-grants access. Ask her in #office-asks, naming the drive folder.
 
 ## Passwords
 
@@ -161,11 +161,11 @@ Never ask for, share or repeat a password in a ticket, a channel or a message. A
 
 Spare monitors, keyboards, mice and desk lamps are in the supply cupboard next to the kitchen. Anyone may take one to replace a broken one at their own desk; no request or approval is needed.
 
-Say what you took in #office-asks, so the office manager can restock.
+Say what you took in #office-asks, so the office manager, Dev, can restock.
 
 ## Anything else
 
-Furniture, building repairs and anything that costs more than 200 dollars go to the office manager, who orders them.
+Furniture, building repairs and anything that costs more than 200 dollars go to Dev, who orders them.
 `,
   },
   {
@@ -490,7 +490,7 @@ export const seedMockEnvironment = internalMutation({
     await seedMessage(
       'office-asks',
       'thread-drive-access',
-      'Theo',
+      'Kofi',
       'requester',
       'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
     );
@@ -504,7 +504,7 @@ export const seedMockEnvironment = internalMutation({
     await seedMessage(
       'office-asks',
       'thread-double-charge',
-      'Ines',
+      'Hana',
       'requester',
       'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
     );

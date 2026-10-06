@@ -92,10 +92,12 @@ describe('the seeded mock office', (): void => {
       expect.objectContaining({ displayName: '#office-asks', kind: 'channel' }),
     ]);
     const asks = seeded.messages.filter((message) => message.channelSlug === 'office-asks');
+    // Askers from across the company, none of them named elsewhere in the office as RevOps or the
+    // on-call pool (the second pass: Theo and Ines are engineers in the on-call rotation).
     expect(asks.map((ask) => [ask.sender, ask.threadKey])).toEqual([
-      ['Theo', 'thread-drive-access'],
+      ['Kofi', 'thread-drive-access'],
       ['Sara', 'thread-spare-monitor'],
-      ['Ines', 'thread-double-charge'],
+      ['Hana', 'thread-double-charge'],
     ]);
     const doc = (slug: string) => seeded.docs.find((row) => row.slug === slug);
     for (const slug of ['it-access', 'office-supplies', 'billing-replies']) {
@@ -106,6 +108,11 @@ describe('the seeded mock office', (): void => {
     expect(doc('office-supplies')?.body).toContain('supply cupboard');
     expect(doc('billing-replies')?.body).toContain('within two business days');
     expect(doc('team-overview')?.body).toContain('`#office-asks`');
+    // A document says how the office works, never what an employee should do with it.
+    expect(doc('it-access')?.body).not.toMatch(/Answer them/);
+    // Whoever a document routes an ask to is named, as the rest of the office names its people.
+    expect(doc('it-access')?.body).toContain('the IT lead, Mei,');
+    expect(doc('office-supplies')?.body).toContain('the office manager, Dev,');
   });
 
   it("files no ticket for an ask a seeded message already makes, which an employee's own ticket would repeat (13-FD)", async (): Promise<void> => {
