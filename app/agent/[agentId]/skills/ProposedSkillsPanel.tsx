@@ -148,12 +148,16 @@ export function ProposedSkillsPanel({
     );
   }
 
+  /** What an approval that starts an authoring says: the authoring under way, or held by a pause. */
+  function approvedWords(skillName: string): string {
+    return authoringHold === undefined
+      ? `Approved ${skillName}: the employee is authoring it now, and the Skills card says when it is callable.`
+      : `Approved ${skillName}. It is ${heldStartLine(authoringHold, 'authoring')}.`;
+  }
+
   function onApprove(skill: Doc<'skills'>): void {
     change.run(() => approve({ skillId: skill._id }), {
-      done:
-        authoringHold === undefined
-          ? `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`
-          : `Approved ${skill.name}. It is ${heldStartLine(authoringHold, 'authoring')}.`,
+      done: approvedWords(skill.name),
       refused: `${skill.name} was not approved.`,
       after: () => startAuthoring(skill),
     });
@@ -207,7 +211,10 @@ export function ProposedSkillsPanel({
     const skill = { _id: adoption.skillId, name: adoption.name };
     if (adoption.state !== 'offered') {
       change.run(() => setOfferAside({ skillId: adoption.skillId }), {
-        done: `${name} is writing ${adoption.name} now, and the Skills card says when it is callable.`,
+        done:
+          authoringHold === undefined
+            ? `${name} is writing ${adoption.name} now, and the Skills card says when it is callable.`
+            : `${adoption.name} is ${heldStartLine(authoringHold, 'authoring')}.`,
         refused: `${adoption.name} was not sent to be written.`,
         after: () => startAuthoring(skill),
       });
@@ -219,7 +226,7 @@ export function ProposedSkillsPanel({
         return await approve({ skillId: adoption.skillId });
       },
       {
-        done: `Approved ${adoption.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
+        done: approvedWords(adoption.name),
         refused: `${adoption.name} was not approved.`,
         after: () => startAuthoring(skill),
       },

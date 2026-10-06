@@ -400,6 +400,7 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
   function panel(
     skills: Doc<'skills'>[],
     onAuthoringAttempt: (attempt: unknown) => void = noop,
+    employee: Parameters<typeof asEmployee>[1] = {},
   ): ReactNode {
     return asEmployee(
       <ProposedSkillsPanel
@@ -409,6 +410,7 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
         name="Mira"
         itemTitles={titles}
       />,
+      employee,
     );
   }
 
@@ -617,6 +619,40 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
       'Mira is writing chat-thread-reply now, and the Skills card says when it is callable.',
     );
     view.unmount();
+  });
+
+  it('says writing a new one is held while the employee is paused, in either of its forms (the bed, D-8 (b))', async (): Promise<void> => {
+    const held = 'held while Mira is paused: writing it starts when you resume Mira';
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    backend.results = {
+      'skillAdoption:setOfferAside': { ok: true },
+      'skillActions:authorAndRegisterSkill': { ok: false, reason: held, held: true },
+    };
+    const paused = { surfaceMode: 'real' as const, agent: { ...EMPLOYEE_ROW, pausedAt: 5 } };
+    const view = mount(panel([offered], noop, paused));
+    await press(view.container, 'Write a new one instead of kanban-comment-and-close');
+    expect(said(view.container)).toEqual([`Approved kanban-comment-and-close. It is ${held}.`]);
+    view.unmount();
+
+    // Past the proposal (a failed check), the row is approved already: only the authoring, held.
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        {
+          ...adoption,
+          skillId: 'skill-10',
+          name: 'chat-thread-reply',
+          description: 'Threaded reply on a chat surface.',
+          state: 'failed',
+          rowState: 'failed',
+          missingScopes: [],
+          log: 'the stored skill failed its check - smoke.py exited 1',
+        },
+      ],
+    };
+    const failed = mount(panel([], noop, paused));
+    await press(failed.container, 'Write a new one instead of chat-thread-reply');
+    expect(said(failed.container).at(-1)).toBe(`chat-thread-reply is ${held}.`);
+    failed.unmount();
   });
 
   it('has no axe violation and a 44 px target on every control with every adoption state drawn', async (): Promise<void> => {
