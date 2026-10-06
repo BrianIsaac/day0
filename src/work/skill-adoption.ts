@@ -467,7 +467,15 @@ export interface AdoptionWordsInput {
    * manager (either releases the version, `releaseAuthor`).
    */
   readonly authorLeft?: boolean;
+  /**
+   * How the author left, when the version records it (`skillVersions.authorLeft`, wave 13 item 7);
+   * absent on a version released before the record, whose words are true of both.
+   */
+  readonly authorDeparture?: AuthorDeparture;
 }
+
+/** How a version's author stopped working for this manager: retired, or handed over to another. */
+export type AuthorDeparture = 'retired' | 'transferred';
 
 /** Why an offer may no longer be adopted or checked again: its version was withdrawn. */
 export const OFFER_WITHDRAWN_REFUSAL = 'the offered skill was withdrawn from every employee';
@@ -482,6 +490,23 @@ export interface AdoptionWords {
   readonly scopesLead: string;
   /** Said in place of the scopes when the adopter holds every one. */
   readonly noScopes: string;
+}
+
+/**
+ * How an author who left is said: as it left when the version records it, and in words true of
+ * both otherwise.
+ *
+ * @param departure - How the author left, if the version records it.
+ */
+function departureWords(departure: AuthorDeparture | undefined): string {
+  switch (departure) {
+    case 'retired':
+      return 'has been retired';
+    case 'transferred':
+      return 'now works for another manager';
+    case undefined:
+      return 'no longer works for you';
+  }
 }
 
 /**
@@ -521,7 +546,7 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
         lead: handedOver
           ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
           : left
-            ? `${opening}, verified on ${verifiedOn}, does this. ${input.authorName}, who wrote it, no longer works for you.`
+            ? `${opening}, verified on ${verifiedOn}, does this. ${input.authorName}, who wrote it, ${departureWords(input.authorDeparture)}.`
             : `${opening}, verified on ${verifiedOn}, does this.`,
         body: `${adopterName} can adopt it. It would be re-verified in the sandbox${under} before ${adopterName} can use it.`,
         ...scopes,

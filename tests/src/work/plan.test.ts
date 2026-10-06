@@ -10,6 +10,7 @@ import {
   unreadCandidateRecord,
   draftExecutionPlan,
   OWN_ITEM_READS_PLANNER,
+  LIST_READ_PLANNER,
   planPreconditionAudit,
   planSchema,
   planSystemPrompt,
@@ -395,6 +396,16 @@ describe('charter adjectives are scope, not gates', (): void => {
     const prompt = planSystemPrompt(true, 'real');
     expect(prompt).toContain("A ticket's own item is done on its ticket");
     expect(prompt).toContain('a declared read is one the run is held to');
+  });
+
+  it('tells the real planner to read open items across their open states, never one (W12V-12, wave 13 item 3)', (): void => {
+    for (const line of LIST_READ_PLANNER) {
+      expect(planSystemPrompt(false, 'real')).toContain(line);
+      expect(planSystemPrompt(false, 'mock')).not.toContain(line);
+    }
+    expect(planSystemPrompt(false, 'real')).toContain(
+      '  - A step that reads a list of open items reads every state that is not done or cancelled (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.',
+    );
   });
 
   it('derives candidate properties from the charter wording', (): void => {

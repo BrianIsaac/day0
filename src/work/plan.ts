@@ -91,6 +91,16 @@ export const OWN_ITEM_READS_PLANNER = [
   "  - Plan the reads the work itself needs and no others. A ticket's own item is done on its ticket: it needs no chat channel read unless a step of this plan uses what the channel says, and a question somebody asked in a channel is its own work item, answered there. Declare a read of a surface only on a step that uses what it reads; a declared read is one the run is held to.",
 ];
 
+/**
+ * How a plan reads a list of open items, real mode only (W12V-12): on 4 and 5 October GLM's
+ * first read scoped `list_issues` to `state: "unstarted"` and found nothing for tickets in
+ * Backlog (4 runs), or asked for a field list the tool refused (6 runs), and either stopped the
+ * run before any write. The mock planner text stays byte-identical.
+ */
+export const LIST_READ_PLANNER = [
+  '  - A step that reads a list of open items reads every state that is not done or cancelled (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.',
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -119,6 +129,7 @@ export function planSystemPrompt(
           ...DECLARED_OBLIGATIONS_PLANNER,
           ...SIGNED_TICKET_PLANNER,
           ...OWN_ITEM_READS_PLANNER,
+          ...LIST_READ_PLANNER,
         ]
       : []),
     '',

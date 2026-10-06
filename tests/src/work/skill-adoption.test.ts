@@ -461,6 +461,21 @@ describe('adoptionWords', (): void => {
     );
   });
 
+  it('says how the author left when the version records it: retired, or working for another manager (wave 13 item 7)', (): void => {
+    expect(
+      adoptionWords({ ...base, authorLeft: true, authorDeparture: 'retired', state: 'offered' })
+        .lead,
+    ).toBe(
+      'The skill kanban-comment-and-close, verified on 18 September 2026, does this. Priya, who wrote it, has been retired.',
+    );
+    expect(
+      adoptionWords({ ...base, authorLeft: true, authorDeparture: 'transferred', state: 'offered' })
+        .lead,
+    ).toBe(
+      'The skill kanban-comment-and-close, verified on 18 September 2026, does this. Priya, who wrote it, now works for another manager.',
+    );
+  });
+
   it('says the sandbox alone in mock mode, where there is no connection to name', (): void => {
     const { body } = adoptionWords({ ...base, connection: undefined, state: 'offered' });
     expect(body).toBe(

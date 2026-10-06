@@ -69,6 +69,21 @@ export const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The stamp a skill's transition into a state writes: `waitingSince` when the state waits on the
+ * manager ({@link SKILL_WAITS_ON_MANAGER_STATES}), nothing else (13-K's field; wave 13 item 7).
+ * The inbox dates a skill's wait by it, and a skill stamped before none by its proposal.
+ *
+ * @param state - The state the skill enters.
+ * @param now - The transition's time.
+ */
+export function skillWaitingStamp(
+  state: Doc<'skills'>['state'],
+  now: number,
+): { waitingSince?: number } {
+  return SKILL_WAITS_ON_MANAGER_STATES.has(state) ? { waitingSince: now } : {};
+}
+
+/**
  * Whether a failed skill has spent its authoring attempts ("Attempt 3 of 3"): Retry is withdrawn
  * and the manager's move is Give up. It still waits on the manager, as every failed skill does.
  *

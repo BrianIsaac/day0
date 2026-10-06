@@ -3,7 +3,14 @@ import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import { EMPLOYEE_GONE, EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
+import {
+  CHARTER_NOT_YOURS,
+  EMPLOYEE_GONE,
+  EMPLOYEE_NOT_YOURS,
+  ONE_TO_ONE_NOT_YOURS,
+  SKILL_NOT_YOURS,
+  WORK_ITEM_NOT_YOURS,
+} from '../src/agent/employee-access';
 import {
   CUSTOMER_OIDC_ISSUER_VAR,
   customerAddressVerified,
@@ -450,55 +457,62 @@ export async function assertNamedInTransfer(
 }
 
 /**
- * The charter, if the caller owns its employee; throws otherwise. This guard and the three below
- * admit the caller before they read the row, so a caller the guard does not admit is refused alike
- * for an id that is gone and one that is live (the anonymous-caller guard, 12-G).
+ * A row keyed by its employee, if the caller owns that employee; throws the row's one refusal
+ * otherwise, the same for a row that is gone, one whose employee is gone and one of an employee
+ * another owner holds, so an id confirms nothing (W12-R25). The caller is admitted before the
+ * row is read, so a caller the guard does not admit is refused alike for any id (12-G).
+ *
+ * @param read - Reads the row.
+ * @param refusal - The row's refusal, a `ConvexError`'s data.
+ * @throws ConvexError with `refusal`; the not-authenticated error for an anonymous caller.
+ */
+async function ownedEmployeeRow<Row extends { agentId: Id<'agents'> }>(
+  ctx: QueryCtx | MutationCtx,
+  read: () => Promise<Row | null>,
+  refusal: string,
+): Promise<Row> {
+  const caller = await getCallerOrThrow(ctx);
+  const row = await read();
+  const agent = row === null ? null : await ctx.db.get(row.agentId);
+  if (row === null || agent === null || !agent.userId || agent.userId !== caller.ownerKey) {
+    throw new ConvexError(refusal);
+  }
+  return row;
+}
+
+/**
+ * The charter, if the caller owns its employee; throws {@link CHARTER_NOT_YOURS} otherwise. This
+ * guard and the three below admit the caller before they read the row (12-G).
  */
 export async function assertOwnsCharter(
   ctx: QueryCtx | MutationCtx,
   charterId: Id<'charters'>,
 ): Promise<Doc<'charters'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const charter = await ctx.db.get(charterId);
-  if (!charter) throw new Error('charter not found');
-  await callersAgent(ctx, caller, charter.agentId);
-  return charter;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(charterId), CHARTER_NOT_YOURS);
 }
 
-/** The work item, if the caller owns its employee; throws otherwise. */
+/** The work item, if the caller owns its employee; throws {@link WORK_ITEM_NOT_YOURS} otherwise. */
 export async function assertOwnsWorkItem(
   ctx: QueryCtx | MutationCtx,
   workItemId: Id<'workItems'>,
 ): Promise<Doc<'workItems'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const item = await ctx.db.get(workItemId);
-  if (!item) throw new Error('work item not found');
-  await callersAgent(ctx, caller, item.agentId);
-  return item;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(workItemId), WORK_ITEM_NOT_YOURS);
 }
 
-/** The skill, if the caller owns its employee; throws otherwise. */
+/** The skill, if the caller owns its employee; throws {@link SKILL_NOT_YOURS} otherwise. */
 export async function assertOwnsSkill(
   ctx: QueryCtx | MutationCtx,
   skillId: Id<'skills'>,
 ): Promise<Doc<'skills'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const skill = await ctx.db.get(skillId);
-  if (!skill) throw new Error('skill not found');
-  await callersAgent(ctx, caller, skill.agentId);
-  return skill;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(skillId), SKILL_NOT_YOURS);
 }
 
-/** The voice session, if the caller owns its employee; throws otherwise. */
+/** The voice session, if the caller owns its employee; throws {@link ONE_TO_ONE_NOT_YOURS} otherwise. */
 export async function assertOwnsVoiceSession(
   ctx: QueryCtx | MutationCtx,
   sessionId: Id<'voiceSessions'>,
 ): Promise<Doc<'voiceSessions'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const session = await ctx.db.get(sessionId);
-  if (!session) throw new Error('voice session not found');
-  await callersAgent(ctx, caller, session.agentId);
-  return session;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(sessionId), ONE_TO_ONE_NOT_YOURS);
 }
 
 /**

@@ -49,6 +49,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   isChatMessage,
   itemEvidence,
+  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -1370,6 +1371,39 @@ export function withholdActions<T extends CorrectableOutput>(
 }
 
 /**
+ * The refusals with every message that reports a withheld write of its set added (W12X-2): the
+ * evidence check counted the write as the message's evidence and the apply binds the two, so the
+ * message goes with the write rather than reporting a write that is no longer sent. The evidence
+ * check's own rounds need none of this: each reads every message again against what stands.
+ *
+ * Args:
+ *   actions: The set as the audit saw it.
+ *   given: The writes being withheld, by index, with the reasons.
+ *
+ * Returns:
+ *   The refusals, each reporting message's added after the write it reports, in index order.
+ */
+export function withReportsOfWithheld(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+): AuditRefusal[] {
+  const refusals = [...given];
+  const withheld = new Map(given.map((refusal) => [refusal.index, refusal.reason]));
+  actions.forEach((action, index): void => {
+    if (withheld.has(index)) return;
+    const at = [...withheld.keys()]
+      .filter((earlier) => earlier < index)
+      .sort((a, b) => a - b)
+      .find((earlier) => reportsEarlierWrite(action, [actions[earlier]!]));
+    if (at === undefined) return;
+    const reason = `withheld with a write it reports, which was withheld: ${withheld.get(at)}`;
+    withheld.set(index, reason);
+    refusals.push({ index, reason });
+  });
+  return refusals.sort((a, b) => a.index - b.index);
+}
+
+/**
  * One refusal per action, its reasons joined: a message with two refused
  * sentences is one withheld action, not two.
  */
@@ -1455,10 +1489,13 @@ async function withheldAgainstFact<T extends CorrectableOutput & WorkDoneFields>
 ): Promise<T> {
   const fact = workDoneFactOf(output);
   if (fact === undefined || closingAgainstFact(fact, output.actions) === undefined) return output;
-  const refusals = closingChanges(output.actions).map(({ index, state }) => ({
-    index,
-    reason: closingAgainstFactReason(fact, state),
-  }));
+  const refusals = withReportsOfWithheld(
+    output.actions,
+    closingChanges(output.actions).map(({ index, state }) => ({
+      index,
+      reason: closingAgainstFactReason(fact, state),
+    })),
+  );
   await record?.(
     refusals.map((refusal) => refusal.index),
     `${WITHHELD_AGAINST_WORK_DONE}: ${refusals.map((refusal) => refusal.reason).join('; ')}`,
@@ -2695,6 +2732,13 @@ export function mockActionContractIssues(
   return issues;
 }
 
+/** A tool that lists records (`list_issues`, `list-projects`), which the list-read rule is for. */
+const LIST_TOOL = /^list[_-]/i;
+
+/** How a real run takes a list read, shown when a connected surface allows one (W12V-12, wave 13 item 3). */
+export const LIST_READ_RULE =
+  '  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done or cancelled, such as Backlog, Todo or In Progress, so read open items with no state filter.';
+
 /**
  * Describe the connected surfaces and the two verbs that reach them.
  *
@@ -2754,6 +2798,12 @@ export function surfaceInstructions(
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
+  // W12V-12: a first read that named a field list, or scoped open items to one state, stopped
+  // the run before any write on the hosted model.
+  const listTool = connected.some((surface) =>
+    (surface.toolAllowlist ?? []).some((tool) => LIST_TOOL.test(tool)),
+  );
+  if (mode === 'real' && listTool) lines.push(LIST_READ_RULE);
   return lines.join('\n');
 }
 
@@ -2895,6 +2945,15 @@ export function executorInstructions(args: {
 }
 
 /**
+ * What a resumed closing set is told of the previous attempt's failure: it is that attempt's, and
+ * a write it names that this set carries is sent again, so the set answers for the run as it will
+ * stand once it lands (wave 13 item 8; Wren's second Retry answered `partial` from the failure line
+ * although its own re-sent post landed).
+ */
+const RESUMED_FAILURE_IS_EARLIER =
+  "That failure is the previous attempt's, not this set's: a write it names that is in this set is sent again with it, so answer workDone as the run will stand once this set lands.";
+
+/**
  * How a supervised real run's writes land (W12V-11, the walk on real Slack): with autonomous
  * actions off, the writes one response emits wait for the manager as one set and land together
  * when the manager approves it. A run told only that its writes are "held", and to answer whether
@@ -2903,10 +2962,12 @@ export function executorInstructions(args: {
  * what lands each write in it, and answers for the work as it will stand once the set lands. A run
  * that did not do the work still answers partial or not-done however its writes land, and never
  * closes (decision D-1 (b)): the bed's REVOPS-3 answered done for its plan's gap note until the
- * rule said so.
+ * rule said so. A message that reports the set's own writes is bound to them at the apply (wave
+ * 13, W12X-1 and W12X-2), and is told so: a comment that said its posts were "held for manager
+ * approval" landed beside them, untrue.
  */
 export const HELD_SET_REAL =
-  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands.';
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write before it has landed, and holds it back with them otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';
@@ -3590,6 +3651,61 @@ export async function repairToolArguments(
   };
 }
 
+/** A line of a provider's validation refusal that names the argument at fault: "- fields.1: must be ...". */
+const FAULTED_ARGUMENT = /(?:^|\s)-\s+([A-Za-z_][A-Za-z0-9_]*)(?:[.[][^:\s]*)?:\s/g;
+
+/**
+ * The arguments that only select which fields of a record come back, which a read may leave out
+ * and still read what it was asked (`fields` on `list_issues`). A filter (`state`, `project`)
+ * scopes what is read: leaving one out would read wider than asked, so it is never left out.
+ */
+const FIELD_SELECTION = /^(?:fields|select|expand|include[A-Z]\w*)$/;
+
+/**
+ * The top-level field-selection arguments of a call that a validation refusal names, in the
+ * client's format ("- fields.1: must be equal to one of the allowed values"); only arguments the
+ * call carries, and only those that select fields ({@link FIELD_SELECTION}).
+ *
+ * Args:
+ *   reason: The refusal's words.
+ *   action: The call it refused.
+ *
+ * Returns:
+ *   The named arguments, each once; empty when the refusal is not about arguments or names none.
+ */
+function faultedArguments(reason: string | undefined, action: MockAction): string[] {
+  if (!isArgumentFailure(reason) || reason === undefined) return [];
+  const carried = toolArgumentsOf(action);
+  if (!carried) return [];
+  const named = [...reason.split(/\n\s*\n/, 1)[0]!.matchAll(FAULTED_ARGUMENT)].map(
+    (match) => match[1]!,
+  );
+  return [...new Set(named)].filter(
+    (name) => Object.hasOwn(carried, name) && FIELD_SELECTION.test(name),
+  );
+}
+
+/** A call's arguments as an object, or undefined when they do not parse as one. */
+function toolArgumentsOf(action: MockAction): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(action.args.toolArgsJson ?? '');
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    // Not an object: the call has no named arguments to leave out.
+    return undefined;
+  }
+}
+
+/** The call with the named arguments left out. */
+function withoutArguments(action: MockAction, names: readonly string[]): MockAction {
+  const kept = Object.fromEntries(
+    Object.entries(toolArgumentsOf(action) ?? {}).filter(([name]) => !names.includes(name)),
+  );
+  return { ...action, args: { ...action.args, toolArgsJson: JSON.stringify(kept) } };
+}
+
 /** What the failed-read repair takes: the actions, their ledger and the reads to retry. */
 export interface RepairFailedReadsArgs {
   actions: readonly MockAction[];
@@ -3609,7 +3725,9 @@ export interface RepairFailedReadsArgs {
  *
  * Each such row costs one model call and one re-apply, then stands as the
  * second attempt's outcome whatever that was: a second refusal is ledgered
- * failed with the second message, and nothing loops. A row whose repair the
+ * failed with the second message, and nothing loops. The one exception is a
+ * second refusal that names arguments the repaired call carries: the read is
+ * taken once more without them, with no model call (W12V-12). A row whose repair the
  * model could not produce, or whose repair call itself failed, keeps its first
  * outcome. Writes are never touched.
  *
@@ -3639,12 +3757,23 @@ export async function repairFailedReads(
       replacement = undefined;
     }
     if (!replacement) continue;
-    const outcome = await args.apply(replacement, row.index);
-    actions[row.index] = replacement;
+    let action = replacement;
+    let outcome = await args.apply(action, row.index);
+    let reason = row.reason;
+    // The second shape (W12V-12): a repaired read refused again for field-selection arguments the
+    // provider names is taken once more without them; the fields a list returns change nothing it
+    // reads. A refused filter is left as it stands, so no read is taken wider than asked.
+    const faulted = outcome.ok ? [] : faultedArguments(outcome.reason, action);
+    if (faulted.length > 0) {
+      action = withoutArguments(action, faulted);
+      outcome = await args.apply(action, row.index);
+      reason = `${row.reason}; the repaired call was refused too for ${faulted.join(', ')}, so it was taken without them`;
+    }
+    actions[row.index] = action;
     applied[row.index] = {
       ...outcome,
       repair: {
-        reason: row.reason,
+        reason,
         toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
       },
     };
@@ -3745,6 +3874,8 @@ async function authorDependentSkillRun(
       ? [
           '',
           `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`,
+          // A resumed set read the earlier failure as its own outcome (Wren's second Retry).
+          ...(args.resumedClosing ? [RESUMED_FAILURE_IS_EARLIER] : []),
         ]
       : []),
     ...(args.refusedClosing ? ['', ...refusedClosingLines(args.refusedClosing)] : []),
@@ -3863,7 +3994,10 @@ async function authorDependentSkillRun(
     const gate = gateIssues(output);
     if (gate.length > 0) throw new ClosingGateRefusal(gate, withLimitations(output));
     output = await withholdUnsupported(output, claimFindings, args.onAuditCorrection);
-    const orphaned = orphanedStatusChanges(output, landedCommentTargets(args));
+    const orphaned = withReportsOfWithheld(
+      output.actions,
+      orphanedStatusChanges(output, landedCommentTargets(args)),
+    );
     if (orphaned.length > 0) {
       output = withholdActions(output, orphaned);
       await args.onAuditCorrection?.(

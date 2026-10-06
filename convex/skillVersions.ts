@@ -26,6 +26,7 @@ import {
   versionBodyHash,
   type SurfaceTools,
 } from '../src/work/skill-library';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /*
  * The owner's skill library (the enhancements plan, section 4.1; K1 to K4).
@@ -468,7 +469,7 @@ async function replacedVersionOf(
 /**
  * The retire's rule for an author (the plan's "retire and transfer, with the library"): the
  * owner's versions stay, since other employees may hold them, and stop naming the departed
- * employee; `authorName` keeps the name for the card.
+ * employee; `authorName` keeps the name for the card, and `authorLeft` how and when it left.
  *
  * @param ctx - The retire's or the move's mutation context.
  * @param agentId - The departing employee.
@@ -486,7 +487,15 @@ export async function releaseAuthor(
     .withIndex('by_author', (q) => q.eq('authorAgentId', agentId))
     .collect();
   const released = authored.filter((version) => version.userId !== keptBy);
-  for (const version of released) await ctx.db.patch(version._id, { authorAgentId: undefined });
+  // How the author left, for the adoption card's words (13-K's field; wave 13 item 7): a retire
+  // keeps no owner's versions naming it, a handover keeps the new owner's.
+  const authorLeft = {
+    how: keptBy === undefined ? 'retired' : 'transferred',
+    at: Date.now(),
+  } as const;
+  for (const version of released) {
+    await ctx.db.patch(version._id, { authorAgentId: undefined, authorLeft });
+  }
   return released.length;
 }
 
@@ -550,7 +559,7 @@ export async function copyVersionsForMove(
     // An offer is the old owner's library speaking, not something the employee holds: it goes,
     // and an adoption under way goes with it (the wave 10 review, B1).
     if (row.offeredVersionId !== undefined) {
-      await endOfferAtMove(ctx, row);
+      await endOfferAtMove(ctx, row, now);
     } else if (row.state !== 'registered' && holdsParkedStoredCopy(row)) {
       // A copy whose offer is gone by any path still goes: nothing of the version crosses.
       await ctx.db.patch(row._id, STORED_COPY_CLEARED);
@@ -607,7 +616,7 @@ const ENDED_ROW_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
  * manager's approval. A check still running is fenced out of the row by the released claim. An
  * adoption that ended (declined, retired, superseded) stays as it ended, its copy gone.
  */
-async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<void> {
+async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>, now: number): Promise<void> {
   if (row.state === 'proposed') {
     await ctx.db.patch(row._id, { offeredVersionId: undefined });
     return;
@@ -619,6 +628,7 @@ async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<voi
   }
   await ctx.db.patch(row._id, {
     state: 'proposed',
+    ...skillWaitingStamp('proposed', now),
     offeredVersionId: undefined,
     ...STORED_COPY_CLEARED,
     authoringAttempts: undefined,

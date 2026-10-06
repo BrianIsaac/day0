@@ -694,6 +694,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Seeding work from the approved charter failed${because(p.reason)}; ${
       p.retrying === true ? 'trying again' : 'given up'
     }`,
+  'charter.seeded': (_p, subject) =>
+    `Day0 set up ${subject.name}'s approved charter and began finding how to reach the systems it names`,
+  'charter.seeding-requested': (_p, subject) =>
+    `${decider(subject)} asked Day0 to find work for ${subject.name} again from the approved charter`,
   'person.proposed': (p, subject) =>
     `${subject.name} proposed ${text(p.person) ?? 'a person'} from ${
       p.via === 'handover' ? 'the charter it brought' : 'its approved charter'
@@ -798,6 +802,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Writing the skill ${text(p.name) ?? 'unnamed'} was taken over${
       duration(p.heldForMs) ? `; the last run held it ${duration(p.heldForMs)}` : ''
     }`,
+  'skill.authoring-held': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} was held${because(p.reason)}`,
+  'skill.authoring-resumed': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} went on after the pause`,
   'skill.authoring-claimed': (p, { name }) =>
     p.purpose === 'verify-stored'
       ? `${name} started checking the skill ${text(p.name) ?? 'unnamed'} in the sandbox`
@@ -849,6 +857,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${decider(subject)} asked for a connection card${text(p.slug) ? ` for ${p.slug}` : ''}`,
   'surface.orientation-failed': (p, subject) =>
     `Finding a way to reach ${subject.connection ?? 'a system'} failed${because(p.reason)}`,
+  'surface.orientation-held': (p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} was held${because(p.reason)}`,
+  'surface.orientation-resumed': (_p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} went on after the pause`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
   'surface.socket-token-landed': (p, subject) =>

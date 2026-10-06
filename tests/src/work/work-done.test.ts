@@ -4,6 +4,7 @@ import {
   closingAgainstFact,
   closingChanges,
   doneAgainstWords,
+  landedClosings,
   WORK_DONE_WHY_LIMIT,
   workDoneFactOf,
 } from '../../../src/work/work-done';
@@ -87,6 +88,39 @@ describe('closingChanges', (): void => {
       { index: 1, state: 'done' },
       { index: 3, state: 'Done' },
     ]);
+  });
+});
+
+describe("landedClosings (the closing states a run landed, both phases; 12-D's Minor 5)", (): void => {
+  /** A ledger row for one action: landed, held for the manager, or failed. */
+  function row(outcome: 'landed' | 'held' | 'failed'): Record<string, unknown> {
+    return {
+      tool: 'mcp.call',
+      idempotencyKey: `key-${outcome}`,
+      ok: outcome !== 'failed',
+      ...(outcome === 'held' ? { held: true } : {}),
+    };
+  }
+
+  it('names the ticket and the state of each close that landed, in either phase, and no other', (): void => {
+    expect(
+      landedClosings({
+        initial: {
+          actions: [ticketUpdate('Reconciled.', 'done'), linearState('In Progress')],
+          applied: [row('landed'), row('landed')],
+        },
+        actions: [linearState('Done'), linearState('Canceled'), linearState('Done')],
+        applied: [row('landed'), row('held'), row('failed')],
+      }),
+    ).toEqual([
+      { ticket: 'REVOPS-204', state: 'done' },
+      { ticket: 'REVOPS-5', state: 'Done' },
+    ]);
+  });
+
+  it('finds nothing in a run with no ledger', (): void => {
+    expect(landedClosings(undefined)).toEqual([]);
+    expect(landedClosings({ actions: [linearState('Done')] })).toEqual([]);
   });
 });
 

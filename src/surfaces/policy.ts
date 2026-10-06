@@ -64,6 +64,16 @@ export const AWAITING_APPROVAL = "awaiting the manager's approval";
 export const WITHHELD_AFTER_FAILED_WRITE =
   'withheld: an earlier write in this set did not land, so this message could report it wrongly';
 /**
+ * Why a message that reports a write of its own set is not sent: a write before it in the set
+ * did not land (the manager did not approve it, it failed, a claim held it or its outcome is
+ * unknown), so the report would be untrue (wave 13, W12X-2).
+ */
+export const WITHHELD_REPORTED_WRITE_NOT_LANDED =
+  'withheld: it reports a write of this set that did not land, so it would say something untrue';
+/** Why a message that reports a held write of its own set waits with it rather than going ahead (wave 13, W12X-2). */
+export const HELD_WITH_REPORTED_WRITES =
+  'held with the writes it reports: it is sent only once they land';
+/**
  * Why a browser write is not sent after an earlier write on the same page did
  * not land: the page is not as the run left it, and a Save would commit
  * whatever the page holds, such as the value a failed fill left in place.

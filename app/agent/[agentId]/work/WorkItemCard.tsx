@@ -63,6 +63,7 @@ import {
   type PhasedLedgerRow,
   type RunOutput,
   notDoneOnCard,
+  isProviderAnswer,
   waitingLine,
 } from './work-item';
 import { closeAgainstWordsOf } from '@/work/work-done';
@@ -235,7 +236,6 @@ export function WorkItemCard({
   );
   const ledger = phasedLedger(output);
   const places = landedPlaces(ledger);
-  const landed = places.map((place) => ({ ...ledger[place]!, place }));
   // Rows that land while the page is open are a landing the manager is
   // watching (v3 section 5.2), whether or not the run landed a row before (M7).
   const landedBefore = usePreviousValue(places.join(','), LANDING_MS);
@@ -256,6 +256,13 @@ export function WorkItemCard({
           }
         : row;
     });
+  // A documented API's or an MCP tool's write keeps the provider's raw answer as its effect, which
+  // the evidence check reads; the card names it by what its action does instead (12-J item 5c).
+  const landed = places.map((place) => {
+    const row = ledger[place]!;
+    const shown = isProviderAnswer(row.effect) ? named([row])[0]! : row;
+    return { ...shown, place };
+  });
   const held = named(ledger.filter((row) => row.held && !row.awaitingApproval));
   // A row Day0's own gate refused was never sent: it is listed apart from a
   // row the provider failed, whose outcome someone may have to check.
@@ -386,6 +393,13 @@ export function WorkItemCard({
               ))}
             </ul>
           )}
+          {notDone.closed.map((close) => (
+            <p key={`${close.ticket}:${close.state}`} className="mt-1.5 text-[15px]">
+              {employeeName} moved {close.ticket} to {close.state} in this run, though the work is
+              {notDone.answer === 'partial' ? ' not all done' : ' not done'}: reopen it if it should
+              stay open.
+            </p>
+          ))}
         </Note>
       </ItemSection>
     ) : null;
