@@ -67,7 +67,6 @@ export const WORK_GEN_SYSTEM = [
   '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>"); the two tickets never share one.',
   '  - Vary priorities: ideally one P1, one P2, one low.',
-  "  - The read-and-answer item and both tickets are this role's own asks: an ask in the snapshot that the charter's willDo does not cover is never one of them, though it may be the out-of-scope item.",
   "  - requesterLabel is a person's name or role; never the agent itself.",
   '  - The title and contentSummary are the request as its sender wrote it, and the manager reads them on the work card: never say how the request should be handled (no "skip this", "route this back", "out of scope") and never mention the agent, the evaluator or Day0.',
   '  - Titles are 8-14 words.',
