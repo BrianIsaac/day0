@@ -90,4 +90,20 @@ describe('isClosingState', () => {
       expect(isClosingState(state), state).toBe(false);
     }
   });
+
+  it("counts the states that close a ticket without finishing it as closing: cancelled, a duplicate, released (12-D's Minor 5)", () => {
+    for (const state of [
+      'Canceled',
+      'cancelled',
+      'Cancelled',
+      'Duplicate',
+      'duplicate',
+      'Released',
+    ]) {
+      expect(isClosingState(state), state).toBe(true);
+    }
+    for (const state of ['Backlog', 'Triage', 'In Review', 'Unstarted']) {
+      expect(isClosingState(state), state).toBe(false);
+    }
+  });
 });
