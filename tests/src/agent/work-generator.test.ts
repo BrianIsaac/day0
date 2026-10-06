@@ -432,6 +432,12 @@ describe('the first tickets the office can and cannot back (13-FD, the v0.16.0 r
     expect(prompt).toContain('slug "page-15" titled "Page 15"');
   });
 
+  it("keeps the read and both tickets to the role's own asks, another role's only ever out of scope (the second pass)", (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      "The read-and-answer item and both tickets are this role's own asks: an ask in the snapshot that the charter's willDo does not cover is never one of them, though it may be the out-of-scope item.",
+    );
+  });
+
   it('keeps the two tickets apart when the draft gives them one external id', async (): Promise<void> => {
     drafts.push([READ, ACTION, { ...BEYOND, externalId: 'ticket-action' }, PLAIN_OUT_OF_SCOPE]);
     const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
