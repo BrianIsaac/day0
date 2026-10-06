@@ -14,6 +14,8 @@ const NO_EXCLUSION = { kind: 'none', quote: '' } as const;
 
 const model = vi.hoisted(() => ({
   calls: [] as Array<{ agent: string; user: string }>,
+  /** Each agent's standing instructions, as the module made it. */
+  instructions: new Map<string, string>(),
   answer: {
     inScope: true,
     fit: true,
@@ -42,7 +44,10 @@ vi.mock('../../../src/lib/mastra', () => {
   };
   const checked = schemaChecked(reply);
   return {
-    makeAgent: (name: string): { name: string } => ({ name }),
+    makeAgent: (name: string, instructions: string): { name: string } => {
+      model.instructions.set(name, instructions);
+      return { name };
+    },
     agentJson: async (args: Parameters<typeof checked>[0]): Promise<unknown> =>
       model.unchecked ? await reply(args) : await checked(args),
   };
@@ -218,6 +223,12 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(
       charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: GOOD_HABITS }),
     ).toContain('--- AGENTS.md (good-habits memory) ---\n## Good-habits memory');
+  });
+
+  it('tells the model a clause bounding which items are the role’s is judged against the item, not what it reads (W12V-9)', (): void => {
+    expect(model.instructions.get('day0-scope-judgement')).toContain(
+      "  - A willNotDo clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
+    );
   });
 
   it("hands the model the manager's answers to the charter's questions, which bind every later item", (): void => {
