@@ -57,6 +57,18 @@ describe('the empty Work tab (12-J item 6, option C)', (): void => {
     view.unmount();
   });
 
+  it('keeps focus on the tab’s line once the press goes through, and says a stop in the warning tone (the second pass)', async (): Promise<void> => {
+    backend.standing = STOPPED;
+    const view = mount(<EmptyQueue agentId={AGENT} charterApproved={true} />);
+    const line = [...view.container.querySelectorAll('p')].find((p) =>
+      p.textContent?.includes(STOPPED.line),
+    );
+    expect(line?.className).toContain('--color-warn');
+    await press(view.container, 'Find work again');
+    expect(document.activeElement).toBe(line);
+    view.unmount();
+  });
+
   it('says the backend’s refusal when the press is refused', async (): Promise<void> => {
     backend.standing = STOPPED;
     backend.refusal = 'Day0 is still finding work for Nola.';
