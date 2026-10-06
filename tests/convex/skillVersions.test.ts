@@ -924,6 +924,46 @@ describe('skillVersions: the owner key on every holder row (K-m3, R-S)', (): voi
     expect(holders.map((row) => row._id).sort()).toEqual([keyed.skillId, rows.unkeyed].sort());
   });
 
+  it('stamps the wait of an adoption the move sends back to a proposal (skills.waitingSince, wave 13 item 7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const adopting = await claimedSkill(harness, priya, {
+      name: 'adopting',
+      state: 'approved',
+      ownerKey: 'owner',
+    });
+    const offered = await harness.run(async (ctx) => {
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'adopting',
+        description: 'Ticket comment-and-close.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: BODY_ONE,
+        bodyHash: 'sha256:1',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(adopting.skillId, { offeredVersionId: versionId });
+      return versionId;
+    });
+    expect(await skill(harness, adopting.skillId)).toMatchObject({ offeredVersionId: offered });
+
+    await harness.run(async (ctx) => {
+      await copyVersionsForMove(ctx, { agentId: priya, toOwnerKey: 'lead', cutSlugs: [], now: 5 });
+    });
+
+    expect(await skill(harness, adopting.skillId)).toMatchObject({
+      state: 'proposed',
+      waitingSince: 5,
+    });
+  });
+
   it("rewrites every row of a moving employee to the new owner's key", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priya = await employee(harness, 'Priya');

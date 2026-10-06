@@ -505,6 +505,63 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
     expect(view).toMatchObject({ versionId: offered, authorName: 'Priya', authorLeft: true });
   });
 
+  it('records on the version that its author was retired, and when, and the card says which (wave 13 item 7)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 6, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await linear(harness, mateo);
+    const offered = await version(harness, priya);
+    await propose(harness, mateo);
+
+    await harness.run(async (ctx) => {
+      await releaseAuthor(ctx, priya);
+    });
+    const stored = await harness.run(async (ctx) => await ctx.db.get(offered));
+    expect(stored?.authorLeft).toEqual({ how: 'retired', at: Date.UTC(2026, 9, 6, 9, 0) });
+    const [view] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(view).toMatchObject({ authorLeft: true, authorDeparture: 'retired' });
+    vi.useRealTimers();
+  });
+
+  it('records on the version that its author was handed over, and the card says so (wave 13 item 7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await linear(harness, mateo);
+    const offered = await version(harness, priya);
+    await propose(harness, mateo);
+
+    await harness.run(async (ctx) => {
+      await releaseAuthor(ctx, priya, 'another-owner');
+    });
+    const stored = await harness.run(async (ctx) => await ctx.db.get(offered));
+    expect(stored?.authorLeft).toMatchObject({ how: 'transferred' });
+    const [view] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(view).toMatchObject({ authorLeft: true, authorDeparture: 'transferred' });
+  });
+
+  it('keeps the words true of both for a version released before the record of how (wave 13 item 7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await linear(harness, mateo);
+    const offered = await version(harness, priya);
+    await propose(harness, mateo);
+
+    await harness.run(async (ctx) => await ctx.db.patch(offered, { authorAgentId: undefined }));
+    const [view] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(view).toMatchObject({ authorLeft: true });
+    expect(view).not.toHaveProperty('authorDeparture');
+  });
+
   it("refuses another owner's caller", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priya = await employee(harness, 'Priya');
@@ -671,6 +728,19 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     expect((await row(harness, skillId)).state).toBe('proposed');
     expect(await liveGrants(harness, ines)).toEqual([]);
     expect(await eventsOf(harness, 'skill.adopted')).toEqual([]);
+  });
+
+  it("stamps the adopted row's wait as the adoption is approved (skills.waitingSince, wave 13 item 7)", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await version(harness, priya);
+    const skillId = await propose(harness, mateo);
+
+    vi.setSystemTime(Date.UTC(2026, 9, 6, 9, 30));
+    await harness.withIdentity(OWNER).mutation(api.skillAdoption.adopt, { skillId });
+    expect((await row(harness, skillId)).waitingSince).toBe(Date.UTC(2026, 9, 6, 9, 30));
   });
 
   it("adopt grants only the adopter's missing scopes and schedules the stored verification", async (): Promise<void> => {

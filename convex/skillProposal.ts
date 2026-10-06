@@ -7,6 +7,7 @@ import { recordOffer } from './skillAdoption';
 import { skillOwnerKeyOf } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 import { surfaceSlug } from '../src/surfaces/slug';
 
 /*
@@ -171,6 +172,7 @@ export async function proposeInTransaction(
   // A skill proposed for work that came in from a discovered surface acts on
   // that surface: it is named on the row so approval can insist the surface
   // is connected, and its scopes are the surface's read and write pair.
+  const now = Date.now();
   const id = await ctx.db.insert('skills', {
     agentId: args.agentId,
     ...(await skillOwnerKeyOf(ctx.db, args.agentId)),
@@ -185,7 +187,8 @@ export async function proposeInTransaction(
     targetSurface,
     surfaceClass: args.surfaceClass,
     operation: args.operation,
-    createdAt: Date.now(),
+    createdAt: now,
+    ...skillWaitingStamp('proposed', now),
   });
   await appendEvent(ctx, {
     agentId: args.agentId,

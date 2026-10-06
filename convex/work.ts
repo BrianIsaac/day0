@@ -7706,7 +7706,8 @@ export async function needsYouOfEmployee(
     })),
     ...waiting.skills.map(({ skill, waitingItems }) => ({
       kind: 'skill' as const,
-      ...base(`skill:${skill._id}`, skill.name, exact(skill.createdAt)),
+      // Stamped as the skill entered its wait (13-K's field); one stamped before none, by its proposal.
+      ...base(`skill:${skill._id}`, skill.name, exact(skill.waitingSince ?? skill.createdAt)),
       skillId: skill._id,
       waitingItems,
     })),

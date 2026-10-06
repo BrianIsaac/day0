@@ -9,6 +9,7 @@ import {
   countsAsAuthoringAttempt,
   MAX_AUTHORING_ATTEMPTS,
 } from '../src/work/skill-library';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /*
  * The exclusive, fenced authoring run (`convex/skills.ts`'s state machine): which states a run
@@ -159,8 +160,10 @@ export async function claimAuthoringRunInTransaction(
     },
     createdAt: Date.now(),
   });
+  const state = verifying && row.state === 'registered' ? 'registered' : 'authoring';
   await ctx.db.patch(args.skillId, {
-    state: verifying && row.state === 'registered' ? 'registered' : 'authoring',
+    state,
+    ...skillWaitingStamp(state, Date.now()),
     authoringRunId: runId,
     authoringClaimedAt: Date.now(),
     ...(!verifying && countsAsAuthoringAttempt(row)

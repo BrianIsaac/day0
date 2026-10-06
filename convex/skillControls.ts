@@ -37,6 +37,7 @@ import {
   withdrawnRunReason,
   type TakenOut,
 } from '../src/work/skill-controls';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /*
  * The manager's controls on a skill (the enhancements plan, section 4.1, "the five controls";
@@ -826,6 +827,7 @@ export async function openRevision(ctx: MutationCtx, row: Doc<'skills'>): Promis
     body: '',
     sourceType: 'agent-authored',
     state: 'approved',
+    ...skillWaitingStamp('approved', now),
     ...(row.proposedFor !== undefined ? { proposedFor: row.proposedFor } : {}),
     ...(row.rationale !== undefined ? { rationale: row.rationale } : {}),
     requiredScopes: [...(row.requiredScopes ?? [])],
