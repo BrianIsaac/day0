@@ -6,7 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { parseTranscript } from '../../convex/onboarding';
-import { CHARTER_SEEDING_ATTEMPTS, SEEDING_DID_NOT_FINISH } from '../../src/agent/charter-seeding';
+import { CHARTER_SEEDING_ATTEMPTS } from '../../src/agent/charter-seeding';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
