@@ -29,7 +29,7 @@ import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
-import { workDoneFactOf } from '@/work/work-done';
+import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -590,6 +590,11 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
 export interface NotDoneOnCard {
   readonly answer: 'partial' | 'not-done';
   readonly statements: readonly string[];
+  /**
+   * The tickets the run closed all the same (a closing round's first set, 12-D's Minor 5), so a
+   * closed ticket never stands under the answer unsaid.
+   */
+  readonly closed: readonly LandedClosing[];
 }
 
 /**
@@ -604,11 +609,12 @@ export interface NotDoneOnCard {
 export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | undefined {
   if (!output) return undefined;
   const fact = workDoneFactOf(output);
+  const closed = landedClosings(output);
   if (fact !== undefined) {
     return fact.workDone === 'done'
       ? undefined
-      : { answer: fact.workDone, statements: [fact.workDoneWhy] };
+      : { answer: fact.workDone, statements: [fact.workDoneWhy], closed };
   }
   const statements = unfinishedInOwnWords(output);
-  return statements.length > 0 ? { answer: 'not-done', statements } : undefined;
+  return statements.length > 0 ? { answer: 'not-done', statements, closed } : undefined;
 }

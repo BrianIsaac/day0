@@ -393,6 +393,12 @@ export function WorkItemCard({
               ))}
             </ul>
           )}
+          {notDone.closed.map((close) => (
+            <p key={`${close.ticket}:${close.state}`} className="mt-1.5 text-[15px]">
+              {close.ticket} was moved to {close.state} in this run. Reopen it if the work is not
+              finished.
+            </p>
+          ))}
         </Note>
       </ItemSection>
     ) : null;

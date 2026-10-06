@@ -21,7 +21,14 @@
  */
 
 import { z } from 'zod';
-import { isSurfaceTool, parseSurfaceAction, statusChangeTarget } from '../surfaces/policy';
+import {
+  isSurfaceTool,
+  parseSurfaceAction,
+  statusChangeTarget,
+  targetIssue,
+} from '../surfaces/policy';
+import { landedEntry, type AppliedAction } from '../surfaces/types';
+import { ledgerPhases } from './reconciliation';
 import { isClosingState, notDoneStatements, runOwnWords } from './not-done';
 import {
   type MockAction,
@@ -98,6 +105,37 @@ export function closingChanges(actions: readonly MockAction[]): ClosingChange[] 
           : undefined;
     return state !== undefined && isClosingState(state) ? [{ index, state }] : [];
   });
+}
+
+/** A closing state a run landed on a ticket. */
+export interface LandedClosing {
+  readonly ticket: string;
+  readonly state: string;
+}
+
+/**
+ * The closing states a run landed, in both phases, oldest first: what its ledger says reached the
+ * ticket, never a change held for the manager or one that failed. A card reads it beside a run that
+ * answered its work was not all done, which a closing round can do over a ticket its first set
+ * closed (12-D's Minor 5).
+ *
+ * @param output - The run's output.
+ */
+export function landedClosings(output: unknown): LandedClosing[] {
+  return ledgerPhases(output).flatMap(({ actions, applied }) =>
+    closingChanges(actions).flatMap(({ index, state }): LandedClosing[] => {
+      const ticket = closedTicketOf(actions[index]!);
+      const row = applied[index] as AppliedAction | undefined;
+      return ticket !== undefined && landedEntry(row) ? [{ ticket, state }] : [];
+    }),
+  );
+}
+
+/** The ticket a closing change names: the mock ticket's slug, or the real issue's key. */
+function closedTicketOf(action: MockAction): string | undefined {
+  if (action.tool === 'ticket.update') return action.args.slug;
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok ? targetIssue(parsed.action) : undefined;
 }
 
 function closingTargetOf(action: MockAction): string | undefined {

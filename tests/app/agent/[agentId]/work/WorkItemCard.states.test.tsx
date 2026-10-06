@@ -717,6 +717,45 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     expect(nell).toContain('The October deal list is not in the tracker.');
   });
 
+  it("says a ticket this run closed beside a run that answered partial, so a Done ticket never stands under Partly done unsaid (12-D's Minor 5)", (): void => {
+    const drawn = DRAWN.landed.output as { actions: unknown[]; applied: unknown[] };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...drawn,
+        actions: [
+          ...drawn.actions,
+          {
+            tool: 'mcp.call',
+            args: {
+              surface: 'linear',
+              tool: 'save_issue',
+              toolArgsJson: JSON.stringify({ id: 'REVOPS-202', state: 'Done' }),
+            },
+          },
+        ],
+        applied: [
+          ...drawn.applied,
+          {
+            tool: 'mcp.call',
+            ok: true,
+            idempotencyKey: 'close-202',
+            providerId: 'REVOPS-202',
+            effect: 'save_issue on linear · REVOPS-202 · Done',
+          },
+        ],
+        draft: ROOK_COMMENT,
+        workDone: 'partial',
+        workDoneWhy: 'The reply to Sara is still owed.',
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Partly done, in Mira’s own words');
+    expect(view.text()).toContain(
+      'REVOPS-202 was moved to Done in this run. Reopen it if the work is not finished.',
+    );
+    view.unmount();
+  });
+
   it('says a run was only partly done before what landed, since that is the first thing the manager asks', (): void => {
     const text = card(
       answered(
