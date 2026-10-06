@@ -20,7 +20,7 @@ import { appliedAgreementIds, plannerAgreementLines, type PromptAgreement } from
 import {
   PEOPLE_HEADING,
   peopleBlockLines,
-  personNamed,
+  fromLine,
   type PromptNamed,
   type PromptPeople,
 } from '../people/prompt-block';
@@ -835,13 +835,6 @@ export interface DraftPlanArgs {
   requester?: PromptNamed;
 }
 
-/** The candidate's From line: the confirmed requester by name and role in real mode, else the label. */
-function fromLine(args: Pick<DraftPlanArgs, 'candidate' | 'requester' | 'surfaceMode'>): string {
-  const named =
-    args.surfaceMode === 'real' && args.requester ? personNamed(args.requester) : undefined;
-  return `From: ${named ?? args.candidate.requesterLabel ?? '(unknown)'}`;
-}
-
 /**
  * Render every surface with its live verdict for the planner.
  *
@@ -892,7 +885,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
-    fromLine(args),
+    fromLine(candidate.requesterLabel, args.surfaceMode === 'real' ? args.requester : undefined),
     ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,

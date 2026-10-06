@@ -3,6 +3,7 @@ import {
   PEOPLE_BLOCK_LEAD,
   PEOPLE_BLOCK_MAX_LINES,
   PEOPLE_HEADING,
+  fromLine,
   peopleBlockLines,
   personNamed,
   withoutIdentities,
@@ -168,5 +169,16 @@ describe('personNamed', (): void => {
     );
     expect(personNamed({ displayName: 'Lee Tan' })).toBe('Lee Tan');
     expect(personNamed({ displayName: 'lee@kestrel.test' })).toBeUndefined();
+  });
+});
+
+describe('fromLine', (): void => {
+  it('names the confirmed requester, else keeps the label, else says unknown', (): void => {
+    expect(fromLine('U07LEE12345', { displayName: 'Lee Tan', title: 'Admin' })).toBe(
+      'From: Lee Tan (Admin)',
+    );
+    expect(fromLine('Lee', undefined)).toBe('From: Lee');
+    expect(fromLine('Lee', { displayName: 'lee@kestrel.test' })).toBe('From: Lee');
+    expect(fromLine(undefined, undefined)).toBe('From: (unknown)');
   });
 });

@@ -123,6 +123,18 @@ export function personNamed(person: PromptNamed): string | undefined {
   return role === '' ? name : `${name} (${role})`;
 }
 
+/**
+ * A candidate's From line: the confirmed person its requester resolves to, by name and role, else
+ * the requester's label as intake stored it (an ambiguous or unknown requester, or a person named
+ * only by an address).
+ *
+ * @param label - The requester's label, as intake stored it.
+ * @param requester - The confirmed person, when the requester resolves to one; real mode only.
+ */
+export function fromLine(label: string | undefined, requester: PromptNamed | undefined): string {
+  return `From: ${(requester && personNamed(requester)) ?? label ?? '(unknown)'}`;
+}
+
 /** One edge in the manager's words: "works with you on X", "neighbouring role, X". */
 function edgePhrase(edge: PromptEdge): string {
   const scope = edge.scope === undefined ? '' : oneClause(edge.scope);

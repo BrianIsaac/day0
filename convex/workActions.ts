@@ -136,6 +136,7 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { scrubbedCorrectionEntries, type PlannerCorrection } from '../src/work/corrections';
 import { scrubbedAgreementEntries, type PromptAgreement } from '../src/work/agreements';
+import type { PromptNamed, PromptPeople } from '../src/people/prompt-block';
 import {
   droppedReadRefusal,
   gateRefusalStop,
@@ -776,6 +777,8 @@ async function draftPlanHandler(
     SURFACE_MODE === 'real'
       ? await plannerCorrections(ctx, item, knownValues, agreements?.covered ?? [])
       : undefined;
+  // The People block and the From line's confirmed requester (13-J); the scope judgement reads neither.
+  const people = await promptPeople(ctx, args.workItemId);
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
   const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
@@ -798,6 +801,7 @@ async function draftPlanHandler(
               ...(agreements.redaction ? { agreementsRedaction: agreements.redaction } : {}),
             }
           : {}),
+        ...people,
         onObligationEvent: async (event) =>
           await logObligationEvent(ctx, { agentId, workItemId: args.workItemId }, event),
       }),
@@ -1270,6 +1274,7 @@ async function holdDay0Actions(
       item: args.item,
       plan: args.plan,
     });
+    const people = await promptPeople(ctx, args.workItemId);
     await claimPlannedWriteTargets(ctx, {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1299,6 +1304,7 @@ async function holdDay0Actions(
       heldElsewhere,
       appliedCorrections,
       appliedAgreements,
+      ...people,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
@@ -2671,6 +2677,7 @@ export const authorDependentActions = internalAction({
         plan,
         knownValues,
       });
+      const { people } = await promptPeople(ctx, args.workItemId);
       let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
@@ -2758,6 +2765,7 @@ export const authorDependentActions = internalAction({
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
             appliedAgreements,
+            ...(people ? { people } : {}),
             groundingReads,
             initialOutput: prerequisites,
             initialLedger: prerequisites.applied,
@@ -4277,6 +4285,24 @@ async function executorAgreements(
     known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
   });
   return scrubbed.entries;
+}
+
+/**
+ * The people the employee works with, and the confirmed person the item's requester resolves to,
+ * as the planner and both executor phases read them (13-J, the People block and the From line):
+ * names, roles and what each edge covers, from the owner's graph now. The scope judgement never
+ * reads them; scope is the charter's.
+ *
+ * @param ctx - Convex action context.
+ * @param workItemId - The work item.
+ * @returns What the prompts take; empty in mock mode, where no graph is kept.
+ */
+async function promptPeople(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+): Promise<{ people?: PromptPeople; requester?: PromptNamed }> {
+  if (SURFACE_MODE !== 'real') return {};
+  return await ctx.runQuery(internal.peoplePrompt.forItem, { workItemId });
 }
 
 /**

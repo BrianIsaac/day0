@@ -45,7 +45,12 @@ import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
-import { peopleBlockLines, type PromptPeople } from '../people/prompt-block';
+import {
+  fromLine,
+  peopleBlockLines,
+  type PromptNamed,
+  type PromptPeople,
+} from '../people/prompt-block';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   isChatMessage,
@@ -1077,6 +1082,11 @@ export interface RunSkillArgs {
    * collaborators in the charter lines, and never decide a write.
    */
   people?: PromptPeople;
+  /**
+   * The confirmed person the candidate's requester resolves to, named on phase one's From line in
+   * place of the label; real mode only (13-J). Absent for an ambiguous or unknown requester.
+   */
+  requester?: PromptNamed;
   /**
    * The reads made for this work item before its plan was drafted, redacted
    * as their events stored them; real mode only. Evidence for what the
@@ -3072,7 +3082,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
-    `From: ${candidate.requesterLabel ?? '(unknown)'}`,
+    fromLine(candidate.requesterLabel, mode === 'real' ? args.requester : undefined),
     ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,

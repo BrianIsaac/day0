@@ -520,6 +520,22 @@ describe('people graph readers: the audit six queries', (): void => {
     ).toEqual({ kind: 'manager', personId: rowan });
   });
 
+  it('answers the escalation contact with what its edge covers, for the People block (13-J)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const lee = await seedPerson(harness, 'Lee Tan');
+    await seedEdge(harness, lee, { type: 'escalation-contact', scope: 'ledger access' });
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.people.escalationContactFor, { agentId })).toEqual({
+      kind: 'person',
+      via: 'owner',
+      personId: lee,
+      displayName: 'Lee Tan',
+      scope: 'ledger access',
+    });
+  });
+
   it('answers the manager with no person for an owner who has no row of their own yet', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

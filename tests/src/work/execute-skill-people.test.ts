@@ -196,6 +196,34 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     expect(recorded.users[0]).toBe(recorded.users[1]);
   });
 
+  it("names a confirmed requester on phase one's From line, in real mode only", async (): Promise<void> => {
+    const requester = { displayName: 'Lee Tan', title: 'Work management administrator' };
+    const labelled = { ...candidate, requesterLabel: 'U07LEE12345' };
+    recorded.outputs.push(phaseOne, phaseOne);
+    await runSkill({
+      skill,
+      plan,
+      candidate: labelled,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      requester,
+    });
+    await runSkill({
+      skill,
+      plan,
+      candidate: labelled,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+    });
+    expect(recorded.users[0]).toContain('\nFrom: Lee Tan (Work management administrator)\n');
+    expect(recorded.users[0]).not.toContain('U07LEE12345');
+    expect(recorded.users[1]).toContain('\nFrom: U07LEE12345\n');
+  });
+
   it('leaves the mock executor prompt as it was', async (): Promise<void> => {
     const mockOutput = { draft: 'Drafted.', notes: '', actions: [], procedureTrails: [] };
     recorded.outputs.push(mockOutput, mockOutput);
@@ -208,7 +236,7 @@ describe('the People block in the executor prompts (13-J)', (): void => {
       mode: 'mock' as const,
     };
     await runSkill(args);
-    await runSkill({ ...args, people });
+    await runSkill({ ...args, people, requester: { displayName: 'Lee Tan' } });
     expect(recorded.users[1]).toBe(recorded.users[0]);
     expect(recorded.users[1]).not.toContain('People the manager confirmed');
   });
