@@ -94,6 +94,15 @@ const TICKET_PURPOSES: ReadonlySet<WorkItemPurpose> = new Set(['action', 'beyond
 const ROWS_SHOWN = 10;
 const MESSAGES_SHOWN = 6;
 
+/**
+ * The most team documents whose words the generator is shown, and the most lines of each: the
+ * seeded office's seven fit whole (the longest is 22 lines), and a large mirrored documentation
+ * source cannot swell the prompt past what the model takes (the 13-FD second pass). A document
+ * past the first twelve is listed by its slug and title.
+ */
+const TEAM_DOCS_SHOWN = 12;
+const TEAM_DOC_LINES_SHOWN = 40;
+
 /** How many drafts the generator asks for before it leaves out an out-of-scope item that reads as the role's work. */
 export const GENERATION_ATTEMPTS = 3;
 
@@ -166,12 +175,15 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
   }
   if (env.teamDocs.length) {
     lines.push('Team docs (read-only):');
-    for (const d of env.teamDocs) {
-      lines.push(`  - slug "${d.slug}" titled "${d.title}":`);
-      for (const line of d.body.split('\n')) {
-        if (line.trim() !== '') lines.push(`      ${line.trim()}`);
+    env.teamDocs.forEach((d, index) => {
+      if (index >= TEAM_DOCS_SHOWN) {
+        lines.push(`  - slug "${d.slug}" titled "${d.title}"`);
+        return;
       }
-    }
+      lines.push(`  - slug "${d.slug}" titled "${d.title}":`);
+      const words = d.body.split('\n').filter((line) => line.trim() !== '');
+      for (const line of words.slice(0, TEAM_DOC_LINES_SHOWN)) lines.push(`      ${line.trim()}`);
+    });
   }
   if (env.tweets.length) {
     lines.push('Tweets the agent could reply to:');
@@ -190,16 +202,17 @@ function renderMockSnapshot(env: MockSurfaceSnapshot): string {
 const RECORD_PREFIXES = ['mock-spreadsheet://', 'channel://', 'docs-fixture/', 'twitter://'];
 
 /**
- * Every reference to a record the snapshot holds, as a drafted item writes it without a thread or
- * a fragment: `mock-spreadsheet://<slug>`, `channel://<slug>`, `docs-fixture/<slug>`,
- * `twitter://<slug>`.
+ * Every reference to a record the snapshot shows the generator, as a drafted item writes it
+ * without a thread or a fragment: `mock-spreadsheet://<slug>`, `channel://<slug>`,
+ * `docs-fixture/<slug>`, `twitter://<slug>`. The how-to guides are not among them: the snapshot
+ * never shows them, and a ticket that names only one names nothing it asks for (the 13-FD second
+ * pass). Naming a record is the floor of a ticket the office can back, not proof of it.
  */
 function officeRecords(env: MockSurfaceSnapshot): ReadonlySet<string> {
   return new Set([
     ...env.spreadsheets.map((s) => `mock-spreadsheet://${s.slug}`),
     ...env.slackChannels.map((c) => `channel://${c.slug}`),
     ...env.teamDocs.map((d) => `docs-fixture/${d.slug}`),
-    ...env.howToGuides.map((d) => `docs-fixture/${d.slug}`),
     ...env.tweets.map((tw) => `twitter://${tw.slug}`),
   ]);
 }
@@ -320,7 +333,7 @@ function withoutPurpose(item: DraftedWorkItem): GeneratedWorkItem {
 }
 
 /**
- * Draft the three day-one work items for an approved charter, from the office the employee works
+ * Draft the four day-one work items for an approved charter, from the office the employee works
  * in. An out-of-scope item that shares a word with the role, or an action item that is not a
  * ticket on the ticket queue, is drafted again, up to `GENERATION_ATTEMPTS` drafts; the last
  * draft's out-of-scope item is left out if it still reads as the role, and its action item filed

@@ -394,6 +394,44 @@ describe('the first tickets the office can and cannot back (13-FD, the v0.16.0 r
     expect(items).toHaveLength(4);
   });
 
+  it('asks again when the action ticket names only a how-to guide, which the snapshot never shows (the second pass)', async (): Promise<void> => {
+    const office = {
+      ...OFFICE,
+      howToGuides: [{ slug: 'how-to-update-ticket', title: 'How to update a ticket', body: '' }],
+    };
+    drafts.push(
+      [
+        READ,
+        { ...ACTION, contentRefs: ['docs-fixture/how-to-update-ticket'] },
+        BEYOND,
+        PLAIN_OUT_OF_SCOPE,
+      ],
+      [READ, ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+    );
+    await generateWorkItemsFromCharter(HYGIENE, office as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain('how-to-update-ticket');
+    expect(prompts[1]).toContain(
+      'The action item in your last draft names no record the snapshot holds',
+    );
+  });
+
+  it("shows at most twelve team documents' words, forty lines each, and lists the rest by name (the second pass)", async (): Promise<void> => {
+    const page = (n: number) => ({
+      slug: `page-${n}`,
+      title: `Page ${n}`,
+      body: Array.from({ length: 60 }, (_, line) => `page ${n} line ${line + 1}`).join('\n'),
+    });
+    const office = { ...OFFICE, teamDocs: Array.from({ length: 15 }, (_, n) => page(n + 1)) };
+    await generateWorkItemsFromCharter(HYGIENE, office as never);
+    const prompt = prompts[0] ?? '';
+    expect(prompt).toContain('page 1 line 40');
+    expect(prompt).not.toContain('page 1 line 41');
+    expect(prompt).toContain('page 12 line 1');
+    expect(prompt).not.toContain('page 13 line 1');
+    expect(prompt).toContain('slug "page-15" titled "Page 15"');
+  });
+
   it('keeps the two tickets apart when the draft gives them one external id', async (): Promise<void> => {
     drafts.push([READ, ACTION, { ...BEYOND, externalId: 'ticket-action' }, PLAIN_OUT_OF_SCOPE]);
     const items = await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
