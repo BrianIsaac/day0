@@ -6,7 +6,12 @@ import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
 import { NOT_SENT_AFTER_STOP_REASON } from '@/work/reconciliation';
 import { Lead, Note } from './ItemParts';
 import { PhaseLabel, RepairNote, SessionRestoreNote } from './RunDetails';
-import { clipLedgerRow, landedHeadline, type PhasedLedgerRow } from './work-item';
+import {
+  clipLedgerRow,
+  landedHeadline,
+  providerAnswerStatus,
+  type PhasedLedgerRow,
+} from './work-item';
 
 /** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
 const LANDING_STAGGER_CAP = 3;
@@ -79,8 +84,11 @@ function LedgerLine({
  * @returns The line, or undefined when the row carries none of them.
  */
 function rowMeta(row: PhasedLedgerRow): ReactNode {
-  if (!row.providerId && !row.phase && !row.reusedFrom) return undefined;
+  // A row named by its action keeps the provider's status in the small print (12-J item 5c).
+  const status = row.summary === undefined ? undefined : providerAnswerStatus(row.effect);
+  if (!status && !row.providerId && !row.phase && !row.reusedFrom) return undefined;
   const parts: ReactNode[] = [];
+  if (status) parts.push(<span key="status">{status}</span>);
   if (row.providerId)
     parts.push(
       <span key="id" className="font-mono">
@@ -130,7 +138,7 @@ export function LandedChanges({
   const arriving = rows.filter((row) => fresh.has(row.place));
   const line = (row: LandedRow, rise?: number) => (
     <LedgerLine key={row.place} kind="landed" rise={rise} meta={rowMeta(row)}>
-      {clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
+      {row.summary ?? clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
       <RepairNote repair={row.repair} />
       <SessionRestoreNote restore={row.sessionRestore} />
     </LedgerLine>

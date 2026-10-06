@@ -251,6 +251,19 @@ export function justLanded(before: string | undefined, now: readonly number[]): 
   return new Set(now.filter((place) => !seen.has(place)));
 }
 
+/** A documented API's answer as the HTTP adapter keeps it: the status, then the provider's own words. */
+const PROVIDER_ANSWER = /^(HTTP \d{3})\b/;
+
+/**
+ * The status of a row whose effect is a documented API's raw answer ("HTTP 200 · {...}"); undefined
+ * for a row whose effect is already words (12-J item 5c).
+ *
+ * @param effect - The row's effect as the ledger keeps it.
+ */
+export function providerAnswerStatus(effect: string | undefined): string | undefined {
+  return effect === undefined ? undefined : PROVIDER_ANSWER.exec(effect)?.[1];
+}
+
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
 export function clipLedgerRow(text: string | undefined): string | undefined {
   if (text === undefined || text.length <= LEDGER_ROW_LENGTH) return text;

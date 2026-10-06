@@ -445,6 +445,29 @@ describe('landed (work-landed.html)', (): void => {
   });
 });
 
+describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', (): void => {
+  it('names the landed reply by what its action does, not by the provider’s raw answer', (): void => {
+    const output = DRAWN.landed.output as { applied: Array<Record<string, unknown>> };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...output,
+        applied: [
+          {
+            ...output.applied[0],
+            effect: 'HTTP 200 · {"ok":true,"channel":"C0ASKS","ts":"1790000000.000300"}',
+          },
+          ...output.applied.slice(1),
+        ],
+      },
+    });
+    expect(view.text()).not.toContain('{"ok":true');
+    expect(view.text()).toContain('Landed: Reply in');
+    expect(view.text()).toContain('HTTP 200 · id 1790000000.000300');
+    view.unmount();
+  });
+});
+
 describe('landed partial (work-landed-partial.html)', (): void => {
   it('keeps the withheld action in the record beside what landed', (): void => {
     const view = card(DRAWN.landedPartial);

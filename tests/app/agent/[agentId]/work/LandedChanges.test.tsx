@@ -101,3 +101,29 @@ describe('what was held and never sent', (): void => {
     expect(renderToStaticMarkup(<NotSentLedger rows={[]} />)).toBe('');
   });
 });
+
+describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', (): void => {
+  it('reads the line the card wrote from the action, the provider’s status in the small print, never its raw answer', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[
+          {
+            tool: 'http.request',
+            ok: true,
+            place: 0,
+            effect: 'HTTP 200 · {"ok":true,"channel":"C0BSQTE1H7E","ts":"1791181288.687059"}',
+            providerId: '1791181288.687059',
+            summary: 'Post to Slack channel <#C0BSQTE1H7E>: “Close week, note 1 of 2”',
+          },
+        ]}
+        fresh={new Set()}
+      />,
+    );
+    const text = markup.replace(/<[^>]+>/g, '');
+    expect(text).toContain(
+      'Landed: Post to Slack channel &lt;#C0BSQTE1H7E&gt;: “Close week, note 1 of 2”',
+    );
+    expect(text).toContain('HTTP 200 · id 1791181288.687059');
+    expect(text).not.toContain('{&quot;ok&quot;:true');
+  });
+});
