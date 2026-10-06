@@ -145,4 +145,43 @@ describe('the seeded mock office', (): void => {
       ['REVOPS-203', 'open'],
     ]);
   });
+
+  it("leaves a page the manager's own documentation mirrors under a seeded slug as the source wrote it (the second pass)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, docId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'manager@day0.local',
+        name: 'Nell',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '/handbook',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const docId = await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: 'it-access',
+        title: 'IT access (our handbook)',
+        body: 'Our own access steps.',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'it-access.md',
+        updatedAt: 1,
+      });
+      return { agentId, docId };
+    });
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const page = await harness.run(async (ctx) => await ctx.db.get(docId));
+    expect(page).toMatchObject({
+      title: 'IT access (our handbook)',
+      body: 'Our own access steps.',
+    });
+  });
 });

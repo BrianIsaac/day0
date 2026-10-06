@@ -358,6 +358,9 @@ export const seedMockEnvironment = internalMutation({
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
         .unique();
       const payload = { title, body, category, updatedAt: Date.now() };
+      // A page the manager's own documentation mirrors under this slug is theirs: the seed never
+      // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
+      if (existing?.sourceId !== undefined) return;
       if (existing) {
         await ctx.db.patch(existing._id, payload);
         return;
