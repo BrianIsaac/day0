@@ -125,29 +125,29 @@ export async function claimAuthoringRunInTransaction(
       reason: `all ${MAX_AUTHORING_ATTEMPTS} attempts at this skill failed; give it up instead`,
     };
   }
-  if (row.authoringRunId) {
-    const heldFor = Date.now() - (row.authoringClaimedAt ?? 0);
-    if (heldFor < AUTHORING_LEASE_MS) {
-      return {
-        claimed: false,
-        reason: `another authoring run has held this skill for ${Math.round(heldFor / 1000)}s; it can be taken over after ${Math.round(AUTHORING_LEASE_MS / 60000)} minutes`,
-      };
+  const heldFor = Date.now() - (row.authoringClaimedAt ?? 0);
+  if (row.authoringRunId && heldFor < AUTHORING_LEASE_MS) {
+    return {
+      claimed: false,
+      reason: `another authoring run has held this skill for ${Math.round(heldFor / 1000)}s; it can be taken over after ${Math.round(AUTHORING_LEASE_MS / 60000)} minutes`,
+    };
+  }
+  // A pause holds a skill's authoring as it holds a step (D-8 (b)): no claim, no attempt and no
+  // takeover of a lapsed run, recorded, and started again at the resume (`heldStarts.ts`). A stored
+  // version's check is a manager's press on a body already written, and runs.
+  if (!verifying) {
+    const held = await startHoldOf(ctx.db, row.agentId);
+    if (held !== undefined) {
+      return { claimed: false, reason: await recordAuthoringHeld(ctx, row, held), held: true };
     }
+  }
+  if (row.authoringRunId) {
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.authoring-superseded',
       payload: { skillId: args.skillId, name: row.name, heldForMs: heldFor },
       createdAt: Date.now(),
     });
-  }
-  // A pause holds a skill's authoring as it holds a step (D-8 (b)): no claim and no attempt,
-  // recorded, and started again at the resume (`heldStarts.ts`). A stored version's check is a
-  // manager's press on a body already written, and runs.
-  if (!verifying) {
-    const held = await startHoldOf(ctx.db, row.agentId);
-    if (held !== undefined) {
-      return { claimed: false, reason: await recordAuthoringHeld(ctx, row, held), held: true };
-    }
   }
   const runId = await appendEvent(ctx, {
     agentId: row.agentId,

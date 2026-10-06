@@ -167,6 +167,50 @@ describe("a paused employee's skill authoring (D-8 (b))", (): void => {
     });
   });
 
+  it('is spent by a later claim of the skill, so a resume never starts an authoring nobody asked for since (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    await pause(harness, agentId);
+    await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    // A stored version's check (not held) claims the skill while paused, and then fails it.
+    const check = await harness.mutation(internal.skills.claimAuthoringRun, {
+      skillId,
+      purpose: 'verify-stored',
+    });
+    if (!check.claimed) throw new Error(check.reason);
+    await harness.mutation(internal.skills.failAuthoringRun, {
+      skillId,
+      runId: check.runId,
+      rowReason: 'the stored skill failed its check',
+      reason: 'the stored skill failed its check',
+      eventType: 'skill.author-failed',
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+
+    expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toEqual([]);
+  });
+
+  it('does not count the held claim as a takeover of a lapsed run (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    const first = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!first.claimed) throw new Error(first.reason);
+    // The run died holding the skill; its lease lapses while the employee is paused.
+    vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+    await pause(harness, agentId);
+    await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+
+    expect(await eventsOf(harness, 'skill.authoring-superseded')).toEqual([]);
+    expect(await eventsOf(harness, 'skill.authoring-held')).toHaveLength(1);
+  });
+
   it('holds nothing in mock mode, where a pause is refused and the page drives every step', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
@@ -239,6 +283,31 @@ describe("a paused employee's orientation (D-8 (b))", (): void => {
     expect(await eventsOf(harness, 'surface.orientation-resumed')).toEqual([{ surfaceId }]);
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduled(harness, 'orientationActions:orientOne')).toHaveLength(1);
+  });
+
+  it("keeps the manager's request for a system's card across a later plain hold of it (the second pass)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    const surfaceId = await declaredSurface(harness, agentId);
+    await pause(harness, agentId);
+    await harness.action(internal.orientationActions.orientOne, { surfaceId, requested: true });
+    await harness.action(internal.orientationActions.orientOne, { surfaceId });
+
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+
+    expect(await scheduled(harness, 'orientationActions:orientOne')).toEqual([
+      { surfaceId, requested: true },
+    ]);
+    // The resumed job is the surface's job in flight, so a re-run then places no second one.
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.orientationJobId).toBeDefined();
+    const job = await harness.run(
+      async (ctx) => await ctx.db.system.get(surface!.orientationJobId!),
+    );
+    expect(job?.name).toBe('orientationActions:orientOne');
   });
 
   it('leaves a held surface that is no longer declared at the resume', async (): Promise<void> => {

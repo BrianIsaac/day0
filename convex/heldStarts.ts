@@ -135,8 +135,9 @@ async function heldSinceLastResume(
 
 /**
  * Start the authoring of every skill a pause held since the last resume, once each: a skill the
- * manager has since rejected, retired or given up, or one a run holds now, is left to the state
- * it is in. The claim decides the rest, as it does for a manager's press.
+ * manager has since rejected, retired or given up, one a run holds now, and one claimed since its
+ * hold (a stored version's check, a press after the pause) is left to the state it is in: its hold
+ * is spent. The claim decides the rest, as it does for a manager's press.
  *
  * @returns How many authorings were started.
  */
@@ -150,11 +151,12 @@ async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Pro
     'skill.authoring-held',
     'skill.authoring-resumed',
   )) {
-    const skillId = (event.payload as { skillId: Id<'skills'> }).skillId;
-    if (seen.has(skillId)) continue;
+    const skillId = payloadId(event.payload, 'skillId') as Id<'skills'> | undefined;
+    if (skillId === undefined || seen.has(skillId)) continue;
     seen.add(skillId);
     const skill = await ctx.db.get(skillId);
     if (skill === null || !authoringMayResume(skill, now)) continue;
+    if (await claimedSince(ctx, agentId, skillId, event._creationTime)) continue;
     await ctx.scheduler.runAfter(0, internal.skillActions.authorAndRegisterSkillInternal, {
       skillId,
     });
@@ -167,6 +169,26 @@ async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Pro
     started += 1;
   }
   return started;
+}
+
+/** Whether an event's payload names a row by this field; the id, or undefined when it does not. */
+function payloadId(payload: unknown, field: 'skillId' | 'surfaceId'): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Whether the skill was claimed after its hold, which spends the hold. */
+async function claimedSince(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  skillId: Id<'skills'>,
+  heldAt: number,
+): Promise<boolean> {
+  const claims = await eventsOfType(ctx, agentId, 'skill.authoring-claimed', { after: heldAt })
+    .order('desc')
+    .take(HELD_STARTS_READ);
+  return claims.some((claim) => payloadId(claim.payload, 'skillId') === skillId);
 }
 
 /**
@@ -186,34 +208,37 @@ function authoringMayResume(skill: Doc<'skills'>, now: number): boolean {
 
 /**
  * Orient again every system a pause held since the last resume, once each and as it was asked
- * for, clearing the held line its card shows. A system no longer declared (oriented by a
- * manager's re-run, or found absent) is left as it is.
+ * for (the manager's request for its card kept when any of its holds carried one), clearing the
+ * held line its card shows and recording the job as the surface's orientation in flight. A system
+ * no longer declared (oriented by a manager's re-run, or found absent) is left as it is.
  *
  * @returns How many orientations were started.
  */
 async function resumeHeldOrientation(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
   const now = Date.now();
-  const seen = new Set<string>();
-  let started = 0;
+  const requested = new Map<string, boolean>();
   for (const event of await heldSinceLastResume(
     ctx,
     agentId,
     'surface.orientation-held',
     'surface.orientation-resumed',
   )) {
-    const { surfaceId, requested } = event.payload as {
-      surfaceId: Id<'surfaces'>;
-      requested: boolean;
-    };
-    if (seen.has(surfaceId)) continue;
-    seen.add(surfaceId);
+    const surfaceId = payloadId(event.payload, 'surfaceId');
+    if (surfaceId === undefined) continue;
+    const asked = (event.payload as { requested?: unknown }).requested === true;
+    requested.set(surfaceId, (requested.get(surfaceId) ?? false) || asked);
+  }
+  let started = 0;
+  for (const [id, asked] of requested) {
+    const surfaceId = id as Id<'surfaces'>;
     const surface = await ctx.db.get(surfaceId);
     if (surface === null || surface.verdict !== 'declared') continue;
-    await ctx.db.patch(surfaceId, { reason: undefined });
-    await ctx.scheduler.runAfter(0, internal.orientationActions.orientOne, {
-      surfaceId,
-      requested,
-    });
+    const orientationJobId = await ctx.scheduler.runAfter(
+      0,
+      internal.orientationActions.orientOne,
+      { surfaceId, requested: asked },
+    );
+    await ctx.db.patch(surfaceId, { reason: undefined, orientationJobId });
     await appendEvent(ctx, {
       agentId,
       type: 'surface.orientation-resumed',
