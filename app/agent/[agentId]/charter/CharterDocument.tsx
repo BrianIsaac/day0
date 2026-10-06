@@ -311,7 +311,14 @@ export function CharterDocument({
       ) : null}
       {body.priorityReading.length > 0 ? (
         <Section title="Priority reading">
-          <p>{body.priorityReading.join(', ')}</p>
+          {/* One entry a line: an entry the model writes as a sentence ends in a full stop, and
+              a comma join read "in the wiki., The vendor" on the 13-FD bed. */}
+          <ul className="grid list-disc gap-1 pl-5">
+            {body.priorityReading.map((entry, index) => (
+              // The list never reorders; the place keeps two equal entries apart.
+              <li key={`${index}:${entry}`}>{entry}</li>
+            ))}
+          </ul>
         </Section>
       ) : null}
       {open.length > 0 || answered.length > 0 ? (

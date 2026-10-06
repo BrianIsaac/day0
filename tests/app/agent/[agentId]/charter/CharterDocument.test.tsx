@@ -31,6 +31,25 @@ function render(node: React.ReactNode): string {
 }
 
 describe('the charter as one document', (): void => {
+  it('lists the priority reading one entry a line, never joining sentences into ".," (the 13-FD second pass)', (): void => {
+    const html = render(
+      <CharterDocument
+        body={{
+          ...body,
+          priorityReading: [
+            'The close checklist page in the wiki.',
+            'The vendor reconciliation runbook.',
+          ],
+        }}
+        manager="sam@kestrel.example"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html).toContain('<li>The close checklist page in the wiki.</li>');
+    expect(html).toContain('<li>The vendor reconciliation runbook.</li>');
+    expect(html).not.toContain('.,');
+  });
+
   it('opens every section, draws the 60-day gap as a gap, and names the systems on one line', (): void => {
     const html = render(
       <CharterDocument
