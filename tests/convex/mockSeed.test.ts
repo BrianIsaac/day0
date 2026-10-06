@@ -67,4 +67,44 @@ describe('the seeded mock office', (): void => {
     }
     expect(guide('how-to-update-spreadsheet')).not.toContain('if you fully closed the work');
   });
+
+  it('holds an ask each kind of role can finish from the office, with the document that answers it (13-FD)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'manager@day0.local',
+          name: 'Nell',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    // Twice: the seed is idempotent, so a second run adds nothing.
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const seeded = await harness.run(async (ctx) => ({
+      docs: await ctx.db.query('mockDocs').collect(),
+      channels: await ctx.db.query('mockSlackChannels').collect(),
+      messages: await ctx.db.query('mockSlackMessages').collect(),
+    }));
+    expect(seeded.channels.filter((channel) => channel.slug === 'office-asks')).toEqual([
+      expect.objectContaining({ displayName: '#office-asks', kind: 'channel' }),
+    ]);
+    const asks = seeded.messages.filter((message) => message.channelSlug === 'office-asks');
+    expect(asks.map((ask) => [ask.sender, ask.threadKey])).toEqual([
+      ['Theo', 'thread-drive-access'],
+      ['Sara', 'thread-spare-monitor'],
+      ['Ines', 'thread-double-charge'],
+    ]);
+    const doc = (slug: string) => seeded.docs.find((row) => row.slug === slug);
+    for (const slug of ['it-access', 'office-supplies', 'billing-replies']) {
+      expect(doc(slug)?.category, slug).toBe('team-doc');
+    }
+    // Each ask's answer is in a document the office holds, so a run can finish it from there.
+    expect(doc('it-access')?.body).toContain('Sign out of the drive app');
+    expect(doc('office-supplies')?.body).toContain('supply cupboard');
+    expect(doc('billing-replies')?.body).toContain('within two business days');
+    expect(doc('team-overview')?.body).toContain('`#office-asks`');
+  });
 });
