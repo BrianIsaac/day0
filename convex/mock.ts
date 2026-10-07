@@ -186,7 +186,8 @@ export const getDoc = query({
  * Upsert one page of an agent's Docs surface by slug. Internal; written by the
  * seed and by the documentation sync's mirror. A sync names its generation
  * and writes nothing once a newer sync has superseded it (step 14). A page of a source the
- * employee does not read ({@link mirrorReadable}) is not written.
+ * employee does not read ({@link mirrorReadable}) is not written, nor one of a source that no
+ * longer exists, which a deploy's mirroring that crossed an unlink would otherwise leave (M18).
  *
  * @returns The page's id, or null when nothing was written.
  * @throws Error when `syncRunId` is given without its source, or is not the

@@ -219,6 +219,47 @@ describe('a mirror written for an employee that no longer reads its source (tran
   });
 });
 
+describe('a mirror for an unlinked source (M18)', (): void => {
+  it('refuses a mirror for an unlinked source, as a deploy mirroring across the unlink would write it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Team folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'mirror test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      // The unlink deletes the source row first and its pages and mirrors in scheduled pages
+      // after, so a walk of the pages begun before it still holds pages to mirror.
+      await ctx.db.delete(sourceId);
+      return { agentId, sourceId };
+    });
+
+    await expect(
+      harness.mutation(internal.mock.upsertDoc, {
+        agentId,
+        slug: 'source-onboarding',
+        title: 'Onboarding',
+        body: '# Onboarding',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'onboarding.md',
+      }),
+    ).resolves.toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([]);
+  });
+});
+
 describe('openTicketsForDraftedWork', (): void => {
   it("opens the office's next ticket for a drafted ticket item and returns the batch naming it", async (): Promise<void> => {
     const { openTicketsForDraftedWork } = await import('../../convex/mock');
