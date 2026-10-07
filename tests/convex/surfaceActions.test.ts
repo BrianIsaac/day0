@@ -495,6 +495,39 @@ describe('Slack documented API probing', (): void => {
     // A policy that does not name it leaves it out, and nothing requires it.
     expect(slackMethodsFromPolicy('`chat.postMessage`')).toEqual(['chat.postMessage']);
   });
+
+  it('derives the manager DM on an app Day0 created whatever its page names, and keeps only the work’s methods (design 1 (b))', async (): Promise<void> => {
+    const called: string[] = [];
+    const fetcher = vi.fn(async (input: string | URL): Promise<Response> => {
+      const url = String(input);
+      called.push(url.replace(/^.*\/api\//, '').replace(/\?.*$/, ''));
+      if (url.endsWith('/auth.test')) return slackResponse({ ok: true, user_id: 'UBOT' });
+      if (url.includes('/users.lookupByEmail')) {
+        return slackResponse({ ok: true, user: { id: 'UMANAGER', real_name: 'Sam Ortiz' } });
+      }
+      return slackResponse({ ok: true, channel: { id: 'DMANAGER' } });
+    });
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      'The team reads `conversations.history` in #revops.',
+      fetcher,
+      [],
+      { ownApp: true },
+    );
+    expect(called).toEqual(['auth.test', 'users.lookupByEmail', 'conversations.open']);
+    expect(result.managerDmChannelId).toBe('DMANAGER');
+    expect(result.toolAllowlist).toEqual(['conversations.history']);
+    // A shared token's card still needs its page to name them.
+    await expect(
+      probeSlackSurface(
+        'xoxb-shared-token',
+        'boss@day0.local',
+        'The team reads `conversations.history` in #revops.',
+        fetcher,
+      ),
+    ).rejects.toThrow('Slack policy does not allow required methods');
+  });
 });
 
 describe('probe error hygiene', (): void => {

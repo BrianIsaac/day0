@@ -22,6 +22,7 @@ import {
 } from '../src/surfaces/policy';
 import { applySurfaceActions } from '../src/surfaces/registry';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { withChannelMethods } from '../src/surfaces/slack-own-channel';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
@@ -125,7 +126,8 @@ async function applyManagerAction(
   const applied = await applySurfaceActions(
     ctx,
     'real',
-    delivery.surfaces,
+    // Day0's own message: on an app Day0 created the channel's methods pass the gate (design 1 (b)).
+    delivery.surfaces.map(withChannelMethods),
     {
       agentId: delivery.agentId,
       agentName: delivery.agentName,
@@ -183,8 +185,9 @@ function beforeManagerTransport(
         return 'decision request is no longer current';
     }
     if (!authority.agentExists) return 'agent not found';
-    const surface = authority.surface;
-    if (!surface) return UNKNOWN_SURFACE;
+    if (!authority.surface) return UNKNOWN_SURFACE;
+    // Re-read as the delivery sent it: with the channel's methods on an app Day0 created.
+    const surface = withChannelMethods(authority.surface);
     if (authority.accessEnded) return authority.accessEnded;
     if (!sameAuthority(surface, claimedSurface))
       return 'surface authority changed before transport';

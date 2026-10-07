@@ -194,6 +194,32 @@ describe('the dedicated-app procedure on the card', (): void => {
     ).toMatchObject({ offerProvisioning: false, stage: 'not-applicable' });
   });
 
+  it("offers the employee's own app whenever the organisation's Slack connection is active, whatever the docs record (W12V-1, design 1 (b))", (): void => {
+    const botToken = { found: 'value', method: 'api-key' } as const;
+    const shown = presentProvisioning({
+      credential: botToken,
+      hasPublicUrl: true,
+      organisationConnected: true,
+    });
+    expect(shown).toMatchObject({
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+      stage: 'offer',
+    });
+    // No finding at all reads the same: the manifest is Day0's kit, not the customer's text.
+    expect(presentProvisioning({ hasPublicUrl: true, organisationConnected: true }).stage).toBe(
+      'offer',
+    );
+    // Without the connection the page's finding still decides.
+    expect(
+      presentProvisioning({
+        credential: botToken,
+        hasPublicUrl: true,
+        organisationConnected: false,
+      }).stage,
+    ).toBe('not-applicable');
+  });
+
   it('offers to register an app when the deployment can receive the redirect', (): void => {
     const shown = presentProvisioning({ credential: oauth, hasPublicUrl: true });
     expect(shown.stage).toBe('offer');

@@ -6,6 +6,7 @@ import { isTransferDue } from '../src/agent/manager-transfer';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { surfaceRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { channelAllowlist } from '../src/surfaces/slack-own-channel';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { accessEnded } from '../src/work/surface-access';
@@ -100,9 +101,12 @@ export async function noticeCarrierOf(
       surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
   );
   if (connected.length === 0) return withheld(NOTICE_CARD_NOT_CONNECTED);
-  const approved = connected.filter((surface) =>
-    NOTICE_SLACK_METHODS.every((method) => surface.toolAllowlist?.includes(method)),
-  );
+  // Day0's own notice: on an app Day0 created its channel's methods are allowed whatever the page
+  // names (13-FS's design 1 (b)); a shared token's page must name every one.
+  const approved = connected.filter((surface) => {
+    const allowed = channelAllowlist(toSurfaceRecord(surface));
+    return NOTICE_SLACK_METHODS.every((method) => allowed.includes(method));
+  });
   if (approved.length === 0) return withheld(NOTICE_CARD_NOT_APPROVED);
   const readable = approved.filter((surface) => active.has(`${surface.slug}:read`));
   if (readable.length === 0) return withheld(NOTICE_WITHOUT_READ);

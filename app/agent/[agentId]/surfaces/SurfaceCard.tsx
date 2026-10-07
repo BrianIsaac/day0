@@ -39,7 +39,6 @@ import {
   moveLabel,
   moveOfferWords,
   noWayOnWords,
-  slackNoInstallWords,
   slackChannelsGoWords,
   unservedConnectionWords,
   identityChip,
@@ -412,16 +411,6 @@ export function SurfaceCard({
     !accessRequest &&
     !connectable &&
     !slack;
-  // A covered Slack card whose documentation describes no install of the employee's app has no
-  // way on either: it says what is missing (W12V-1, words only).
-  const slackNoInstall =
-    slack &&
-    covering !== undefined &&
-    approvedAccess &&
-    !ended &&
-    surface.credentialId === undefined &&
-    !accessRequest &&
-    provisioningPresentation.stage === 'not-applicable';
   const waitsOn =
     accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined;
   // The approval's own probe meets no credential and leaves the card `ungranted`; one that waits
@@ -624,11 +613,6 @@ export function SurfaceCard({
         {noWayOn && covering !== undefined ? (
           <p className="text-sm text-[var(--color-warn)]">
             {noWayOnWords(covering.displayName, context.employeeName)}
-          </p>
-        ) : null}
-        {slackNoInstall ? (
-          <p className="text-sm text-[var(--color-warn)]">
-            {slackNoInstallWords(context.employeeName)}
           </p>
         ) : null}
         {/* An ended card renews first; what IT is asked for follows the renewal. */}

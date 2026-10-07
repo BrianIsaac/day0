@@ -8,7 +8,6 @@ import {
   connectedForOrganisationWords,
   decisionButtonsWords,
   typedCodeWords,
-  slackNoInstallWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -546,14 +545,6 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
       note: 'Slack does not let you message Otto (Day0) yet, so no typed code reaches it, and Day0 cannot change this app’s settings. Someone who manages Otto (Day0) in Slack turns on App Home, “Allow users to send Slash commands and messages from the messages tab”; then say so here.',
       confirm: 'It is on in Slack',
     });
-  });
-});
-
-describe('a covered Slack card with no install described (W12V-1, words only)', (): void => {
-  it('says what is missing and which page would supply it', (): void => {
-    expect(slackNoInstallWords('Vela')).toBe(
-      'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
-    );
   });
 });
 

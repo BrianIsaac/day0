@@ -156,6 +156,10 @@ export interface CredentialPresentationInput {
  * of its channels (RM4), unless the connection that created it was revoked:
  * that app is never installed again, so nothing is offered (W12X-4).
  *
+ * The procedure is offered where the documentation describes an install (an `oauth` finding) or,
+ * whatever the documentation records, where the organisation's Slack configuration connection is
+ * active (13-FS's design 1 (b)).
+ *
  * Args:
  *   input.credential: The credential finding orientation extracted.
  *   input.provisioning: The dedicated app, once one has been registered.
@@ -207,7 +211,10 @@ export function presentProvisioning(input: {
       title: notReinstalledTitle(employee),
     };
   }
-  if (input.credential?.method !== 'oauth') {
+  // The employee's own app is offered wherever the organisation's Slack configuration connection
+  // is active, since its manifest is Day0's kit, not the customer's text; the documentation's
+  // finding decides only where there is no such connection (13-FS's design 1 (b), W12V-1).
+  if (input.credential?.method !== 'oauth' && input.organisationConnected !== true) {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
       offerProvisioning: false,

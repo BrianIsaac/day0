@@ -415,9 +415,11 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
   });
 
-  it('says what a covered Slack card is missing when its documentation describes no install of the app (W12V-1)', (): void => {
+  it("offers a covered Slack card the employee's own app though its documentation records a bot token (W12V-1, design 1 (b))", (): void => {
     // The walk's Vela: the company bed's page says "The shared bot token is landed on your Slack
-    // card by the messaging administrator", so the card had no way on and said nothing of why.
+    // card by the messaging administrator", so the card had no way on. Re-pinned for 13-S: the
+    // words-only fix said which page was missing; design 1 (b) offers the app wherever IT's Slack
+    // configuration connection is active, since its manifest is Day0's kit.
     const markup = render(
       listed({
         ...SLACK_CARD,
@@ -434,13 +436,9 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       } as Partial<ListedSurface>),
       { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
     );
-    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
-    expect(markup).toContain(
-      'Day0 cannot create Maya’s own Slack app from this card: the linked documentation describes no install procedure for it.',
-    );
-    expect(markup).toContain(
-      'A Slack page saying Maya’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
-    );
+    expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain('describes no install procedure');
   });
 
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {

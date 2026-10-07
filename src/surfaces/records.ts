@@ -7,6 +7,7 @@ import {
 } from './types';
 import type { PersistedSurfaceVerdict } from './verdict';
 import { attributionOf, isActsAsKind } from './access-identity';
+import { holdsOwnSlackApp } from './slack-own-channel';
 
 /**
  * A `surfaces` row as any lane's schema revision may store it. Only the fields
@@ -27,6 +28,8 @@ export interface SurfaceRowLike {
   credentialKind?: string;
   /** Whom the card acts as (wave 11, 11-AK), written by the connect paths. */
   actsAs?: { kind: string };
+  /** The app Day0 created for the employee, and when it was installed (`holdsOwnSlackApp`). */
+  provisioning?: { installedAt?: number };
   managerDmChannelId?: string;
   managerUserId?: string;
   managerName?: string;
@@ -97,6 +100,7 @@ export function toSurfaceRecord(row: SurfaceRowLike): SurfaceRecord {
     credentialId: row.credentialId,
     credentialKind: credentialKindFor(row),
     ...attributionFor(row),
+    ...(holdsOwnSlackApp(row) ? { ownSlackApp: true as const } : {}),
     managerDmChannelId: row.managerDmChannelId,
     managerUserId: row.managerUserId,
     managerName: row.managerName,

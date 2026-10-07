@@ -2,6 +2,7 @@ import { TransientProviderError } from '../lib/transport-error';
 import type { MockAction } from '../work/types';
 import { isSlackApiEndpoint, SLACK_API_ENDPOINT } from './slack-endpoint';
 import type { SurfaceRecord } from './types';
+import { channelAllowlist } from './slack-own-channel';
 
 /**
  * The chat reader over the ladder (A6): what any chat rung must answer for
@@ -191,7 +192,7 @@ const MEMBER_NAME_MAX = 80;
  * @param dependencies - The credential, the fetch and the API base.
  */
 export function slackChatReader(
-  surface: Pick<SurfaceRecord, 'slug' | 'toolAllowlist'>,
+  surface: Pick<SurfaceRecord, 'slug' | 'toolAllowlist' | 'ownSlackApp'>,
   dependencies: ChatReaderDependencies,
 ): ChatReader {
   const base = dependencies.slackApiBase ?? new URL(SLACK_API_ENDPOINT);
@@ -200,7 +201,10 @@ export function slackChatReader(
     method: SlackReadMethod,
     query: Record<string, string>,
   ): Promise<Record<string, unknown>> => {
-    if (!surface.toolAllowlist?.includes(method)) {
+    // Who the bot is is Day0's own question, a channel method on an app Day0 created (13-FS's
+    // design 1 (b)); every other read is the work's, as the page names it.
+    const allowed = method === 'auth.test' ? channelAllowlist(surface) : surface.toolAllowlist;
+    if (!allowed?.includes(method)) {
       throw new Error(`Connected Slack surface does not allow ${method}.`);
     }
     const url = new URL(method, base);

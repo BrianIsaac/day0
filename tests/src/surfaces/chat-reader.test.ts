@@ -167,6 +167,26 @@ describe('the Slack chat reader', (): void => {
     expect(request!.init.redirect).toBe('error');
   });
 
+  it('asks who the bot is on an app Day0 created whatever the page names, and reads only what it names (design 1 (b))', async (): Promise<void> => {
+    const double = slackDouble({ 'auth.test': () => ok({ user_id: 'U1', bot_id: 'B1' }) });
+    const ownApp = slackChatReader(
+      { ...slack, toolAllowlist: ['conversations.history'], ownSlackApp: true },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(ownApp.identity()).resolves.toEqual({ userId: 'U1', botId: 'B1' });
+    await expect(ownApp.readThread('D1', '2.0')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.replies.',
+    );
+    // A shared token's page must still name it.
+    const shared = slackChatReader(
+      { ...slack, toolAllowlist: ['conversations.history'] },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(shared.identity()).rejects.toThrow(
+      'Connected Slack surface does not allow auth.test.',
+    );
+  });
+
   it('reads the local proof service when the deployment points Slack there', async (): Promise<void> => {
     const double = slackDouble({ 'auth.test': () => ok({ user_id: 'U1' }) });
     await slackChatReader(slack, {

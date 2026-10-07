@@ -60,6 +60,7 @@ import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { holdsOwnSlackApp, SLACK_CHANNEL_METHODS } from '../src/surfaces/slack-own-channel';
 import {
   organisationConnectedRefusal,
   organisationSystemOf,
@@ -73,6 +74,11 @@ import {
   transientFromResponse,
 } from '../src/lib/transport-error';
 
+/**
+ * The Slack methods a card may be allowed, in least-privilege order; the probe keeps those the
+ * linked page names. On an app Day0 created, Day0's own channel methods are allowed besides
+ * (`SLACK_CHANNEL_METHODS`, 13-FS's design 1 (b)) and never stored, so this is the work's half.
+ */
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
   'users.lookupByEmail',
@@ -81,14 +87,15 @@ const SLACK_METHOD_DEFAULTS = [
   'conversations.history',
   'conversations.replies',
   'chat.postMessage',
-  // Marks Day0's own decision request decided in the manager DM; optional,
-  // so a policy that does not name it leaves the request as sent.
+  // Day0's own edit of its decision request is a channel method on an app Day0 created; on a
+  // shared token a policy that does not name it leaves the request as sent.
   'chat.update',
   // Names the asker of an ask intake takes; optional, so a policy that does
   // not name it leaves the ask under the asker's id.
   'users.info',
 ] as const;
 
+/** What the probe calls to derive the manager DM: on a shared token the page must name each. */
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
 
 export interface ToolDefinition {
@@ -1084,18 +1091,7 @@ export function managerDisplayName(user: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Verify Slack identity and derive the manager's dedicated DM channel.
- *
- * Args:
- *   credential: Decrypted bot token.
- *   bossEmail: Manager email stored on the agent.
- *   policyMarkdown: Owner-visible policy pages naming allowed methods.
- *   fetcher: HTTP implementation, replaceable by behavioural tests.
- *
- * Returns:
- *   Constrained methods and safe provider identifiers.
- */
+/** The documented channels the app is not a member of yet, by `conversations.list`. */
 export async function probeChannelMembership(
   fetcher: Fetcher,
   credential: string,
@@ -1127,16 +1123,33 @@ export async function probeChannelMembership(
   return channelsAwaitingInvite(documented, visible);
 }
 
+/**
+ * Verify Slack identity and derive the manager's dedicated DM channel.
+ *
+ * @param credential - Decrypted bot token.
+ * @param bossEmail - Manager email stored on the agent.
+ * @param policyMarkdown - Owner-visible policy pages naming the work's allowed methods.
+ * @param fetcher - HTTP implementation, replaceable by behavioural tests.
+ * @param documentedChannels - The channels whose invite the card asks for.
+ * @param card - Whether the card acts as an app Day0 created (`holdsOwnSlackApp`): then the
+ *   manager DM's methods are Day0's own and the page need not name them (13-FS's design 1 (b)).
+ * @returns The work's methods the page names, and safe provider identifiers.
+ */
 export async function probeSlackSurface(
   credential: string,
   bossEmail: string,
   policyMarkdown: string,
   fetcher: Fetcher = fetch,
   documentedChannels: readonly string[] = [],
+  card: { readonly ownApp?: boolean } = {},
 ): Promise<SlackProbeResult> {
   const toolAllowlist = slackMethodsFromPolicy(policyMarkdown);
+  // The manager DM is Day0's own channel: on an app Day0 created its methods are allowed whatever
+  // the page names, and the stored allowlist stays the work's half (13-FS's design 1 (b)).
+  const callable =
+    card.ownApp === true ? [...toolAllowlist, ...SLACK_CHANNEL_METHODS] : toolAllowlist;
   const missing = REQUIRED_SLACK_METHODS.filter(
-    (method: string): boolean => !toolAllowlist.includes(method),
+    (method: string): boolean => !callable.includes(method),
   );
   if (missing.length > 0) {
     throw new Error(`Slack policy does not allow required methods: ${missing.join(', ')}.`);
@@ -1597,6 +1610,7 @@ export async function runSurfaceProbe(
             surface.intakeScope
               ? approvedChannelNames(surface.intakeScope)
               : documentedChannelNames(pages),
+            { ownApp: holdsOwnSlackApp(surface) },
           ),
         );
         toolAllowlist = slack.toolAllowlist;

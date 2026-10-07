@@ -421,6 +421,15 @@ describe('manager channel decision requests', (): void => {
     expect(canEditManagerMessage({ ...withEdit, path: 'mcp' })).toBe(false);
   });
 
+  it('edits and posts in the manager DM on an app Day0 created whatever its page names (W12V-3, design 1 (b))', (): void => {
+    const ownApp: SurfaceRecord = { ...slack, toolAllowlist: [], ownSlackApp: true };
+    expect(canEditManagerMessage(ownApp)).toBe(true);
+    expect(managerMessageUpdateAction(ownApp, '1.1', 'Decided.')?.args.path).toBe('chat.update');
+    expect(managerMessageAction(ownApp, 'A request.').args.path).toBe('chat.postMessage');
+    // A shared token's card still reads its page alone.
+    expect(canEditManagerMessage({ ...slack, toolAllowlist: [] })).toBe(false);
+  });
+
   it('parses only bounded approve and reject prefixes', (): void => {
     expect(parseDecisionReply('  APPROVE   ab3xyz  ')).toEqual({
       verb: 'approve',
