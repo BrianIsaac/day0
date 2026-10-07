@@ -9,7 +9,8 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
-import { UrlsReader } from '../../src/docs/readers/urls';
+import { UrlsReader, __setPageConnectionForTest } from '../../src/docs/readers/urls';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -42,8 +43,7 @@ const temporary = temporaryDirectories();
 // 6.28 (Node 22.23) a request on a pooled socket waits for a zero-delay timer
 // that a faked clock never fires (about 6 s a test until the double dropped the
 // socket, 12-N, 5 October 2026). A test that stubs fetch again keeps the route by
-// handing on to the global it found; one that unstubs every global itself (the
-// private wiki test, after its sync) leaves the rest of its own body unrouted.
+// handing on to the global it found.
 const redactorFetch = routeSpanModelFetch(globalThis.fetch);
 beforeAll((): void => {
   process.env.DAY0_REDACTOR_URL = SPAN_MODEL_TEST_URL;
@@ -1147,26 +1147,28 @@ describe('documentation sync batching', (): void => {
       });
     });
     const seen: Array<string | null> = [];
-    // The in-process redactor is reached through fetch too; only the wiki is faked.
-    const realFetch = globalThis.fetch;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        if (!String(input).startsWith('https://wiki.example/')) return await realFetch(input, init);
-        seen.push(new Headers(init?.headers).get('authorization'));
-        if (String(input).endsWith('/two')) {
-          // A failure that echoes the secret across where a 200-character cut once fell.
-          throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
-        }
-        return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
-      }),
-    );
+    // The wiki is reached through the reader's own connection (R9); the in-process redactor
+    // keeps the global fetch.
+    __setPageConnectionForTest({
+      resolve: async (): Promise<string[]> => ['93.184.215.14'],
+      dial:
+        () =>
+        async (input: URL, init?: RequestInit): Promise<Response> => {
+          seen.push(new Headers(init?.headers).get('authorization'));
+          if (input.href.endsWith('/two')) {
+            // A failure that echoes the secret across where a 200-character cut once fell.
+            throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
+          }
+          return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
+        },
+      privateHosts: privateHostAllowlist(''),
+    });
     try {
       await expect(
         harness.action(internal.docSyncActions.syncSource, { sourceId }),
       ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
     } finally {
-      vi.unstubAllGlobals();
+      __setPageConnectionForTest(undefined);
     }
     expect(seen).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
     const stored = await harness.run(async (ctx) => ({
