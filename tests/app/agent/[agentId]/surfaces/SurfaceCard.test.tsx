@@ -572,7 +572,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
   it("names what IT does, never a control that is not drawn, on an escalate-path Slack card that draws no provisioning row (W13V-1's card sentence)", (): void => {
     const markup = render(
       listed({
-        _id: 'surface-slack-policy',
+        _id: 'surface-slack-policy' as ListedSurface['_id'],
         slug: 'slack-automation-policy',
         displayName: 'Slack automation policy',
         class: 'chat',
