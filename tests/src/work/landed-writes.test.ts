@@ -27,10 +27,12 @@ const post = (body: Record<string, unknown>): MockAction => ({
     body: JSON.stringify(body),
   },
 });
+/** Each row its own key, numbered rather than random, so no two rows ever share one by chance. */
+let rows = 0;
 const row = (extra: Partial<AppliedAction> = {}): AppliedAction => ({
   tool: 'mcp.call',
   ok: true,
-  idempotencyKey: `k${Math.random()}`,
+  idempotencyKey: `k${(rows += 1)}`,
   ...extra,
 });
 const parsed = (action: MockAction) => {
