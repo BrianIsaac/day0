@@ -432,7 +432,7 @@ export function RuleRow({
         />
         {preview?.rewrittenFunction !== undefined && !preview.refusal ? (
           <RowNote>
-            {'rewrites the role: '}
+            {'rewrites the function: '}
             {quotedClauses([preview.rewrittenFunction.from])}
             {' to '}
             {quotedClauses([preview.rewrittenFunction.to])}

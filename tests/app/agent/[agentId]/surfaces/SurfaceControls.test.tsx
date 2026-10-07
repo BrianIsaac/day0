@@ -40,7 +40,7 @@ describe('the tools line and the re-approval of a narrowed card (Q10, U10 D2 (b)
       <ToolsRow surface={slack} ownSlackApp onApprove={async () => undefined} />,
     );
     expect(own.replace(/&#x27;/g, "'")).toContain(
-      "On the app Day0 created for this employee, its messages to you and the edit of its own request are Day0's own, whatever this list says.",
+      "Whatever this list says, this employee's own app can always message you and edit its own requests for your approval.",
     );
     const shared = renderToStaticMarkup(
       <ToolsRow surface={slack} onApprove={async () => undefined} />,

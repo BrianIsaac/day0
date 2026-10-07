@@ -12,7 +12,7 @@ import { type ChangeOutcome, refusalText } from '../../../components/use-change'
  * the manager's DM and the edit of Day0's own request (wording draft).
  */
 export const OWN_APP_CHANNEL_NOTE =
-  "On the app Day0 created for this employee, its messages to you and the edit of its own request are Day0's own, whatever this list says.";
+  "Whatever this list says, this employee's own app can always message you and edit its own requests for your approval.";
 
 /** A surface as the tools row reads it. */
 export type ToolsSurface = Pick<

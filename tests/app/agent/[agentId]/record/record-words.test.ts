@@ -1337,7 +1337,7 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
         subject,
       ),
     ).toBe(
-      'A working agreement was not kept for every employee: you have more employees than its check reads.',
+      'A working agreement is not in effect for every employee: you have more than 50 employees.',
     );
     expect(
       recordWords(

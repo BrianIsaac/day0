@@ -1358,7 +1358,7 @@ const confirmedShownValidator = v.object({
 const employeePeopleValidator = v.object({
   proposals: v.array(proposalShownValidator),
   confirmed: v.array(confirmedShownValidator),
-  /** Set when a standing holds more people than the tab reads: only the newest are listed (W13-R23). */
+  /** Set when more proposals wait than the tab reads: only the newest are listed (W13-R23). */
   more: v.optional(v.boolean()),
 });
 
@@ -1495,7 +1495,9 @@ async function employeePeople(
           .take(GRAPH_READ_LIMIT + 1),
     ),
   );
-  const more = [unverified, active].some((rows) => (rows?.length ?? 0) > GRAPH_READ_LIMIT);
+  // Said on the Proposed card: the proposals past the bound (a confirmed list past it is rarer and
+  // its newest are read the same way).
+  const more = (unverified?.length ?? 0) > GRAPH_READ_LIMIT;
   const people = [
     ...(unverified ?? []).slice(0, GRAPH_READ_LIMIT),
     ...(active ?? []).slice(0, GRAPH_READ_LIMIT),

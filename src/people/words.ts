@@ -27,7 +27,7 @@ export const NO_PROPOSED_CHANGE = 'Nothing is proposed for this person any more.
 
 /** The refusal of Take on a proposed address another of the owner's people holds (W13-R3). */
 export const PROPOSED_ADDRESS_HELD =
-  'Another person on your list has this address. Dismiss the change, or merge the two people first.';
+  'Another person on your list already has this address, so it cannot be taken. Dismiss the change.';
 
 /** The refusal of a relationship the employee already has to the person, the same kind and scope (W13-R26). */
 export const RELATIONSHIP_HELD = 'This relationship is already there.';
@@ -37,7 +37,7 @@ export const RELATIONSHIP_HELD = 'This relationship is already there.';
  * person's own there (W13-R24).
  */
 export const SAME_PERSON_CONFLICT =
-  'These are not the same person: they hold different verified accounts in the same workspace. Keep them apart with Different.';
+  'These cannot be the same person: they hold different verified accounts in the same workspace. Keep them apart with Different.';
 
 /** The refusal of a change to an edge that has ended. */
 export const RELATIONSHIP_ENDED = 'This relationship has already ended.';
@@ -343,7 +343,7 @@ export function proposedChangeLine(where: string, change: ProposedChangeWords): 
  * @param when - When it failed, in the employee's zone.
  */
 export function lookupFailedLine(name: string, when: string): string {
-  return `Looking up ${name} in Slack or Linear failed on ${when}: a message or ticket from them may not show their name yet.`;
+  return `Day0 could not look ${name} up in Slack or Linear on ${when}, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.`;
 }
 
 /**
@@ -359,4 +359,4 @@ export function sameBringsAddressLine(name: string, address: string): string {
 
 /** The Proposed card's line when a standing holds more people than the tab reads (W13-R23, wording draft). */
 export const PEOPLE_MORE =
-  'Only the newest 500 people of each standing are listed here; decide these and older ones follow.';
+  'Showing the 500 most recently added proposals; decide some and the rest appear.';

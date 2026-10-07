@@ -60,7 +60,7 @@ export function keepNoteHint(name: string): string {
  * of the "Keep this note" tick (13-FD's R10; wording draft).
  */
 export const KEEP_NOTE_IN_MOCK =
-  'Your answer is for this run. In a deployment of your own, a tick here keeps it as a working agreement for later work of this kind.';
+  'Your answer is for this run. In a deployment of your own, “Keep this note for later work of this kind” keeps it as a working agreement.';
 
 /** Where a card stands: the Work tab's promotion card, or the Charter tab's Agreements card. */
 export type AgreementPlace = 'work' | 'charter';
@@ -92,7 +92,7 @@ export const NOT_KEPT = 'Not kept';
  * row is drawn on every employee's card, so it names none of them (found on the bed: "Keep it for
  * Ines alone" on a card whose proposal was Priya's).
  */
-export const EVERY_EMPLOYEE_TOO_MANY = `Not kept for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. It can still be kept for the employee it was proposed for, on that employee's Work tab.`;
+export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. You can keep it for a single employee instead.`;
 
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';

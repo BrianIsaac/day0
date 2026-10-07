@@ -409,7 +409,7 @@ describe('a rule bound to the proposed function (14-FX, W13-R38)', (): void => {
       },
     });
     expect(html).toContain(
-      'rewrites the role: “Keep the tracker clean, and flag deals that look stuck.” to “Flag deals that look stuck.”',
+      'rewrites the function: “Keep the tracker clean, and flag deals that look stuck.” to “Flag deals that look stuck.”',
     );
   });
 });

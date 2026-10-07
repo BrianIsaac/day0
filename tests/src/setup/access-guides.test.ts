@@ -238,7 +238,7 @@ describe('the Slack recipe and the card it describes', (): void => {
     // so the workaround ("title the page Slack") went and the guide says when it is read so.
     expect(text).not.toContain('title the page "Slack"');
     expect(text).toContain(
-      "is read as Slack's Web API from v0.18.0 when a sentence on it names Slack and gives `https://slack.com/api/`",
+      'a Slack page whose title opens with "Slack" (the "Slack automation policy" page of the repository\'s own examples) is read as Slack\'s Web API',
     );
     expect(text).not.toContain('reports a live connection for it, within seconds');
   });

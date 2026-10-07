@@ -1029,7 +1029,7 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     settled({ 'people:forEmployee': { ...GRAPH, more: true } });
     const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
     expect(section(view.container, 'Proposed').textContent).toContain(
-      'Only the newest 500 people of each standing are listed here; decide these and older ones follow.',
+      'Showing the 500 most recently added proposals; decide some and the rest appear.',
     );
   });
 
@@ -1080,7 +1080,7 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
       'Evidence: “Priya Shah, Head of revenue operations, priya.shah@kestrel.test” (Team directory, 6 Oct 2026, 02:00).',
     );
     expect(confirmed.textContent).toContain(
-      'Looking up Priya Shah in Slack or Linear failed on 6 Oct 2026, 03:00: a message or ticket from them may not show their name yet.',
+      'Day0 could not look Priya Shah up in Slack or Linear on 6 Oct 2026, 03:00, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.',
     );
     await press(confirmed, 'Take the proposed change for Priya Shah');
     expect(backend.calls.at(-1)).toEqual({

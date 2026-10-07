@@ -248,10 +248,12 @@ describe('the plan approval tick', (): void => {
         gate="mock"
       />,
     );
-    expect(view.container.textContent).not.toContain('Keep this note');
+    // Re-pinned with 13-FD's R10 (14-FX): the hosted office's sentence names the option by its
+    // label, so "no tick" is read as no checkbox.
+    expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
     // 13-FD's R10: the hosted office says where the tick lives instead of leaving it absent.
     expect(view.container.textContent).toContain(
-      'Your answer is for this run. In a deployment of your own, a tick here keeps it as a working agreement for later work of this kind.',
+      'Your answer is for this run. In a deployment of your own, “Keep this note for later work of this kind” keeps it as a working agreement.',
     );
     expect(button(view.container, 'Approve plan with answers')).toBeDefined();
     view.unmount();
