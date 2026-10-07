@@ -88,13 +88,11 @@ export const NOT_KEPT = 'Not kept';
 /**
  * Why an agreement kept for every employee was not kept (W13-R28, moved from
  * `convex/workingAgreements.ts` for the card's row; wording draft): the owner has more employees
- * than its check reads, so it would bind an employee whose charter nobody checked it against.
- *
- * @param name - The employee whose card it is drawn on.
+ * than its check reads, so it would bind an employee whose charter nobody checked it against. The
+ * row is drawn on every employee's card, so it names none of them (found on the bed: "Keep it for
+ * Ines alone" on a card whose proposal was Priya's).
  */
-export function everyEmployeeTooMany(name: string): string {
-  return `Not kept for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. Keep it for ${name} alone instead.`;
-}
+export const EVERY_EMPLOYEE_TOO_MANY = `Not kept for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. It can still be kept for the employee it was proposed for, on that employee's Work tab.`;
 
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
@@ -208,7 +206,7 @@ export function refusalSentence(
     case 'names-credential':
       return 'This names a credential, which a working agreement never keeps. It was not kept.';
     case 'every-employee-too-many':
-      return everyEmployeeTooMany(name);
+      return EVERY_EMPLOYEE_TOO_MANY;
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);
