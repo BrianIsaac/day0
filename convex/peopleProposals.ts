@@ -1031,10 +1031,15 @@ export const recordLookups = internalMutation({
       await ctx.db.patch(person._id, { lookupFailedAt: undefined });
     }
     let added = 0;
+    let offerable: Id<'people'> | undefined;
     for (const identity of args.found) {
       const held = (await identitiesUnder(ctx, person.userId, [identity])).filter(
         (row) => row.providerWorkspaceId === identity.workspaceId,
       );
+      // Another person holds it: the proposal is offered as possibly them, for the manager's merge
+      // (W13-R25), never given the identity.
+      const holder = held.find((row) => row.personId !== person._id)?.personId;
+      if (holder !== undefined && person.status === 'unverified') offerable ??= holder;
       if (held.length > 0) continue;
       await ctx.db.insert('personIdentities', {
         userId: person.userId,
@@ -1055,6 +1060,9 @@ export const recordLookups = internalMutation({
         createdAt: now,
       });
       added += 1;
+    }
+    if (offerable !== undefined && person.possiblySameAs === undefined) {
+      await ctx.db.patch(person._id, { possiblySameAs: offerable, updatedAt: now });
     }
     return added;
   },

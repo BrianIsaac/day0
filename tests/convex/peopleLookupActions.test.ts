@@ -272,4 +272,25 @@ describe('peopleLookupActions.runLookups', (): void => {
     ).toBe(0);
     expect((await graphRows(harness)).people[0]?.lookupFailedAt).toBeUndefined();
   });
+
+  it('offers a proposal as possibly the person who holds the identity its lookup found (W13-R25)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const held = await seedPerson(harness, 'S. Lim');
+    await seedIdentity(harness, held, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      providerWorkspaceId: 'T0KESTREL',
+    });
+    const sara = await seedPerson(harness, 'Sara Lim', {
+      status: 'unverified',
+      primaryEmail: 'sara.lim@kestrel.test',
+    });
+    const { dependencies } = slackFake({ 'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' } });
+    expect(await runLookups(runners(harness), [sara], dependencies)).toBe(0);
+    expect((await graphRows(harness)).people.find((row) => row._id === sara)?.possiblySameAs).toBe(
+      held,
+    );
+  });
 });
