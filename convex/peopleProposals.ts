@@ -994,7 +994,8 @@ const foundIdentityValidator = v.object({
 
 /**
  * Internal, for `peopleLookupActions.lookUpAddresses`: record what a lookup by a person's address
- * found as their identities (`source: 'provider-lookup'`, verified now). An identity on a proposal
+ * found as their identities (`source: 'provider-lookup'`, verified now), and whether it failed
+ * (`lookupFailedAt`, W13-R25). An identity on a proposal
  * answers for nobody until Confirm (readers read confirmed people only); one another person
  * already holds is left for the manager to merge.
  *
@@ -1006,6 +1007,11 @@ export const recordLookups = internalMutation({
     /** The address looked up: a lookup of one the person no longer holds records nothing (W13-R8). */
     address: v.optional(v.string()),
     found: v.array(foundIdentityValidator),
+    /**
+     * How the lookup ended (W13-R25): `failed` marks the person (`lookupFailedAt`) once its asks
+     * are spent or a provider refused, `answered` clears a mark; absent while it is still asked.
+     */
+    outcome: v.optional(v.union(v.literal('answered'), v.literal('failed'))),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
@@ -1019,6 +1025,11 @@ export const recordLookups = internalMutation({
       return 0;
     }
     const now = Date.now();
+    if (args.outcome === 'failed') {
+      await ctx.db.patch(person._id, { lookupFailedAt: now });
+    } else if (args.outcome === 'answered' && person.lookupFailedAt !== undefined) {
+      await ctx.db.patch(person._id, { lookupFailedAt: undefined });
+    }
     let added = 0;
     for (const identity of args.found) {
       const held = (await identitiesUnder(ctx, person.userId, [identity])).filter(

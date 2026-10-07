@@ -25,6 +25,15 @@ import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 /** How long one lookup waits for its provider. */
 const LOOKUP_TIMEOUT_MS = 30_000;
 
+/** How many times a person's lookup is asked before a failure is marked on the person (W13-R25). */
+export const LOOKUP_ATTEMPTS = 3;
+
+/** How long a lookup waits before asking again when the provider names no wait. */
+const LOOKUP_RETRY_MS = 60_000;
+
+/** The longest wait a provider's Retry-After is taken at. */
+const LOOKUP_RETRY_LIMIT_MS = 600_000;
+
 /** What one lookup found: the person's user in that system, and how it shows them. */
 interface FoundIdentity {
   readonly provider: 'slack' | 'linear';
@@ -44,7 +53,42 @@ export interface LookupDependencies {
   readonly fetch: (input: URL, init: RequestInit) => Promise<Response>;
   /** An MCP client for a Linear card's endpoint. */
   readonly makeMcpClient: (endpoint: URL, credential: string) => LookupMcpClient;
+  /**
+   * Ask again later for the people whose lookup failed in a way a later ask may not (a rate limit,
+   * a timeout, a provider down): the action schedules itself. Absent, a failure is marked at once.
+   */
+  readonly retry?: (
+    personIds: readonly Id<'people'>[],
+    attempt: number,
+    delayMs: number,
+  ) => Promise<void>;
 }
+
+/** A provider's refusal a later ask would meet again (a missing scope, a revoked token). */
+class LookupRefused extends Error {}
+
+/** A provider's answer that asks the caller to wait, with the wait it names when it names one. */
+class LookupRateLimited extends Error {
+  readonly retryAfterMs: number | undefined;
+
+  constructor(retryAfterMs: number | undefined) {
+    super('The provider limited the lookup rate.');
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** The wait a Retry-After header names, bounded, or undefined when it names none. */
+function retryAfterMs(response: Response): number | undefined {
+  const seconds = Number(response.headers.get('Retry-After'));
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(seconds * 1000, LOOKUP_RETRY_LIMIT_MS);
+}
+
+/** What one card's lookup of an address came to. */
+type CardLookup =
+  | { readonly kind: 'answered'; readonly identity?: FoundIdentity }
+  | { readonly kind: 'refused' }
+  | { readonly kind: 'failed'; readonly retryAfterMs?: number };
 
 /** A value as an object, or undefined. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -83,11 +127,16 @@ async function slackUserByAddress(
     signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
   });
   const payload = asRecord(await response.json().catch((): unknown => ({})));
+  if (response.status === 429 || payload?.error === 'ratelimited') {
+    throw new LookupRateLimited(retryAfterMs(response));
+  }
   if (payload?.ok !== true) {
     if (payload?.error === 'users_not_found') return undefined;
-    throw new Error(
-      `Slack users.lookupByEmail failed: ${text(payload?.error) ?? `HTTP ${response.status}`}`,
-    );
+    const reason = `Slack users.lookupByEmail failed: ${text(payload?.error) ?? `HTTP ${response.status}`}`;
+    // A refusal Slack states is met again on the next ask; a server's failure may pass.
+    throw response.status >= 500 || payload === undefined
+      ? new Error(reason)
+      : new LookupRefused(reason);
   }
   const user = asRecord(payload.user);
   const userId = text(user?.id);
@@ -152,27 +201,32 @@ async function linearUserByAddress(
   }
 }
 
-/** One card's lookup of an address, a failure logged and answered as nothing found. */
+/** One card's lookup of an address, a failure logged and told apart from an answer. */
 async function lookUpOnCard(
   card: LookupCard,
   address: string,
   dependencies: LookupDependencies,
-): Promise<FoundIdentity | undefined> {
+): Promise<CardLookup> {
   let credential = '';
   try {
     credential = await dependencies.bearer(card.credentialId);
-    return card.kind === 'slack'
-      ? await slackUserByAddress(card, address, credential, dependencies)
-      : await linearUserByAddress(card, address, credential, dependencies);
+    const identity =
+      card.kind === 'slack'
+        ? await slackUserByAddress(card, address, credential, dependencies)
+        : await linearUserByAddress(card, address, credential, dependencies);
+    return identity === undefined ? { kind: 'answered' } : { kind: 'answered', identity };
   } catch (error: unknown) {
     // A lookup is a convenience for the card: the proposal stands without it, and the manager
-    // confirms or dismisses it either way.
+    // confirms or dismisses it either way. A failure a later ask may pass is asked again.
     log.warn('a person lookup by address failed; the proposal stands without its match', {
       surfaceId: card.surfaceId,
       kind: card.kind,
       reason: safeFailureMessage(error, credential, 'The lookup failed.', 300),
     });
-    return undefined;
+    if (error instanceof LookupRefused) return { kind: 'refused' };
+    return error instanceof LookupRateLimited && error.retryAfterMs !== undefined
+      ? { kind: 'failed', retryAfterMs: error.retryAfterMs }
+      : { kind: 'failed' };
   } finally {
     credential = '';
   }
@@ -180,34 +234,61 @@ async function lookUpOnCard(
 
 /**
  * Look each person's address up on the owner's cards and record what is found as their
- * identities (`peopleProposals.recordLookups`).
+ * identities (`peopleProposals.recordLookups`). A lookup that fails in a way a later ask may pass
+ * is asked again, within {@link LOOKUP_ATTEMPTS}, after the wait the provider names; past that, or
+ * at once for a refusal, the person is marked (`lookupFailedAt`, W13-R25) until a lookup answers.
  *
  * @param ctx - The action's runners.
  * @param personIds - The people whose addresses reached the graph.
  * @param dependencies - The outside the lookups reach.
+ * @param attempt - Which ask this is, from 1.
  * @returns How many identities were added.
  */
 export async function runLookups(
   ctx: Pick<ActionCtx, 'runQuery' | 'runMutation'>,
   personIds: readonly Id<'people'>[],
   dependencies: LookupDependencies,
+  attempt = 1,
 ): Promise<number> {
   const targets = await ctx.runQuery(internal.peopleProposals.lookupTargets, {
     personIds: [...personIds],
   });
+  const canRetry = dependencies.retry !== undefined && attempt < LOOKUP_ATTEMPTS;
+  const again: Id<'people'>[] = [];
+  let delayMs = 0;
   let added = 0;
   for (const target of targets) {
-    const found: FoundIdentity[] = [];
-    for (const card of target.cards) {
-      const identity = await lookUpOnCard(card, target.address, dependencies);
-      if (identity !== undefined) found.push(identity);
+    const looked: CardLookup[] = [];
+    for (const card of target.cards)
+      looked.push(await lookUpOnCard(card, target.address, dependencies));
+    const found = looked.flatMap((card) =>
+      card.kind === 'answered' && card.identity !== undefined ? [card.identity] : [],
+    );
+    const failed = looked.filter((card) => card.kind === 'failed');
+    const retried = canRetry && failed.length > 0;
+    if (retried) {
+      again.push(target.personId);
+      delayMs = Math.max(
+        delayMs,
+        ...failed.map((card) => card.retryAfterMs ?? LOOKUP_RETRY_MS * attempt),
+      );
     }
-    if (found.length === 0) continue;
+    const outcome =
+      failed.length > 0 || looked.some((card) => card.kind === 'refused')
+        ? retried
+          ? undefined
+          : ('failed' as const)
+        : ('answered' as const);
+    if (found.length === 0 && outcome === undefined) continue;
     added += await ctx.runMutation(internal.peopleProposals.recordLookups, {
       personId: target.personId,
       address: target.address,
       found,
+      ...(outcome === undefined ? {} : { outcome }),
     });
+  }
+  if (again.length > 0 && dependencies.retry !== undefined) {
+    await dependencies.retry(again, attempt + 1, delayMs);
   }
   return added;
 }
@@ -216,17 +297,33 @@ export async function runLookups(
  * Internal, scheduled when an address first reaches the graph (the documentation's extraction):
  * look each person's address up on the owner's employees' Slack and Linear cards and record the
  * users found as the person's identities. Reads the cards' credentials; writes
- * `personIdentities`.
+ * `personIdentities` and the person's `lookupFailedAt`; schedules itself again for a lookup that
+ * failed and may pass later (W13-R25).
  *
  * @returns How many identities it added.
  */
 export const lookUpAddresses = internalAction({
-  args: { personIds: v.array(v.id('people')) },
+  args: {
+    personIds: v.array(v.id('people')),
+    /** Which ask this is, from 1; a retry of a failed lookup asks again with the next. */
+    attempt: v.optional(v.number()),
+  },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> =>
-    await runLookups(ctx, args.personIds, {
-      bearer: async (credentialId) => await readSurfaceBearer(ctx, credentialId),
-      fetch: async (input, init) => await fetch(input, init),
-      makeMcpClient: (endpoint, credential) => createMcpClient(endpoint, credential),
-    }),
+    await runLookups(
+      ctx,
+      args.personIds,
+      {
+        bearer: async (credentialId) => await readSurfaceBearer(ctx, credentialId),
+        fetch: async (input, init) => await fetch(input, init),
+        makeMcpClient: (endpoint, credential) => createMcpClient(endpoint, credential),
+        retry: async (personIds, attempt, delayMs) => {
+          await ctx.scheduler.runAfter(delayMs, internal.peopleLookupActions.lookUpAddresses, {
+            personIds: [...personIds],
+            attempt,
+          });
+        },
+      },
+      args.attempt ?? 1,
+    ),
 });
