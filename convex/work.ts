@@ -3691,12 +3691,16 @@ const REPLACEMENT_HOPS = 5;
  *
  * @param ctx - The decision's transaction.
  * @param replaced - The replaced request the code names.
- * @returns The answer's words, and the code that stands, when there is one.
+ * @returns The answer's words, and the code that stands and the DM it went to, when there is one.
  */
 async function replacedRequestAnswer(
   ctx: MutationCtx,
   replaced: Doc<'replacedDecisionRequests'>,
-): Promise<{ readonly text: string; readonly replacedBy?: string }> {
+): Promise<{
+  readonly text: string;
+  readonly replacedBy?: string;
+  readonly standingChannel?: string;
+}> {
   const opening =
     replaced.outcome === undefined
       ? `That request (${replaced.decisionId}) was replaced`
@@ -3704,12 +3708,17 @@ async function replacedRequestAnswer(
   const answerWith = (
     code: string,
     decision: NonNullable<Doc<'workItems'>['decision']>,
-  ): { readonly text: string; readonly replacedBy: string } =>
+  ): { readonly text: string; readonly replacedBy: string; readonly standingChannel: string } =>
     decision.decidedAt === undefined
-      ? { text: `${opening} by ${code}. Decide on ${code} instead.`, replacedBy: code }
+      ? {
+          text: `${opening} by ${code}. Decide on ${code} instead.`,
+          replacedBy: code,
+          standingChannel: decision.channel,
+        }
       : {
           text: `${opening} by ${code}, which was already ${decision.outcome ?? 'decided'}.`,
           replacedBy: code,
+          standingChannel: decision.channel,
         };
   let code = replaced.replacedBy;
   for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
@@ -3745,9 +3754,12 @@ async function replacedRequestAnswer(
 const INTERRUPTED_NOTE_REASON =
   'the apply was interrupted, so what it sent is not known; check each change marked below';
 
-/** Why a request delivered to the previous manager is sent again. */
+/**
+ * Why a request delivered to the manager's previous DM is sent again: a new manager, or the
+ * employee's new Slack app after a forget (W13V-4).
+ */
 export const MANAGER_CHANGED_RESEND_REASON =
-  'the manager changed; the request went to the previous one';
+  "the manager's DM changed, to a new manager or to the employee's new Slack app; the request went to the previous one";
 
 /**
  * Why a request asked of the manager who handed the employee over is closed at the move: their
@@ -6602,10 +6614,19 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       )
       .first();
     if (!replaced) return await unknown('unknown decision id');
-    if (replaced.surfaceSlug !== surface.slug || replaced.channel !== surface.managerDmChannelId) {
+    if (replaced.surfaceSlug !== surface.slug) {
       return await unknown('decision belongs to another manager channel');
     }
     const answer = await replacedRequestAnswer(ctx, replaced);
+    // Answered in the DM it was asked in, or in the DM its replacement went to once the manager's
+    // DM changed (the employee's new app after a forget, or a new manager): there the old code is
+    // the one the manager still has (W13V-4).
+    if (
+      replaced.channel !== surface.managerDmChannelId &&
+      answer.standingChannel !== surface.managerDmChannelId
+    ) {
+      return await unknown('decision belongs to another manager channel');
+    }
     // One "was replaced" notice per replaced request (W12-R19): a further reply or press, or a
     // button left on its message, is recorded and not answered again.
     const notified =

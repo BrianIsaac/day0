@@ -904,6 +904,91 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     });
   });
 
+  it('answers a replaced code typed in the new DM its replacement went to with that replacement, and says the DM changed (W13V-4)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    // The employee's new app after a forget: the probe resolves the manager's DM with it, a new one.
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0NEWAPP',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const replacement = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!;
+    expect(replacement.channel).toBe('D0NEWAPP');
+    const newCode = replacement.id;
+    expect(newCode).not.toBe(oldCode);
+    const resent = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .filter((q) => q.eq(q.field('type'), 'work.decision-request-resent'))
+          .first(),
+    );
+    expect(resent?.payload).toMatchObject({
+      decisionId: oldCode,
+      reason:
+        "the manager's DM changed, to a new manager or to the employee's new Slack app; the request went to the previous one",
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: newCode });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row?.decision?.decidedAt).toBeUndefined();
+    const notice = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .filter((q) => q.eq(q.field('kind'), 'replaced'))
+          .first(),
+    );
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced by ${newCode}. Decide on ${newCode} instead.`,
+    );
+  });
+
+  it('still refuses a replaced code typed in a DM its replacement did not go to', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { managerDmChannelId: 'D0ELSEWHERE' });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'decision belongs to another manager channel',
+    });
+  });
+
   it('answers with the replacement’s own decision once it was decided', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
