@@ -394,3 +394,22 @@ describe('a strike that takes only the clauses carrying its rule (W13-R6, W13-R7
     expect(html).not.toContain('nothing else changes');
   });
 });
+
+describe('a rule bound to the proposed function (14-FX, W13-R38)', (): void => {
+  it("says how a strike rewrites the role's sentence", (): void => {
+    const html = row({
+      preview: {
+        removedClauses: [],
+        rewrittenClauses: [],
+        rewrittenFunction: {
+          from: 'Keep the tracker clean, and flag deals that look stuck.',
+          to: 'Flag deals that look stuck.',
+        },
+        changes: true,
+      },
+    });
+    expect(html).toContain(
+      'rewrites the role: “Keep the tracker clean, and flag deals that look stuck.” to “Flag deals that look stuck.”',
+    );
+  });
+});

@@ -280,7 +280,9 @@ export function removeWording(text: string, phrase: string): string {
   const trimmed = phrase.trim();
   if (!trimmed) return text;
   const p = escapeRegExp(trimmed);
-  const separator = String.raw`(?:\s*,\s*|\s+(?:and|or)\s+)`;
+  // A comma or semicolon takes the "and" or "or" after it with it (W13-R38: ", and" left a
+  // dangling comma, "; flag deals;" a doubled semicolon).
+  const separator = String.raw`(?:\s*[,;]\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)`;
   // Joined on the left and not on the right: the phrase closes or sits inside
   // a list, so the separator before it goes with it.
   const withPreceding = new RegExp(
@@ -295,11 +297,18 @@ export function removeWording(text: string, phrase: string): string {
   // Tidying an unmatched clause would make a strike that removes nothing read
   // as a change (and be recorded as one), so the clause stays as written.
   if (removed === text) return text;
-  return removed
+  const tidied = removed
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([,;:])(?:\s*[,;:])+/g, '$1')
+    .replace(/[,;:]+(?=[.!?]|$)/g, '')
     .replace(/^[\s,;:]+/, '')
+    .replace(/^(?:and|or)\s+/i, '')
     .trim();
+  // A sentence that opened on a capital still does once its first words are taken (W13-R38).
+  return /^[A-Z]/.test(text.trim())
+    ? tidied.replace(/^[a-z]/, (first) => first.toUpperCase())
+    : tidied;
 }
 
 /**
@@ -978,6 +987,8 @@ export interface StrikePreview {
   removedClauses: string[];
   /** Will-do clauses the strike keeps with the wording gone, as they read before and after. */
   rewrittenClauses: Array<{ from: string; to: string }>;
+  /** The proposed function with the rule's words gone, as it reads before and after (W13-R38). */
+  rewrittenFunction?: { from: string; to: string };
   /** Clauses the rule binds that the strike keeps, each with why (W13-R6, W13-R7); absent when none. */
   keptClauses?: KeptClause[];
   /**
@@ -1066,9 +1077,13 @@ export function strikePreview(charter: ClauseCharter, index: number): StrikePrev
       ? [{ clause, because: fate.because, ...(fate.rule === undefined ? {} : { rule: fate.rule }) }]
       : [];
   });
+  const functionAfter = after.charter.proposedFunction;
   return {
     removedClauses: gone.filter((clause: string): boolean => !rewritten.has(clause)),
     rewrittenClauses,
+    ...(functionAfter !== base.proposedFunction
+      ? { rewrittenFunction: { from: base.proposedFunction, to: functionAfter } }
+      : {}),
     ...(keptClauses.length > 0 ? { keptClauses } : {}),
     // The function is not one of the lists above, so what changes is asked of the whole charter.
     changes: clauseChanges(base, after.charter).length > 0,

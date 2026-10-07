@@ -430,6 +430,14 @@ export function RuleRow({
           preview={preview}
           check={standing === 'check'}
         />
+        {preview?.rewrittenFunction !== undefined && !preview.refusal ? (
+          <RowNote>
+            {'rewrites the role: '}
+            {quotedClauses([preview.rewrittenFunction.from])}
+            {' to '}
+            {quotedClauses([preview.rewrittenFunction.to])}
+          </RowNote>
+        ) : null}
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
               <RowNote key={i}>
