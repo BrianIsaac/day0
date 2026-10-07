@@ -198,6 +198,35 @@ describe('HTTP adapter', (): void => {
     expect(call.init.redirect).toBe('manual');
   });
 
+  it('labels a form body and a JSON scalar with no content type of their own, and leaves other text as written (W13-R18)', async (): Promise<void> => {
+    const sent = async (body: string): Promise<RequestInit['headers']> => {
+      const fetchImpl = fakeFetch(
+        (): Response => new Response(JSON.stringify({ ok: true, ts: '1.2' }), { status: 200 }),
+      );
+      const action: MockAction = {
+        ...post,
+        args: {
+          ...post.args,
+          headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+          body,
+        },
+      };
+      await adapter(fetchImpl).apply(ctx, run, action, 0, 'k');
+      return fetchImpl.calls[0]?.init.headers;
+    };
+    expect(await sent('channel=D0MANAGER&text=Draft%20ready.')).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    });
+    expect(await sent('"Draft ready."')).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+      'Content-Type': 'application/json; charset=utf-8',
+    });
+    expect(await sent('Draft ready, see the ticket.')).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+    });
+  });
+
   it('revalidates authority after decrypt and before fetch', async (): Promise<void> => {
     const fetchImpl = fakeFetch((): Response => new Response('should not be called'));
     const beforeTransport = vi.fn(async (): Promise<string> => 'agent not found');
@@ -529,9 +558,15 @@ describe('the content type of a body the action sends', (): void => {
     });
   });
 
-  it('names no content type for a body that is not JSON', async (): Promise<void> => {
+  // Re-pinned for W13-R18 (14-FX): a form body is labelled a form now; text that is neither JSON
+  // nor a form still goes with no content type.
+  it('names no content type for a body that is neither JSON nor a form', async (): Promise<void> => {
+    expect(await sentHeaders(untypedPost('Draft ready, see the ticket.'))).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+    });
     expect(await sentHeaders(untypedPost('channel=D0MANAGER&text=Draft'))).toEqual({
       Authorization: 'Bearer xoxb-test-value',
+      'Content-Type': 'application/x-www-form-urlencoded',
     });
   });
 });
