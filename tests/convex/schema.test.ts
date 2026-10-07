@@ -2523,6 +2523,45 @@ describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void 
     });
   });
 
+  it("reads one owner's agreements about one person by owner first, for the merge that repoints them (W13-R33)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const personOf = async (userId: string): Promise<Id<'people'>> =>
+        await ctx.db.insert('people', {
+          userId,
+          displayName: 'Aiko',
+          nameKey: 'aiko',
+          status: 'active',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const aiko = await personOf('owner');
+      const agreement = (userId: string, personId: Id<'people'>) => ({
+        userId,
+        kind: 'preference' as const,
+        statement: 'Copy Aiko on the close note.',
+        scope: 'person' as const,
+        personId,
+        sourceType: 'manager-card' as const,
+        status: 'active' as const,
+        createdAt: 2,
+        appliedTo: [],
+      });
+      const ours = await ctx.db.insert('workingAgreements', agreement('owner', aiko));
+      await ctx.db.insert('workingAgreements', agreement('another', await personOf('another')));
+      const about = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_person', (q) =>
+          q.eq('userId', 'owner').eq('personId', aiko).eq('status', 'active'),
+        )
+        .collect();
+      return { ours, about: about.map((row) => row._id) };
+    });
+    expect(read.about).toEqual([read.ours]);
+  });
+
   it('refuses a proposed change that names neither a source nor when', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(

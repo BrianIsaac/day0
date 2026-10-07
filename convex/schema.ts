@@ -2011,7 +2011,13 @@ export default defineSchema({
      * One owner's agreements for one employee, or for every employee (absent `agentId`), in one
      * standing: selection reads the candidate's and the every-employee rows, owner first.
      */
-    .index('by_user_agent_status', ['userId', 'agentId', 'status']),
+    .index('by_user_agent_status', ['userId', 'agentId', 'status'])
+    /**
+     * One owner's agreements about one person, in one standing (wave 14, 14-I for 14-FX; W13-R33):
+     * the merge of two people repoints a person-scoped agreement from the one merged away, read
+     * whole rather than past a bounded scan of every agreement.
+     */
+    .index('by_user_person', ['userId', 'personId', 'status']),
 
   /**
    * The lease on the verification sandbox: at most one row, the skill whose
