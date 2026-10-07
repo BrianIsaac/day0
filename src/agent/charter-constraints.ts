@@ -1221,24 +1221,32 @@ function contentStems(text: string): Set<string> {
   );
 }
 
+/** The words a rule forbids an act by, wherever in the rule they stand (the second pass on W13-R6). */
+const FORBIDS =
+  /\b(?:never|must not|mustn't|cannot|can't|do not|don't|should not|shouldn't|under no circumstances|not allowed to|no one may)\b/i;
+
 /**
- * A rule that opens on a prohibition (`PROHIBITION_OPENING`, or "No", "Not", "Avoid", "Stop"),
- * whose act a will-do or the function grants and never carries.
+ * Whether a rule forbids an act (`PROHIBITION_OPENING`, or a forbidding word in any of its
+ * sentences: "Sales owns the tracker. Never edit a booked figure.", "You must not ..."), so a
+ * will-do or the function, which grant the act, never carries it.
  */
-function opensOnProhibition(quote: string): boolean {
-  const opening = quote.trim();
-  return PROHIBITION_OPENING.test(opening) || /^(?:no|not|avoid|stop)\s+/i.test(opening);
+function forbidsAnAct(quote: string): boolean {
+  return PROHIBITION_OPENING.test(quote.trim()) || FORBIDS.test(quote);
 }
 
-/** The manager's first person, which the drafter writes as "the manager" (the charter's copy rules). */
-const FIRST_PERSON = /\b(?:i|me|my|myself)\b/gi;
+/** The manager's first person, which the drafter writes as "the manager"; never the "i" of "i.e.". */
+const FIRST_PERSON = /\b(?:I|[Mm]e|[Mm]y|[Mm]yself)\b(?![.'\u2019]\w)/g;
 
 /** A sentence that routes work through the manager: "Go through me for both.", "Ask me first." */
 const THROUGH_ME = /\b(?:through|via)\s+me\b|\bask\s+me\s+(?:first|before)\b/i;
 
-/** What such a sentence becomes in a will-not-do or an escalation clause. */
+/**
+ * What such a sentence becomes in a will-not-do or an escalation clause: the contact going through
+ * the manager, or a contact made "directly" (a bare "directly", as in "Edit the ledger directly.",
+ * names no contact).
+ */
 const THROUGH_THE_MANAGER =
-  /\b(?:through|via)\s+the\s+manager\b|\bdirectly\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b/i;
+  /\b(?:through|via)\s+the\s+manager\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b|\b(?:contact|message|email|ask|reach|call|talk to|write to|go to)\b[^.;]*\bdirectly\b/i;
 
 /**
  * Whether one clause carries a rule, judged on its own (W13-R6): one of the rule's verified phrases
@@ -1263,14 +1271,18 @@ function clauseCarriesRule(
     return true;
   }
   const grants = field === 'willDo' || field === 'proposedFunction';
-  if (grants && opensOnProhibition(constraint.quote)) return false;
+  if (grants && forbidsAnAct(constraint.quote)) return false;
   const inClause = contentStems(clause);
-  return constraint.quote.split(/(?<=[.!?;])\s+/).some((sentence: string): boolean => {
-    const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
-    const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
-    if (said.size > 0 && shared * 2 > said.size) return true;
-    return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
-  });
+  // A sentence ends before a capital, so "e.g. in a ticket comment" stays inside its sentence; a
+  // fragment of one word is too little to read as the rule.
+  return constraint.quote
+    .split(/(?<=[.!?;])\s+(?=[A-Z"\u201c])/)
+    .some((sentence: string): boolean => {
+      const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
+      const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
+      if (said.size >= 2 && shared * 2 > said.size) return true;
+      return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
+    });
 }
 
 /**

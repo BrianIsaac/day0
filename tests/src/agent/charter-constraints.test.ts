@@ -1184,6 +1184,60 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     expect(rulePlacement(commenting, password)).toMatchObject({ carriesWords: false });
   });
 
+  it("reads a prohibition anywhere in the rule, in any of its usual words, as not carried by a will-do granting the act (the code reader's probes)", (): void => {
+    const base = larkDraft();
+    const charter: Charter = {
+      ...base,
+      proposedBoundaries: {
+        ...base.proposedBoundaries,
+        willDo: [...base.proposedBoundaries.willDo, 'Edit any booked figure.'],
+      },
+    };
+    for (const quote of [
+      'Sales owns the tracker. Never edit a booked figure.',
+      'Please never edit a booked figure.',
+      'Under no circumstances edit a booked figure.',
+      'Cannot edit a booked figure.',
+      'You must not edit a booked figure.',
+    ]) {
+      const rule: CharterConstraint = {
+        kind: 'system-boundary',
+        quote,
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 3 }],
+      };
+      expect(rulePlacement(charter, rule), quote).toMatchObject({ carriesWords: false });
+    }
+  });
+
+  it('reads "directly" as going around the manager only beside a contact, and splits no abbreviation', (): void => {
+    const base = larkDraft();
+    const charter: Charter = {
+      ...base,
+      proposedBoundaries: {
+        ...base.proposedBoundaries,
+        willNotDo: ['Edit the ledger directly.', 'Draft a ticket comment for the tracker.'],
+      },
+    };
+    const route: CharterConstraint = {
+      kind: 'reporting-line',
+      quote: 'Go through me for both.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 0 }],
+    };
+    expect(rulePlacement(charter, route)).toMatchObject({ carriesWords: false });
+    const abbreviated: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share it with anyone outside finance, e.g. in a ticket comment.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willNotDo', index: 1 }],
+    };
+    expect(rulePlacement(charter, abbreviated)).toMatchObject({ carriesWords: false });
+  });
+
   it('says where a rule is placed: by its words, in no clause, or in the clauses it binds', (): void => {
     const charter = larkDraft();
     expect(rulePlacement(charter, { ...amountRule, wording: [], origin: 'synthesis' })).toEqual({
