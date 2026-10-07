@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -17,6 +17,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
+  LISTING_RESTARTS_REASON,
   SYNC_BATCH_SIZE,
   categoryForPage,
   persistPageBatch,
@@ -976,6 +977,59 @@ describe('documentation sync batching', (): void => {
     expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
     expect(state.runs[1]).toMatchObject({ state: 'superseded' });
     expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+  });
+
+  it('ends a sync whose listing keeps changing after three restarts, with its reason on the source (M19)', async (): Promise<void> => {
+    const root = temporary('day0-sync-changing-');
+    await mkdir(join(root, 'changing'));
+    for (let index = 1; index <= 30; index += 1) {
+      await writeFile(
+        join(root, 'changing', `page-${String(index).padStart(2, '0')}.md`),
+        `# Page ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Changing',
+      kind: 'folder',
+      locator: 'changing',
+    });
+    // An author renames a page between every first batch and the next, as a folder written
+    // into all day would change under each sync.
+    const read = FolderReader.prototype.listPageBatch;
+    let renames = 0;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (args[2] !== undefined) {
+        const from = renames === 0 ? 'page-01.md' : `renamed-${renames}.md`;
+        renames += 1;
+        await rename(join(root, 'changing', from), join(root, 'changing', `renamed-${renames}.md`));
+      }
+      return await read.apply(this, args);
+    });
+
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+    }));
+    expect(state.runs.map((run) => [run.state, run.restarts])).toEqual([
+      ['error', 3],
+      ['superseded', 2],
+      ['superseded', 1],
+      ['superseded', undefined],
+    ]);
+    expect(state.runs[0].reason?.split('\n')[0]).toBe(LISTING_RESTARTS_REASON);
+    expect(state.source).toMatchObject({ status: 'error', lastError: LISTING_RESTARTS_REASON });
+    expect(state.source?.activeSyncId).toBeUndefined();
+    expect(await scheduled(harness)).toEqual([]);
   });
 
   it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {

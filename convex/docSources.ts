@@ -923,7 +923,8 @@ const LISTING_CHANGED_REASON =
  * Internal; the sync calls it when a reader finds its offset cursor was taken
  * from another listing (`ListingChangedError`). Reading on would miss a page
  * that moved behind the cursor and delete it at the end, so the new run reads
- * from page one and carries nothing over.
+ * from page one and carries nothing over but the count of restarts before it
+ * (`restarts`), which the sync's back-off reads (M19).
  *
  * @returns The new run's id, or null when the run is no longer the source's running one.
  */
@@ -947,6 +948,7 @@ export const restartSync = internalMutation({
       redactionCount: 0,
       state: 'running',
       createdAt: now,
+      restarts: (run.restarts ?? 0) + 1,
     });
     await ctx.db.patch(source._id, {
       activeSyncId: runId,
