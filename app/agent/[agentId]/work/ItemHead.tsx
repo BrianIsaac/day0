@@ -2,7 +2,7 @@
 
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
-import { sourceLine } from '@/work/item-display';
+import { sourceLine, withoutSlackMentions, type ListedWorkItem } from '@/work/item-display';
 import { undeliveredDecisionReason } from '@/work/manager-channel';
 import { Button } from '../../../components/Button';
 import { connectedManagerChannel } from '../manager-channel';
@@ -82,7 +82,7 @@ export function ItemHead({
   onAskAgain,
   stampDecision = true,
 }: {
-  item: Doc<'workItems'>;
+  item: ListedWorkItem;
   surfaces: readonly SurfaceRecord[];
   now: number;
   zone: string | undefined;
@@ -120,11 +120,11 @@ export function ItemHead({
         id={`work-item-${item._id}`}
         className="text-base leading-snug font-semibold text-[var(--color-fg)]"
       >
-        {item.title}
+        {withoutSlackMentions(item.title)}
       </h3>
       <p className="line-clamp-2 text-sm text-[var(--color-fg-2)]">
         {from ? `${from}: ` : null}
-        <Quote>{item.contentSummary}</Quote>
+        <Quote>{withoutSlackMentions(item.contentSummary)}</Quote>
       </p>
       {decided ? (
         <p className="text-[13px] text-[var(--color-muted)] first-letter:uppercase">

@@ -10,7 +10,7 @@ import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
 import type { PlanAgreement } from './PlanSection';
 import type { AutonomyChange } from '@/work/autonomy';
-import type { RunHold } from '@/work/item-display';
+import type { ListedWorkItem, RunHold } from '@/work/item-display';
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
 import { Button } from '../../../components/Button';
@@ -258,7 +258,7 @@ export function WorkQueue({
   managerKey?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
   needsYou?: ReadonlySet<string>;
-  workItems: Doc<'workItems'>[];
+  workItems: ListedWorkItem[];
   /** The queue's query has not answered yet, which is not the same as an empty queue. */
   loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */

@@ -10,7 +10,13 @@ import {
   autonomyTurnedOnAfterDraft,
   autonomyTurnedOnAfterDraftNote,
 } from '@/work/autonomy';
-import { heldStepWords, rejectionOf, workingFrom, type RunHold } from '@/work/item-display';
+import {
+  heldStepWords,
+  rejectionOf,
+  workingFrom,
+  type ListedWorkItem,
+  type RunHold,
+} from '@/work/item-display';
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
@@ -179,7 +185,7 @@ export function WorkItemCard({
   hold,
   refusedSkill,
 }: {
-  item: Doc<'workItems'>;
+  item: ListedWorkItem;
   surfaces: SurfaceRecord[];
   autonomousActions: boolean;
   /** The employee's name, for the sentences that say who does what next. */

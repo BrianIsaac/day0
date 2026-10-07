@@ -37,6 +37,18 @@ describe('the top of a work item', (): void => {
     expect(markup).toMatch(/Sara, in #revops-asks: <q [^>]*>Can you take this tier-2 question/);
   });
 
+  it('names the confirmed requester and shows the ask without its raw Slack mention (W13V-7)', (): void => {
+    const markup = head({
+      ...DRAWN.held,
+      requesterLabel: 'U0C78V6LAPP',
+      requesterName: 'Rowan Hale',
+      contentSummary: '<@U0C78V6LAPP> can you refresh the board?',
+    } as Doc<'workItems'>);
+    expect(markup).toMatch(/Rowan Hale, in #revops-asks: <q [^>]*>can you refresh the board\?/);
+    expect(markup).not.toContain('U0C78V6LAPP');
+    expect(markup).not.toContain('A Slack member');
+  });
+
   it('stamps who decided with its time, unless the landed line says it', (): void => {
     expect(head(DRAWN.landed)).toMatch(
       /approved from the day0 dashboard at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>\./,

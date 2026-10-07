@@ -11,7 +11,13 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import {
+  assertOwnsAgent,
+  assertOwnsWorkItem,
+  employeeOwnerScope,
+  getCallerOrThrow,
+} from './ownership';
+import { confirmedPersonOf } from './itemPeople';
 import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
@@ -147,7 +153,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import type { TicketHolderView } from '../src/work/item-display';
+import type { ListedWorkItem, TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -341,15 +347,45 @@ export async function assertSameAgent(
 /** Public, owner-guarded: every work item of one employee. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'workItems'>[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+  handler: async (ctx, args): Promise<ListedWorkItem[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const items = await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .collect();
+    return await withRequesterNames(ctx, agent, items);
   },
 });
+
+/**
+ * Each item with the name of the confirmed person its requester resolved to, where it resolved to
+ * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member").
+ * Each person is read once.
+ */
+async function withRequesterNames(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  items: readonly Doc<'workItems'>[],
+): Promise<ListedWorkItem[]> {
+  const scope = employeeOwnerScope(agent);
+  if (scope === undefined) return [...items];
+  const names = new Map<string, Promise<string | undefined>>();
+  const nameOf = (resolution: Doc<'workItems'>['requesterPerson']): Promise<string | undefined> => {
+    if (resolution?.kind !== 'person') return Promise.resolve(undefined);
+    const known = names.get(resolution.personId);
+    if (known !== undefined) return known;
+    const read = confirmedPersonOf(ctx, scope, resolution).then((person) => person?.displayName);
+    names.set(resolution.personId, read);
+    return read;
+  };
+  return await Promise.all(
+    items.map(async (item): Promise<ListedWorkItem> => {
+      const requesterName = await nameOf(item.requesterPerson);
+      return requesterName === undefined ? item : { ...item, requesterName };
+    }),
+  );
+}
 
 /** Public, owner-guarded: one work item. */
 export const get = query({
