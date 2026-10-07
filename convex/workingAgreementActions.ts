@@ -24,6 +24,21 @@ import { CHECK_RETRY_DELAYS_MS, type CheckInputs, type ProposalInputs } from './
  * agreement in mock mode, and no correction is kept there.
  */
 
+/** How long a kept agreement's check held by a pause waits before it asks again. */
+const HELD_CHECK_DELAY_MS = 10 * 60_000;
+
+/** Whether a step of the employee may start now (`workLoop.stepMayRun`): no pause holds it. */
+async function mayRun(ctx: ActionCtx, agentId: Id<'agents'>): Promise<boolean> {
+  const permission = await ctx.runQuery(internal.workLoop.stepPermission, { agentId });
+  if (!permission.mayRun) {
+    log.info('working agreements: held while the work is paused', {
+      agentId,
+      reason: permission.reason,
+    });
+  }
+  return permission.mayRun;
+}
+
 /** The owner's stored values for the exact layer, resolved once per action. */
 async function knownValuesOf(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
   return await ownerKnownValues(ctx, userId);
@@ -109,6 +124,9 @@ export const proposeFromCorrections = internalAction({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
+    // A paused employee, or the deployment's paused work, starts no model call (W13-R45); its
+    // corrections stay new for the run after the work resumes.
+    if (!(await mayRun(ctx, args.agentId))) return;
     const inputs = await ctx.runQuery(internal.workingAgreements.proposalInputs, {
       agentId: args.agentId,
     });
@@ -211,6 +229,16 @@ export const settleKept = internalAction({
   },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
+    // Held while the employee or the deployment's work is paused (W13-R45): asked again later,
+    // the attempt not spent, so the check runs once the work resumes.
+    if (!(await mayRun(ctx, args.agentId))) {
+      await ctx.scheduler.runAfter(
+        HELD_CHECK_DELAY_MS,
+        internal.workingAgreementActions.settleKept,
+        args,
+      );
+      return;
+    }
     const inputs = await ctx.runQuery(internal.workingAgreements.checkInputs, {
       agreementId: args.agreementId,
     });

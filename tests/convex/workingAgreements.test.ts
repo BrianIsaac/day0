@@ -495,6 +495,25 @@ describe('keeping an agreement on a card', (): void => {
     ).toEqual([]);
   });
 
+  it('asks no model while its employee is paused: the check waits, and so does the proposal run (W13-R45)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await proposal(harness, agentId);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+    recorded.model.length = 0;
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: false,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    await harness.action(internal.workingAgreementActions.proposeFromCorrections, { agentId });
+    expect(recorded.model).toEqual([]);
+    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'proposed' });
+    expect((await agreementsOf(harness))[0]?.approvedAt).toBeTypeOf('number');
+  });
+
   it('refuses to keep one for every employee of an owner with more employees than the check reads, and says so (W13-R28)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

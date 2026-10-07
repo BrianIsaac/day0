@@ -19,6 +19,9 @@ import {
   type PeopleExtractionResult,
 } from '../src/people/extraction';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { log } from '../src/lib/logger';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { stepHoldReason } from '../src/work/pause';
 
 /*
  * The documentation's people extraction (wave 13, 13-P; the wave file's section 5.2; A1, N20):
@@ -268,6 +271,16 @@ export const extractSource = internalAction({
     progress: v.optional(progressValidator),
   },
   handler: async (ctx, { progress, ...args }): Promise<ExtractionOutcome> => {
+    // The source is the owner's, not one employee's: only the deployment's pause holds it
+    // (W13-R45). Nothing is recorded, so the next completed generation extracts as usual.
+    const held = stepHoldReason(null, cronsPauseReason());
+    if (held !== undefined) {
+      log.info('the people extraction is held while scheduled work is paused', {
+        sourceId: args.sourceId,
+        reason: held,
+      });
+      return { applied: false, people: 0, reason: held };
+    }
     const startedAt = Date.now();
     try {
       if (progress !== undefined) return await extract(ctx, args, progress, startedAt);

@@ -255,4 +255,23 @@ describe('peopleExtractionActions.extractSource', (): void => {
     expect(people).toHaveLength(251);
     expect(people.every((person) => person.status === 'unverified')).toBe(true);
   });
+
+  it("starts no extraction while the deployment's scheduled work is paused, and records no failure (W13-R45)", async (): Promise<void> => {
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'maintenance window');
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const { sourceId, runId } = await seedGeneration(harness);
+      model.people = [DANA];
+      await expect(
+        harness.action(internal.peopleExtractionActions.extractSource, { sourceId, runId }),
+      ).resolves.toMatchObject({ applied: false, people: 0 });
+      expect(model.calls).toBe(0);
+      expect((await graphRows(harness)).people).toEqual([]);
+      const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+      expect(source?.lastPeopleExtractionError).toBeUndefined();
+      expect(source?.peopleExtractionSyncId).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
