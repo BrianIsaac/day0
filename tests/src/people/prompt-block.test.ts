@@ -179,6 +179,32 @@ describe('the People block', (): void => {
     );
   });
 
+  it("carries the escalation's scope, not the extraction's routing words around it (W13V-8)", (): void => {
+    const contact = (scope: string): string | undefined =>
+      peopleBlockLines({
+        people: [],
+        escalation: {
+          kind: 'person',
+          displayName: 'Mei Ling',
+          title: 'Close lead',
+          team: 'Finance',
+          scope,
+        },
+      }).at(-1);
+    expect(contact('questions about the Q3 close queue go to her')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for questions about the Q3 close queue; anything else, the manager.',
+    );
+    expect(contact('Q3 close questions should go to Mei Ling')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for Q3 close questions; anything else, the manager.',
+    );
+    expect(contact('anything about the ledger goes to her first')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for anything about the ledger; anything else, the manager.',
+    );
+    expect(contact('a good-to-go checklist')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for a good-to-go checklist; anything else, the manager.',
+    );
+  });
+
   it('heads the planner section with its own heading', (): void => {
     expect(PEOPLE_HEADING).toBe('--- People ---');
   });

@@ -145,10 +145,19 @@ function midSentence(clause: string): string {
  */
 const CLAUSE_END = /[.!?](?=\s+[A-Z])|;|\s[-\u2013\u2014]\s/;
 
+/**
+ * The routing words an extraction leaves after a scope ("questions about the Q3 close queue go to
+ * her", "should go to Mei Ling"): the line names the person already, so only the scope is kept
+ * (W13V-8).
+ */
+const ROUTED_TO =
+  /\s+(?:should\s+|must\s+|can\s+|will\s+)?(?:go(?:es)?|be\s+(?:sent|routed|directed)|(?:is|are)\s+(?:sent|routed|directed))\s+to\s+\S.*$/i;
+
 /** The first clause of a scope, cut at a word when still long, with no identity in it. */
 function oneClause(scope: string): string {
   const clean = withoutIdentities(scope);
-  const clause = midSentence((clean.split(CLAUSE_END)[0] ?? '').replace(/[\s,.:]+$/, ''));
+  const first = (clean.split(CLAUSE_END)[0] ?? '').replace(ROUTED_TO, '');
+  const clause = midSentence(first.replace(/[\s,.:]+$/, ''));
   return bounded(clause, SCOPE_MAX_CHARS);
 }
 
