@@ -36,6 +36,7 @@ const actions: SurfaceCardActions = {
   provision: (): void => undefined,
   landSocketToken: (): void => undefined,
   confirmMessagesTab: (): void => undefined,
+  forgetApp: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,
@@ -897,9 +898,11 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain("through IT's connection");
       expect(fact(markup, 'Acts as')).toBe('nobody');
       expect(markup).toContain("Maya's own app is not installed again");
+      // Re-pinned for 13-S: forgetting the app is the way on (13-FS's design 2 (b)).
       expect(markup).toContain(
-        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Maya a new app.",
+        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings.",
       );
+      expect(markup).toMatch(/<button[^>]*>Forget this app<\/button>/);
       expect(markup).toContain('Nothing is read or sent through this card.');
       expect(markup).not.toMatch(/Renew for/);
       expect(chip(markup)).toBe('Ended');
@@ -912,6 +915,12 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain('Typed code');
       expect(markup).not.toContain('app-level token');
     }
+    expect(revoked).toContain(
+      'Forget this app to give Maya a new one: once IT connects Slack again, Connect creates it.',
+    );
+    expect(reconnected).toContain(
+      "Forget this app, and Connect then creates Maya a new one through IT's Slack connection.",
+    );
     // Re-pinned for 13-FS: the reason is IT's whether or not Slack is connected again, and the
     // card offers no check that could only overwrite it.
     for (const markup of [revoked, reconnected]) {

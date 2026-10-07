@@ -4,13 +4,18 @@ import type { Doc, Id } from './_generated/dataModel';
 import {
   internalMutation,
   internalQuery,
+  mutation,
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
 import { appendConnectionEvent } from './connectionEvents';
+import { purgeAppLevelToken, purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
+import { endedByItsRevoke } from './organisationConnectionReads';
+import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { recordAppTakesMessages } from './slackMessagesTab';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
+import { assertRealMode } from '../src/lib/surface-mode';
 import type {
   OrganisationConfigurationUsedPayload,
   SlackConfigurationMethod,
@@ -440,6 +445,70 @@ export const recordInstallLink = internalMutation({
         appName: surface.provisioning.appName,
       },
       createdAt: args.now,
+    });
+    return null;
+  },
+});
+
+/** Why Forget this app is refused: the card's own app is not one IT's revoke ended. */
+export const FORGET_NOT_ENDED =
+  "This card's own Slack app is not one IT's revoke ended, so there is nothing to forget.";
+
+/**
+ * Forget the employee's own Slack app that IT's revoke ended (W12X-4; 13-FS's design 2, option
+ * (b), the operator's "recommended decisions" of 6 October), so the card offers Connect and
+ * `provisionApp` creates a new app through IT's new connection. Day0 cannot delete the old app:
+ * `apps.manifest.delete` needs the configuration token of the connection that created it, which IT
+ * revoked, so IT deletes it in Slack's app settings, and the record says so by the app's id and
+ * name, the one pointer left to it once the card forgets it.
+ *
+ * Public, owner-guarded, real mode only; the manager's control on such a card. Writes the card
+ * (its app and what the old app's bot answered: its identity, its DM with the manager and the
+ * channels it was not in), purges the app's client secret and app-level token, which nothing can
+ * use, and appends `surface.app-forgotten`.
+ *
+ * @throws ConvexError with {@link FORGET_NOT_ENDED} when the card's app is not one IT's revoke
+ *   ended.
+ */
+export const forgetEndedApp = mutation({
+  args: { surfaceId: v.id('surfaces') },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await getCallerOrThrow(ctx);
+    const surface = await ctx.db.get(args.surfaceId);
+    if (surface === null) throw new ConvexError('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    assertRealMode('Forgetting an app');
+    const app = surface.provisioning;
+    if (app === undefined || (await endedByItsRevoke(ctx, surface)) !== 'kept-app-ended') {
+      throw new ConvexError(FORGET_NOT_ENDED);
+    }
+    const now = Date.now();
+    const secret = await ctx.db.get(app.clientSecretCredentialId);
+    if (secret !== null) await purgeCredential(ctx, secret, now);
+    await purgeAppLevelToken(ctx, app.appLevelTokenCredentialId, now);
+    await ctx.db.patch(surface._id, {
+      provisioning: undefined,
+      // The old bot's: the new app has its own identity and its own DM, which its probe reads.
+      providerIdentityId: undefined,
+      providerBotId: undefined,
+      managerDmChannelId: undefined,
+      channelsNotJoined: undefined,
+      lastDecisionPolledAt: undefined,
+      lastDecisionError: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.app-forgotten',
+      payload: {
+        surfaceId: surface._id,
+        appId: app.appId,
+        appName: app.appName,
+        ...(app.organisationConnectionId === undefined
+          ? {}
+          : { organisationConnectionId: app.organisationConnectionId }),
+      },
+      createdAt: now,
     });
     return null;
   },

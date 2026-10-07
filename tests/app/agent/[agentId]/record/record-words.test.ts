@@ -89,6 +89,20 @@ describe('recordWords', (): void => {
     },
   );
 
+  it("names the app the manager forgot after IT's revoke, and that IT deletes it (13-S)", (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.app-forgotten',
+          payload: { surfaceId: 's1', appId: 'A0LEO', appName: 'Leo (Day0)' },
+        },
+        { name: 'Leo', connection: 'Slack' },
+      ),
+    ).toBe(
+      "You forgot Leo (Day0), Leo's own app on the Slack connection, which IT's revoke had ended, so Day0 can create a new one; IT deletes the old app in Slack's app settings, which Day0 cannot.",
+    );
+  });
+
   it('names the employee, addresses the manager and quotes the item', (): void => {
     expect(
       recordWords(

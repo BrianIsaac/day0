@@ -112,6 +112,7 @@ export function SurfaceCards({
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const landAppLevelToken = useAction(api.slackSocketActions.landAppLevelToken);
   const confirmMessagesTab = useMutation(api.slackMessagesTab.confirmMessagesTab);
+  const forgetEndedApp = useMutation(api.slackProvision.forgetEndedApp);
   const connectLinear = useAction(api.linearIdentityActions.connect);
   const authoriseMcp = useAction(api.mcpOauthActions.startAuthorisation);
   const disconnect = useMutation(api.surfaces.disconnect);
@@ -306,6 +307,11 @@ export function SurfaceCards({
         operate('messages-tab', surface, () => confirmMessagesTab({ surfaceId: surface._id }), {
           done: `Recorded: ${surface.provisioning?.appName ?? 'the app'} takes messages, so new requests to you through ${surface.displayName} offer the typed code.`,
           refused: 'Nothing was recorded.',
+        }),
+      forgetApp: () =>
+        operate('forget', surface, () => forgetEndedApp({ surfaceId: surface._id }), {
+          done: `${surface.provisioning?.appName ?? 'The app'} is forgotten. IT deletes it in Slack's app settings; Connect creates ${employeeName}'s new app through IT's Slack connection.`,
+          refused: 'The app was not forgotten.',
         }),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),
       approveTools: (tools) => approveTools({ surfaceId: surface._id, tools }),

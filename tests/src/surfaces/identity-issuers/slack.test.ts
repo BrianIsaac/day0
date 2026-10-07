@@ -266,10 +266,13 @@ describe('an app whose creating connection IT revoked (R41X-9)', (): void => {
     expect(SLACK_RETIRE_ORPHANED_APP).toContain("delete it in Slack's app settings");
     expect(KEPT_APP_CONNECTION_REVOKED).not.toMatch(/retire the app/i);
     expect(KEPT_APP_CONNECTION_REVOKED).not.toMatch(/Once IT connects Slack again, retire/);
+    // Re-pinned for 13-S: the refusal names the card's Forget, the way to a new app (13-FS's
+    // design 2 (b)); it still promises no retire.
     expect(KEPT_APP_CONNECTION_REVOKED).toBe(
       "IT revoked the organisation's Slack connection this employee's app was created with, so " +
         'the app is not installed again, and Day0 cannot delete it, even once IT connects Slack ' +
-        "again: IT deletes it in Slack's app settings.",
+        "again: IT deletes it in Slack's app settings. Forget the app on the card for Day0 to " +
+        'create a new one.',
     );
   });
 });

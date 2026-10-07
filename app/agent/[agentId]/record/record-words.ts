@@ -863,6 +863,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Finding a way to reach ${subject.connection ?? 'a system'} went on after the pause`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
+  'surface.app-forgotten': (p, subject) => {
+    const ownApp = `${subject.name}'s own app on ${connectionOf(subject)}`;
+    const app = text(p.appName);
+    return `${decider(subject)} forgot ${app === undefined ? ownApp : `${app}, ${ownApp}`}, which IT's revoke had ended, so Day0 can create a new one; IT deletes the old app in Slack's app settings, which Day0 cannot`;
+  },
   'surface.socket-token-landed': (p, subject) =>
     `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,
   'surface.app-messages-open': (p, subject) => messagesOpenWords(p, subject),

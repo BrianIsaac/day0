@@ -3,13 +3,14 @@
 import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { CARD_HAS_APP, SPENT_REFRESH_REASON } from '../../convex/slackProvision';
+import { CARD_HAS_APP, FORGET_NOT_ENDED, SPENT_REFRESH_REASON } from '../../convex/slackProvision';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /*
  * The transactions of Slack's identity issuer (11-AS): the rotation-safe write of the kept
@@ -393,5 +394,143 @@ describe('the app a card is given', (): void => {
         now: Date.now(),
       }),
     ).rejects.toThrow("The card's app changed");
+  });
+});
+
+describe("forgetting an app IT's revoke ended (W12X-4; 13-FS's design 2 (b))", (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /**
+   * An approved Slack card whose own app, with its client secret and app-level token, was created
+   * through a connection in the given state, holding no credential as IT's revoke left it.
+   */
+  async function endedCard(
+    harness: Harness,
+    status: 'active' | 'revoked',
+  ): Promise<{
+    surfaceId: Id<'surfaces'>;
+    secretId: Id<'credentials'>;
+    tokenId: Id<'credentials'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Leo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const organisationConnectionId = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: ['chat:write'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status,
+        createdAt: 1,
+      });
+      const held = async (label: string) =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'oauth',
+          label,
+          ciphertext: 'ciphertext',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+        });
+      const secretId = await held('Leo (Day0) client secret');
+      const tokenId = await held('Leo (Day0) app-level token');
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        managerApprovedAt: 2,
+        credentialLanded: false,
+        organisationConnectionId,
+        providerIdentityId: 'U0LEOBOT',
+        providerBotId: 'B0LEO',
+        managerDmChannelId: 'D0LEO',
+        channelsNotJoined: ['#revops'],
+        provisioning: {
+          appId: 'A0LEO',
+          appName: 'Leo (Day0)',
+          clientId: '1.2',
+          clientSecretCredentialId: secretId,
+          appLevelTokenCredentialId: tokenId,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.example/api/oauth/slack',
+          scopes: ['chat:write'],
+          createdAt: 1,
+          installedAt: 2,
+          organisationConnectionId,
+        },
+        createdAt: 1,
+      });
+      return { surfaceId, secretId, tokenId };
+    });
+  }
+
+  it("forgets the app with the old bot's identity, its DM and channels, and purges both its secrets", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const card = await endedCard(harness, 'revoked');
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId });
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(card.surfaceId));
+    expect(row).toMatchObject({ verdict: 'approved', managerApprovedAt: 2 });
+    for (const field of [
+      'provisioning',
+      'providerIdentityId',
+      'providerBotId',
+      'managerDmChannelId',
+      'channelsNotJoined',
+    ] as const) {
+      expect(row?.[field]).toBeUndefined();
+    }
+    for (const id of [card.secretId, card.tokenId]) {
+      const secret = await harness.run(async (ctx) => await ctx.db.get(id));
+      expect(secret).toMatchObject({ revokedAt: expect.any(Number) });
+      expect(secret?.ciphertext).toBeUndefined();
+      expect(secret?.iv).toBeUndefined();
+    }
+  });
+
+  it('refuses an app whose connection IT has not revoked, and changes nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const card = await endedCard(harness, 'active');
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId }),
+    ).rejects.toThrow(FORGET_NOT_ENDED);
+    const row = await harness.run(async (ctx) => await ctx.db.get(card.surfaceId));
+    expect(row?.provisioning?.appId).toBe('A0LEO');
+  });
+
+  it('is refused in mock mode, where the page drives every step', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const card = await endedCard(harness, 'revoked');
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId }),
+    ).rejects.toThrow('Forgetting an app is a local real-mode');
+    const row = await harness.run(async (ctx) => await ctx.db.get(card.surfaceId));
+    expect(row?.provisioning?.appId).toBe('A0LEO');
   });
 });

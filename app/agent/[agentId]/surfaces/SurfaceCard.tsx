@@ -115,7 +115,8 @@ export interface Operation {
     | 'provision'
     | 'reject'
     | 'socket-token'
-    | 'messages-tab';
+    | 'messages-tab'
+    | 'forget';
   readonly surfaceId: string;
 }
 
@@ -177,6 +178,8 @@ export interface SurfaceCardActions {
   readonly landSocketToken: (token: string) => void;
   /** Say a person turned on the messages tab of the employee's own Slack app (W12V-7). */
   readonly confirmMessagesTab: () => void;
+  /** Forget the employee's own Slack app IT's revoke ended, so a new one can be made (W12X-4). */
+  readonly forgetApp: () => void;
   readonly setDays: (days: number) => Promise<Renewed>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
   /** Connect through the organisation's connection, where the card's system has an issuer. */
@@ -563,10 +566,12 @@ export function SurfaceCard({
         surface.managerApprovedAt !== undefined &&
         provisioningPresentation.stage !== 'installed' ? (
           <ProvisioningRow
-            error={failed('provision')}
+            error={failed('provision') ?? failed('forget')}
             onProvision={actions.provision}
+            onForget={actions.forgetApp}
             presentation={provisioningPresentation}
             provisioning={pending === 'provision'}
+            forgetting={pending === 'forget'}
             surfaceSlug={surface.slug}
           />
         ) : null}

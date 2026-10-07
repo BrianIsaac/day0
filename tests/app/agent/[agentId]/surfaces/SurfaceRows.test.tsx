@@ -220,6 +220,26 @@ describe('ProvisioningRow', (): void => {
     expect(markup).not.toContain('type="password"');
   });
 
+  it("offers Forget this app only on an app IT's revoke ended (W12X-4, design 2 (b))", (): void => {
+    const ended = presentProvisioning({
+      hasPublicUrl: true,
+      provisioning: { appId: 'A1', appName: 'Leo (Day0)', installUrl: 'u', installedAt: 1 },
+      credentialHeld: false,
+      keptAppNotReinstalled: true,
+      employee: 'Leo',
+    });
+    const forget = /<button[^>]*>Forget this app<\/button>/;
+    expect(renderProvisioningRow(ended, { onForget: (): void => undefined })).toMatch(forget);
+    expect(
+      renderProvisioningRow(ended, { onForget: (): void => undefined, forgetting: true }),
+    ).toContain('Forgetting the app…');
+    const offered = presentProvisioning({
+      credential: { found: 'none', method: 'oauth' },
+      hasPublicUrl: true,
+    });
+    expect(renderProvisioningRow(offered, { onForget: (): void => undefined })).not.toMatch(forget);
+  });
+
   it('reports the dedicated identity once the install has landed', (): void => {
     const markup = renderProvisioningRow(
       presentProvisioning({

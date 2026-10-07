@@ -42,6 +42,7 @@ const actions: SurfaceCardActions = {
   provision: (): void => undefined,
   landSocketToken: (): void => undefined,
   confirmMessagesTab: (): void => undefined,
+  forgetApp: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,

@@ -106,6 +106,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'surface.orientation-held': NONE,
   'surface.orientation-resumed': NONE,
   'surface.app-provisioned': NONE,
+  'surface.app-forgotten': DECISIONS,
   'surface.socket-token-landed': NONE,
   'surface.app-messages-open': NONE,
   'surface.install-failed': NONE,

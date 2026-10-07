@@ -394,16 +394,34 @@ describe('the dedicated-app procedure on the card', (): void => {
         offerProvisioning: false,
         asksForConfigurationToken: false,
         title: "Leo's own app is not installed again",
-        note: "Leo's own app, Leo (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Leo a new app.",
+        // Re-pinned for 13-S: forgetting the app is the way on (13-FS's design 2 (b)), where the
+        // note said connecting Slack again gave Leo no new app.
+        note: "Leo's own app, Leo (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Forget this app to give Leo a new one: once IT connects Slack again, Connect creates it.",
       });
       expect(shown.installUrl).toBeUndefined();
     }
   });
 
-  it('points the fallback field at no control on a card whose own app is not installed again (W12X-4)', (): void => {
+  it("says Connect then creates the new app where IT's Slack connection is active again (design 2 (b))", (): void => {
+    const shown = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: { appId: 'A1', appName: 'Leo (Day0)', installUrl: 'u', installedAt: 1 },
+      credentialHeld: false,
+      keptAppNotReinstalled: true,
+      organisationConnected: true,
+      employee: 'Leo',
+    });
+    expect(shown.stage).toBe('not-reinstalled');
+    expect(shown.note).toContain(
+      "IT deletes it in Slack's app settings. Forget this app, and Connect then creates Leo a new one through IT's Slack connection.",
+    );
+  });
+
+  it('points the fallback field at the forget above on a card whose own app is not installed again (W12X-4, re-pinned for 13-S)', (): void => {
     const shown = presentSurfaceCredential({ credential: oauth, keptAppNotReinstalled: true });
     expect(shown.landingNote).toBe(NOT_REINSTALLED_FALLBACK_NOTE);
-    expect(shown.landingNote).not.toContain('the control above');
+    expect(shown.landingNote).toContain('only once you forget the old one above');
     expect(presentSurfaceCredential({ credential: oauth }).landingNote).toBe(OAUTH_FALLBACK_NOTE);
   });
 
