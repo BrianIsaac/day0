@@ -266,9 +266,12 @@ async function proposeEdges(
 }
 
 /**
- * Merge a proposal into a person the graph holds, as evidence: the new words, an address, title or
- * team the person has none of, identities nobody holds, and the edges it implies as proposals. A
- * fact the manager confirmed is never changed by it.
+ * Merge a proposal into a person the graph holds, as evidence: the new words, identities nobody
+ * holds, the edges it implies as proposals, and, while the person still waits on Confirm, an
+ * address, title or team it has none of. A person the manager confirmed (active, or inactive
+ * since) keeps the address, title and team as confirmed: a source never writes one, even where the
+ * person has none (W13-R3), since the People block prints them to the planner and the executor;
+ * the source's words stay as evidence.
  */
 async function mergeProposal(
   ctx: MutationCtx,
@@ -279,15 +282,18 @@ async function mergeProposal(
   now: number,
 ): Promise<void> {
   const address = normaliseManagerAddress(proposal.email);
+  const fills = person.status === 'unverified';
   await ctx.db.patch(person._id, {
     evidence: withEvidence(person.evidence, proposal.evidence),
-    ...(person.primaryEmail === undefined && address !== undefined
+    ...(fills && person.primaryEmail === undefined && address !== undefined
       ? { primaryEmail: address }
       : {}),
-    ...(person.title === undefined && proposal.title !== undefined
+    ...(fills && person.title === undefined && proposal.title !== undefined
       ? { title: proposal.title }
       : {}),
-    ...(person.team === undefined && proposal.team !== undefined ? { team: proposal.team } : {}),
+    ...(fills && person.team === undefined && proposal.team !== undefined
+      ? { team: proposal.team }
+      : {}),
     updatedAt: now,
   });
   await addIdentities(ctx, scope, person._id, proposal.identities, origin, now);
