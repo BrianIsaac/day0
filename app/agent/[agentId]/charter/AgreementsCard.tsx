@@ -10,6 +10,9 @@ import {
   awaitingManager,
   bindingWords,
   checkingLine,
+  checkStale,
+  checkUnavailableLine,
+  CHECKING_AGAIN,
   NOT_KEPT,
   quotedSentence,
   REFUSED_WITHOUT_REASON,
@@ -22,7 +25,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
-import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
+import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
 import { INLINE_LINK } from './CharterDocument';
 
@@ -32,6 +35,8 @@ export interface AgreementCalls {
   readonly onEdit: (agreementId: AgreementView['_id'], statement: string) => Promise<unknown>;
   readonly onRetire: (agreementId: AgreementView['_id']) => Promise<unknown>;
   readonly onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
+  /** Try a kept agreement's check again once it is stale (W13-R30). */
+  readonly onRecheck: (agreementId: AgreementView['_id']) => Promise<unknown>;
 }
 
 /**
@@ -121,6 +126,7 @@ export function AgreementsCard({
   onEdit,
   onRetire,
   onDismiss,
+  onRecheck,
 }: {
   agreements: readonly AgreementView[];
   employeeName: string;
@@ -128,6 +134,7 @@ export function AgreementsCard({
   workHref: string;
 } & AgreementCalls) {
   const zone = useAgentZone();
+  const now = useNow();
   const card = useRef<HTMLElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const change = useChange(card);
@@ -240,8 +247,27 @@ export function AgreementsCard({
               key={row._id}
               className="p-3 rounded-md border border-[var(--color-border)] text-sm text-[var(--color-fg-2)]"
             >
-              <p>{checkingLine(row.statement, 'charter')}</p>
+              <p>
+                {checkStale(row, now)
+                  ? checkUnavailableLine(row.statement)
+                  : checkingLine(row.statement, 'charter')}
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
+                {checkStale(row, now) ? (
+                  <Button
+                    size="small"
+                    disabled={change.busy}
+                    aria-label={`Try the check of “${row.statement}” again`}
+                    onClick={() =>
+                      change.run(() => onRecheck(row._id), {
+                        done: CHECKING_AGAIN,
+                        refused: 'The check was not tried again.',
+                      })
+                    }
+                  >
+                    Try again
+                  </Button>
+                ) : null}
                 <Button
                   variant="quiet"
                   size="small"

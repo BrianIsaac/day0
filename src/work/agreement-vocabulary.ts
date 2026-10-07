@@ -89,6 +89,20 @@ export type AgreementKeepRefusalReason = (typeof AGREEMENT_KEEP_REFUSAL_REASONS)
 export type AgreementRowRefusalReason = AgreementRefusalReason | AgreementKeepRefusalReason;
 
 /**
+ * The waits between the tries of an agreement's check that could not be had; after the last, the
+ * employee's next proposal run tries it again.
+ */
+export const CHECK_RETRY_DELAYS_MS: readonly number[] = [30_000, 120_000, 600_000];
+
+/**
+ * How long a kept agreement may wait on its check before it is stale: the next proposal run checks
+ * it again, and its card says the check could not be had and offers Try again (W13-R30). The
+ * retries' delays summed, with room for the last check.
+ */
+export const CHECK_STALE_MS =
+  CHECK_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0) + 5 * 60_000;
+
+/**
  * How many employees' charters the check of an agreement for every employee reads: an owner with
  * more is refused such an agreement (W13-R28).
  */

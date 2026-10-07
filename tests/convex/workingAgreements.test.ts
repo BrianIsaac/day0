@@ -1199,3 +1199,41 @@ describe('selection for a candidate', (): void => {
     expect(await statementsFor({})).toEqual([]);
   });
 });
+
+describe('a kept agreement whose check could not be had (14-FX, W13-R30)', (): void => {
+  it('checks it again on Try again, and refuses one no longer waiting on its check', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          agentId,
+          kind: 'preference',
+          statement: NO_EMAIL,
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'proposed',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    recorded.model.length = 0;
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.recheck, { agreementId, agentId });
+    await drain(harness);
+    expect(promptsOf('day0-agreement-refusal')).toHaveLength(1);
+    expect((await agreementsOf(harness))[0]?.status).toBe('active');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.recheck, { agreementId, agentId }),
+    ).rejects.toMatchObject({ data: 'This working agreement has changed since this page loaded.' });
+    await expect(
+      harness
+        .withIdentity(STRANGER)
+        .mutation(api.workingAgreements.recheck, { agreementId, agentId }),
+    ).rejects.toThrow();
+  });
+});

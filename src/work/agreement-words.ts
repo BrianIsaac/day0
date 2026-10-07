@@ -6,6 +6,7 @@
 
 import type { Id } from '../../convex/_generated/dataModel';
 import {
+  CHECK_STALE_MS,
   EMPLOYEES_CHECKED,
   type AgreementRowRefusalReason,
   type AgreementSourceType,
@@ -91,6 +92,9 @@ export function everyEmployeeTooMany(name: string): string {
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
 
+/** The live region once a stale check is tried again (W13-R30, wording draft). */
+export const CHECKING_AGAIN = 'Day0 is checking it again.';
+
 /** The live region once a kept agreement waiting on its check is withdrawn. */
 export const WITHDRAWN = 'Withdrawn: it will not take effect.';
 
@@ -144,6 +148,29 @@ export function checkingLine(statement: string, place: AgreementPlace): string {
       ? 'once it passes it is on the Charter tab'
       : 'it takes effect once the check passes';
   return `Kept. Day0 is checking “${statement}” against the charter; ${then}.`;
+}
+
+/**
+ * Whether a kept agreement's check has waited past its tries (W13-R30): its card then says the
+ * check could not be had and offers Try again beside Withdraw.
+ *
+ * @param row - The agreement.
+ * @param now - The page's clock.
+ */
+export function checkStale(
+  row: Pick<AgreementView, 'status' | 'approvedAt'>,
+  now: number,
+): boolean {
+  return awaitingCheck(row) && now - (row.approvedAt ?? now) > CHECK_STALE_MS;
+}
+
+/**
+ * The line of a kept agreement whose check could not be had (W13-R30, wording draft).
+ *
+ * @param statement - The agreement's words.
+ */
+export function checkUnavailableLine(statement: string): string {
+  return `Kept, but Day0 could not check “${statement}” against the charter yet, so it is not in effect. Try again, or withdraw it.`;
 }
 
 /**

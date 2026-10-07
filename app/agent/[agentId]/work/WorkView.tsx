@@ -53,6 +53,7 @@ export function WorkView() {
   const agreements = useQuery(api.workingAgreements.listForAgent, real ? { agentId } : 'skip');
   const keepAgreement = useMutation(api.workingAgreements.keep);
   const dismissAgreement = useMutation(api.workingAgreements.dismiss);
+  const recheckAgreement = useMutation(api.workingAgreements.recheck);
   // The inbox's own read, which the shell already holds: the Needs you filter is its rule set.
   const inbox = useQuery(api.work.needsYouForAgent, { agentId });
   const needsYou = useMemo(() => needsYouItemIds(inbox?.entries ?? []), [inbox]);
@@ -74,6 +75,7 @@ export function WorkView() {
                 keepAgreement({ agreementId, agentId, forEveryEmployee, via: 'promotion-card' })
               }
               onDismiss={(agreementId) => dismissAgreement({ agreementId, agentId })}
+              onRecheck={(agreementId) => recheckAgreement({ agreementId, agentId })}
             />
           ) : null}
           {real ? (

@@ -14,7 +14,8 @@ import {
   type CheckedStatement,
 } from '../src/work/agreement-judgements';
 import type { CharterBounds } from '../src/work/agreements';
-import { CHECK_RETRY_DELAYS_MS, type CheckInputs, type ProposalInputs } from './workingAgreements';
+import { CHECK_RETRY_DELAYS_MS } from '../src/work/agreement-vocabulary';
+import type { CheckInputs, ProposalInputs } from './workingAgreements';
 
 /*
  * The model passes of working agreements (wave 13, 13-W; F10 and F11): the proposal run over an

@@ -7,6 +7,9 @@ import {
   awaitingCheck,
   awaitingManager,
   checkingLine,
+  checkStale,
+  checkUnavailableLine,
+  CHECKING_AGAIN,
   NOT_KEPT,
   PROPOSALS_DONE,
   PROPOSALS_TITLE,
@@ -21,7 +24,7 @@ import { Button, ButtonLink } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { useChange } from '../../components/use-change';
 import { StatusRegion } from '../../components/StatusRegion';
-import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../components/time';
+import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../components/time';
 
 /**
  * The manager's corrections on the employee's dashboard: what was kept, from
@@ -247,6 +250,7 @@ export function AgreementProposals({
   charterHref,
   onKeep,
   onDismiss,
+  onRecheck,
 }: {
   agreements: readonly AgreementView[];
   employeeName: string;
@@ -254,7 +258,10 @@ export function AgreementProposals({
   charterHref: string;
   onKeep: (agreementId: AgreementView['_id'], forEveryEmployee: boolean) => Promise<unknown>;
   onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
+  /** Try a kept agreement's check again once it is stale (W13-R30). */
+  onRecheck: (agreementId: AgreementView['_id']) => Promise<unknown>;
 }) {
+  const now = useNow();
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
   const id = useId();
@@ -334,9 +341,27 @@ export function AgreementProposals({
                 ) : awaitingCheck(row) ? (
                   <>
                     <p className="text-[var(--color-fg-2)]">
-                      {checkingLine(row.statement, 'work')}
+                      {checkStale(row, now)
+                        ? checkUnavailableLine(row.statement)
+                        : checkingLine(row.statement, 'work')}
                     </p>
                     <div className={ROW_ACTIONS}>
+                      {checkStale(row, now) ? (
+                        <Button
+                          size="small"
+                          disabled={change.busy}
+                          aria-label={`Try the check of “${row.statement}” again`}
+                          className={ROW_BUTTON}
+                          onClick={() =>
+                            change.run(() => onRecheck(row._id), {
+                              done: CHECKING_AGAIN,
+                              refused: 'The check was not tried again.',
+                            })
+                          }
+                        >
+                          Try again
+                        </Button>
+                      ) : null}
                       <Button
                         variant="quiet"
                         size="small"

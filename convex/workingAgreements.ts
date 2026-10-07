@@ -27,6 +27,7 @@ import {
   AGREEMENT_KEEP_REFUSAL_REASONS,
   AGREEMENT_REFUSAL_REASONS,
   AGREEMENT_STATEMENT_LIMIT,
+  CHECK_STALE_MS,
   EMPLOYEES_CHECKED,
   type AgreementApprovedVia,
   type AgreementStatus,
@@ -54,16 +55,6 @@ const CHARTER_VERSIONS = 50;
 
 /** The most of an employee's active corrections the sameness judgement reads, newest first. */
 export const CORRECTIONS_JUDGED = 20;
-
-/**
- * How long after the last retry a kept agreement whose check never answered is checked again, at
- * the employee's next proposal run: the retries' delays summed, with room for the last check.
- */
-export const CHECK_RETRY_DELAYS_MS: readonly number[] = [30_000, 120_000, 600_000];
-
-/** How long a kept agreement may wait on its check before the next proposal run checks it again. */
-export const CHECK_STALE_MS =
-  CHECK_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0) + 5 * 60_000;
 
 /** The refusal when an agreement is not in a standing the asked change applies to. */
 export const AGREEMENT_MOVED_ON = 'This working agreement has changed since this page loaded.';
@@ -1188,6 +1179,21 @@ export const dismiss = mutation({
       },
       createdAt: Date.now(),
     });
+    return { ok: true };
+  },
+});
+
+/**
+ * Try the check of a kept agreement again from a card (W13-R30): one whose check could not be had,
+ * whose card says so once it is stale. Public, guarded by `assertOwnsAgreement` first and the
+ * card's employee after; refused for one no longer waiting on its check. Schedules the check.
+ */
+export const recheck = mutation({
+  args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+    if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
+    await scheduleCheck(ctx, agreement._id, args.agentId);
     return { ok: true };
   },
 });
