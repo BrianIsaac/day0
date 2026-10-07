@@ -515,6 +515,9 @@ function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]):
   return ofKind;
 }
 
+/** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
+const ISSUE_KEY = /^[a-z]+-\d+$/;
+
 /**
  * Whether a sentence reports writes its own set made before it, every value it gives carried by
  * them, the ledger or the item: the set lands together, and the apply holds the message back
@@ -533,9 +536,15 @@ function reportsOwnWrites(
   const carried = new Set(
     reported.flatMap((action) => distinctiveTokens(writeOf(action)?.text ?? '')),
   );
+  // The item vouches here only for a key that names it (REVOPS-6), never for a figure: a figure
+  // the item asks for is not one the write reported (W13-R44: the item's "74%" let a report of
+  // 74% stand over a post that carried 68%). The item vouches for a figure only through
+  // `repeatsTheItem`, a report the item itself makes.
   return tokens.every(
     (token) =>
-      carried.has(token) || prepared.ledgerTokens.has(token) || prepared.itemTokens.has(token),
+      carried.has(token) ||
+      prepared.ledgerTokens.has(token) ||
+      (ISSUE_KEY.test(token) && prepared.itemTokens.has(token)),
   );
 }
 
