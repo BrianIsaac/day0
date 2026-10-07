@@ -1985,6 +1985,24 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     // The close approved on its card: the set was approved whole.
     const whole = computeAgentMetrics([...first, approved([2], [], 9_000)], [], []);
     expect(whole.decisions).toMatchObject({ approved: 1, rejected: 0, partiallyApproved: 0 });
+    // The run rejected on the card instead: the rest of the same decision, approved in part.
+    const rejectedOnCard = computeAgentMetrics(
+      [
+        ...first,
+        event(
+          'work.actions-rejected',
+          { workItemId: 'wi', reason: 'Not this close.', decidedVia: 'dashboard' },
+          9_000,
+        ),
+      ],
+      [],
+      [],
+    );
+    expect(rejectedOnCard.decisions).toMatchObject({
+      approved: 1,
+      rejected: 0,
+      partiallyApproved: 1,
+    });
   });
 
   it('dates Working from a write the employee applied on its own when it came first, never a message to the manager (walk m12)', (): void => {

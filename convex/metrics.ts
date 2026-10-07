@@ -382,12 +382,16 @@ function decisionTotals(
     const request = queue.shift();
     pending.set(key, queue);
     const earlier = result.kind === 'actions' ? leftForCard.get(result.workItemId) : undefined;
-    if (earlier !== undefined && earlier.runId === asString(payload?.runId)) {
+    // The card's decision on the close an approval left: an approval of the same run, or the run
+    // rejected on the card (its event names no run, and only the close is left to decide). It
+    // adds no decision and no latency of its own: the wait was for the one decision already timed.
+    const rejectedOnCard = isEventOf(event, 'work.actions-rejected');
+    if (earlier !== undefined && (rejectedOnCard || earlier.runId === asString(payload?.runId))) {
       leftForCard.delete(result.workItemId);
       waitingSince.delete(key);
       const askId = asString(asRecord(request?.payload)?.decisionId);
       if (askId) resultIds.add(askId);
-      if (!earlier.partial && asIndexes(payload?.rejectedIndexes).length > 0) {
+      if (!earlier.partial && (rejectedOnCard || asIndexes(payload?.rejectedIndexes).length > 0)) {
         totals.partiallyApproved += 1;
       }
       continue;
