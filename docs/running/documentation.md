@@ -12,6 +12,17 @@ documented-API example is checked that way once day0 reads that grammar.
 
 - A folder or git source reads every `.md` file under it. Other files, images included, are
   skipped.
+- A git source is a repository on GitHub or GitLab, or on a host the operator lists:
+  `DAY0_GIT_HOSTS` for another public code host, such as `gitee.com`, the JiHu host
+  `jihulab.com` or the company's own, and `DAY0_PRIVATE_HOSTS` for a host inside the company's
+  network. A listed git host is cloned at the address it resolves to when checked, and listing it
+  in `DAY0_GIT_HOSTS` never makes it a private host. A repository on a host on neither list is
+  refused. A host other than GitHub or GitLab can only be cloned, which needs a `git` binary in
+  the backend: the stock backend image has none, and the source's status says so.
+- A Feishu or Lark source reads a wiki space, or a Drive folder and the folders under it, as the
+  company's own app: every new-style document as Markdown, and every sheet, base, mind note or
+  file named as not read. How IT sets up the app, and what each refusal means:
+  [reader-feishu.md](reader-feishu.md).
 - A page's title is its first `# ` heading, or its file name when it has none.
 - Each linked source is read again on a schedule. A change reaches day0 at the next sync, not when
   you save.

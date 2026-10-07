@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { feishuReaderSecret } from '../../../../src/docs/feishu-source';
@@ -334,5 +335,23 @@ describe('the Feishu documentation reader', (): void => {
     await expect(reader.listPageBatch(wiki, undefined, undefined, 25)).rejects.toThrow(
       'A Feishu source reads with its app ID and secret',
     );
+  });
+});
+
+describe("the Feishu reader's guide", (): void => {
+  it('quotes word for word every reason the reader gives for a page it does not read', async (): Promise<void> => {
+    const guide = readFileSync(
+      new URL('../../../../docs/running/reader-feishu.md', import.meta.url),
+      'utf8',
+    )
+      .replace(/\s+/g, ' ')
+      .replaceAll('` `', ' ');
+    const { reader } = readerOnTenant();
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    const reasons = batch.unread
+      .map((page) => page.reason)
+      .filter((reason) => !reason.includes('mind note'));
+    expect(reasons).toHaveLength(3);
+    for (const reason of reasons) expect(guide).toContain(reason);
   });
 });
