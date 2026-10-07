@@ -56,6 +56,7 @@ import { appendEvent } from './eventLog';
 import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence';
 import schema from './schema';
 import { ROSTER_SCAN_LIMIT, rosterOf, rosterRowValidator, type RosterRow } from './roster';
+import { scheduleHeldChecks } from './workingAgreements';
 
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
@@ -833,7 +834,8 @@ export const pause = mutation({
 /**
  * Resume a paused employee (12-P): the pause's three fields cleared, an `agent.resumed` event,
  * and in the same transaction one pass of the stalled-step sweep for this employee, so every step
- * the pause held is queued again at once (`resumeAgentStepsInTransaction`).
+ * the pause held is queued again at once (`resumeAgentStepsInTransaction`), and every working
+ * agreement check it held (`scheduleHeldChecks`).
  *
  * Public: the anonymous-caller guard first, then real mode only, then the owner's guard. Resuming
  * an employee that is not paused records nothing.
@@ -858,6 +860,8 @@ export const resume = mutation({
       createdAt: now,
     });
     await resumeAgentStepsInTransaction(ctx, args.agentId, now);
+    // A working agreement's check the pause held spent no retry and waits on nothing else.
+    await scheduleHeldChecks(ctx, args.agentId);
     return { ok: true, paused: false, changed: true };
   },
 });

@@ -806,6 +806,26 @@ export const settleCharterCheck = internalMutation({
 });
 
 /**
+ * Schedule again, as the employee is resumed, every check its pause held (the first pre-tag's item
+ * for wave 14): each kept agreement still waiting on its check that binds the employee, and the
+ * check of its charter against the owner's agreements for every employee. A check the pause held
+ * spent no retry, so it starts from its first. Real mode only, as a pause is.
+ *
+ * @param ctx - The resume's mutation context.
+ * @param agentId - The employee resumed.
+ */
+export async function scheduleHeldChecks(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const agent = await ctx.db.get(agentId);
+  const userId = agent ? employeeOwnerScope(agent) : undefined;
+  if (!agent || userId === undefined) return;
+  const waiting = (await bindingAgreements(ctx, userId, agentId, 'proposed')).filter(awaitingCheck);
+  for (const row of waiting) await scheduleCheck(ctx, row._id, agentId);
+  await scheduleCharterCheck(ctx, agentId);
+}
+
+/**
+ * Schedule the check of an employee's newly approved charter/**
  * Schedule the check of an employee's newly approved charter against its owner's agreements for
  * every employee (13-W's gap), in the approval's transaction. Real mode only: no agreement is kept
  * in mock mode.

@@ -538,6 +538,26 @@ describe('keeping an agreement on a card', (): void => {
     expect((await agreementsOf(harness))[0]?.approvedAt).toBeTypeOf('number');
   });
 
+  it('checks a keep the pause held as soon as the employee is resumed (the first pre-tag, for wave 14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await proposal(harness, agentId);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: false,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    expect((await agreementsOf(harness))[0]?.status).toBe('proposed');
+    recorded.model.length = 0;
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    await drain(harness);
+    expect(promptsOf('day0-agreement-refusal')).toHaveLength(1);
+    expect((await agreementsOf(harness))[0]?.status).toBe('active');
+  });
+
   it('refuses a keep for every employee of an owner with more employees than the check reads on the row, and keeps the proposal for its employee (W13-R28, W13-R31)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
