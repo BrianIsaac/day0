@@ -4,6 +4,7 @@ import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
   forgottenAppWords,
+  forgetDoneWords,
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
@@ -596,6 +597,14 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
   it('passes any other failure through as the poll gave it', (): void => {
     expect(decisionErrorWords('decision poll failed: Slack returned HTTP 502.')).toBe(
       'decision poll failed: Slack returned HTTP 502.',
+    );
+  });
+});
+
+describe('what the forget says of the requests the old app sent (W13-R16)', (): void => {
+  it('says they stay in its DM as sent, are no longer read there, and where to decide them', (): void => {
+    expect(forgetDoneWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
+      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. Requests it already sent stay in its DM as they were and are no longer read there: decide any still open in day0, or through the new app once it connects.",
     );
   });
 });

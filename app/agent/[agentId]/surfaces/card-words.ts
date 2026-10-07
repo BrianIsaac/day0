@@ -538,6 +538,19 @@ export function forgottenAppWords(
 }
 
 /**
+ * The forget's message (13-S): the app by its name and Slack app id, who deletes it, and that the
+ * requests it already sent stay in its DM unread, so the manager decides any still open elsewhere
+ * (W13-R16: a press there is another app's and is ignored). A draft.
+ *
+ * @param app - The card's app as it stood before the forget.
+ */
+export function forgetDoneWords(
+  app: { readonly appId: string; readonly appName: string } | undefined,
+): string {
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Requests it already sent stay in its DM as they were and are no longer read there: decide any still open in day0, or through the new app once it connects.`;
+}
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *
