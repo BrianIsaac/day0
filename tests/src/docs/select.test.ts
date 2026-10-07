@@ -17,6 +17,12 @@ import {
   type SelectionRequest,
 } from '../../../src/docs/select';
 import { parseProcedureContract } from '../../../src/work/procedure-contract';
+import { planUserPrompt } from '../../../src/work/plan';
+import { planObligationsPrompt } from '../../../src/work/plan-obligations';
+import { executorInstructions } from '../../../src/work/execute-skill';
+import { renderHowTos, renderTeamDocs } from '../../../src/work/documents';
+import type { Charter } from '../../../src/agent/charter';
+import type { MockSurfaceSnapshot } from '../../../src/work/types';
 
 /** A page of the fixture handbook, keyed as a mirrored page is. */
 function page(
@@ -408,5 +414,102 @@ describe('selectionSwitchedOff', (): void => {
     expect(selectionSwitchedOff({ DAY0_TEST_WHOLE_DOCUMENTATION: '' })).toBe(false);
     expect(selectionSwitchedOff({ DAY0_TEST_WHOLE_DOCUMENTATION: 'true' })).toBe(false);
     expect(selectionSwitchedOff({})).toBe(false);
+  });
+});
+
+describe('the four prompts that carry documentation', (): void => {
+  const charter: Charter = {
+    version: '0.0',
+    source: 'day-1 manager 1:1',
+    whyThisHire: 'Keep the pipeline current.',
+    proposedFunction: 'Revenue operations coordination',
+    evidence: [],
+    shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
+    proposedBoundaries: { willDo: ['Refresh the tile.'], willNotDo: [], escalationTriggers: [] },
+    namedCollaborators: [],
+    namedSystems: [],
+    priorityReading: [],
+    adjacentRoles: [],
+    approvalChain: { boss: 'Manager', confidence: 'high' },
+    openQuestions: [],
+    createdAt: '2026-10-08T00:00:00.000Z',
+  };
+  /** A handbook of 40 pages of 6,000 characters, every one about the tile, far past the bound. */
+  const handbook = Array.from({ length: 40 }, (_unused, index) =>
+    page(
+      `team/page-${index}.md`,
+      `Pipeline notes ${index}`,
+      Array.from(
+        { length: 5 },
+        (_unused, section) =>
+          `## Part ${section}\n\n${`Looker pipeline tile coverage figure note ${index} ${section}. `.repeat(24)}`,
+      ).join('\n\n'),
+      index % 2 === 0 ? 'how-to-guide' : 'team-doc',
+    ),
+  );
+
+  it('carry at most 24,000 characters of documentation, and only the selection', (): void => {
+    const selection = selectDocumentation({
+      request,
+      pages: handbook,
+      scouted: everyBlock(handbook),
+    });
+    const documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'> = {
+      howToGuides: selection.howToGuides,
+      teamDocs: selection.teamDocs,
+    };
+    expect(handbook.reduce((total, entry) => total + entry.body.length, 0)).toBeGreaterThan(
+      200_000,
+    );
+    expect(selection.chars).toBeLessThanOrEqual(DOCUMENTATION_CHAR_LIMIT);
+    const guides = renderHowTos(documents.howToGuides);
+    const team = renderTeamDocs(documents.teamDocs);
+    const planner = planUserPrompt({
+      candidate: {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: request.title,
+        contentSummary: request.summary,
+        contentRefs: [],
+        observedAt: new Date(0),
+        priority: 'P2',
+      },
+      charter,
+      surfaceMode: 'real',
+      documents,
+    });
+    const obligations = planObligationsPrompt({
+      plan: { summary: 'Refresh.', steps: ['Refresh the tile.'], expectedOutputType: 'message' },
+      charter,
+      surfaces: [],
+      documents,
+      now: 0,
+    });
+    const system = executorInstructions({
+      mode: 'real',
+      autonomousActions: false,
+      skillBody: '# Skill',
+      surfaces: [],
+      mockEnv: { ...documents, spreadsheets: [], slackChannels: [], tweets: [], tickets: [] },
+      now: 0,
+    });
+    for (const prompt of [planner, obligations]) {
+      expect(prompt).toContain(guides);
+      expect(prompt).toContain(team);
+    }
+    // The executor's system prompt carries the guides, and both phases' user prompts the team
+    // documents as renderTeamDocs writes them.
+    expect(system).toContain(guides);
+    expect(guides.length + team.length).toBeLessThanOrEqual(DOCUMENTATION_CHAR_LIMIT);
+    const unselected = handbook.filter(
+      (entry) =>
+        !selection.howToGuides.some((guide) => guide.slug === entry.slug) &&
+        !selection.teamDocs.some((doc) => doc.slug === entry.slug),
+    );
+    expect(unselected.length).toBeGreaterThan(0);
+    for (const prompt of [planner, obligations, system]) {
+      for (const entry of unselected) expect(prompt).not.toContain(`--- ${entry.title} ---`);
+    }
   });
 });
