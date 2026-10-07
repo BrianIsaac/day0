@@ -94,9 +94,11 @@ describe('the charter as one document', (): void => {
         strikes={{ pending: true, changes: [] }}
       />,
     );
-    expect(html.match(/data-goal="gap"/g)).toHaveLength(1);
+    // Re-pinned for W13-R37 (14-FX): the 60-day goal's words say no milestone was stated, so it is
+    // a gap though the model said it was stated.
+    expect(html.match(/data-goal="gap"/g)).toHaveLength(2);
     expect(html).toContain('90 days · no goal stated');
-    expect(html).not.toContain('60 days · no goal stated');
+    expect(html).toContain('60 days · no goal stated');
   });
 
   it('names the manager it reports to and sends a handover to People, never to the header', (): void => {
