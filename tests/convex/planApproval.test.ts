@@ -67,8 +67,17 @@ afterEach((): void => {
 });
 
 async function drain(harness: Harness): Promise<void> {
-  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  // Each round starts what is due and waits for it to finish in real time: the check's action
+  // awaits work that, on a busy machine, outlasted convex-test's 10,000 macrotask pumps in
+  // `finishAllScheduledFunctions` (a flake seen on the pre-tag's partial runs, on `2478d192` too).
+  for (let round = 0; round < DRAIN_ROUNDS; round += 1) {
+    vi.advanceTimersByTime(0);
+    await harness.finishInProgressScheduledFunctions();
+  }
 }
+
+/** Rounds of scheduled work a drain runs: each round's jobs may schedule the next round's. */
+const DRAIN_ROUNDS = 10;
 
 /** One employee with an approved charter and one work item in the state the test names. */
 async function seed(
