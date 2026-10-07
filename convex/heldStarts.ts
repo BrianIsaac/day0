@@ -109,12 +109,12 @@ export const holdOrientation = internalMutation({
 });
 
 /**
- * The payloads of one employee's held starts of one kind since its last resume of that kind,
- * newest first: a resume records one resumed event per start it takes up, so every hold before
- * the newest of them has been taken up.
+ * The payloads of one employee's held starts of one kind since that kind was last taken up,
+ * newest first: a resume records, for each start it takes up, either that it started it or that
+ * its hold is spent (W13-R46), so every hold before the newest of either has been taken up.
  *
  * @param held - The kind's held event.
- * @param resumed - The kind's resumed event.
+ * @param takenUp - The kind's events that take a hold up: resumed, and spent.
  */
 async function heldSinceLastResume(
   ctx: MutationCtx,

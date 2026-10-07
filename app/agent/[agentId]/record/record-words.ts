@@ -188,7 +188,6 @@ function registeredVia(via: unknown): string {
   return '';
 }
 
-/** The connection an event is about, by name, or a plain stand-in when it names none. */
 /** Why a held authoring did not go on after the pause, as the record says it (W13-R46). */
 function heldAuthoringSpentWords(why: unknown): string {
   switch (why) {
@@ -205,6 +204,7 @@ function heldAuthoringSpentWords(why: unknown): string {
   }
 }
 
+/** The connection an event is about, by name, or a plain stand-in when it names none. */
 function connectionOf(subject: RecordSubject): string {
   return subject.connection ? `the ${subject.connection} connection` : 'a connection';
 }

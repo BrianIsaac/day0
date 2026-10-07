@@ -16,6 +16,7 @@ function drafted(proposedFunction: string, willDo: string[]): Charter {
   } as unknown as Charter;
 }
 
+/** Lark, the revenue operations coordinator, as drafted and approved. */
 export const LARK = drafted(
   'Act as revenue operations coordinator, keeping the Q4 Revenue Tracker current from what is said in Slack, flagging deals that look stuck, and catching problems before the forecast call.',
   [
@@ -27,6 +28,7 @@ export const LARK = drafted(
   ],
 );
 
+/** Moss, the finance close assistant, as drafted and approved. */
 export const MOSS = drafted(
   'Act as the finance close assistant, reconciling vendor charges against the tracker, keeping the close checklist moving on the ticket queue, and drafting the close summary for the controller, while sign-off of the close stays with the controller.',
   [
@@ -38,6 +40,7 @@ export const MOSS = drafted(
   ],
 );
 
+/** Nell, the IT helpdesk triager, as drafted and approved. */
 export const NELL = drafted(
   'Act as the IT helpdesk triager: sort new tickets on the ticket queue, answer routine access questions using the wiki steps, and hand anything else to the right person.',
   [
@@ -48,6 +51,7 @@ export const NELL = drafted(
   ],
 );
 
+/** Pip, the support triage coordinator, as drafted and approved. */
 export const PIP = drafted(
   'Act as the support triage coordinator: read social mentions and Slack asks, draft first replies for the manager to approve, and log each ask on the ticket queue.',
   [
@@ -57,6 +61,7 @@ export const PIP = drafted(
   ],
 );
 
+/** Quill, the facilities coordinator, as drafted and approved. */
 export const QUILL = drafted(
   'Act as the facilities coordinator: collect facilities requests from Slack into the ticket queue, keep each one moving to done, and report weekly to the manager on what is stuck.',
   [
@@ -67,11 +72,17 @@ export const QUILL = drafted(
   ],
 );
 
-/** The three asks 13-FD seeded in `#office-asks`, word for word (`convex/mockSeed.ts`). */
+/*
+ * The three asks 13-FD seeded in `#office-asks`, word for word (`convex/mockSeed.ts`).
+ */
+
+/** Kofi's ask, the IT helpdesk's. */
 export const KOFI_ASK =
   'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?';
+/** Sara's ask, facilities'. */
 export const SARA_ASK =
   'The monitor at desk 14 has died. Where can I get a spare, and does anyone need to know I took one?';
+/** Hana's ask, customer support's. */
 export const HANA_ASK =
   'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?';
 /** The manager's own ask in the DM, which the office's revenue roles finish (13-FD). */
