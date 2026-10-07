@@ -596,7 +596,7 @@ export const setCompleted = internalMutation({
             args.output,
             surfaces,
             replyTargetFor(row),
-            verdictList(row.actionVerdicts, actionsOf(row.output).length),
+            row.actionVerdicts ?? [],
           ),
           outcome: 'completed',
         }),
@@ -708,12 +708,7 @@ async function noteApplyStopped(
     landedNoteText({
       agentName,
       title: row.title,
-      rows: landedNoteRows(
-        output,
-        surfaces,
-        replyTargetFor(row),
-        verdictList(row.actionVerdicts, actionsOf(row.output).length),
-      ),
+      rows: landedNoteRows(output, surfaces, replyTargetFor(row), row.actionVerdicts ?? []),
       outcome: 'failed',
       reason: stopDetail(reason),
     }),

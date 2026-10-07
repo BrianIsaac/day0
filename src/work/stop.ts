@@ -339,8 +339,9 @@ export function stopDetail(skipReason: string): string {
  *   output: A run's persisted output, in either of its two shapes.
  *   surfaces: The agent's surfaces, for display names and the manager DM.
  *   replyTarget: The thread the work item answers, so a reply to it reads as one.
- *   verdicts: The gate's verdicts on the set the manager decided (the output's own
- *     actions, never a prerequisite phase's), which say which DM was held.
+ *   verdicts: The gate's verdicts as the row stores them, on the set the manager
+ *     decided (the output's own actions, never a prerequisite phase's); only a DM
+ *     whose stored verdict says held counts, never one with no verdict.
  *
  * Returns:
  *   One row per landed action, for `landedNoteText`.
@@ -349,7 +350,7 @@ export function landedNoteRows(
   output: unknown,
   surfaces: readonly SurfaceRecord[],
   replyTarget?: ReplyTarget,
-  verdicts: ReadonlyArray<Pick<ActionVerdict, 'disposition'> | undefined> = [],
+  verdicts: ReadonlyArray<{ readonly disposition?: ActionVerdict['disposition'] }> = [],
 ): LandedNoteRow[] {
   return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {

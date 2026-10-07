@@ -1310,6 +1310,50 @@ describe('a manager DM that reports a held write of its set (W12X-2, W12V-8)', (
     expect(landed?.text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
   });
 
+  it('leaves out a manager DM the gate applied on its own, on a row with no verdicts, as before (W13V-6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    // A note goes through a channel that holds its credential and knows the manager.
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', ids.agentId))
+        .filter((q) => q.eq(q.field('slug'), 'slack'))
+        .first();
+      if (slack === null) throw new Error('no Slack card');
+      await ctx.db.patch(slack._id, { credentialId, managerUserId: 'UMANAGER' });
+    });
+    const actions = [comment, dm('Commented the audit note on REVOPS-1.')];
+    // The run's own output on the row, as a run that applied its set with no hold leaves it.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(ids.workItemId, { output: { draft: '', notes: '', actions } });
+    });
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId: ids.workItemId,
+      output: {
+        draft: 'Commented on REVOPS-1.',
+        notes: '',
+        actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+        applied: [
+          { tool: 'mcp.call', ok: true, effect: 'comment on REVOPS-1' },
+          { tool: 'http.request', ok: true, effect: 'message in D0MANAGER' },
+        ],
+      },
+    });
+
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(notes.find((note) => note.kind === 'landed')?.text).toContain(': 1 change landed.');
+  });
+
   it('lets a DM that reports nothing of the set go on its own, as before', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
