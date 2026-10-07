@@ -281,15 +281,21 @@ export const settleKept = internalAction({
  * every employee (13-W's gap; scheduled by `charters.approve`), each as the keep's check would have:
  * one the charter refuses, or every one once the owner has more employees than the check reads, is
  * refused on its row (`settleCharterCheck`). A check that could not be had is tried again after each
- * of `CHECK_RETRY_DELAYS_MS`, the rows already settled no longer read.
+ * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone.
  */
 export const checkForCharter = internalAction({
-  args: { agentId: v.id('agents'), attempt: v.number() },
+  args: {
+    agentId: v.id('agents'),
+    attempt: v.number(),
+    /** On a retry, the agreements whose check could not be had; absent, every one (the second pass). */
+    agreementIds: v.optional(v.array(v.id('workingAgreements'))),
+  },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
     if (!(await mayRun(ctx, args.agentId))) return;
     const inputs = await ctx.runQuery(internal.workingAgreements.charterCheckInputs, {
       agentId: args.agentId,
+      ...(args.agreementIds === undefined ? {} : { agreementIds: args.agreementIds }),
     });
     if (inputs === null) return;
     if (inputs.pastTheCheck) {
@@ -302,7 +308,7 @@ export const checkForCharter = internalAction({
       }
       return;
     }
-    let unavailable = false;
+    const unavailable: Id<'workingAgreements'>[] = [];
     for (const agreement of inputs.agreements) {
       const outcome = await checkedOrUnavailable(ctx, {
         agreement,
@@ -310,7 +316,7 @@ export const checkForCharter = internalAction({
         pastTheCheck: false,
       });
       if (outcome.outcome === 'unavailable') {
-        unavailable = true;
+        unavailable.push(agreement._id);
         log.warn('working agreements: a new charter waits on its check', {
           agreementId: agreement._id,
           attempt: args.attempt,
@@ -326,10 +332,11 @@ export const checkForCharter = internalAction({
       });
     }
     const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
-    if (unavailable && delay !== undefined) {
+    if (unavailable.length > 0 && delay !== undefined) {
       await ctx.scheduler.runAfter(delay, internal.workingAgreementActions.checkForCharter, {
-        ...args,
+        agentId: args.agentId,
         attempt: args.attempt + 1,
+        agreementIds: unavailable,
       });
     }
   },

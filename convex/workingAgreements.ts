@@ -752,7 +752,11 @@ export interface CharterCheckInputs {
  * agreement to check.
  */
 export const charterCheckInputs = internalQuery({
-  args: { agentId: v.id('agents') },
+  args: {
+    agentId: v.id('agents'),
+    /** Only these agreements, a retry's; absent, every active one for every employee. */
+    agreementIds: v.optional(v.array(v.id('workingAgreements'))),
+  },
   handler: async (ctx, args): Promise<CharterCheckInputs | null> => {
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
@@ -768,8 +772,12 @@ export const charterCheckInputs = internalQuery({
         .take(AGREEMENTS_READ),
       pastTheCheck(ctx, userId),
     ]);
-    if (charter === null || agreements.length === 0) return null;
-    return { userId, charter, agreements, pastTheCheck: past };
+    const asked =
+      args.agreementIds === undefined
+        ? agreements
+        : agreements.filter((row) => args.agreementIds?.includes(row._id) === true);
+    if (charter === null || asked.length === 0) return null;
+    return { userId, charter, agreements: asked, pastTheCheck: past };
   },
 });
 

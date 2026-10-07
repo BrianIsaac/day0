@@ -23,6 +23,8 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
   refusalDown: false,
+  /** A statement whose judgement is down while the others answer. */
+  downFor: undefined as string | undefined,
 }));
 
 vi.mock('../../src/lib/mastra', async () => {
@@ -36,6 +38,9 @@ vi.mock('../../src/lib/mastra', async () => {
       if (call.agent.name === 'day0-agreement-refusal') {
         if (recorded.refusalDown) throw new Error('model down');
         const statement = call.user.split('--- Statement ---\n')[1] ?? '';
+        if (recorded.downFor !== undefined && statement.includes(recorded.downFor)) {
+          throw new Error('model down');
+        }
         const clauses = [...call.user.matchAll(/\[(\d+)\] (.+)/g)];
         const emailing = clauses.find((clause) => clause[2] === 'email customers directly');
         return /yourself/i.test(statement) && emailing
@@ -73,6 +78,7 @@ beforeEach((): void => {
 afterEach((): void => {
   recorded.model.length = 0;
   recorded.refusalDown = false;
+  recorded.downFor = undefined;
   vi.useRealTimers();
   restoreSurfaceMode();
 });
@@ -709,6 +715,40 @@ describe('keeping an agreement on a card', (): void => {
       status: 'refused',
       refusal: { reason: 'contradicts-will-not-do', clause: 'email customers directly' },
     });
+  });
+
+  it('asks again of a new charter only the agreements whose check could not be had (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });
+    const every = async (statement: string): Promise<Id<'workingAgreements'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('workingAgreements', {
+            userId: 'owner',
+            kind: 'preference',
+            statement,
+            scope: 'global',
+            sourceType: 'correction-promotion',
+            status: 'active',
+            approvedAt: 1,
+            approvedVia: 'promotion-card',
+            effectiveFrom: 1,
+            createdAt: 1,
+            appliedTo: [],
+          }),
+      );
+    await every('Name the vessel in every comment.');
+    const held = await every('Name the carrier in every comment.');
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    recorded.downFor = 'Name the carrier';
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: hired,
+      attempt: 0,
+    });
+    const retry = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).find((job) => job.name === 'workingAgreementActions:checkForCharter');
+    expect(retry?.args[0]).toMatchObject({ agreementIds: [held], attempt: 1 });
   });
 
   it("checks an every-employee agreement against a new employee's charter at its approval, the refusal on the agreement's row (13-W's gap)", async (): Promise<void> => {
