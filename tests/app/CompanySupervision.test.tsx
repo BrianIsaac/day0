@@ -341,6 +341,17 @@ describe('the company supervision card', (): void => {
 });
 
 describe('the retrieval figure (14-R)', (): void => {
+  it('takes both columns of the stacked grid on a phone, as its words are the longest', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+    const pilot = html.slice(html.indexOf('Pilot figures'));
+    const cells =
+      pilot.match(
+        /<td role="cell" class="[^"]*"><span aria-hidden="true"[^>]*><span[^>]*>Retrieval</g,
+      ) ?? [];
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) expect(cell).toContain('max-lg:col-span-2');
+  });
+
   const retrievalFigure = PILOT_FIGURES.find((figure) => figure.label === 'Retrieval')!;
   const figures = (retrieval: PilotFigures['retrieval']): PilotFigures => ({
     ...FIGURES.company.pilot,
@@ -356,7 +367,7 @@ describe('the retrieval figure (14-R)', (): void => {
         }),
       ),
     ).toBe(
-      '6,210 characters of documentation an item; 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items',
+      '6,210 characters of documentation and 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items',
     );
   });
 

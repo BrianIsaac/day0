@@ -120,10 +120,9 @@ function hours(value: number): string {
 /** The documentation an item read, and the input tokens billed an item where a provider reported them. */
 function retrievalRead(tokens: PilotFigures['retrieval']['tokens']): string {
   if (tokens === null) return 'no documentation counted yet';
-  const chars = `${Math.round(tokens.charsPerItem).toLocaleString('en-GB')} characters of documentation an item`;
-  return tokens.inputTokensPerItem === null
-    ? chars
-    : `${chars}; ${Math.round(tokens.inputTokensPerItem).toLocaleString('en-GB')} input tokens billed an item`;
+  const chars = Math.round(tokens.charsPerItem).toLocaleString('en-GB');
+  if (tokens.inputTokensPerItem === null) return `${chars} characters of documentation an item`;
+  return `${chars} characters of documentation and ${Math.round(tokens.inputTokensPerItem).toLocaleString('en-GB')} input tokens billed an item`;
 }
 
 /** One of decision A9's pilot figures as the Supervision cards print it. */
@@ -132,6 +131,8 @@ export interface PilotFigure {
   readonly unit: string;
   readonly definition: string;
   readonly value: (pilot: PilotFigures) => string;
+  /** Whether its cell takes both columns of the stacked grid below `lg`: its words run long. */
+  readonly wide?: boolean;
 }
 
 /**
@@ -187,6 +188,7 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   {
     label: 'Retrieval',
     unit: 'documentation read per item, and recall',
+    wide: true,
     definition:
       'The characters of documentation the model was given for an item, beside the input tokens billed for the item where the provider reported them. Recall is a test result: on the labelled test items, where people marked the pages and sections they would open, the share Day0 chose too.',
     value: ({ retrieval }) =>
@@ -360,7 +362,11 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
                 {row.name}
               </th>
               {PILOT_FIGURES.map((figure) => (
-                <td key={figure.label} role="cell" className={CELL}>
+                <td
+                  key={figure.label}
+                  role="cell"
+                  className={figure.wide === true ? `${CELL} max-lg:col-span-2` : CELL}
+                >
                   <StackLabel column={figure} />
                   {figure.value(row.pilot)}
                 </td>
