@@ -1061,8 +1061,10 @@ export const recordLookups = internalMutation({
       });
       added += 1;
     }
-    if (offerable !== undefined && person.possiblySameAs === undefined) {
-      await ctx.db.patch(person._id, { possiblySameAs: offerable, updatedAt: now });
+    // Never the owner's own row: the manager is never a merge target (the one-role rulings).
+    const holder = offerable === undefined ? null : await ctx.db.get(offerable);
+    if (holder !== null && holder.isOwner !== true && person.possiblySameAs === undefined) {
+      await ctx.db.patch(person._id, { possiblySameAs: holder._id, updatedAt: now });
     }
     return added;
   },

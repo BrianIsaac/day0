@@ -293,4 +293,25 @@ describe('peopleLookupActions.runLookups', (): void => {
       held,
     );
   });
+
+  it("offers no proposal as possibly the owner, whose own row a lookup's user may be (W13-R25, found on the bed)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const owner = await seedPerson(harness, 'manager@acme.test', { isOwner: true });
+    await seedIdentity(harness, owner, {
+      provider: 'slack',
+      externalId: 'U0BOSS',
+      providerWorkspaceId: 'T0KESTREL',
+    });
+    const mei = await seedPerson(harness, 'Mei Ling', {
+      status: 'unverified',
+      primaryEmail: 'mei.ling@kestrel.test',
+    });
+    const { dependencies } = slackFake({ 'mei.ling@kestrel.test': { id: 'U0BOSS', name: 'boss' } });
+    await runLookups(runners(harness), [mei], dependencies);
+    expect(
+      (await graphRows(harness)).people.find((row) => row._id === mei)?.possiblySameAs,
+    ).toBeUndefined();
+  });
 });
