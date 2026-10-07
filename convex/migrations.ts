@@ -962,11 +962,13 @@ const MIGRATION_PAGES: Readonly<
 };
 
 /**
- * Stored pages one page of the block backfill reads: few, and bounded by bytes, since each is split
- * and its blocks (the text and its search text, about three times a CJK page) written and, on a
- * second run, read back in the same transaction.
+ * Stored pages one page of the block backfill reads, bounded so a page of the pass stays inside a
+ * transaction's limits whatever its pages: each splits into at most `MAX_BLOCKS_PER_PAGE` (1,500)
+ * blocks, all written (and, on a second run, read back) in the same transaction, so four pages
+ * write at most 6,000 documents of the 16,000 allowed; and a byte bound, since a block's search
+ * text is about three times a CJK page's.
  */
-const BLOCK_BACKFILL_READ = { numItems: 25, maximumBytesRead: 1024 * 1024 } as const;
+const BLOCK_BACKFILL_READ = { numItems: 4, maximumBytesRead: 1024 * 1024 } as const;
 
 /** Whose blocks a source's pages are, and the run they are filed under; null for a gone source. */
 async function blockOwnerOf(

@@ -3113,6 +3113,50 @@ describe('the block backfill (14-I)', (): void => {
     vi.unstubAllGlobals();
   });
 
+  it("splits pages dense with blocks inside a transaction's write and read limits, twice (second pass)", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    // Each page is 1,400 one-line sections: 1,400 blocks, near the bound a page may split into.
+    const dense = Array.from(
+      { length: 1_400 },
+      (_unused, index) => `## ${index}\n\nx${index}`,
+    ).join('\n\n');
+    await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 12,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+      for (let index = 0; index < 12; index += 1) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `dense-${index}.md`,
+          title: `Dense ${index}`,
+          markdown: dense,
+          updatedAt: 3,
+        });
+      }
+    });
+    await runAll(harness);
+    const count = async (): Promise<number> =>
+      await harness.run(async (ctx) => (await ctx.db.query('docBlocks').collect()).length);
+    expect(await count()).toBe(12 * 1_400);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'docs-backfill-blocks'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await runAll(harness);
+    expect(await count()).toBe(12 * 1_400);
+  }, 120_000);
+
   it('reads nothing on a deployment that stores no page, as the hosted mock deployment does', async (): Promise<void> => {
     const harness = limitedHarness();
     await agent(harness, { userId: 'owner' });
