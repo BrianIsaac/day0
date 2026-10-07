@@ -832,6 +832,17 @@ export async function scheduleHeldChecks(ctx: MutationCtx, agentId: Id<'agents'>
  */
 export async function scheduleCharterCheck(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
+  const agent = await ctx.db.get(agentId);
+  const userId = agent ? employeeOwnerScope(agent) : undefined;
+  if (userId === undefined) return;
+  // An owner with no agreement for every employee has nothing to check the charter against.
+  const everyone = await ctx.db
+    .query('workingAgreements')
+    .withIndex('by_user_agent_status', (q) =>
+      q.eq('userId', userId).eq('agentId', undefined).eq('status', 'active'),
+    )
+    .first();
+  if (everyone === null) return;
   await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
     agentId,
     attempt: 0,
