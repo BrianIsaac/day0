@@ -440,7 +440,7 @@ export function SurfaceCard({
         surface.reason !== skipReason &&
         surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
-            {surface.connectionRevoked || surface.keptAppNotReinstalled
+            {surface.connectionRevoked || surface.keptAppNotReinstalled || surface.reasonFromIt
               ? itsReasonWords(surface.reason)
               : surface.reason}
           </p>

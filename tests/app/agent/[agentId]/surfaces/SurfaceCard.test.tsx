@@ -931,6 +931,20 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     }
   });
 
+  it("says IT's revoke reason as IT's on a card IT connected again, never as a bare sentence (13-S)", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'The 13-S bed ends the bed connection.',
+        reasonFromIt: true,
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).toContain("IT's reason: The 13-S bed ends the bed connection.");
+  });
+
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
     const unreachable = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(unreachable).not.toMatch(/>Send to me in Slack<\/button>/);

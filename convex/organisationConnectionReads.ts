@@ -61,17 +61,22 @@ export async function systemConnectionRevoked(
 }
 
 /**
- * The connections among those named that an administrator revoked, read one by one.
+ * The revoked organisation connections among those named, each with the reason IT gave for its
+ * revoke (`statusReason`), which the cards it ended carry as theirs.
  *
  * @param ctx - A query's or a mutation's context.
- * @param ids - The connections a set of cards is linked to.
+ * @param ids - Connection ids, repeats allowed.
  */
-export async function revokedConnectionsAmong(
+export async function revokeReasonsAmong(
   ctx: Pick<QueryCtx, 'db'>,
   ids: Iterable<Id<'organisationConnections'>>,
-): Promise<ReadonlySet<Id<'organisationConnections'>>> {
+): Promise<ReadonlyMap<Id<'organisationConnections'>, string | undefined>> {
   const rows = await Promise.all([...new Set(ids)].map(async (id) => await ctx.db.get(id)));
-  return new Set(rows.flatMap((row) => (row?.status === 'revoked' ? [row._id] : [])));
+  return new Map(
+    rows.flatMap((row) =>
+      row?.status === 'revoked' ? [[row._id, row.statusReason] as const] : [],
+    ),
+  );
 }
 
 /**
