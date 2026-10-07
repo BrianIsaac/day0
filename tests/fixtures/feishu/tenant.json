@@ -234,6 +234,17 @@
       "path": "/open-apis/docx/v1/documents/doxcnOldProcess000000000000",
       "status": 200,
       "body": "document-old.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnPayroll000000000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 403,
+      "body": "content-restricted.json"
     }
   ],
   "folderToken": "fldcnRevOpsFolder0000000000",

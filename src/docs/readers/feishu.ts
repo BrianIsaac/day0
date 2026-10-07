@@ -41,13 +41,25 @@ export type FeishuFetch = (input: URL, init: RequestInit) => Promise<Response>;
 
 /** What the reader is given instead of the network, the clock and the timer, for tests. */
 export interface FeishuReaderOptions {
+  /** Sends one request; the platform's `fetch` by default. */
   readonly fetch?: FeishuFetch;
+  /** The clock the token's life and the request spacing are read against. */
   readonly now?: () => number;
+  /** Waits between requests and before a retry. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** How long one batch may spend waiting on Feishu; `BATCH_BUDGET_MS` by default. */
+  readonly batchBudgetMs?: number;
 }
 
 /** How long one request may take. */
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * How long one batch may spend before a wait would run past it: under the
+ * ten minutes a Convex action has, so a limit that keeps resetting fails the
+ * batch, which records why, rather than the action being stopped mid-batch.
+ */
+const BATCH_BUDGET_MS = 6 * 60_000;
 
 /**
  * How long before its expiry a token is replaced. Feishu answers a token
@@ -116,6 +128,33 @@ class FeishuApiError extends Error {
   }
 }
 
+/** A server failure Feishu answered with a code: tried again, and its code kept for the words. */
+class FeishuServerError extends TransientProviderError {
+  readonly feishuCode: number;
+
+  constructor(status: number, feishuCode: number) {
+    super(`Feishu answered HTTP ${status} (code ${feishuCode}).`, { status });
+    this.name = 'FeishuServerError';
+    this.feishuCode = feishuCode;
+  }
+}
+
+/**
+ * A refusal of the app itself rather than of one request (a missing scope, an
+ * unpublished version), worded with what IT checks.
+ */
+class FeishuAppError extends Error {
+  constructor(error: FeishuApiError) {
+    super(
+      `Feishu refused the request as this app (Feishu code ${error.code}, ${error.feishuMessage}): ` +
+        'check that the app has the scopes reader-feishu.md lists and that its latest version is ' +
+        'published.',
+      { cause: error },
+    );
+    this.name = 'FeishuAppError';
+  }
+}
+
 /** One node or file a listing found, in the words the batch needs. */
 interface ListedEntry {
   readonly ref: string;
@@ -143,6 +182,8 @@ interface ListedPage {
 interface FeishuSession {
   readonly locator: FeishuLocator;
   readonly app: FeishuApp;
+  /** The time, on the system clock the backoff reads, past which no wait may run. */
+  readonly deadline: number;
 }
 
 /** A Feishu answer's parsed body. */
@@ -219,6 +260,26 @@ function pageFailureReason(entry: ListedEntry, error: FeishuApiError): string {
   );
 }
 
+/**
+ * Why a document was not read, when the failure is the document's: a refusal
+ * of it, or a server failure that outlasted every retry. Anything else (the
+ * app, the limit, the transport) is thrown for the batch.
+ */
+function documentFailure(entry: ListedEntry, error: unknown): string {
+  if (error instanceof FeishuApiError && error.code < 99_990_000) {
+    return pageFailureReason(entry, error);
+  }
+  if (
+    error instanceof TransientProviderError &&
+    error.status !== undefined &&
+    error.status >= 500
+  ) {
+    const code = error instanceof FeishuServerError ? ` (Feishu code ${error.feishuCode})` : '';
+    return `Feishu answered HTTP ${error.status} for "${entry.title}" each time it was asked${code}; re-sync to try again.`;
+  }
+  throw error;
+}
+
 /** The sentence for a listing Feishu refused. */
 function listingFailure(scope: FeishuLocator['scope'], error: FeishuApiError): Error {
   if (scope.kind === 'wiki' && error.code === 131006) {
@@ -247,6 +308,7 @@ export class FeishuReader implements DocumentationReader {
   private readonly fetch: FeishuFetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly batchBudgetMs: number;
   private readonly lastRequestAt = new Map<Endpoint, number>();
   /**
    * The tenant token, for the app it was issued to. Held by this reader only:
@@ -259,6 +321,7 @@ export class FeishuReader implements DocumentationReader {
   constructor(options: FeishuReaderOptions = {}) {
     this.fetch = options.fetch ?? ((input, init): Promise<Response> => fetch(input, init));
     this.now = options.now ?? Date.now;
+    this.batchBudgetMs = options.batchBudgetMs ?? BATCH_BUDGET_MS;
     this.sleep =
       options.sleep ??
       ((ms: number): Promise<void> =>
@@ -292,6 +355,7 @@ export class FeishuReader implements DocumentationReader {
     const session: FeishuSession = {
       locator: parseFeishuLocator(source.locator),
       app: parseFeishuSecret(secret),
+      deadline: Date.now() + this.batchBudgetMs,
     };
     const scope = session.locator.scope;
     const walk =
@@ -311,8 +375,7 @@ export class FeishuReader implements DocumentationReader {
       } catch (error) {
         // A refusal of this document is the page's; the token, the limit or the
         // transport are the batch's, for its retry and the sync's resume.
-        if (!(error instanceof FeishuApiError) || error.code >= 99_990_000) throw error;
-        unread.push({ ref: entry.ref, reason: pageFailureReason(entry, error) });
+        unread.push({ ref: entry.ref, reason: documentFailure(entry, error) });
       }
     }
     return {
@@ -483,26 +546,15 @@ export class FeishuReader implements DocumentationReader {
   }
 
   /**
-   * One document as Markdown. Its `revision_id` is read and logged for wave
-   * 15's change check: the store has no field for it yet.
+   * One document as Markdown. Its `revision_id` is then read and logged for
+   * wave 15's change check (the store has no field for it yet); a refusal of
+   * that read is logged and the page kept, since nothing depends on it.
    */
   private async readDocument(
     session: FeishuSession,
     source: DocSourceRecord,
     entry: ListedEntry,
   ): Promise<DocPage> {
-    const document = await this.call(
-      session,
-      'document',
-      `/open-apis/docx/v1/documents/${encodeURIComponent(entry.objToken)}`,
-      {},
-    );
-    const revision = field(field(document, 'document'), 'revision_id');
-    log.info('feishu document read', {
-      sourceId: source._id,
-      ref: entry.ref,
-      revision: typeof revision === 'number' ? revision : null,
-    });
     const content = await this.call(session, 'content', '/open-apis/docs/v1/content', {
       doc_token: entry.objToken,
       doc_type: 'docx',
@@ -512,6 +564,11 @@ export class FeishuReader implements DocumentationReader {
     if (markdown === undefined) {
       throw new FeishuApiError(0, 200, 'the answer carried no Markdown');
     }
+    log.info('feishu document read', {
+      sourceId: source._id,
+      ref: entry.ref,
+      revision: await this.revision(session, entry),
+    });
     return {
       sourceId: source._id,
       ref: entry.ref,
@@ -520,6 +577,28 @@ export class FeishuReader implements DocumentationReader {
       markdown,
       updatedAt: entry.editedAt ?? this.now(),
     };
+  }
+
+  /** A document's `revision_id`, or null when Feishu would not say. */
+  private async revision(session: FeishuSession, entry: ListedEntry): Promise<number | null> {
+    try {
+      const document = await this.call(
+        session,
+        'document',
+        `/open-apis/docx/v1/documents/${encodeURIComponent(entry.objToken)}`,
+        {},
+      );
+      const revision = field(field(document, 'document'), 'revision_id');
+      return typeof revision === 'number' ? revision : null;
+    } catch (error) {
+      if (!(error instanceof FeishuApiError) && !(error instanceof FeishuAppError)) throw error;
+      // Logged, not recorded: the revision is kept nowhere yet, and the page was read.
+      log.warn('feishu document revision not read', {
+        ref: entry.ref,
+        reason: error.message,
+      });
+      return null;
+    }
   }
 
   /**
@@ -544,13 +623,12 @@ export class FeishuReader implements DocumentationReader {
           async (): Promise<unknown> =>
             (await this.request(endpoint, url, { headers: { authorization: `Bearer ${token}` } }))
               .data,
-          { ...FEISHU_BACKOFF, sleep: this.sleep },
+          { ...FEISHU_BACKOFF, sleep: this.sleep, deadline: session.deadline },
         );
       } catch (error) {
+        if (!(error instanceof FeishuApiError) || error.code < 99_990_000) throw error;
         // A token Feishu stopped honouring before its time is replaced once.
-        if (refreshed || !(error instanceof FeishuApiError) || !TOKEN_REFUSED.has(error.code)) {
-          throw error;
-        }
+        if (refreshed || !TOKEN_REFUSED.has(error.code)) throw new FeishuAppError(error);
         refreshed = true;
       }
     }
@@ -582,7 +660,7 @@ export class FeishuReader implements DocumentationReader {
               }),
             },
           ),
-        { ...FEISHU_BACKOFF, sleep: this.sleep },
+        { ...FEISHU_BACKOFF, sleep: this.sleep, deadline: session.deadline },
       );
     } catch (error) {
       if (!(error instanceof FeishuApiError)) throw error;
@@ -629,15 +707,14 @@ export class FeishuReader implements DocumentationReader {
           status: response.status,
         });
       }
-      throw new Error(`Feishu answered HTTP ${response.status} with a body day0 does not read.`);
+      // A refusal that is not Feishu's own JSON is still this request's refusal: one page's, when
+      // it answered a document.
+      throw new FeishuApiError(0, response.status, 'an answer that is not Feishu JSON');
     }
     if (body.code === 0) return body;
     // A server failure is tried again, except a document too large to export, which stays so.
     if (response.status >= 500 && body.code !== CONTENT_TOO_LARGE) {
-      throw new TransientProviderError(
-        `Feishu answered HTTP ${response.status} (code ${body.code}).`,
-        { status: response.status },
-      );
+      throw new FeishuServerError(response.status, body.code);
     }
     throw new FeishuApiError(body.code, response.status, body.msg);
   }
@@ -651,11 +728,18 @@ export class FeishuReader implements DocumentationReader {
   }
 }
 
-/** The body of a Feishu answer, or undefined when it is not one. */
+/**
+ * The body of a Feishu answer, or undefined when it is not Feishu's JSON.
+ *
+ * The body is read whole before it is parsed, so a read cut off part way
+ * throws as the transport failure it is, for the backoff to try again; only
+ * a body that is not Feishu's JSON (a gateway's page) is answered undefined.
+ */
 async function readBody(response: Response): Promise<FeishuBody | undefined> {
+  const raw = await response.text();
   let parsed: unknown;
   try {
-    parsed = await response.json();
+    parsed = JSON.parse(raw);
   } catch {
     // Not JSON (a gateway's page): the caller words the status instead.
     return undefined;

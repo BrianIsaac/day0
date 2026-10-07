@@ -28,7 +28,11 @@ const wiki: DocSourceRecord = {
 
 /** A reader on the recorded tenant with a clock that moves only when the reader waits. */
 function readerOnTenant(
-  options: { readonly tokens?: readonly string[]; readonly override?: RequestOverride } = {},
+  options: {
+    readonly tokens?: readonly string[];
+    readonly override?: RequestOverride;
+    readonly batchBudgetMs?: number;
+  } = {},
 ): {
   reader: FeishuReader;
   requests: RecordedRequest[];
@@ -41,6 +45,7 @@ function readerOnTenant(
   const reader = new FeishuReader({
     fetch: tenant.fetch,
     now: (): number => clock,
+    batchBudgetMs: options.batchBudgetMs,
     sleep: async (ms: number): Promise<void> => {
       sleeps.push(ms);
       clock += ms;
@@ -171,7 +176,7 @@ describe('the Feishu documentation reader', (): void => {
     const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
     const restricted = batch.unread.find((page) => page.ref === NODES.restricted.node);
     expect(restricted?.reason).toBe(
-      'The Feishu app cannot read "Payroll" (Feishu code 1770032): add the app to the document, or to its wiki space as a member.',
+      'The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member.',
     );
   });
 
@@ -458,6 +463,113 @@ describe('the Feishu walk between batches (second pass)', (): void => {
     const { reader } = readerOnTenant();
     await expect(reader.listPageBatch(wiki, SECRET, '3@abcdefg', 25)).rejects.toThrow(
       ListingChangedError,
+    );
+  });
+});
+
+describe('the Feishu reads a batch keeps inside its time (second pass)', (): void => {
+  it('fails the batch rather than wait past its time for a limit to reset', async (): Promise<void> => {
+    const { reader, sleeps } = readerOnTenant({
+      batchBudgetMs: 30_000,
+      override: (request) =>
+        request.url.pathname.endsWith('/nodes')
+          ? new Response(
+              JSON.stringify({ code: 99991400, msg: 'request trigger frequency limit' }),
+              {
+                status: 429,
+                headers: { 'x-ogw-ratelimit-reset': '60' },
+              },
+            )
+          : undefined,
+    });
+    await expect(reader.listPageBatch(wiki, SECRET, undefined, 25)).rejects.toThrow(
+      'Feishu was rate limited',
+    );
+    expect(sleeps).not.toContain(60_000);
+  });
+
+  it('names a document Feishu keeps failing to export unread, and reads the rest', async (): Promise<void> => {
+    const { reader, sleeps } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content' &&
+        request.url.searchParams.get('doc_token') === NODES.zh1.obj
+          ? new Response(JSON.stringify({ code: 2889905, msg: 'internal error' }), { status: 500 })
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.unread).toContainEqual({
+      ref: NODES.zh1.node,
+      reason:
+        'Feishu answered HTTP 500 for "刷新看板" each time it was asked (Feishu code 2889905); re-sync to try again.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toContain(NODES.refresh.node);
+    expect(sleeps).toEqual(expect.arrayContaining([1_000, 2_000, 4_000]));
+  });
+
+  it('names a document that answers with a page that is not Feishu JSON unread', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content' &&
+        request.url.searchParams.get('doc_token') === NODES.zh1.obj
+          ? new Response('<html>Not Found</html>', { status: 404 })
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.unread.map((page) => page.ref)).toContain(NODES.zh1.node);
+    expect(batch.pages).toHaveLength(3);
+  });
+
+  it('tries again a read cut off in its body, and fails the batch as interrupted, not as a strange answer', async (): Promise<void> => {
+    let tries = 0;
+    const { reader } = readerOnTenant({
+      override: (request) => {
+        if (!request.url.pathname.endsWith('/nodes')) return undefined;
+        tries += 1;
+        return new Response(
+          new ReadableStream({
+            start(controller): void {
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    const failure = await reader.listPageBatch(wiki, SECRET, undefined, 25).catch((error) => error);
+    expect(String(failure)).toContain('terminated');
+    expect(String(failure)).not.toContain('does not read');
+    expect(tries).toBe(4);
+  });
+
+  it('reads a document whose details the app may not read, logging no revision', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname.startsWith('/open-apis/docx/v1/documents/')
+          ? new Response(JSON.stringify({ code: 99991672, msg: 'Access denied. scope missing' }), {
+              status: 400,
+            })
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual([
+      NODES.handbook.node,
+      NODES.zh1.node,
+      NODES.zh2.node,
+      NODES.refresh.node,
+    ]);
+  });
+
+  it("names the app's scopes when Feishu refuses the app itself", async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content'
+          ? new Response(JSON.stringify({ code: 99991672, msg: 'Access denied. scope missing' }), {
+              status: 400,
+            })
+          : undefined,
+    });
+    await expect(reader.listPageBatch(wiki, SECRET, undefined, 25)).rejects.toThrow(
+      'Feishu refused the request as this app (Feishu code 99991672, Access denied. scope missing): check that the app has the scopes reader-feishu.md lists and that its latest version is published.',
     );
   });
 });

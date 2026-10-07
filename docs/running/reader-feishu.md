@@ -97,13 +97,16 @@ a Feishu source gives, word for word:
 - `"Q3 numbers" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as
 Markdown.` The same sentence names a base, a mind note, a slide deck, a file, or a document in
   the old format.
-- `The Feishu app cannot read "Payroll" (Feishu code 1770032): add the app to the document, or to
+- `The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to
 its wiki space as a member.` The page is in the space but the app may not open it: add the app
   to that document (step 2's last paragraph).
 - `"Full CRM export" is larger than the 10 MB Feishu exports as Markdown, so it is not read.`
 - `"..." was deleted or moved in Feishu after it was listed`: the next read lists the space again.
 - `Feishu could not give "..." as Markdown (Feishu code ..., ...). Re-sync to try again; if it
 repeats, ask IT to look the code up in Feishu's documentation.`
+
+- `Feishu answered HTTP 500 for "..." each time it was asked (Feishu code ...); re-sync to try
+again.` Feishu failed on that document through every retry; the rest of the source was read.
 
 A page that could not be read keeps its last version in day0 until a later read succeeds.
 
@@ -115,6 +118,9 @@ When the whole source cannot be read, its status says why instead:
 - `Feishu found no wiki space with this ID (Feishu code 131005): check the space ID.`
 - `Feishu refused the app ID and secret this source uses (...): use Rotate on the source's row to
 enter the app's current ID and secret.` The secret was rotated or the app was disabled.
+- `Feishu refused the request as this app (...): check that the app has the scopes reader-feishu.md
+lists and that its latest version is published.` A scope from step 1 is missing, or the version
+  that added it was never published.
 - `Feishu was rate limited ...`: Feishu stayed busy past day0's waits; the next read tries again.
 
 ## For the network
