@@ -812,6 +812,8 @@ interface Replacement {
 /**
  * A kept replacement of an active agreement, waiting on its check: the same kind and scope, the
  * new binding or words, made on the manager's card, superseding the one it replaces once it passes.
+ * It carries the corrections the agreement came from, so once it is in effect the planner reads
+ * them as the agreement and not again beside it (W13-R5).
  */
 function replacementOf(
   agreement: Doc<'workingAgreements'>,
@@ -825,6 +827,9 @@ function replacementOf(
     scope: agreement.scope,
     ...(agreement.scopeRef !== undefined ? { scopeRef: agreement.scopeRef } : {}),
     ...(agreement.personId !== undefined ? { personId: agreement.personId } : {}),
+    ...(agreement.correctionIds !== undefined
+      ? { correctionIds: [...agreement.correctionIds] }
+      : {}),
     sourceType: 'manager-card',
     sourceRef: agreement._id,
     status: 'proposed',
@@ -945,9 +950,35 @@ export const dismiss = mutation({
 });
 
 /**
- * Retire an active agreement: no later plan reads it. Idempotent for one already retired. Public,
- * guarded by `assertOwnsAgreement` first and the card's employee after. Writes the status, when it
- * stopped, and `agreement.retired`.
+ * Retire the corrections a retired agreement came from, each as the Corrections panel's Retire
+ * does, so no later plan reads the same words as a correction (W13-R5). A correction already
+ * retired, gone, or of another owner's employee is left as it is.
+ */
+async function retireSourceCorrections(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  now: number,
+): Promise<void> {
+  for (const correctionId of agreement.correctionIds ?? []) {
+    const correction = await ctx.db.get(correctionId);
+    if (correction === null || correction.retiredAt !== undefined) continue;
+    const employee = await ctx.db.get(correction.agentId);
+    if (employee === null || employeeOwnerScope(employee) !== agreement.userId) continue;
+    await ctx.db.patch(correction._id, { retiredAt: now });
+    await appendEvent(ctx, {
+      agentId: correction.agentId,
+      type: 'work.correction-retired',
+      payload: { correctionId: correction._id, workItemId: correction.workItemId },
+      createdAt: now,
+    });
+  }
+}
+
+/**
+ * Retire an active agreement: no later plan reads it, nor the corrections it came from. Idempotent
+ * for one already retired. Public, guarded by `assertOwnsAgreement` first and the card's employee
+ * after. Writes the status, when it stopped, `agreement.retired`, and each source correction's
+ * `retiredAt` with its `work.correction-retired`.
  */
 export const retire = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
@@ -957,6 +988,7 @@ export const retire = mutation({
     if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
     const now = Date.now();
     await ctx.db.patch(agreement._id, { status: 'retired', effectiveUntil: now });
+    await retireSourceCorrections(ctx, agreement, now);
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agreement.retired',

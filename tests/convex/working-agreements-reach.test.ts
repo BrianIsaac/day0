@@ -81,6 +81,10 @@ vi.mock('../../src/lib/mastra', () => ({
         reason: 'the plan leaves the ticket state alone',
       }) as T;
     }
+    if (name === 'day0-agreement-refusal') {
+      return args.schema.parse({ verdict: 'keep', clause: null }) as T;
+    }
+    if (name === 'day0-agreement-sameness') return args.schema.parse({ groups: [] }) as T;
     if (name.startsWith('day0-skill-') && name.endsWith('-initial')) {
       return (await import('./fakes/executor-reply')).parseRecordedReply(args.schema, {
         draft: 'The delay notice names the carrier and the new date.',
@@ -367,6 +371,97 @@ describe('where a working agreement reaches', (): void => {
     expect(plannerPrompt).toContain(HEADING);
     expect(plannerPrompt!.split(STATEMENT)).toHaveLength(2);
     expect(plannerPrompt).not.toContain('--- Corrections the manager gave on earlier work ---');
+  }, 30_000);
+
+  /**
+   * Priya's own agreement kept from two corrections given on an earlier ticket, now cancelled: the
+   * planner reads the agreement and not the corrections while it is active.
+   */
+  async function keptFromTwoCorrections(
+    harness: Harness,
+    priya: Id<'agents'>,
+  ): Promise<{ agreementId: Id<'workingAgreements'>; words: string[] }> {
+    const given = await seedTicket(harness, priya, 'LOG-1');
+    await drain(harness);
+    const words = ['Name the vessel.', 'Always name the vessel in the notice.'];
+    const agreementId = await harness.run(async (ctx) => {
+      const agreementId = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        agentId: priya,
+        kind: 'preference',
+        statement: 'Name the vessel.',
+        scope: 'surface',
+        scopeRef: 'linear',
+        sourceType: 'correction-promotion',
+        status: 'active',
+        approvedAt: 1,
+        approvedVia: 'promotion-card',
+        effectiveFrom: 1,
+        createdAt: 1,
+        appliedTo: [],
+      });
+      const correctionIds: Id<'corrections'>[] = [];
+      for (const text of words) {
+        correctionIds.push(
+          await ctx.db.insert('corrections', {
+            agentId: priya,
+            workItemId: given,
+            kind: 'plan-rejection',
+            text,
+            itemTitle: 'Exception: LOG-1 delayed at the port',
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            surfaces: ['linear'],
+            createdAt: 1,
+            appliedTo: [],
+            origin: 'dashboard',
+            agreementId,
+          }),
+        );
+      }
+      await ctx.db.patch(agreementId, { correctionIds });
+      await ctx.db.patch(given, { state: 'cancelled' });
+      return agreementId;
+    });
+    recorded.model.length = 0;
+    return { agreementId, words };
+  }
+
+  const CORRECTIONS_HEADING = '--- Corrections the manager gave on earlier work ---';
+
+  it("leaves the planner none of a retired agreement's corrections (W13-R5)", async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, 'Priya');
+    const { agreementId, words } = await keptFromTwoCorrections(harness, priya);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.retire, { agreementId, agentId: priya });
+
+    await seedTicket(harness, priya, 'LOG-6');
+    await drain(harness);
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).not.toContain(HEADING);
+    expect(plannerPrompt).not.toContain(CORRECTIONS_HEADING);
+    for (const text of words) expect(plannerPrompt).not.toContain(text);
+  }, 30_000);
+
+  it("gives the planner an edited agreement's new words and none of its corrections beside them (W13-R5)", async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, 'Priya');
+    const { agreementId, words } = await keptFromTwoCorrections(harness, priya);
+    const edited = 'Name the vessel and the carrier.';
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.edit, { agreementId, agentId: priya, statement: edited });
+    await drain(harness);
+    recorded.model.length = 0;
+
+    await seedTicket(harness, priya, 'LOG-7');
+    await drain(harness);
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(edited);
+    expect(plannerPrompt).not.toContain(CORRECTIONS_HEADING);
+    for (const text of words) expect(plannerPrompt).not.toContain(text);
   }, 30_000);
 
   it('reaches no planner once retired', async (): Promise<void> => {
