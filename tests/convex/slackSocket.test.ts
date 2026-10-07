@@ -7,6 +7,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
+import { REPORT_PAGE } from '../../slack-socket/bridge.js';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { reportBridgeOn } from './fakes/socket-heartbeat';
 
@@ -593,9 +594,11 @@ describe('the bridge’s heartbeat (wave 13, 13-FS; D-6 (b), W12-R16)', (): void
     ).toEqual({ written: 0 });
   });
 
-  it('refuses a report naming more apps than the bridge’s own list can hold (13-FS second pass)', async (): Promise<void> => {
+  // Re-pinned for W13-R17 (14-FX): one report names at most a bridge page of apps (the bridge
+  // reports in pages), so one call runs at most ten mutations, not four hundred.
+  it('refuses a report naming more apps than one of the bridge’s report pages (W13-R17)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const apps = Array.from({ length: 40_001 }, (_, index) => ({
+    const apps = Array.from({ length: REPORT_PAGE + 1 }, (_, index) => ({
       surfaceId: `s${index}`,
       appId: 'A0OPS',
       live: true,
@@ -603,6 +606,8 @@ describe('the bridge’s heartbeat (wave 13, 13-FS; D-6 (b), W12-R16)', (): void
     const response = await heartbeat(harness, { apps });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'too many apps in one report' });
+    // A whole page is taken.
+    expect((await heartbeat(harness, { apps: apps.slice(0, REPORT_PAGE) })).status).toBe(200);
   });
 
   it('sends a request made while the bridge reports nothing with no buttons, saying how to decide', async (): Promise<void> => {
