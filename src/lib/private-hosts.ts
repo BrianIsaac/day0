@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { isDiallablePrivateAddress } from './network-addresses';
+import { isDiallablePrivateAddress, isNonPublicAddress } from './network-addresses';
 
 /**
  * The operator's list of hosts inside their own network that day0 may reach.
@@ -127,10 +127,19 @@ export const GIT_HOSTS_VAR = 'DAY0_GIT_HOSTS';
  *
  * @param value - The variable's value: entries separated by commas or whitespace.
  * @returns The names and suffixes, as the private list's parser returns them.
- * @throws Error naming `DAY0_GIT_HOSTS` for an entry the private list would refuse.
+ * @throws Error naming `DAY0_GIT_HOSTS` for an entry the private list would refuse, or an IP
+ *   address that is not public, which is a private host and listed as one.
  */
 export function gitHostAllowlist(value: string | undefined): PrivateHostAllowlist {
-  return hostList(GIT_HOSTS_VAR, value);
+  const list = hostList(GIT_HOSTS_VAR, value);
+  const inside = list.names.find((name) => isIP(name) !== 0 && isNonPublicAddress(name));
+  if (inside !== undefined) {
+    throw new Error(
+      `${GIT_HOSTS_VAR} lists "${inside}", an address that is not public: list a host inside ` +
+        `your network in ${PRIVATE_HOSTS_VAR} instead.`,
+    );
+  }
+  return list;
 }
 
 /**

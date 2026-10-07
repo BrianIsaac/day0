@@ -86,6 +86,15 @@ describe('the git hosts list (DAY0_GIT_HOSTS)', (): void => {
     );
   });
 
+  it('refuses an address inside a private network, which belongs in DAY0_PRIVATE_HOSTS', (): void => {
+    for (const entry of ['10.0.0.5', '192.168.1.20', 'fd12::5']) {
+      expect(() => gitHostAllowlist(`gitee.com ${entry}`), entry).toThrow(
+        `DAY0_GIT_HOSTS lists "${entry}", an address that is not public: list a host inside your network in DAY0_PRIVATE_HOSTS instead.`,
+      );
+    }
+    expect(gitHostAllowlist('1.1.1.1').names).toEqual(['1.1.1.1']);
+  });
+
   it('admits a listed git host and leaves it out of the private hosts', (): void => {
     vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
     vi.stubEnv('DAY0_PRIVATE_HOSTS', 'git.corp.internal');
