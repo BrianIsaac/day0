@@ -9,6 +9,10 @@ import type { ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import {
+  AGREEMENT_NOT_A_SENTENCE,
+  AGREEMENT_STATEMENT_TOO_LONG,
+} from '../../convex/workingAgreements';
 
 /**
  * A plan's arrival and its approval (`convex/planApproval.ts`, moved out of `convex/work.ts` by
@@ -206,6 +210,29 @@ describe('the "Keep this note" tick at plan approval', (): void => {
     expect((await mock.run(async (ctx) => await ctx.db.get(seeded.workItemId)))?.state).toBe(
       'plan-pending',
     );
+  });
+});
+
+describe('the note the tick keeps, held to what an edit keeps (W13-R32)', (): void => {
+  it('refuses a note past the limit, as an edit does, and a word that is no sentence, approving nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    for (const [note, refusal] of [
+      [`Use template B ${'and say so again '.repeat(40)}`, AGREEMENT_STATEMENT_TOO_LONG],
+      ['Yes', AGREEMENT_NOT_A_SENTENCE],
+      ['Evergreen.', AGREEMENT_NOT_A_SENTENCE],
+    ] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const { workItemId } = await seed(harness, 'plan-pending');
+      await expect(
+        harness
+          .withIdentity(OWNER)
+          .mutation(api.planApproval.approvePlan, { workItemId, note, keepNote: true }),
+      ).rejects.toThrow(refusal);
+      expect(await agreementsOf(harness)).toEqual([]);
+      expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+        'plan-pending',
+      );
+    }
   });
 });
 

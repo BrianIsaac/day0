@@ -87,6 +87,13 @@ export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most $
  */
 export const EVERY_EMPLOYEE_TOO_MANY = `Day0 checks an agreement for every employee against at most ${EMPLOYEES_CHECKED} charters, and you have more employees than that. Keep it for this employee instead.`;
 
+/** The fewest words a kept note must have: a direction a later plan can follow (W13-R32). */
+const AGREEMENT_SENTENCE_WORDS = 3;
+
+/** The refusal of a note kept from the plan approval that is no sentence ("Yes", "Evergreen"). */
+export const AGREEMENT_NOT_A_SENTENCE =
+  'Keep a note as a working agreement only when it is a sentence a later plan can follow, not a one-word answer.';
+
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
 
@@ -215,7 +222,8 @@ async function scheduleCheck(
  * @param row - The plan-pending work item.
  * @param note - The manager's note, as written.
  * @returns The kept agreement, or the one already kept for the same note.
- * @throws ConvexError in mock mode, or for an employee no owner holds.
+ * @throws ConvexError in mock mode, for an employee no owner holds, or for a note longer than an
+ *   agreement keeps or of fewer than three words (W13-R32).
  */
 export async function keepPlanNoteInTransaction(
   ctx: MutationCtx,
@@ -226,8 +234,17 @@ export async function keepPlanNoteInTransaction(
   const agent = await ctx.db.get(row.agentId);
   const userId = agent ? employeeOwnerScope(agent) : undefined;
   if (!agent || userId === undefined) throw new ConvexError(AGREEMENT_NOT_THIS_EMPLOYEES);
+  // Held to what an edit keeps (W13-R32): never cut silently, and a direction, not an answer.
+  if (note.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
+    throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
+  }
   const statement = agreementStatement(redactTokenShapes(note));
   if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+  if (
+    statement.split(' ').filter((word) => /\p{L}/u.test(word)).length < AGREEMENT_SENTENCE_WORDS
+  ) {
+    throw new ConvexError(AGREEMENT_NOT_A_SENTENCE);
+  }
   const scopeRef = surfaceSlug(row.sourceSystem);
   // The same note kept again keeps the agreement already in force, or already waiting on its check.
   const kept = [
