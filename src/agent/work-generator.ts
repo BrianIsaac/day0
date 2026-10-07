@@ -4,6 +4,7 @@ import { log } from '../lib/logger';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
+import { otherRolesAskThreads } from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -151,14 +152,20 @@ function shown(text: string): string {
  * description the LLM can copy identifiers out of without hallucinating, with
  * what each record holds (13-FD): a tab's latest rows, a channel's latest
  * messages and each team document, so a ticket asks only for what is there.
+ * A company-wide ask that is another role's work is not shown.
  */
-function renderMockSnapshot(env: MockSurfaceSnapshot): string {
+function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
+  // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
+  // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
+  const otherRoles = otherRolesAskThreads(charter);
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
     for (const c of env.slackChannels) {
       lines.push(`  - slug "${c.slug}" (${c.kind}, displayed as "${c.displayName}")`);
-      const messages = c.recentMessages.slice(-MESSAGES_SHOWN);
+      const messages = c.recentMessages
+        .filter((m) => !(m.threadKey && otherRoles.has(`${c.slug}#${m.threadKey}`)))
+        .slice(-MESSAGES_SHOWN);
       if (messages.length === 0) lines.push('      (no messages)');
       for (const m of messages) {
         const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
@@ -361,7 +368,7 @@ export async function generateWorkItemsFromCharter(
     JSON.stringify({ ...charter, struckClauses: undefined }, null, 2),
     '',
     'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
-    renderMockSnapshot(mockEnv),
+    renderMockSnapshot(mockEnv, charter),
     '',
     // Named up front: an item that shares one is judged the role's work, and a re-ask that names
     // only the last draft's words let the next draft reach for another (the bed walk). The in-scope

@@ -27,6 +27,17 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import type { Charter } from '../../../src/agent/charter';
+import {
+  HANA_ASK,
+  KOFI_ASK,
+  LARK,
+  MANAGER_ASK,
+  MOSS,
+  NELL,
+  PIP,
+  QUILL,
+  SARA_ASK,
+} from '../../fixtures/agent/office-roles-2026-10-07';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -521,4 +532,50 @@ describe('the generation inside one seeding attempt (12-J item 6, option A)', ()
       'reached its budget',
     );
   });
+});
+
+describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 13-FD's R4)", (): void => {
+  /** 13-FD's office in small: the three company-wide asks and the manager's own. */
+  const OFFICE_ASKS = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [
+          { sender: 'Kofi', threadKey: 'thread-drive-access', body: KOFI_ASK },
+          { sender: 'Sara', threadKey: 'thread-spare-monitor', body: SARA_ASK },
+          { sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK },
+        ],
+      },
+      {
+        slug: 'dm-manager',
+        displayName: 'DM · Manager',
+        kind: 'dm',
+        recentMessages: [{ sender: 'Manager', body: MANAGER_ASK }],
+      },
+    ],
+  };
+  const asks = { Kofi: KOFI_ASK, Sara: SARA_ASK, Hana: HANA_ASK };
+
+  it.each([
+    ['Nell, the IT helpdesk triager', NELL, ['Kofi']],
+    ['Pip, the support triage coordinator', PIP, ['Hana']],
+    ['Quill, the facilities coordinator', QUILL, ['Sara']],
+    ['Lark, the revenue operations coordinator', LARK, []],
+    ['Moss, the finance close assistant', MOSS, []],
+  ] as const)(
+    'shows %s the company-wide asks of its own role and no other',
+    async (_who, charter, own) => {
+      await generateWorkItemsFromCharter(charter, OFFICE_ASKS as never);
+      const prompt = prompts.at(-1) ?? '';
+      for (const [sender, words] of Object.entries(asks)) {
+        if ((own as readonly string[]).includes(sender)) expect(prompt, sender).toContain(words);
+        else expect(prompt, sender).not.toContain(words);
+      }
+      // The manager's own ask is the office's own team's, shown to every role as before.
+      expect(prompt).toContain(MANAGER_ASK);
+    },
+  );
 });
