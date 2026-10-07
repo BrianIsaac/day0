@@ -525,9 +525,11 @@ export default defineSchema({
    * A stored page as blocks for the search index (wave 14, 14-I; the wave file's section 6.1):
    * split at headings after redaction by `splitPage` (`src/docs/blocks.ts`), so a block holds
    * nothing its page does not. Real mode only, as `docPages` is (R3: mock mode reads the whole
-   * mirror). Written by `upsertPage` when a page changes and by the `docs-backfill-blocks` pass
-   * (`replacePageBlocks`, `convex/docBlocks.ts`); pruned with its page (`prunePages`) and its
-   * source (`deleteSourceRows`). Read by `docBlocks.searchBlocks` (14-R's selection) and by id.
+   * mirror). Written by `docBlocks.splitStoredPage`, which `upsertPage` schedules for each page
+   * it writes, and by the `docs-backfill-blocks` pass (both through `replacePageBlocks`,
+   * `convex/docBlocks.ts`); pruned with its page (`prunePages`, scheduling
+   * `docBlocks.prunePageBlocks`) and its source (`deleteSourceRows`). Read by
+   * `docBlocks.searchBlocks` (14-R's selection), `docBlocks.unchangedPage` and by id.
    */
   docBlocks: defineTable({
     /** The source owner's key (`docSources.userId`): every search filters on it first. */
@@ -551,7 +553,10 @@ export default defineSchema({
   })
     /** A page's blocks in document order: the replace, the prune and an assembled citation. */
     .index('by_source_page', ['sourceId', 'pageRef', 'index'])
-    /** A source's blocks by the run that wrote them: the source's removal pages through them. */
+    /**
+     * A source's blocks by the run that wrote them (the wave file's index; nothing reads it yet: a
+     * source's removal pages through `by_source_page`, which also leads with the source).
+     */
     .index('by_source_generation', ['sourceId', 'generation'])
     /**
      * At most 16 terms are read and 1,024 results scanned; filter on `userId` and one `sourceId`
