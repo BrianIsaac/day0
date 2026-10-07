@@ -1049,6 +1049,43 @@ describe('people lookups at Confirm', (): void => {
     expect((await graphRows(harness)).identities).toEqual([]);
   });
 
+  it("writes the address it was told is someone else's on the person's own field (W13-R8, 14-I's field)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'sara@kestrel.test' });
+    const identityId = await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      displayName: 'sara',
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.notThisMatch, { personId, identityId, agentId });
+    expect((await graphRows(harness)).people[0]?.notTheirAddresses).toEqual(['sara@kestrel.test']);
+  });
+
+  it("reads the person's field, not the evidence, so a page line and a lookup by an address it holds bring it back to nobody (W13-R8, 14-I's field)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(personId, { notTheirAddresses: ['sara@kestrel.test'] }),
+    );
+    expect(await proposePriya(harness, agentId, { email: 'sara@kestrel.test' })).toBe(personId);
+    expect((await graphRows(harness)).people[0]?.primaryEmail).toBeUndefined();
+    await harness.run(
+      async (ctx) => await ctx.db.patch(personId, { primaryEmail: 'sara@kestrel.test' }),
+    );
+    expect(
+      await harness.mutation(internal.peopleProposals.recordLookups, {
+        personId,
+        address: 'sara@kestrel.test',
+        found: [{ provider: 'slack', externalId: 'U0SARA', displayName: 'sara' }],
+      }),
+    ).toBe(0);
+    expect((await graphRows(harness)).identities).toEqual([]);
+  });
+
   it('looks a confirmed person up when Same person brings them the address a page gave', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

@@ -541,8 +541,9 @@ export const notTheSame = mutation({
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **A different person**
  * on a proposal a lookup matched to a chat user. The lookup was by the proposal's address, so the
  * manager saying the user is someone else says the address is someone else's: every identity a
- * lookup by it recorded (Slack and Linear alike) and the address go, the address is kept as
- * evidence that it is someone else's so no source or lookup gives it back (W13-R8), and the
+ * lookup by it recorded (Slack and Linear alike) and the address go, the address is kept on the
+ * person's `notTheirAddresses` so no source or lookup gives it back, and as evidence the card shows
+ * (W13-R8), and the
  * proposal stays, for Confirm or Dismiss, which then looks nothing up.
  */
 export const notThisMatch = mutation({
@@ -573,14 +574,16 @@ export const notThisMatch = mutation({
         await ctx.db.delete(row._id);
     }
     const now = Date.now();
+    const address = proposal.primaryEmail;
+    const marked = proposal.notTheirAddresses ?? [];
     await ctx.db.patch(proposal._id, {
       primaryEmail: undefined,
-      ...(proposal.primaryEmail === undefined
+      // The field is what the merge and the lookup read; the evidence is what the card shows.
+      ...(address === undefined
         ? {}
         : {
-            evidence: withEvidence(proposal.evidence, [
-              notTheirAddressEvidence(proposal.primaryEmail, now),
-            ]),
+            notTheirAddresses: marked.includes(address) ? marked : [...marked, address],
+            evidence: withEvidence(proposal.evidence, [notTheirAddressEvidence(address, now)]),
           }),
       updatedAt: now,
     });

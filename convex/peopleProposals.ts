@@ -206,7 +206,11 @@ export function notTheirAddressEvidence(address: string, at: number): Evidence {
   };
 }
 
-/** The addresses the manager said are not a person's ({@link notTheirAddressEvidence}). */
+/**
+ * The addresses a person's evidence marks as someone else's ({@link notTheirAddressEvidence}): the
+ * marker the `people-not-their-addresses` pass lifts into `people.notTheirAddresses`. Read by that
+ * pass alone since 14-FX; it goes with the marker in the release after (N10).
+ */
 export function notTheirAddresses(person: Pick<Doc<'people'>, 'evidence'>): ReadonlySet<string> {
   return new Set(
     person.evidence.flatMap((item) =>
@@ -313,7 +317,7 @@ async function mergeProposal(
   origin: ProposalOrigin,
   now: number,
 ): Promise<void> {
-  const notTheirs = notTheirAddresses(person);
+  const notTheirs = new Set(person.notTheirAddresses ?? []);
   const given = normaliseManagerAddress(proposal.email);
   const address = given !== undefined && notTheirs.has(given) ? undefined : given;
   const fills = person.status === 'unverified';
@@ -978,7 +982,8 @@ export const recordLookups = internalMutation({
     if (person === null || person.status === 'dismissed') return 0;
     if (
       args.address !== undefined &&
-      (person.primaryEmail !== args.address || notTheirAddresses(person).has(args.address))
+      (person.primaryEmail !== args.address ||
+        (person.notTheirAddresses ?? []).includes(args.address))
     ) {
       return 0;
     }
