@@ -349,7 +349,7 @@ describe('a strike that takes only the clauses carrying its rule (W13-R6, W13-R7
     });
     expect(html).toContain('strikes the clause: “Contact the support lead or billing directly.”');
     expect(html).toContain(
-      'keeps the clause “Promise a refund in a reply.”, which “Never promise a refund in a reply.” also binds',
+      'keeps the clause “Promise a refund in a reply.” because another rule still needs it: “Never promise a refund in a reply.”',
     );
     expect(html).toContain(
       'keeps the clause “Read each social mention.”: it does not carry your words',
@@ -357,8 +357,20 @@ describe('a strike that takes only the clauses carrying its rule (W13-R6, W13-R7
     expect(html).toContain(
       'keeps the clause “Draft replies.”: your words are not in it to take out',
     );
-    expect(html).toContain(
-      'This bound clause does not carry your words: “Promise a refund in a reply.”',
+    // Named once, by its kept line; the note names only a bound clause no kept line names.
+    expect(html).not.toContain('Also linked to this rule');
+    const recordRow = row({
+      constraint: bound,
+      preview: undefined,
+      placement: {
+        kind: 'bound',
+        clauses: ['Promise a refund in a reply.', 'Contact the support lead or billing directly.'],
+        carriesWords: true,
+        notCarrying: ['Promise a refund in a reply.'],
+      },
+    });
+    expect(recordRow).toContain(
+      'Also linked to this rule, but it does not carry your words: “Promise a refund in a reply.”',
     );
     expect(html).toMatch(/<span[^>]*>Confirmed<\/span>/);
     // Shown as the clause that carries it; the other is said beneath, not listed as the rule.

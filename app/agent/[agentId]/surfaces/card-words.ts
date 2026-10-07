@@ -538,16 +538,16 @@ export function forgottenAppWords(
 }
 
 /**
- * The forget's message (13-S): the app by its name and Slack app id, who deletes it, and that the
- * requests it already sent stay in its DM unread, so the manager decides any still open elsewhere
- * (W13-R16: a press there is another app's and is ignored). A draft.
+ * The forget's message (13-S): the app by its name and Slack app id, who deletes it, and that a
+ * request it already sent is no longer decided in its own messages, so the manager decides it in
+ * day0 (W13-R16: a press there is another app's and is ignored). A draft.
  *
  * @param app - The card's app as it stood before the forget.
  */
 export function forgetDoneWords(
   app: { readonly appId: string; readonly appName: string } | undefined,
 ): string {
-  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Requests it already sent stay in its DM as they were and are no longer read there: decide any still open in day0, or through the new app once it connects.`;
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
 }
 
 /**
@@ -596,7 +596,7 @@ const HISTORY_REFUSAL =
  */
 export function decisionErrorWords(error: string): string {
   return HISTORY_REFUSAL.test(error)
-    ? "Day0 cannot read a typed code you send in Slack: the documentation's Slack page does not let it read the DM's history. Decide in day0 until the page does."
+    ? "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in day0 until it does."
     : error;
 }
 

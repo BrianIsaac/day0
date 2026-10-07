@@ -63,7 +63,7 @@ describe('ResetCard', (): void => {
     // Re-pinned (11-FD): the deletion names the library and the handover notes it takes too.
     const html = renderToStaticMarkup(<ResetCard />);
     expect(html).toContain(
-      'Deletes your employees and everything they made, your skill library, the people and working agreements you keep (your own entry too) and the notes on your handover requests.',
+      'Deletes your employees and everything they made, your skill library, the people and working agreements you keep (including your own entry among your people) and the notes on your handover requests.',
     );
     expect(html).toContain('your skill library');
     expect(html).toContain('Your sign-in stays');
@@ -139,7 +139,7 @@ describe('ResetCard', (): void => {
     expect(heldNow(holding({}), false)).toBe('Nothing of yours is stored now.');
     // W13-R51: the owner's own entry is said, not left out of "nothing".
     expect(heldNow(holding({ ownEntry: true }), false)).toBe(
-      'Nothing of yours is stored now but your own entry among your people, which your next sign-in writes again.',
+      'Nothing of yours is stored now except your own entry among your people, which Day0 writes again each time you open this page.',
     );
     expect(heldNow(holding({ skillLibrary: true, handoverWords: true }), false)).toBe(
       'Stored for you now: your skill library and the notes on your handover requests.',

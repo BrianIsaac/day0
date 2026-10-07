@@ -589,7 +589,7 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
           `decision poll failed: Connected Slack surface does not allow ${method}.`,
         ),
       ).toBe(
-        "Day0 cannot read a typed code you send in Slack: the documentation's Slack page does not let it read the DM's history. Decide in day0 until the page does.",
+        "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in day0 until it does.",
       );
     }
   });
@@ -602,9 +602,9 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
 });
 
 describe('what the forget says of the requests the old app sent (W13-R16)', (): void => {
-  it('says they stay in its DM as sent, are no longer read there, and where to decide them', (): void => {
+  it('says a request it already sent is no longer decided in its messages, and where to decide it', (): void => {
     expect(forgetDoneWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
-      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. Requests it already sent stay in its DM as they were and are no longer read there: decide any still open in day0, or through the new app once it connects.",
+      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.",
     );
   });
 });

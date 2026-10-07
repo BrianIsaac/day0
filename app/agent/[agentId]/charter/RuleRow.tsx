@@ -219,7 +219,7 @@ function keptClauseWords(kept: KeptClause): string {
   const clause = quotedClauses([kept.clause]);
   switch (kept.because) {
     case 'another-rule':
-      return `keeps the clause ${clause}, which ${quotedClauses([kept.rule ?? 'another rule'])} also binds`;
+      return `keeps the clause ${clause} because another rule still needs it: ${quotedClauses([kept.rule ?? 'another rule'])}`;
     case 'not-this-rule':
       return `keeps the clause ${clause}: it does not carry your words`;
     case 'no-words':
@@ -358,6 +358,13 @@ export function RuleRow({
   onKeep?: (index: number) => void;
 }) {
   const standing = ruleStanding(constraint, preview, placement);
+  // The bound clauses a confirmed rule does not carry, said once: a kept line already names its own.
+  const unnamed =
+    standing === 'confirmed' && placement.kind === 'bound'
+      ? placement.notCarrying.filter(
+          (clause) => !(preview?.keptClauses ?? []).some((kept) => kept.clause === clause),
+        )
+      : [];
   const chip = STANDING_CHIP[standing];
   const keepUnder = CLAUSE_LIST_WORDS[defaultRuleClause(constraint.quote)];
   return (
@@ -410,16 +417,6 @@ export function RuleRow({
               : 'These clauses do not carry your words.'}
           </RowNote>
         ) : null}
-        {standing === 'confirmed' &&
-        placement.kind === 'bound' &&
-        placement.notCarrying.length > 0 ? (
-          <RowNote>
-            {placement.notCarrying.length === 1
-              ? 'This bound clause does not carry your words: '
-              : 'These bound clauses do not carry your words: '}
-            {quotedClauses(placement.notCarrying)}
-          </RowNote>
-        ) : null}
         {standing === 'in-no-clause' ? (
           <RowNote emphasis>
             {record
@@ -443,6 +440,15 @@ export function RuleRow({
               </RowNote>
             ))
           : null}
+        {/* After what Strike does, and only for a clause no kept line already names (the design pass). */}
+        {unnamed.length > 0 ? (
+          <RowNote>
+            {unnamed.length === 1
+              ? 'Also linked to this rule, but it does not carry your words: '
+              : 'Also linked to this rule, but they do not carry your words: '}
+            {quotedClauses(unnamed)}
+          </RowNote>
+        ) : null}
         {constraint.struck && onRestore ? (
           <RowNote>Its clauses leave the charter on approval; Restore puts them back.</RowNote>
         ) : null}

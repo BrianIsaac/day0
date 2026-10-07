@@ -86,7 +86,7 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
     if (apart.length === 0) {
       // The owner's own entry alone never makes the control live: the next sign-in writes it again.
       return holdings.ownEntry === true
-        ? 'Nothing of yours is stored now but your own entry among your people, which your next sign-in writes again.'
+        ? 'Nothing of yours is stored now except your own entry among your people, which Day0 writes again each time you open this page.'
         : 'Nothing of yours is stored now.';
     }
     if (!holdings.credentials) {
@@ -203,8 +203,9 @@ export function ResetCard() {
         <div>
           <p className="text-sm text-[var(--color-muted)]">
             Deletes your employees and everything they made, your skill library, the people and
-            working agreements you keep (your own entry too) and the notes on your handover
-            requests. Your sign-in stays, and the requests stay in the other manager’s record.
+            working agreements you keep (including your own entry among your people) and the notes
+            on your handover requests. Your sign-in stays, and the requests stay in the other
+            manager’s record.
           </p>
           <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
             {holdings

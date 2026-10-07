@@ -147,7 +147,7 @@ describe('SurfaceCards and the optional browser component', (): void => {
       'decision poll failed: Connected Slack surface does not allow conversations.history.';
     const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     // Re-pinned for W13-R1: the card says the refusal in the manager's words, not the method's.
-    expect(markup).toContain('Manager decisions: Day0 cannot read a typed code you send in Slack');
+    expect(markup).toContain('Manager decisions: Day0 cannot read a code you type in Slack');
     expect(markup).not.toContain('conversations.history');
   });
 

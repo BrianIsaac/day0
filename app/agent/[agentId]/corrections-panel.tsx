@@ -116,7 +116,7 @@ export function KeptCorrectionsPanel({
           return (
             <li
               key={correction._id}
-              className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'border-dashed' : ''}`}
+              className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'border-dashed border-[var(--color-muted)]/40' : ''}`}
             >
               <p className="text-xs text-[var(--color-muted)] mb-0.5">
                 <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span>{' '}

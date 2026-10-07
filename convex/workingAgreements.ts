@@ -85,14 +85,14 @@ export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most $
  * The refusal of an agreement for every employee of an owner with more employees than its check
  * reads (W13-R28): kept, it would bind an employee whose charter nobody checked it against.
  */
-export const EVERY_EMPLOYEE_TOO_MANY = `Day0 checks an agreement for every employee against at most ${EMPLOYEES_CHECKED} charters, and you have more employees than that. Keep it for this employee instead.`;
+export const EVERY_EMPLOYEE_TOO_MANY = `Day0 can check an agreement for every employee only when you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. Keep it for this employee instead.`;
 
 /** The fewest words a kept note must have: a direction a later plan can follow (W13-R32). */
 const AGREEMENT_SENTENCE_WORDS = 3;
 
 /** The refusal of a note kept from the plan approval that is no sentence ("Yes", "Evergreen"). */
 export const AGREEMENT_NOT_A_SENTENCE =
-  'Keep a note as a working agreement only when it is a sentence a later plan can follow, not a one-word answer.';
+  'A working agreement needs a sentence of at least three words that a later plan can follow. A short answer such as “Yes” is not one.';
 
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';

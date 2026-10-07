@@ -76,7 +76,8 @@ export function PlanSection({
         redaction={plan.correctionsRedaction}
       />
       {applied.length > 0 ? (
-        <ul className="grid gap-1 text-sm text-[var(--color-fg)]">
+        // Drawn as the applied corrections are, beside them: what the plan carries, not a step.
+        <ul className="mt-2 space-y-1 rounded-md border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 p-2 text-[var(--color-fg)]">
           {applied.map((agreement) => (
             <li key={agreement._id}>Applies your working agreement: ‘{agreement.statement}’</li>
           ))}
