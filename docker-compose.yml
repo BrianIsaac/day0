@@ -100,8 +100,12 @@
 # machine which already has these images never pulls at start and a machine
 # that lacks one fails loudly rather than downloading whatever the tag means
 # today. The tag is kept beside the digest for the reader; Docker resolves the
-# digest. Pinned 12 Sep 2026 to the images then present on the demo laptop. To
-# re-pin after a deliberate `docker pull <name:tag>`:
+# digest. Pinned 12 Sep 2026 to the images then present on the demo laptop,
+# except the backend: re-pinned 8 Oct 2026 to the build of upstream commit
+# 5c7cb5bc (28 Sep 2026), the first `latest` after the self-hosted search
+# disk-cache fix of 18 Sep 2026 (PR #531, merged as bf09681d and three more),
+# before the first search index. To re-pin after a deliberate
+# `docker pull <name:tag>`:
 #
 #   docker image inspect --format '{{index .RepoDigests 0}}' <name:tag>
 #
@@ -116,7 +120,7 @@ services:
   # for what each one is for and when you need it.
   backend:
     profiles: ['real']
-    image: ghcr.io/get-convex/convex-backend:latest@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
+    image: ghcr.io/get-convex/convex-backend:latest@sha256:d715e9ec088784407ca4ba2d3db592702cd328d02c76cdca3852c0018f2a76b4
     stop_grace_period: 10s
     stop_signal: SIGINT
     # `nango` is the token store's private network (see `nango-server`): the

@@ -20,7 +20,7 @@
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
@@ -51,8 +51,9 @@ import {
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
-import { markKeptBeforeTheMarkPage } from './keptIdentities';
 import { backfillMessagesTabPage } from './slackMessagesTab';
+import { replacePageBlocks } from './docBlocks';
+import { notTheirAddresses } from './peopleProposals';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
@@ -66,7 +67,10 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
  * Every migration, in the order the upgrade runs them. The access clocks come
  * first, so the hourly sweep has the least time to end a card on the clock
  * they restart. A migration leaves this list when the declaration it cleared
- * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`).
+ * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`), or the dual
+ * read it served goes: `surfaces-kept-identity-since` (0.17.0) left at 0.18.0
+ * with the kept-identity sweep's reason-word fallback (14-I). A deployment's
+ * finished row of a migration that left stays as its record.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
@@ -95,8 +99,9 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'work-decision-closed',
-  'surfaces-kept-identity-since',
   'surfaces-messages-tab',
+  'docs-backfill-blocks',
+  'people-not-their-addresses',
 ] as const;
 
 /** One migration's name. */
@@ -173,6 +178,12 @@ const SUPERVISION_RELEASE = '0.16.0';
  * wave 12 recorded state for only in their reason words or the employee's record (13-K).
  */
 const PEOPLE_RELEASE = '0.17.0';
+
+/**
+ * The release of retrieval (wave 14): the blocks the documentation search reads, split from every
+ * page stored before it, and the people field wave 13 kept as evidence (14-I).
+ */
+const RETRIEVAL_RELEASE = '0.18.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -308,17 +319,22 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
   },
-  'surfaces-kept-identity-since': {
-    release: PEOPLE_RELEASE,
-    does: 'marks each card a handover kept the employee’s own identity on before the mark existed, which the kept-identity sweep read by the card’s reason words alone, dated by the card’s newest surface.proposed line as the sweep dated it, or by the upgrade when its record holds none, so no wait ends sooner; a marked card and every other card are left',
-    thenRemoves:
-      'nothing in the schema: the sweep’s reason-word fallback (keptByHandover and its reason set in convex/keptIdentities.ts) goes the release after',
-  },
   'surfaces-messages-tab': {
     release: PEOPLE_RELEASE,
     does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card’s reader can read it off the row once every writer writes it (13-FS); a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
     thenRemoves:
       'nothing: typedCodeReachOf reads the card’s own field, which every writer of the opening writes (13-FS); the record’s lines stay as the record',
+  },
+  'docs-backfill-blocks': {
+    release: RETRIEVAL_RELEASE,
+    does: 'splits the stored, already redacted Markdown of every documentation page into the blocks the search index reads, under its source’s owner and the source’s last completed sync (its running one, or its newest, for a source that never completed); it asks nothing of the redaction component and changes no page; a page whose blocks already match is left, a page of a removed source is passed over, and mock mode stores no page',
+    thenRemoves: 'nothing: every page a sync writes from this release is split as it is stored',
+  },
+  'people-not-their-addresses': {
+    release: RETRIEVAL_RELEASE,
+    does: 'copies every address a person’s evidence marks as someone else’s (the not-their-address: marker of W13-R8’s A different person) into the person’s notTheirAddresses, after any already there, keeping the evidence; a person with no marker is left, and mock mode stores no person',
+    thenRemoves:
+      'the marker evidence and its reader (notTheirAddresses in convex/peopleProposals.ts) the release after, once every writer writes the field and every reader reads it (14-FX)',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -940,10 +956,86 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
-  'surfaces-kept-identity-since': async (ctx, cursor) =>
-    await markKeptBeforeTheMarkPage(ctx, cursor, Date.now()),
   'surfaces-messages-tab': async (ctx, cursor) => await backfillMessagesTabPage(ctx, cursor),
+  'docs-backfill-blocks': backfillBlocks,
+  'people-not-their-addresses': liftNotTheirAddresses,
 };
+
+/**
+ * Stored pages one page of the block backfill reads, bounded so a page of the pass stays inside a
+ * transaction's limits whatever its pages: each splits into at most `MAX_BLOCKS_PER_PAGE` (1,500)
+ * blocks, all written (and, on a second run, read back) in the same transaction, so four pages
+ * write at most 6,000 documents of the 16,000 allowed; and a byte bound, since a block's search
+ * text is about three times a CJK page's.
+ */
+const BLOCK_BACKFILL_READ = { numItems: 4, maximumBytesRead: 1024 * 1024 } as const;
+
+/** Whose blocks a source's pages are, and the run they are filed under; null for a gone source. */
+async function blockOwnerOf(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+): Promise<{ userId: string; generation: Id<'docSyncRuns'> } | null> {
+  const source = await ctx.db.get(sourceId);
+  if (source === null) return null;
+  const generation =
+    source.lastCompletedSyncId ??
+    source.activeSyncId ??
+    (
+      await ctx.db
+        .query('docSyncRuns')
+        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+        .order('desc')
+        .first()
+    )?._id;
+  return generation === undefined ? null : { userId: source.userId, generation };
+}
+
+/**
+ * One page of the block backfill (14-I): split each stored page's Markdown, as stored, into its
+ * blocks. The Markdown was redacted when the sync stored it, so nothing is redacted again; a page
+ * whose blocks already match changes nothing, so a second run changes nothing.
+ */
+async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docPages').paginate({ ...BLOCK_BACKFILL_READ, cursor });
+  const owners = new Map<Id<'docSources'>, Awaited<ReturnType<typeof blockOwnerOf>>>();
+  let changed = 0;
+  for (const stored of page.page) {
+    if (!owners.has(stored.sourceId)) {
+      owners.set(stored.sourceId, await blockOwnerOf(ctx, stored.sourceId));
+    }
+    const owner = owners.get(stored.sourceId);
+    if (owner === null || owner === undefined) continue;
+    const written = await replacePageBlocks(ctx, {
+      ...owner,
+      sourceId: stored.sourceId,
+      pageRef: stored.ref,
+      markdown: stored.markdown,
+    });
+    if (written > 0) changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * One page of the lift of W13-R8's marker (14-I): every address a person's evidence marks as
+ * someone else's joins the person's `notTheirAddresses`, after those already there. The evidence
+ * stays, so its card and every reader of the marker read as before until they read the field.
+ */
+async function liftNotTheirAddresses(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<MigrationPage> {
+  const page = await ctx.db.query('people').paginate({ ...LARGE_ROWS_READ, cursor });
+  let changed = 0;
+  for (const person of page.page) {
+    const held = person.notTheirAddresses ?? [];
+    const lifted = [...notTheirAddresses(person)].filter((address) => !held.includes(address));
+    if (lifted.length === 0) continue;
+    await ctx.db.patch(person._id, { notTheirAddresses: [...held, ...lifted] });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
 
 /** A migration's row, if it has started. */
 async function migrationRow(ctx: QueryCtx, name: MigrationName): Promise<Doc<'migrations'> | null> {

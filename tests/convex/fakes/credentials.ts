@@ -85,6 +85,38 @@ export const pageRowsByLabel = internalQuery({
   },
 });
 
+/**
+ * Mirror lane A's `pageRowsForStore`: every row of one page, which the sync reads for a page it
+ * keeps as stored (14-I) and for one it could not read, sealed to its owner as the store seals it.
+ */
+export const pageRowsForStore = internalQuery({
+  args: { userId: v.string(), sourceId: v.id('docSources'), pageRef: v.string() },
+  handler: async (_ctx, args): Promise<Doc<'credentials'>[]> =>
+    [...fakeCredentialState().rows.values()]
+      .filter(
+        (row): boolean =>
+          row.userId === args.userId &&
+          row.sourceId === String(args.sourceId) &&
+          credentialPageRef(row.ref) === args.pageRef,
+      )
+      .map((row): Doc<'credentials'> => {
+        const key = process.env.DAY0_CREDENTIAL_KEY;
+        if (key === undefined) throw new Error('DAY0_CREDENTIAL_KEY is not configured.');
+        return {
+          _id: row._id,
+          _creationTime: 1,
+          userId: row.userId,
+          kind: 'value',
+          label: row.label,
+          source: { sourceId: args.sourceId, ref: row.ref },
+          createdAt: 1,
+          explicitlyAssigned: row.explicitlyAssigned,
+          ...(row.revokedAt !== undefined ? { revokedAt: row.revokedAt } : {}),
+          ...sealForOwner(row.plaintext, { current: key }, row.userId),
+        };
+      }),
+});
+
 /** Mirror lane A's list for the exact-value layer: these fixtures store nothing to remove. */
 export const activeValuesForOwner = internalQuery({
   args: { userId: v.string() },

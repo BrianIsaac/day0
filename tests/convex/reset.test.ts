@@ -46,8 +46,31 @@ async function seedOwner(harness: ReturnType<typeof convexTest>): Promise<string
       sourceId,
       ref: 'onboarding.md',
       title: 'Onboarding',
-      markdown: '# Onboarding',
+      markdown: '# Onboarding\n\nRead the handbook.',
       updatedAt: 1,
+    });
+    // The page's one block for the search, as the sync splits it (14-I).
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing: 1,
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: 1,
+    });
+    await ctx.db.insert('docBlocks', {
+      userId: 'owner',
+      sourceId,
+      pageRef: 'onboarding.md',
+      generation: runId,
+      index: 0,
+      headingPath: ['Onboarding'],
+      text: 'Read the handbook.',
+      searchText: 'Onboarding\nRead the handbook.',
+      kind: 'text',
+      hash: 'a'.repeat(64),
+      chars: 18,
     });
     await ctx.db.insert('agents', {
       bossEmail: MANAGER_ADDRESS,
@@ -61,7 +84,17 @@ async function seedOwner(harness: ReturnType<typeof convexTest>): Promise<string
 }
 
 describe('reset documentation retention', (): void => {
-  it('keeps owner-level documentation by default', async (): Promise<void> => {
+  /** How many stored pages and search blocks are left. */
+  const storedDocumentation = async (
+    harness: ReturnType<typeof convexTest>,
+  ): Promise<{ pages: number; blocks: number }> =>
+    await harness.run(async (ctx) => ({
+      pages: (await ctx.db.query('docPages').collect()).length,
+      blocks: (await ctx.db.query('docBlocks').collect()).length,
+    }));
+
+  it('keeps owner-level documentation by default, its pages and their blocks too', async (): Promise<void> => {
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
     const owner = harness.withIdentity(managerIdentity());
@@ -69,17 +102,42 @@ describe('reset documentation retention', (): void => {
       deleted: 1,
       unlinkedSources: 0,
     });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await harness.run(async (ctx) => await ctx.db.get(sourceId as never))).not.toBeNull();
+    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1 });
+    vi.useRealTimers();
   });
 
-  it('removes documentation only when explicitly requested', async (): Promise<void> => {
+  it('removes documentation only when explicitly requested, its pages and their blocks with it', async (): Promise<void> => {
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true }),
     ).resolves.toEqual({ deleted: 1, unlinkedSources: 1 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await harness.run(async (ctx) => await ctx.db.get(sourceId as never))).toBeNull();
+    expect(await storedDocumentation(harness)).toEqual({ pages: 0, blocks: 0 });
+    vi.useRealTimers();
+  });
+
+  it("keeps the owner's pages and their blocks when one employee retires", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness);
+    const retiring = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', 'owner'))
+        .unique();
+      if (!row) throw new Error('agent missing');
+      return row._id;
+    });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1 });
+    vi.useRealTimers();
   });
 });
 

@@ -22,6 +22,7 @@ import type * as credentialCryptoActions from '../credentialCryptoActions.js';
 import type * as credentials from '../credentials.js';
 import type * as crons from '../crons.js';
 import type * as devAuth from '../devAuth.js';
+import type * as docBlocks from '../docBlocks.js';
 import type * as docPages from '../docPages.js';
 import type * as docSources from '../docSources.js';
 import type * as docSyncActions from '../docSyncActions.js';
@@ -135,6 +136,7 @@ declare const fullApi: ApiFromModules<{
   credentials: typeof credentials;
   crons: typeof crons;
   devAuth: typeof devAuth;
+  docBlocks: typeof docBlocks;
   docPages: typeof docPages;
   docSources: typeof docSources;
   docSyncActions: typeof docSyncActions;

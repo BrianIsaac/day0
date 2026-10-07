@@ -986,3 +986,78 @@ describe('skillVersions: the owner key on every holder row (K-m3, R-S)', (): voi
     expect(holders.map((row) => row._id)).toEqual([claimed.skillId]);
   });
 });
+
+describe('stampChangedPage (14-I)', (): void => {
+  it('stamps every holder of a version that read the page, past one page of the library, and passes over a withdrawn version', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { sourceId, holders } = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Europe/London' });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const version = async (name: string, readsPage: boolean, revokedAt?: number) =>
+        await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name,
+          description: name,
+          surfaceClass: 'kanban',
+          operation: 'comment',
+          version: 1,
+          body: '# Body',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: readsPage ? [{ sourceId, ref: 'runbook.md', title: 'Runbook' }] : [],
+          verifiedAt: 1,
+          createdAt: 1,
+          ...(revokedAt !== undefined ? { revokedAt } : {}),
+        });
+      const holder = async (versionId: Id<'skillVersions'>, name: string) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name,
+          description: name,
+          body: '# Body',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+        });
+      // The first page of the library (100 versions) reads nothing; the reader sorts after it.
+      for (let index = 0; index < 100; index += 1) {
+        await version(`a-${String(index).padStart(3, '0')}`, false);
+      }
+      return {
+        sourceId,
+        holders: {
+          reads: await holder(await version('z-reads', true), 'z-reads'),
+          withdrawn: await holder(await version('z-withdrawn', true, 5), 'z-withdrawn'),
+        },
+      };
+    });
+    await harness.mutation(internal.skillVersions.stampChangedPage, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md',
+      title: 'Runbook',
+      changedAt: Date.UTC(2026, 9, 7, 23, 30),
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await skill(harness, holders.reads)).recheckReason).toBe(
+      'its runbook "Runbook" changed on 8 October 2026',
+    );
+    expect((await skill(harness, holders.withdrawn)).recheckDueAt).toBeUndefined();
+    vi.useRealTimers();
+  });
+});

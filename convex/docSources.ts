@@ -587,8 +587,17 @@ async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promis
   await ctx.scheduler.runAfter(0, internal.docSources.deleteSourceRows, { sourceId: source._id });
 }
 
-/** The tables a removed source leaves rows in, in the order they are deleted. */
-const SOURCE_ROW_TABLES = ['mockDocs', 'docPages', 'docPageListings', 'docSyncRuns'] as const;
+/**
+ * The tables a removed source leaves rows in, in the order they are deleted: what an employee
+ * reads directly first (its mirrors, then the blocks a search reads), the record last.
+ */
+const SOURCE_ROW_TABLES = [
+  'mockDocs',
+  'docBlocks',
+  'docPages',
+  'docPageListings',
+  'docSyncRuns',
+] as const;
 
 /**
  * Delete one bounded page of a removed source's rows in one table, and schedule the next.
@@ -604,10 +613,17 @@ export const deleteSourceRows = internalMutation({
   },
   handler: async (ctx, args): Promise<number> => {
     const table = args.table ?? SOURCE_ROW_TABLES[0];
-    const page = await ctx.db
-      .query(table)
-      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .paginate({ ...PAGED_READ, cursor: null });
+    // A source's blocks are read by their page index, which leads with the source.
+    const page =
+      table === 'docBlocks'
+        ? await ctx.db
+            .query('docBlocks')
+            .withIndex('by_source_page', (index) => index.eq('sourceId', args.sourceId))
+            .paginate({ ...PAGED_READ, cursor: null })
+        : await ctx.db
+            .query(table)
+            .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+            .paginate({ ...PAGED_READ, cursor: null });
     for (const row of page.page) await ctx.db.delete(row._id);
     const next = page.isDone ? SOURCE_ROW_TABLES[SOURCE_ROW_TABLES.indexOf(table) + 1] : table;
     if (next !== undefined) {
@@ -1159,6 +1175,11 @@ export const prunePages = internalMutation({
         .unique();
       if (stored !== null) {
         await ctx.db.delete(stored._id);
+        // Its blocks go in their own bounded pages, so this page stays small whatever their count.
+        await ctx.scheduler.runAfter(0, internal.docBlocks.prunePageBlocks, {
+          sourceId: args.sourceId,
+          pageRef: row.ref,
+        });
         removed += 1;
       }
       await ctx.db.delete(row._id);
@@ -1866,6 +1887,11 @@ export const syncReport = internalQuery({
  * generation has superseded that one, so a stale action can never write back
  * a page the newer sync removed.
  *
+ * It stores the page's hash before redaction, schedules the split of every
+ * page it writes into blocks (`docBlocks.splitStoredPage`), and, when a stored
+ * page's body changed, the Re-check due stamp on the skills whose version read
+ * it (`skillVersions.stampChangedPage`; 14-I).
+ *
  * @throws Error when `syncRunId` is not the source's running generation.
  */
 export const upsertPage = internalMutation({
@@ -1877,6 +1903,8 @@ export const upsertPage = internalMutation({
     url: v.optional(v.string()),
     markdown: v.string(),
     updatedAt: v.number(),
+    /** The page's hash before redaction (`pageContentHash`); absent where the deployment has no key. */
+    contentHash: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docPages'>> => {
     await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);
@@ -1886,11 +1914,22 @@ export const upsertPage = internalMutation({
         index.eq('sourceId', args.sourceId).eq('ref', args.ref),
       )
       .unique();
+    // A changed page carries its new hash, or none, so an old hash never vouches for a new body.
     const page = {
       title: args.title,
       url: args.url,
       markdown: args.markdown,
       updatedAt: args.updatedAt,
+      contentHash: args.contentHash,
+    };
+    // The page's blocks are split from the page as stored, in a job of their own that reads it
+    // then, so a later write of the page is never undone by an earlier split (14-I).
+    const splitStored = async (): Promise<void> => {
+      await ctx.scheduler.runAfter(0, internal.docBlocks.splitStoredPage, {
+        sourceId: args.sourceId,
+        ref: args.ref,
+        generation: args.syncRunId,
+      });
     };
     if (existing) {
       // An unchanged page is not written again, so every subscriber to the
@@ -1899,7 +1938,40 @@ export const upsertPage = internalMutation({
         existing.title === page.title &&
         existing.url === page.url &&
         existing.markdown === page.markdown;
-      if (!unchanged) await ctx.db.patch(existing._id, page);
+      if (unchanged) {
+        // A page stored before its hash or under another key takes the hash, with its body
+        // and time left as they were; and an unchanged page the sync stores again (its split
+        // never landed, or it was redacted again) is split again.
+        if (args.contentHash !== undefined) {
+          if (existing.contentHash !== args.contentHash) {
+            await ctx.db.patch(existing._id, { contentHash: args.contentHash });
+          }
+          await splitStored();
+        }
+        return existing._id;
+      }
+      await ctx.db.patch(existing._id, page);
+      await splitStored();
+      // A changed runbook re-checks the skills that read it (the enhancements plan, 4.1): its
+      // text changed and both hashes say so; a page stored before its hash may only have been
+      // redacted to other words, which is no change a skill must be checked against.
+      const textChanged =
+        existing.contentHash !== undefined &&
+        args.contentHash !== undefined &&
+        existing.contentHash !== args.contentHash;
+      if (textChanged && existing.markdown !== page.markdown) {
+        const source = await ctx.db.get(args.sourceId);
+        if (source !== null) {
+          await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPage, {
+            userId: source.userId,
+            sourceId: args.sourceId,
+            ref: args.ref,
+            title: page.title,
+            changedAt: Date.now(),
+            cursor: null,
+          });
+        }
+      }
       return existing._id;
     }
     // Every stored page carries a listing row, so a page whose batch never
@@ -1907,7 +1979,17 @@ export const upsertPage = internalMutation({
     const run = await ctx.db.get(args.syncRunId);
     if (!run) throw new Error('Documentation sync run not found.');
     await stampListed(ctx, args.sourceId, [args.ref], runListing(run));
-    return await ctx.db.insert('docPages', { sourceId: args.sourceId, ref: args.ref, ...page });
+    const pageId = await ctx.db.insert('docPages', {
+      sourceId: args.sourceId,
+      ref: args.ref,
+      title: page.title,
+      url: page.url,
+      markdown: page.markdown,
+      updatedAt: page.updatedAt,
+      ...(args.contentHash !== undefined ? { contentHash: args.contentHash } : {}),
+    });
+    await splitStored();
+    return pageId;
   },
 });
 
