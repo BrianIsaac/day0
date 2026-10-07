@@ -15,8 +15,9 @@ import {
  * Real mode only, as stored pages are (R3): mock mode and the frozen evaluation read the whole
  * mirror and never these rows.
  *
- * Writers: `replacePageBlocks`, called by `docSources.upsertPage` in the page's own transaction
- * (so a page and its blocks never disagree) and by the `docs-backfill-blocks` pass;
+ * Writers: `replacePageBlocks`, through `splitStoredPage`, which `docSources.upsertPage`
+ * schedules for each page it writes (it splits the page as stored when it runs, so it converges
+ * on the newest write), and directly in the `docs-backfill-blocks` pass;
  * `prunePageBlocks`, scheduled by `docSources.prunePages` for a page a finish removed; and
  * `docSources.deleteSourceRows` for a removed source. Readers: `searchBlocks` (14-R's selection
  * calls it from `docSelection`) and `unchangedPage` (the sync's skip of an unchanged page).
@@ -166,6 +167,34 @@ export const prunePageBlocks = internalMutation({
     for (const row of page.page) await ctx.db.delete(row._id);
     if (!page.isDone) await ctx.scheduler.runAfter(0, internal.docBlocks.prunePageBlocks, args);
     return page.page.length;
+  },
+});
+
+/**
+ * Split a stored page into its blocks, as it is stored when this runs. Internal; scheduled by
+ * `docSources.upsertPage` for each page it writes, so the page's own transaction stays one
+ * page's size. A page gone by then leaves its blocks to `prunePageBlocks`.
+ *
+ * @returns How many block rows it inserted, rewrote or deleted.
+ */
+export const splitStoredPage = internalMutation({
+  args: { sourceId: v.id('docSources'), ref: v.string(), generation: v.id('docSyncRuns') },
+  handler: async (ctx, args): Promise<number> => {
+    const [source, page] = await Promise.all([
+      ctx.db.get(args.sourceId),
+      ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
+        .unique(),
+    ]);
+    if (source === null || page === null) return 0;
+    return await replacePageBlocks(ctx, {
+      userId: source.userId,
+      sourceId: args.sourceId,
+      pageRef: args.ref,
+      generation: args.generation,
+      markdown: page.markdown,
+    });
   },
 });
 

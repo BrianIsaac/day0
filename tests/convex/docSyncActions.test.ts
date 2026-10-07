@@ -346,12 +346,16 @@ describe('documentation sync batching', (): void => {
     });
     const first = await harness.action(internal.docSyncActions.syncSource, { sourceId });
     expect(first).toMatchObject({ ok: true, pages: 25, complete: false });
+    // Re-pinned for 14-I: each stored page also schedules its split into blocks, so the pending
+    // jobs are the one continuation and a split per page, every one of them ids only.
     const pending = await scheduled(harness);
-    expect(pending).toHaveLength(1);
-    expect(pending[0].name).toBe('docSyncActions:syncBatch');
-    expect(pending[0].args).toEqual([
+    const continuations = pending.filter((job) => job.name === 'docSyncActions:syncBatch');
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0].args).toEqual([
       { sourceId, runId: expect.any(String), cursor: expect.stringMatching(/^25@[0-9a-z]{7}$/) },
     ]);
+    expect(pending.filter((job) => job.name === 'docBlocks:splitStoredPage')).toHaveLength(25);
+    expect(pending).toHaveLength(26);
     expect(JSON.stringify(pending)).not.toContain(value);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
@@ -409,7 +413,9 @@ describe('documentation sync batching', (): void => {
       locator: 'many',
     });
     await harness.action(internal.docSyncActions.syncSource, { sourceId });
-    const stale = (await scheduled(harness))[0].args as Array<{ runId: Id<'docSyncRuns'> }>;
+    // The continuation among the pending jobs, beside each stored page's split (14-I).
+    const stale = (await scheduled(harness)).find((job) => job.name === 'docSyncActions:syncBatch')
+      ?.args as Array<{ runId: Id<'docSyncRuns'> }>;
     const second = await harness.action(internal.docSyncActions.syncSource, { sourceId });
     expect(second).toMatchObject({ ok: true, pages: 25, complete: false });
     await harness.finishAllScheduledFunctions(drainScheduled);

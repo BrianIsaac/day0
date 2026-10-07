@@ -128,6 +128,32 @@ describe('replacePageBlocks', (): void => {
   });
 });
 
+describe('splitStoredPage', (): void => {
+  it('splits the page as stored when it runs, and nothing for a page gone by then', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+    });
+    const split = async (ref: string) =>
+      await harness.mutation(internal.docBlocks.splitStoredPage, {
+        sourceId,
+        ref,
+        generation: runId,
+      });
+    expect(await split('runbooks/refresh.md')).toBe(3);
+    expect(await split('runbooks/refresh.md')).toBe(0);
+    expect(await split('gone.md')).toBe(0);
+    expect(await blocksOf(harness, sourceId)).toHaveLength(3);
+  });
+});
+
 describe('searchBlocks', (): void => {
   it("answers the owner's blocks of the sources asked, never another owner's", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

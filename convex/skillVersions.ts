@@ -7,6 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
@@ -27,6 +28,8 @@ import {
   type SurfaceTools,
 } from '../src/work/skill-library';
 import { skillWaitingStamp } from '../src/work/needs-manager';
+import { dayLabelAt } from '../src/demo/day-label';
+import { agentZone } from '../src/lib/zone';
 
 /*
  * The owner's skill library (the enhancements plan, section 4.1; K1 to K4).
@@ -39,7 +42,8 @@ import { skillWaitingStamp } from '../src/work/needs-manager';
  * would route through `employeeOwnerScope` too.
  *
  * Writers: registration (`skills.completeRegistration`, through `recordRegisteredVersion`), the
- * re-check stamp (`stampRecheckDue`, the helper every trigger calls), the handover's copy
+ * re-check stamp (`stampRecheckDue`, the helper every trigger calls; a changed runbook's is
+ * `stampChangedPage`), the handover's copy
  * (`copyVersionsForMove`), the retire and the whole-owner reset (`releaseAuthor`,
  * `deleteOwnerLibrary`), and the two backfills `migrations:runPending` runs.
  */
@@ -266,6 +270,70 @@ export async function stampRecheckDueOnSurfaces(
   }
   return stamped;
 }
+
+/** One page of an owner's versions the changed-page trigger reads: bounded by bytes too. */
+const CHANGED_PAGE_SCAN = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
+
+/**
+ * The re-check reason of a skill whose runbook changed: "its runbook "Refresh the tile" changed
+ * on 8 October 2026", after the card's "Re-check due: ".
+ *
+ * @param title - The page's title as stored now.
+ * @param day - The day of the change in the holder's zone, as the pages print a day.
+ */
+export function changedRunbookReason(title: string, day: string): string {
+  return `its runbook "${title}" changed on ${day}`;
+}
+
+/**
+ * Stamp "Re-check due" on every holder of a version whose authoring run read a page whose body
+ * changed (wave 14, 14-I; the enhancements plan's section 4.1 trigger). The holders keep running
+ * the version they verified until a re-check passes (`stampRecheckDue` changes no state). A
+ * withdrawn version runs nowhere and is passed over. Internal; scheduled by
+ * `docSources.upsertPage`, one bounded page of the owner's library at a time, the next page
+ * scheduled until the library is read.
+ *
+ * @returns How many rows this page stamped.
+ */
+export const stampChangedPage = internalMutation({
+  args: {
+    userId: v.string(),
+    sourceId: v.id('docSources'),
+    ref: v.string(),
+    title: v.string(),
+    changedAt: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    const page = await ctx.db
+      .query('skillVersions')
+      .withIndex('by_owner_name_version', (q) => q.eq('userId', args.userId))
+      .paginate({ ...CHANGED_PAGE_SCAN, cursor: args.cursor });
+    let stamped = 0;
+    for (const version of page.page) {
+      if (version.revokedAt !== undefined) continue;
+      const read = version.readRefs.some(
+        (readRef) => readRef.sourceId === args.sourceId && readRef.ref === args.ref,
+      );
+      if (!read) continue;
+      for (const holder of await holdersOf(ctx.db, version._id)) {
+        const agent = await ctx.db.get(holder.agentId);
+        const day = dayLabelAt(args.changedAt, agentZone(agent ?? {}));
+        const reason = changedRunbookReason(args.title, day);
+        if (await stampRecheckDue(ctx, { skillId: holder._id, reason, now: args.changedAt })) {
+          stamped += 1;
+        }
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPage, {
+        ...args,
+        cursor: page.continueCursor,
+      });
+    }
+    return stamped;
+  },
+});
 
 /** What a registration did to the library. */
 export type RegisteredVersion =
