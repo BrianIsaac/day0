@@ -41,12 +41,6 @@
   },
   "routes": [
     {
-      "method": "POST",
-      "path": "/open-apis/auth/v3/tenant_access_token/internal",
-      "status": 200,
-      "body": "token.json"
-    },
-    {
       "method": "GET",
       "path": "/open-apis/wiki/v2/spaces/7300000000000000001/nodes",
       "query": {
