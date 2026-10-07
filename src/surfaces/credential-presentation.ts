@@ -93,6 +93,18 @@ export const OAUTH_FALLBACK_NOTE =
   'so they stay attributable.';
 
 /**
+ * Why an OAuth card still offers a landing field where its provisioning row is drawn but offers no
+ * control (the deployment has no public address for the install to return to): what the row above
+ * waits for, never "the control above" (the pre-tag's found item, `oauthNoProvisioningNote`'s
+ * shape; wording draft).
+ */
+export const OAUTH_UNAVAILABLE_FALLBACK_NOTE =
+  'A dedicated app is the documented path, but this deployment cannot register one yet: the row ' +
+  'above says what it waits for. Where the administrator would rather hand over the workspace ' +
+  'token instead, land it here: it is stored encrypted as a shared credential, and writes ' +
+  'through it carry the employee name and run id so they stay attributable.';
+
+/**
  * Why an OAuth card still offers a landing field where it draws no control that registers an app
  * (W13V-1: a Slack page orientation did not read as Slack's API reaches escalation, and its card
  * said "the control above registers one" with no control above): what IT does instead.
@@ -164,6 +176,11 @@ export interface CredentialPresentationInput {
    * Where it is not, the fallback note says what IT does instead (W13V-1).
    */
   provisioningRowShown?: boolean;
+  /**
+   * Whether that row offers a control; absent reads as offered. A row drawn with none (no public
+   * address yet) gets its own note.
+   */
+  provisioningControlShown?: boolean;
   /** The card's display name, which that note names. */
   displayName?: string;
 }
@@ -356,6 +373,7 @@ function oauthFallbackNote(input: CredentialPresentationInput): string {
   if (input.provisioningRowShown === false) {
     return oauthNoProvisioningNote(input.displayName ?? 'this system');
   }
+  if (input.provisioningControlShown === false) return OAUTH_UNAVAILABLE_FALLBACK_NOTE;
   return OAUTH_FALLBACK_NOTE;
 }
 

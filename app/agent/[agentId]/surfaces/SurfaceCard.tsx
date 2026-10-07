@@ -347,6 +347,7 @@ export function SurfaceCard({
     reason: surface.reason,
     keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
     provisioningRowShown,
+    provisioningControlShown: provisioningPresentation.stage !== 'unavailable',
     displayName: surface.displayName,
   });
   const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
