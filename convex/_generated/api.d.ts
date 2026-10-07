@@ -28,6 +28,7 @@ import type * as docSources from '../docSources.js';
 import type * as docSyncActions from '../docSyncActions.js';
 import type * as documentationDiscovery from '../documentationDiscovery.js';
 import type * as documentationDiscoveryActions from '../documentationDiscoveryActions.js';
+import type * as documentationWindows from '../documentationWindows.js';
 import type * as evaluation from '../evaluation.js';
 import type * as eventLog from '../eventLog.js';
 import type * as events from '../events.js';
@@ -142,6 +143,7 @@ declare const fullApi: ApiFromModules<{
   docSyncActions: typeof docSyncActions;
   documentationDiscovery: typeof documentationDiscovery;
   documentationDiscoveryActions: typeof documentationDiscoveryActions;
+  documentationWindows: typeof documentationWindows;
   evaluation: typeof evaluation;
   eventLog: typeof eventLog;
   events: typeof events;
