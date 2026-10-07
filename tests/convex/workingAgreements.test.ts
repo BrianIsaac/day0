@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { ExecutionPlan } from '../../src/work/types';
 import { AGREEMENT_NOT_YOURS } from '../../src/work/agreement-vocabulary';
+import { EMPLOYEES_CHECKED, EVERY_EMPLOYEE_TOO_MANY } from '../../convex/workingAgreements';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -492,6 +493,25 @@ describe('keeping an agreement on a card', (): void => {
         workItemId: mateoSlack,
       }),
     ).toEqual([]);
+  });
+
+  it('refuses to keep one for every employee of an owner with more employees than the check reads, and says so (W13-R28)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    const agreementId = await proposal(harness, agentId);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+        agreementId,
+        agentId,
+        forEveryEmployee: true,
+        via: 'promotion-card',
+      }),
+    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
+    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'proposed' });
+    expect((await agreementsOf(harness))[0]?.approvedAt).toBeUndefined();
   });
 
   it("refuses an employee's own agreement for every employee when another charter forbids it, and keeps it for its employee", async (): Promise<void> => {

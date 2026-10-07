@@ -80,6 +80,12 @@ export const AGREEMENT_STATEMENT_EMPTY = 'Write the agreement before keeping it.
 /** The refusal of a statement longer than an agreement keeps. */
 export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most ${AGREEMENT_STATEMENT_LIMIT} characters.`;
 
+/**
+ * The refusal of an agreement for every employee of an owner with more employees than its check
+ * reads (W13-R28): kept, it would bind an employee whose charter nobody checked it against.
+ */
+export const EVERY_EMPLOYEE_TOO_MANY = `Day0 checks an agreement for every employee against at most ${EMPLOYEES_CHECKED} charters, and you have more employees than that. Keep it for this employee instead.`;
+
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
 
@@ -146,8 +152,29 @@ async function approvedBounds(
 }
 
 /**
+ * An owner's employees, at most `limit`, read past rows of another owner scope under the same
+ * user id rather than counting them (W13-R28: the bound was taken before the filter).
+ */
+async function ownerEmployees(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+  limit: number,
+): Promise<Doc<'agents'>[]> {
+  const employees: Doc<'agents'>[] = [];
+  for await (const agent of ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))) {
+    if (employeeOwnerScope(agent) !== userId) continue;
+    employees.push(agent);
+    if (employees.length >= limit) break;
+  }
+  return employees;
+}
+
+/**
  * The charters an agreement is checked against: its employee's, or, for one that binds every
- * employee, each of the owner's employees' newest approved charter.
+ * employee, each of the owner's employees' newest approved charter (`keep` refuses an owner with
+ * more than `EMPLOYEES_CHECKED`).
  */
 async function chartersBound(
   ctx: Pick<QueryCtx, 'db'>,
@@ -156,12 +183,7 @@ async function chartersBound(
   const employees =
     row.agentId !== undefined
       ? [await ctx.db.get(row.agentId)].filter((agent): agent is Doc<'agents'> => agent !== null)
-      : (
-          await ctx.db
-            .query('agents')
-            .withIndex('by_userId', (q) => q.eq('userId', row.userId))
-            .take(EMPLOYEES_CHECKED)
-        ).filter((agent) => employeeOwnerScope(agent) === row.userId);
+      : await ownerEmployees(ctx, row.userId, EMPLOYEES_CHECKED);
   const bounds = await Promise.all(
     employees.map(async (agent) => await approvedBounds(ctx, agent)),
   );
@@ -858,6 +880,13 @@ export const keep = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+    if (
+      args.forEveryEmployee &&
+      (await ownerEmployees(ctx, agreement.userId, EMPLOYEES_CHECKED + 1)).length >
+        EMPLOYEES_CHECKED
+    ) {
+      throw new ConvexError(EVERY_EMPLOYEE_TOO_MANY);
+    }
     const now = Date.now();
     if (agreement.status === 'proposed' && agreement.approvedAt === undefined) {
       await ctx.db.patch(agreement._id, {
