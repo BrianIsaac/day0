@@ -12,6 +12,7 @@ import type { MockSurfaceSnapshot, MockWriteResult } from '../src/work/types';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { groundTicketWork, type TicketGroundingItem } from '../src/work/office-tickets';
+import { selectedDocumentation, selectionRequestValidator } from './docSelection';
 
 /**
  * Read + write API for the mock work environment.
@@ -72,10 +73,13 @@ export async function readableDocs(
 
 /**
  * Internal snapshot used only by an already-authorised scheduler continuation. Its documents are
- * the ones the employee reads ({@link readableDocs}).
+ * the ones the employee reads ({@link readableDocs}): every one whole, or with `selection` (real
+ * mode only, wave 14's 14-R) the pages and blocks one item needs, cited, within 24,000
+ * characters (`docSelection.selectedDocumentation`). Mock mode and the frozen evaluation pass no
+ * selection and read the whole mirror (R3).
  */
 export const snapshotInternal = internalQuery({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), selection: v.optional(selectionRequestValidator) },
   handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
     const [stored, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
       ctx.db
@@ -107,14 +111,32 @@ export const snapshotInternal = internalQuery({
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
-    const docs = await readableDocs(ctx.db, await ctx.db.get(args.agentId), stored);
+    const agent = await ctx.db.get(args.agentId);
+    const docs = await readableDocs(ctx.db, agent, stored);
+    const selected =
+      args.selection === undefined
+        ? undefined
+        : await selectedDocumentation(ctx, agent, docs, args.selection);
     return {
-      howToGuides: docs
-        .filter((doc) => doc.category === 'how-to-guide')
-        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
-      teamDocs: docs
-        .filter((doc) => doc.category === 'team-doc')
-        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+      ...(selected === undefined
+        ? {
+            howToGuides: docs
+              .filter((doc) => doc.category === 'how-to-guide')
+              .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+            teamDocs: docs
+              .filter((doc) => doc.category === 'team-doc')
+              .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+          }
+        : {
+            howToGuides: selected.howToGuides,
+            teamDocs: selected.teamDocs,
+            documentation: {
+              site: args.selection!.site,
+              blockIds: selected.blockIds,
+              chars: selected.chars,
+              citations: selected.citations,
+            },
+          }),
       spreadsheets: sheets.map((sheet) => ({
         slug: sheet.slug,
         title: sheet.title,

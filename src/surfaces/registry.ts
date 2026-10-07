@@ -4,6 +4,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
 import { reportedEarlierWrites } from '../work/evidence-claims';
 import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
+import type { SelectionRequest } from '../docs/select';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
@@ -258,6 +259,9 @@ export function resolveAdapters(
  *   agentId: Agent whose workbench is read.
  *   mode: Deployment surface mode.
  *   surfaces: The agent's surfaces.
+ *   selection: Real mode only: the item the documentation is selected for (wave 14, 14-R).
+ *     Without it the guides and team documents are the whole mirror, as mock mode and the
+ *     frozen evaluation read them (R3).
  *
  * Returns:
  *   Complete environment snapshot consumed by skill execution.
@@ -267,24 +271,27 @@ export async function readSurfaceSnapshot(
   agentId: Id<'agents'>,
   mode: SurfaceMode,
   surfaces: readonly SurfaceRecord[],
+  selection?: SelectionRequest,
 ): Promise<MockSurfaceSnapshot> {
   const adapters = new Set(resolveAdapters(mode, surfaces).values());
-  const snapshot: MockSurfaceSnapshot = {
+  const lists = {
     howToGuides: [],
     teamDocs: [],
     spreadsheets: [],
     slackChannels: [],
     tweets: [],
     tickets: [],
-  };
+  } satisfies Omit<MockSurfaceSnapshot, 'documentation'>;
+  let documentation: MockSurfaceSnapshot['documentation'];
   for (const adapter of adapters) {
-    const fragment = await adapter.read(ctx, agentId);
-    for (const key of Object.keys(snapshot) as Array<keyof MockSurfaceSnapshot>) {
+    const fragment = await adapter.read(ctx, agentId, selection);
+    for (const key of Object.keys(lists) as Array<keyof typeof lists>) {
       const values = fragment[key];
-      if (values) snapshot[key].push(...(values as never[]));
+      if (values) (lists[key] as unknown[]).push(...values);
     }
+    documentation ??= fragment.documentation;
   }
-  return snapshot;
+  return documentation === undefined ? lists : { ...lists, documentation };
 }
 
 function refused(tool: string, reason: string, idempotencyKey: string): AppliedAction {

@@ -261,7 +261,8 @@ describe('selectDocumentation', (): void => {
     );
     const selection = selectDocumentation({
       request: { ...request, shape: undefined, target: undefined },
-      pages,
+      // A page that shares no word with them, so the tile's words still tell pages apart.
+      pages: [...pages, holidays],
       scouted: everyBlock(pages),
     });
     const perPage = new Map<string, number>();
@@ -299,6 +300,16 @@ describe('selectDocumentation', (): void => {
     // Every guide names the target surface and its operation, so the guides fill the budget first.
     expect(selection.howToGuides.length).toBeGreaterThan(0);
     expect(selection.teamDocs).toEqual([]);
+  });
+
+  it('ranks no block that shares only a function word with the item', (): void => {
+    const selection = selectDocumentation({
+      request: { ...request, shape: undefined, target: undefined },
+      pages: [holidays, tileRunbook],
+      scouted: everyBlock([holidays, tileRunbook]),
+    });
+    // "The office closes on the first Monday" shares "on" and "the" with the item's summary.
+    expect(selection.ranked.some((key) => key.startsWith(holidays.key))).toBe(false);
   });
 
   it('drops a scouted block whose page is no longer readable', (): void => {

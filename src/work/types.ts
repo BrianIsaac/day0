@@ -573,6 +573,30 @@ export interface MockSurfaceSnapshot {
     status: string;
     body: string;
   }>;
+  /**
+   * What the documentation selection chose for this snapshot's guides and team documents
+   * (wave 14, 14-R): present only when a real-mode caller asked for a selection; mock mode and
+   * the frozen evaluation read the whole mirror and carry none (R3).
+   */
+  documentation?: DocumentationSelectionRecord;
+}
+
+/** One cite line of a selection: its words and the stored blocks under it. */
+export interface DocumentationCitation {
+  /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
+  readonly label: string;
+  readonly blockIds: readonly string[];
+}
+
+/** What one documentation selection put in a prompt, for the record and the plan's cites. */
+export interface DocumentationSelectionRecord {
+  /** The model call site the selection was made for (`DOCUMENTATION_SITES`). */
+  readonly site: 'plan' | 'execute' | 'closing';
+  /** Every stored block the prompt carries, in prompt order. */
+  readonly blockIds: readonly string[];
+  /** The documentation's characters as the prompt renders it. */
+  readonly chars: number;
+  readonly citations: readonly DocumentationCitation[];
 }
 
 /** How many items an employee works at once while the autonomy switch is off. */

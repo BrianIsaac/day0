@@ -3,7 +3,11 @@ import { renderHowTos, renderTeamDocs } from '../work/documents';
 import { parseProcedureContract } from '../work/procedure-contract';
 import { documentedBrowserFields } from '../work/claim-key';
 import { candidateNamesSurface } from '../work/skill-shape';
-import type { MockSurfaceSnapshot } from '../work/types';
+import type {
+  DocumentationCitation,
+  DocumentationSelectionRecord,
+  MockSurfaceSnapshot,
+} from '../work/types';
 
 /*
  * The documentation selection (wave 14, 14-R; the wave file's section 6.2): which pages and
@@ -36,7 +40,11 @@ export const BLOCKS_PER_PAGE_LIMIT = 4;
  * The model call sites a selection is made for: the planner (whose selection the obligations
  * judgement reads too), the executor's first phase and its closing phase.
  */
-export const DOCUMENTATION_SITES = ['plan', 'execute', 'closing'] as const;
+export const DOCUMENTATION_SITES = [
+  'plan',
+  'execute',
+  'closing',
+] as const satisfies readonly DocumentationSelectionRecord['site'][];
 
 /** One documentation site. */
 export type DocumentationSite = (typeof DOCUMENTATION_SITES)[number];
@@ -84,11 +92,7 @@ export interface SelectableBlock {
 }
 
 /** One cite line and the stored blocks under it. */
-export interface Citation {
-  /** The cite line's words, without the brackets: `<source>/<page>#<heading path>`. */
-  readonly label: string;
-  readonly blockIds: readonly string[];
-}
+export type Citation = DocumentationCitation;
 
 /** The documentation one prompt carries, and what it is made of. */
 export interface SelectedDocumentation extends Pick<
@@ -147,6 +151,46 @@ export function documentationChars(
   );
 }
 
+/**
+ * English function words, which say nothing of what a block is about: Lucene's English stop set.
+ * The re-score gives them no weight and the scout puts them last; the index itself keeps them.
+ */
+const STOP_WORDS: ReadonlySet<string> = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'but',
+  'by',
+  'for',
+  'if',
+  'in',
+  'into',
+  'is',
+  'it',
+  'no',
+  'not',
+  'of',
+  'on',
+  'or',
+  'such',
+  'that',
+  'the',
+  'their',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'to',
+  'was',
+  'will',
+  'with',
+]);
+
 /** The query strings of a request, one a field, before they are cut. */
 function queryFields(request: SelectionRequest): Array<{ text: string; weight: number }> {
   return [
@@ -185,7 +229,8 @@ function pageFrequencies(
  * The scout's search strings: one a field of the request (the item's title and summary, the
  * target surface's name and slug, the shape's words, the role's function, the requester's name),
  * each cut by `blockSearchQuery` to the sixteen terms the backend reads after ordering them
- * rarest first over the employee's pages, a term no page holds last. An empty field is left out.
+ * rarest first over the employee's pages, then the function words, then a term no page holds.
+ * An empty field is left out.
  *
  * @param request - What the selection is for.
  * @param pages - The pages the employee reads: the rarity is counted over them.
@@ -198,6 +243,7 @@ export function scoutQueries(
   const frequency = pageFrequencies(pages, new Set(fields.flat()));
   const rarity = (term: string): number => {
     const count = frequency.get(term) ?? 0;
+    if (STOP_WORDS.has(term)) return Number.MAX_VALUE;
     return count === 0 ? Number.POSITIVE_INFINITY : count;
   };
   return fields.flatMap((terms) => {
@@ -246,6 +292,12 @@ export function alwaysIncludedPages(
     .map((page) => page.key);
 }
 
+/**
+ * The share of the best block's score a block needs to be ranked at all: a block that shares
+ * only a common word with the item ("on") is noise in the prompt, not a candidate.
+ */
+export const RELEVANCE_FLOOR = 0.3;
+
 /** BM25's term-frequency saturation and length normalisation. */
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
@@ -253,7 +305,8 @@ const BM25_B = 0.75;
 /**
  * The scouted blocks of readable pages, scored against the request with the index's tokeniser
  * (BM25 over the block's heading path and text, each term's rarity counted over the pages and
- * weighted by the field that asked for it), best first; a block that shares no term is dropped.
+ * weighted by the field that asked for it), best first; a block that shares no term with the
+ * request but terms on every page is dropped.
  */
 function rankBlocks(
   request: SelectionRequest,
@@ -270,7 +323,7 @@ function rankBlocks(
   const weights = new Map<string, number>();
   for (const field of queryFields(request)) {
     for (const term of searchTerms(field.text)) {
-      weights.set(term, Math.max(weights.get(term) ?? 0, field.weight));
+      if (!STOP_WORDS.has(term)) weights.set(term, Math.max(weights.get(term) ?? 0, field.weight));
     }
   }
   const frequency = pageFrequencies(pages, new Set(weights.keys()));
@@ -285,20 +338,24 @@ function rankBlocks(
   const averageLength =
     blocks.reduce((total, entry) => total + entry.terms.length, 0) / Math.max(1, blocks.length);
   const order = new Map(pages.map((page, index) => [page.key, index]));
-  return blocks
+  const scored = blocks
     .map(({ block, terms }) => {
       const counts = new Map<string, number>();
       for (const term of terms) counts.set(term, (counts.get(term) ?? 0) + 1);
+      const norm = 1 - BM25_B + (BM25_B * terms.length) / Math.max(1, averageLength);
       let score = 0;
       for (const [term, weight] of weights) {
         const count = counts.get(term) ?? 0;
-        if (count === 0) continue;
-        const norm = 1 - BM25_B + (BM25_B * terms.length) / Math.max(1, averageLength);
+        // A term on every page tells no page apart ("the"); with one page, every term counts.
+        if (count === 0 || (pages.length > 1 && frequency.get(term) === pages.length)) continue;
         score += (weight * idf(term) * count * (BM25_K1 + 1)) / (count + BM25_K1 * norm);
       }
       return { block, score };
     })
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score > 0);
+  const best = scored.reduce((top, entry) => Math.max(top, entry.score), 0);
+  return scored
+    .filter((entry) => entry.score >= RELEVANCE_FLOOR * best)
     .sort(
       (left, right) =>
         right.score - left.score ||
