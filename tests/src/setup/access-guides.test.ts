@@ -5,6 +5,10 @@ import { ACCESS_KIT, type AccessKitSystem } from '../../../src/surfaces/access-k
 import { linearKitManifest } from '../../../src/surfaces/access-kit/linear';
 import { slackKitManifestTemplate } from '../../../src/surfaces/access-kit/slack';
 import { decisionButtonsWords } from '../../../app/agent/[agentId]/surfaces/card-words';
+import {
+  SLACK_CHANNEL_METHODS,
+  SLACK_DM_READ_METHODS,
+} from '../../../src/surfaces/slack-own-channel';
 
 /**
  * The access recipes are what we run with a customer's IT, so each is pinned to the kit
@@ -202,6 +206,36 @@ describe('the Slack recipe and the card it describes', (): void => {
     expect(text).toContain(
       'Where Day0 cannot (the app was created with a configuration token pasted on its card, the connection that created it is marked **Needs IT** on the organisation page, or Slack refused the update), a collaborator on the app opens it',
     );
+  });
+
+  it("says Day0's own channel methods on an app it created are Day0's, and the page's list binds a shared-token card (the real-Slack walk, rows 2 and 3)", (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    const scopes = text.split('## 3. The scopes')[1]?.split('## 4.')[0] ?? '';
+    expect(scopes).not.toContain('so the Slack page must name each of');
+    expect(scopes).toContain(
+      "On an employee's own app (one Day0 created and the administrator installed), Day0's manager channel is Day0's own",
+    );
+    for (const method of [...SLACK_CHANNEL_METHODS, ...SLACK_DM_READ_METHODS]) {
+      expect(scopes).toContain(`\`${method}\``);
+    }
+    expect(scopes).toContain(
+      'On a card that holds a shared bot token pasted on it instead, the Slack page must name each of',
+    );
+  });
+
+  it('never says there is nothing to delete while the access token IT generated lives (the real-Slack walk, row 6)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).not.toContain("after Day0's revoke there is nothing to delete");
+    expect(text).toContain(
+      "after Day0's revoke and the end of the token you generated (revoke it, or Delete its row)",
+    );
+  });
+
+  it('says what the walk on real Slack saw of the card a page gives and of the socket dial (W13V-1, rows 4, 9 and 10)', (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).not.toContain('makes its card a pasted-token card, and with no page');
+    expect(text).toContain('title the page "Slack"');
+    expect(text).not.toContain('reports a live connection for it, within seconds');
   });
 
   it('says a tab turned off refuses the bot too, and what turns it off (the re-walk on real Slack)', (): void => {

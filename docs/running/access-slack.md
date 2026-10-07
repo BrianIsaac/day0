@@ -5,13 +5,20 @@ install (`./setup.sh access`, or `./setup.sh install`, which runs it; the
 runbook is [install.md](install.md)). It connects Slack once, for the whole
 organisation: afterwards each employee Day0 deploys can get **its own Slack
 app**, created by Day0 from the manifest below, so it posts as itself and never
-as a person, and nobody pastes a token on its card. That holds when the
-employee's linked documentation describes the app's install: a page about Slack
-that says the employee's app is installed by OAuth or created with the
-organisation's configuration token (a page carrying the manifest of section 2
-does), and that records no bot token of its own. A page that records a bot
-token for the employee makes its card a pasted-token card, and with no page of
-either kind the card says what is missing and offers no app.
+as a person, and nobody pastes a token on its card. That holds for an
+employee whose Slack card Day0 reads as Slack's Web API: while this connection
+is active the card offers the employee's own app whatever the Slack page
+records, a bot token included. Without it, a page that says the employee's app
+is installed by OAuth or created with the organisation's configuration token (a
+page carrying a manifest, section 2) offers the app with a configuration token
+pasted on the card, a page that records a bot token makes the card a
+pasted-token card, and with neither the card says what is missing.
+
+A dedicated Slack page titled otherwise than "Slack", such as the "Slack
+automation policy" page of the repository's own examples, is not read as
+Slack's Web API at v0.17.0: its card is reached by escalation and offers no app
+of its own. Until that is fixed, title the page "Slack", or link Slack from a
+page whose sentence giving `https://slack.com/api/` names Slack as the system.
 
 Slack is connected **per employee** only: one app per employee, its own bot
 user, its own permissions. The organisation's connection holds what Day0
@@ -122,7 +129,7 @@ that issues an app-level token, so a person generates one per app:
    with it, keeps it encrypted and held by the organisation, and never shows it
    again. Then:
    - The `slack-socket` component dials the app and reports a live connection
-     for it, within seconds. The card then says "Decisions in Slack: buttons are
+     for it, within half a minute (it reads the app list every 30 seconds). The card then says "Decisions in Slack: buttons are
      on", and each new request carries the buttons, beside its typed code where
      the app takes messages; a request asked before the token landed carries no
      buttons.
@@ -238,16 +245,25 @@ disconnected, Slack has taken its bot out of every channel; with
 scope names itself. There is no `groups:` scope: a private channel is added by
 hand by someone in it, and the employee's card names each one that needs it.
 
-**What a card may call is read from the documentation.** The scopes let the
-app call these methods; the employee's Slack card calls only the ones its
-linked documentation names, so the Slack page must name each of `auth.test`,
-`users.lookupByEmail` and `conversations.open` (the card does not connect
-without them), `conversations.list`, `conversations.history` and
-`conversations.replies` (intake reads nothing without them), `chat.postMessage`
-(nothing is posted without it), `chat.update` (without it a decided request
-keeps its buttons) and `users.info` (without it an ask is shown under the
-asker's id). A manager's **Change approved tools** cannot add a method the
-pages do not name: the card says it is approved but not offered.
+**What a card may call is read from the documentation, except Day0's own
+channel on an app it created.** The scopes let the app call these methods.
+On an employee's own app (one Day0 created and the administrator installed),
+Day0's manager channel is Day0's own: whatever the pages name, it may always
+ask who the bot is (`auth.test`), who the manager is (`users.lookupByEmail`),
+open the manager's DM (`conversations.open`), post there
+(`chat.postMessage`), edit its own request (`chat.update`) and read the
+manager's replies in that DM alone (`conversations.history`,
+`conversations.replies`). The employee's work calls only the methods its
+linked documentation names: `conversations.list`, `conversations.history` and
+`conversations.replies` (intake reads nothing without them),
+`chat.postMessage` (the employee posts nothing in a channel without it) and
+`users.info` (without it an ask is shown under the asker's id). On a card that
+holds a shared bot token pasted on it instead, the Slack page must name each of
+`auth.test`, `users.lookupByEmail` and `conversations.open` too (the card does
+not connect without them), `chat.update` (without it a decided request keeps
+its buttons) and `conversations.history` (without it a code typed in Slack is
+not read). A manager's **Change approved tools** cannot add a method the pages
+do not name: the card says it is approved but not offered.
 
 <!-- access-kit: scopes per-employee -->
 
@@ -290,8 +306,11 @@ A revoke, and a rotation, revokes the configuration token Day0 held at Slack
 at Slack by whoever holds it. Nothing IT can click ends a configuration
 refresh token either: the row's **Delete token** on
 <https://api.slack.com/apps> ends the access token only, and once no access
-token of the pair lives the row is not listed at all, so after Day0's revoke
-there is nothing to delete. The refresh token ends only when it lapses. Until
+token of the pair lives the row is not listed at all, so there is nothing to
+delete only after Day0's revoke and the end of the token you generated (revoke
+it, or Delete its row): Day0 revokes only the token it holds, and until the one
+you generated ends too the row stands and **Generate Token** stays disabled. The
+refresh token ends only when it lapses. Until
 then whoever copied it while its row was listed can mint a token with it, so
 keep the service account's sign-in closed. The connection's ledger on the
 organisation page says the same after each revoke, and tells a token Day0
