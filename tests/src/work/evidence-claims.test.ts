@@ -926,3 +926,58 @@ describe("the review's probe list for the report binding (W13-R2)", (): void => 
     ).toEqual([]);
   });
 });
+
+describe("the report binding, the second pass's probes (W13-R2)", (): void => {
+  const dm = (text: string): MockAction => slackPost('D0C6MMVTY06', text);
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+
+  it('lets a hedge that doubts the fact excuse the sentence, as before, and binds nothing for it', (): void => {
+    for (const sentence of [
+      'I could not confirm that REVOPS-6 was closed.',
+      "I can't confirm the notes were sent.",
+      'Unable to confirm REVOPS-6 was closed.',
+      'Please confirm the ticket was closed.',
+      'It is unverified that the notes were posted.',
+      'Not yet confirmed whether the ticket was closed.',
+    ]) {
+      expect(unsupportedClaims(sentence, empty), sentence).toEqual([]);
+      expect(reportedEarlierWrites(dm(sentence), [NOTE_1, NOTE_2]), sentence).toEqual([]);
+    }
+  });
+
+  it('binds a report beside a "no" that negates a noun, not the report', (): void => {
+    for (const sentence of [
+      'Posted both notes in #revops, no reply needed.',
+      'Posted both notes in #revops with no edits to apply.',
+      'Both notes are posted in #revops, no further comment needed.',
+      'Posted both notes with no need to log anything.',
+    ]) {
+      expect(reportedEarlierWrites(dm(sentence), [NOTE_1, NOTE_2]), sentence).toEqual([0, 1]);
+    }
+  });
+
+  it('drops only the clause that promises, and keeps the report or the claim beside it', (): void => {
+    expect(
+      reportedEarlierWrites(dm('I posted both notes and will comment once they land.'), [
+        NOTE_1,
+        NOTE_2,
+      ]),
+    ).toEqual([0, 1]);
+    for (const sentence of [
+      'The ticket is closed and the owner will be notified.',
+      'All three checks are confirmed and the tile will refresh at noon.',
+    ]) {
+      expect(unsupportedClaims(sentence, empty), sentence).toEqual([sentence]);
+    }
+  });
+
+  it("binds every post of the kind when the sentence's only distinctive word is its channel", (): void => {
+    const note = slackPost('C0BSQTE1H7E', 'Stop drill: the drill starts now.');
+    expect(
+      reportedEarlierWrites(dm('Posted the note in #revops.'), [
+        note,
+        commentOn('REVOPS-6', 'Close-week step logged.'),
+      ]),
+    ).toContain(0);
+  });
+});

@@ -330,46 +330,64 @@ const MESSAGE_REPORT = {
 const COMMENT_REPORT = reportForm(COMMENT_VERBS);
 const STATE_REPORT = reportForm(STATE_VERBS);
 const WRITE_REPORT = reportForm(WRITE_VERBS);
-/** The report verbs' plain forms, for a negation before one ("yet to post", "did not comment"). */
-const REPORT_BASE_FORMS =
-  'post|send|share|message|reply|announce|write|publish|deliver|put|leave|comment|move|close|mark|resolve|reopen|update|save|create|add|record|file|log|enter|change|apply|land';
+/**
+ * A hedge that doubts the fact itself ("could not confirm", "please confirm", "pending"): it
+ * excuses the sentence whatever it reports, as wave 12's floor did, so a run may always say it
+ * could not confirm something (the second pass on W13-R2).
+ */
+const DOUBTED =
+  /\b(?:could not|couldn't|cannot|can't|unable to|unconfirmed|unverified|pending|awaiting|outstanding|still open|to be confirmed|please confirm|needs? (?:your )?confirmation|not (?:yet )?confirmed)\b/i;
 
-/** Every report verb, in the forms the binding reads and in its plain form. */
-const ANY_REPORT_VERB = [
-  MESSAGE_VERBS,
-  COMMENT_VERBS,
-  STATE_VERBS,
-  WRITE_VERBS,
-  REPORT_BASE_FORMS,
-].join('|');
+/** The report verbs in the forms a report reads them by. */
+const REPORT_PAST_FORMS = [MESSAGE_VERBS, COMMENT_VERBS, STATE_VERBS, WRITE_VERBS].join('|');
 
 /**
- * A negation of a report verb within three words before it ("were not posted", "yet to post"; "no"
- * negates the act it determines: "No customer notice is sent by me"), or of a placed form ("not in
- * #revops").
+ * The report verbs' plain forms, after a negating auxiliary ("did not post", "yet to post"). The
+ * forms that are as often nouns ("reply", "log", "file", "message") are left out, so "no reply
+ * needed" negates no report.
+ */
+const REPORT_BASE_FORMS =
+  'post|send|share|publish|deliver|comment|close|move|mark|resolve|reopen|update|save|create|add|record|enter|change|apply';
+
+/**
+ * A negation of a report itself: of its verb with only auxiliaries between ("were not posted",
+ * "has not yet been sent", "did not post", "yet to post"), of the act a "no" determines ("No
+ * customer notice is sent by me"), or of a placed form ("not in #revops").
  */
 const NEGATED_REPORT_VERB = new RegExp(
-  `\\b(?:not|never|no|no longer|yet to|cannot|can't|unable to|didn't|hasn't|haven't|wasn't|weren't|isn't|aren't)\\s+(?:\\w+\\s+){0,3}?(?:${ANY_REPORT_VERB})\\b|\\b(?:not|never|no longer|isn't|aren't|wasn't|weren't)\\s+(?:yet\\s+)?(?:in\\s+#|live\\b|out\\b)`,
+  [
+    `\\b(?:not|never|no longer|\\w+n't)\\s+(?:(?:yet|been|be|have|has|had|being|actually|all|both)\\s+){0,2}(?:${REPORT_PAST_FORMS})\\b`,
+    `\\b(?:did not|do not|does not|will not|yet to|not to|\\w+n't)\\s+(?:${REPORT_BASE_FORMS})\\b`,
+    `\\bno\\s+(?:\\w+\\s+){0,3}(?:is|are|was|were|has been|have been)\\s+(?:${REPORT_PAST_FORMS})\\b`,
+    `\\b(?:not|never|no longer)\\s+(?:yet\\s+)?(?:in\\s+#|live\\b|out\\b)`,
+  ].join('|'),
   'i',
 );
 
 /**
- * Whether a hedge takes a sentence's report back (W13-R2). A sentence with a hedge and no report
- * verb is excused as before (wave 12's floor: "the figure is not confirmed"); a sentence with a
- * report verb is excused only when the hedge negates that verb ("The notes were not posted."), so
- * "Posted both notes with no edits." still reports the posts.
+ * Whether a hedge takes a sentence's report back (W13-R2). A hedge that doubts the fact excuses it
+ * always; any other hedge excuses a sentence with no report verb, as wave 12's floor did ("the
+ * figure is not confirmed"), and a sentence with one only when it negates the report itself ("The
+ * notes were not posted."), so "Posted both notes with no edits." still reports the posts.
  */
 function negatesReport(sentence: string): boolean {
+  if (DOUBTED.test(sentence)) return true;
   if (!HEDGED.test(sentence)) return false;
   return reportableKinds(sentence).size === 0 || NEGATED_REPORT_VERB.test(sentence);
 }
 
 /**
- * A plan or a promise, not a report: a sentence opening "Plan:" or carrying "will" (W13-R2), which
- * says what is to be done ("Plan: post both notes, then comment that both were posted.").
+ * A sentence with its plans and promises left out (W13-R2): nothing of one opening "Plan:", and of
+ * any other each clause carrying "will", so "I posted both notes and will comment once they
+ * land." still reports the posts and "The ticket is closed and the owner will be notified."
+ * still claims the close.
  */
-function intends(sentence: string): boolean {
-  return /^\s*plan\s*:/i.test(sentence) || /\bwill\b/i.test(sentence);
+function withoutIntentions(sentence: string): string {
+  if (/^\s*plan\s*:/i.test(sentence)) return '';
+  return sentence
+    .split(/,\s*|\s+(?:and|then|but)\s+/i)
+    .filter((clause: string): boolean => !/\bwill\b/i.test(clause))
+    .join(', ');
 }
 
 /**
@@ -471,11 +489,13 @@ function reportedWrites(sentence: string, earlier: readonly MockAction[]): MockA
 
 /** The places in `earlier` of the writes a sentence reports ({@link reportedWrites}). */
 function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]): number[] {
-  if (intends(sentence)) return [];
-  const kinds = reportableKinds(sentence);
+  const said = withoutIntentions(sentence);
+  if (said === '') return [];
+  const kinds = reportableKinds(said);
   if (kinds.size === 0) return [];
-  const named = namingStems(sentence);
-  const keys = distinctiveTokens(sentence);
+  // A channel names where a post went, which a post carries only as an id: it names no one write.
+  const named = namingStems(said.replace(/#[\w-]+/g, ' '));
+  const keys = distinctiveTokens(said);
   const sharing: number[] = [];
   const ofKind: number[] = [];
   earlier.forEach((action, index): void => {
@@ -491,7 +511,7 @@ function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]):
   // A report that names a message's kind binds every message of that kind, unless some carry its
   // own words: then those alone, so an unrelated post beside the reported ones is not bound
   // (W13-R2).
-  if (sharing.length > 0 || !namesMessageKind(sentence)) return sharing;
+  if (sharing.length > 0 || !namesMessageKind(said)) return sharing;
   return ofKind;
 }
 
@@ -638,7 +658,8 @@ function unsupportedBeside(
 
 /** Whether a sentence asserts a settled state outside any condition it sets. */
 function claims(sentence: string): boolean {
-  return !intends(sentence) && SETTLED_STATE.test(sentence.replace(CONDITIONAL_CLAUSE, ' '));
+  // The condition first, on the sentence as written: a clause cut at "and" would end it early.
+  return SETTLED_STATE.test(withoutIntentions(sentence.replace(CONDITIONAL_CLAUSE, ' ')));
 }
 
 function messageFields(record: Record<string, unknown>): string[] {
