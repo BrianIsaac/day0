@@ -313,6 +313,10 @@ function decisionTotals(
   const requestIds = new Set<string>();
   const resultIds = new Set<string>();
   const resentIds = new Map<string, string>();
+  // An approval that left a close the tripwire held for its card, by item: the card's decision on
+  // that close is the rest of the same decision, not a second one (W13-R50), so it is folded into
+  // this one, which reads approved in part when the close is withheld.
+  const leftForCard = new Map<string, { runId: string | undefined; partial: boolean }>();
   const firstAsk = (decisionId: string): string => {
     let id = decisionId;
     for (let hops = 0; hops < 100; hops += 1) {
@@ -373,11 +377,32 @@ function decisionTotals(
     }
     const result = decisionResult(event);
     if (!result) continue;
-    countDecision(totals, result.outcome, result.partial, result.cancelled);
     const key = `${result.workItemId}:${result.kind}`;
     const queue = pending.get(key) ?? [];
     const request = queue.shift();
     pending.set(key, queue);
+    const earlier = result.kind === 'actions' ? leftForCard.get(result.workItemId) : undefined;
+    if (earlier !== undefined && earlier.runId === asString(payload?.runId)) {
+      leftForCard.delete(result.workItemId);
+      waitingSince.delete(key);
+      const askId = asString(asRecord(request?.payload)?.decisionId);
+      if (askId) resultIds.add(askId);
+      if (!earlier.partial && asIndexes(payload?.rejectedIndexes).length > 0) {
+        totals.partiallyApproved += 1;
+      }
+      continue;
+    }
+    countDecision(totals, result.outcome, result.partial, result.cancelled);
+    if (result.kind === 'actions') {
+      if (asIndexes(payload?.leftForCard).length > 0) {
+        leftForCard.set(result.workItemId, {
+          runId: asString(payload?.runId),
+          partial: result.partial,
+        });
+      } else {
+        leftForCard.delete(result.workItemId);
+      }
+    }
     const waitStart = waitingSince.get(key);
     waitingSince.delete(key);
     if (!request) {

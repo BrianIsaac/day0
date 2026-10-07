@@ -1937,6 +1937,56 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(metrics.actions).toMatchObject({ held: 2, approved: 0, rejected: 2 });
   });
 
+  it("counts an approval that left a close for its card and the card's decision on that close as one decision (W13-R50)", (): void => {
+    const requested = (decisionId: string, at: number): Doc<'events'> =>
+      event('work.decision-requesting', { workItemId: 'wi', decisionId, kind: 'actions' }, at);
+    const approved = (
+      approvedIndexes: number[],
+      rejectedIndexes: number[],
+      at: number,
+      extra: Record<string, unknown> = {},
+    ): Doc<'events'> =>
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes,
+          rejectedIndexes,
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: extra.decidedVia ?? 'dashboard',
+          ...extra,
+        },
+        at,
+      );
+    const parked = (heldIndexes: number[], at: number, extra: Record<string, unknown> = {}) =>
+      event(
+        'work.actions-pending',
+        { workItemId: 'wi', runId: 'run-1', heldIndexes, refusedIndexes: [], ...extra },
+        at,
+      );
+    const first = [
+      requested('a1', 1_000),
+      parked([0, 1, 2], 1_001),
+      // Approved by the typed code: the posts go, the close the tripwire held is left for its card.
+      approved([0, 1], [], 2_000, { leftForCard: [2], decidedVia: 'channel' }),
+      parked([2], 3_000, { leftForCard: true }),
+      requested('a2', 3_001),
+    ];
+    // "Finish without the close" on the card: the set was approved in part.
+    const withheld = computeAgentMetrics([...first, approved([], [2], 9_000)], [], []);
+    expect(withheld.decisions).toMatchObject({
+      requested: 2,
+      approved: 1,
+      rejected: 0,
+      partiallyApproved: 1,
+    });
+    // The close approved on its card: the set was approved whole.
+    const whole = computeAgentMetrics([...first, approved([2], [], 9_000)], [], []);
+    expect(whole.decisions).toMatchObject({ approved: 1, rejected: 0, partiallyApproved: 0 });
+  });
+
   it('dates Working from a write the employee applied on its own when it came first, never a message to the manager (walk m12)', (): void => {
     const completed = (channel: string, at: number): Doc<'events'> =>
       event(
