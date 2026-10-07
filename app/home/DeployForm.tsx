@@ -24,7 +24,7 @@ const NAME_NEEDED = 'Give your employee a name before you deploy it.';
 
 /** Where a new employee works, by the deployment's surface mode. */
 const WORKS_IN = {
-  mock: 'the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
+  mock: 'the hosted office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
   real: 'the systems it finds in your documentation, each connected only once you approve it',
 } as const;
 

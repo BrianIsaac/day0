@@ -339,7 +339,7 @@ export function EmployeeHeader({
       <div className="grid basis-full justify-items-start gap-2 sm:basis-auto sm:justify-items-end">
         <div className="flex flex-wrap items-center gap-2">
           {surfaceConfig ? (
-            <Pill>{surfaceConfig.mode === 'mock' ? 'mock office' : surfaceConfig.label}</Pill>
+            <Pill>{surfaceConfig.mode === 'mock' ? 'hosted office' : surfaceConfig.label}</Pill>
           ) : null}
           <Pill tone={status.tone}>{status.text}</Pill>
         </div>

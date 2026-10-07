@@ -161,7 +161,7 @@ function MockOffice({
   }
 
   return (
-    <Card title="Mock office" meta={OFFICE_CAPTION}>
+    <Card title="Hosted office" meta={OFFICE_CAPTION}>
       {/* The same in every one of the office's systems, so above the strip, not in a tab. */}
       <dl className="mb-4 grid gap-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
         <dt className="text-[13px] text-[var(--color-muted)]">Acts as</dt>
@@ -172,7 +172,7 @@ function MockOffice({
       <div
         ref={strip}
         role="tablist"
-        aria-label="Mock office"
+        aria-label="Hosted office"
         className="-mt-1 flex flex-wrap gap-0.5 border-b border-[var(--color-border)]"
       >
         {OFFICE_TABS.map((tab, index) => {

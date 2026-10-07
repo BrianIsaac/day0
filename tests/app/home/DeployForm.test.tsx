@@ -73,7 +73,7 @@ describe('DeployForm', (): void => {
     expect(text).toContain('Reports to sam@revops.example (you)');
     expect(text).not.toContain(BROWSER_ADDRESS);
     expect(text).toContain(
-      'Works in the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
+      'Works in the hosted office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
     );
     // Walk m4: the hosted office holds the manager DM too, so the mock copy says every action.
     expect(text).toContain(

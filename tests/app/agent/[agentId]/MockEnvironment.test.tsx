@@ -85,7 +85,7 @@ const markupIn = (mode: SurfaceMode): string =>
 describe('MockEnvironment caption and tabs', (): void => {
   it('says the office is the seeded mock and shows no Surfaces tab in mock mode', (): void => {
     const markup = markupIn('mock');
-    expect(markup).toMatch(/<h2[^>]*>Mock office<\/h2>/);
+    expect(markup).toMatch(/<h2[^>]*>Hosted office<\/h2>/);
     expect(markup).toContain('the seeded workplace this employee works in');
     expect([...markup.matchAll(/role="tab"[^>]*>([A-Za-z]+)/g)].map((tab) => tab[1])).toEqual([
       'Slack',
@@ -108,7 +108,7 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('Operating handbook');
     expect(markup).toMatch(/<h2[^>]*>Permissions<\/h2>/);
     expect(markup).not.toContain('role="tablist"');
-    expect(markup).not.toContain('Mock office');
+    expect(markup).not.toContain('Hosted office');
     expect(markup).not.toContain('mock-only');
   });
 
@@ -117,7 +117,7 @@ describe('MockEnvironment caption and tabs', (): void => {
       <MockEnvironment agentId={agentId} employeeName="Maya" mode={undefined} />,
     );
     expect(markup).toContain('Loading the work environment');
-    expect(markup).not.toContain('Mock office');
+    expect(markup).not.toContain('Hosted office');
   });
 });
 
@@ -132,7 +132,7 @@ describe('whom the employee acts as in the hosted office (wave 11, 11-AC)', (): 
 describe('the tab strip and the panel for a keyboard and a screen reader (step 45, P10-4)', (): void => {
   it('marks the selected tab in words, not colour alone, gives each tab a 44 px target and names the panel', (): void => {
     const markup = markupIn('mock');
-    expect(markup).toMatch(/<div role="tablist" aria-label="Mock office"/);
+    expect(markup).toMatch(/<div role="tablist" aria-label="Hosted office"/);
     const tabs = [
       ...markup.matchAll(
         /<button id="([^"]+)" type="button" role="tab" aria-selected="(true|false)"[^>]*class="([^"]*)"/g,
@@ -269,7 +269,7 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
 
   /** The Docs tab's badge. */
   const docsBadge = (): Element | null | undefined =>
-    [...document.querySelectorAll('[role="tablist"][aria-label="Mock office"] [role="tab"]')]
+    [...document.querySelectorAll('[role="tablist"][aria-label="Hosted office"] [role="tab"]')]
       .find((tab) => tab.textContent?.startsWith('Docs'))
       ?.querySelector('span.rounded-full');
 

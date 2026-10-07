@@ -245,7 +245,7 @@ function surfaceState(surface: ProjectedSurface, zone: string): string {
  */
 function connectionsLine(input: ProjectionInput): string {
   if (input.office === 'mock') {
-    return `Connections: the mock office's ${mockOfficeSystemsPhrase()}. Acts as: ${mockActsAsWords(input.name)}`;
+    return `Connections: the hosted office's ${mockOfficeSystemsPhrase()}. Acts as: ${mockActsAsWords(input.name)}`;
   }
   const surfaces = input.surfaces.map(
     (surface) => `${surface.displayName} (${surfaceState(surface, input.zone)})`,

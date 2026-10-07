@@ -170,7 +170,7 @@ describe('projectKnowledge', (): void => {
   it("names the mock office's systems and whom the employee acts as there, in the Surfaces tab's words (round 0141 R-D item 3)", (): void => {
     const { text } = projectKnowledge(mira({ office: 'mock', surfaces: [] }));
     expect(text.split('\n')).toContain(
-      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
+      "Connections: the hosted office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
     );
     expect(text).not.toContain('Connections: none yet');
   });

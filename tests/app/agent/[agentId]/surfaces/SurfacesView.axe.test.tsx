@@ -312,7 +312,7 @@ describe('the mock office on the Surfaces tab against the floor (N14)', (): void
     'has no axe violation, 44 px targets and named, reachable scroll regions on its %s tab',
     async (label): Promise<void> => {
       backend.queries = { ...OFFICE };
-      const view = await openTab('mock', 'Mock office');
+      const view = await openTab('mock', 'Hosted office');
       const tab = [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')].find(
         (candidate) => candidate.textContent?.startsWith(label),
       );
@@ -335,7 +335,7 @@ describe('the mock office on the Surfaces tab against the floor (N14)', (): void
           (message) => message.channelSlug === (args as { channelSlug: string }).channelSlug,
         ),
     };
-    const view = await openTab('mock', 'Mock office');
+    const view = await openTab('mock', 'Hosted office');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toMatch(
       /^Slack/,
     );

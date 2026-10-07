@@ -124,10 +124,10 @@ describe('DayZero', () => {
     expect(region?.getAttribute('aria-label')).toBe('The 1:1 that drafts the charter');
     expect(view.container.textContent).toContain('What Mira knows so far');
     expect(view.container.textContent).toContain('boss@day0.local');
-    expect(view.container.textContent).toContain('the hosted mock office');
+    expect(view.container.textContent).toContain('the hosted office');
     expect(
       [...view.container.querySelectorAll('a')]
-        .find((link) => link.textContent?.includes('hosted mock office'))
+        .find((link) => link.textContent?.includes('hosted office'))
         ?.getAttribute('href'),
     ).toBe('/agent/agent-1/surfaces');
     expect(view.container.textContent).toContain('read-docs');
