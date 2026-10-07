@@ -405,7 +405,8 @@ describe('charter adjectives are scope, not gates', (): void => {
       expect(planSystemPrompt(false, 'mock')).not.toContain(line);
     }
     expect(planSystemPrompt(false, 'real')).toContain(
-      '  - A step that reads a list of open items reads every state that is not done or cancelled (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.',
+      // Re-pinned for W13-R42: one closing-state vocabulary with isClosingState.
+      "  - A step that reads a list of open items reads every state that is not done, cancelled, duplicate, released, shipped, archived, rejected or won't fix (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.",
     );
   });
 

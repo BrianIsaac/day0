@@ -1742,6 +1742,35 @@ Provided arguments: ${JSON.stringify(scoped)}`,
     expect(result.applied[0]).toMatchObject({ ok: false });
   });
 
+  it('never leaves out an include filter the repaired call was refused for: it widens or narrows the read (W13-R42)', async (): Promise<void> => {
+    const archived = { ...FIELDS_AS_STRING_ARGS, includeArchived: false };
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(archived) });
+    const sent: string[] = [];
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (action: MockAction, index: number): Promise<AppliedAction> => {
+        sent.push(action.args.toolArgsJson ?? '');
+        return {
+          tool: 'mcp.call',
+          ok: false,
+          reason: `Tool input validation failed for linear_list_issues. Please fix the following errors and try again:
+- includeArchived: must be boolean
+
+Provided arguments: ${JSON.stringify(archived)}`,
+          idempotencyKey: `wi:run:${index}`,
+        };
+      },
+    });
+    expect(sent).toEqual([JSON.stringify(archived)]);
+    expect(result.applied[0]).toMatchObject({ ok: false });
+  });
+
   it('leaves a second refusal that names no argument of the call as it stands', async (): Promise<void> => {
     recorded.outputs.push({ toolArgsJson: JSON.stringify(FIELDS_AS_STRING_ARGS) });
     const result = await repairFailedReads({
@@ -1771,7 +1800,8 @@ describe('the executor’s read guidance for a list read (W12V-12, wave 13 item 
   it('tells a real run to select no fields and to read open items across their open states', (): void => {
     const text = surfaceInstructions([LINEAR_LIST], 1, 'real');
     expect(text).toContain(
-      '  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done or cancelled, such as Backlog, Todo or In Progress, so read open items with no state filter.',
+      // Re-pinned for W13-R42: one closing-state vocabulary with isClosingState.
+      "  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done, cancelled, duplicate, released, shipped, archived, rejected or won't fix, such as Backlog, Todo or In Progress, so read open items with no state filter.",
     );
     expect(surfaceInstructions([LINEAR_LIST], 1, 'mock')).not.toContain('A list read');
   });

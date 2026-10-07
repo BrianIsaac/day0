@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../agent/drafted-text-rules';
+import { CLOSING_STATES_WORDS } from './not-done';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -105,7 +106,7 @@ export const OWN_ITEM_READS_PLANNER = [
  * run before any write. The mock planner text stays byte-identical.
  */
 export const LIST_READ_PLANNER = [
-  '  - A step that reads a list of open items reads every state that is not done or cancelled (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.',
+  `  - A step that reads a list of open items reads every state that is not ${CLOSING_STATES_WORDS} (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.`,
 ];
 
 /** The run-context instruction shared by the planner and executor. */
