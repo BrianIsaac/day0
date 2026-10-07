@@ -1010,21 +1010,22 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.17.0, the wave 13 schema step, from 0.6.0, 0.10.0, 0.13.0, 0.14.0, 0.15.0 and
-    // 0.16.0: a stamp names a release no older than the newest a shipped migration names.
+    // Re-pinned at 0.18.0, the wave 14 schema step (its two passes), from 0.6.0, 0.10.0, 0.13.0,
+    // 0.14.0, 0.15.0, 0.16.0 and 0.17.0: a stamp names a release no older than the newest a
+    // shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.17.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.18.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.17.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.17.0', previous: '0.17.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.18.0', previous: '0.18.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.18.0', previous: '0.17.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.19.0', previous: '0.18.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.18.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.19.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2869,9 +2870,10 @@ describe('the kept identity mark backfill (the round review m16; 13-K)', (): voi
     );
   }
 
-  it('is registered at 0.17.0 after the wave 12 passes, the newest release any migration names', (): void => {
+  it('is registered at 0.17.0 after the wave 12 passes', (): void => {
     expect(MIGRATIONS['surfaces-kept-identity-since'].release).toBe('0.17.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.17.0');
+    // Re-pinned at 0.18.0: the wave 14 passes are now the newest release a migration names.
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.18.0');
     expect(MIGRATION_NAMES.indexOf('surfaces-kept-identity-since')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('work-decision-closed'),
     );
@@ -3111,5 +3113,205 @@ describe('the owner person at the upgrade (13-K)', (): void => {
       identities: await ctx.db.query('personIdentities').collect(),
     }));
     expect(graph).toEqual({ people: [], identities: [] });
+  });
+});
+
+describe('the block backfill (14-I)', (): void => {
+  it('is registered at 0.18.0 after the wave 13 passes, the newest release any migration names', (): void => {
+    expect(MIGRATIONS['docs-backfill-blocks'].release).toBe('0.18.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.18.0');
+    expect(MIGRATION_NAMES.indexOf('docs-backfill-blocks')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('surfaces-messages-tab'),
+    );
+  });
+
+  it('splits every stored page as stored, redacting nothing and asking no component, and is safe to run twice', async (): Promise<void> => {
+    // Nothing may be redacted: every request the pass made would land here and fail it.
+    const reached: string[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL): Promise<Response> => {
+      reached.push(String(input));
+      throw new Error('the backfill must not call out');
+    });
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const { runId, olderSource } = await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 3,
+        redactionCount: 1,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+      const page = (ref: string, markdown: string) => ({
+        sourceId,
+        ref,
+        title: ref,
+        markdown,
+        updatedAt: 3,
+      });
+      await ctx.db.insert(
+        'docPages',
+        page('refresh.md', '# Refresh\n\nToken: <credential: linear service token, stored>'),
+      );
+      await ctx.db.insert(
+        'docPages',
+        page('看板.md', '# 看板\n\n请刷新管道看板然后在频道里发布结果'),
+      );
+      await ctx.db.insert('docPages', page('empty.md', '# Only a heading'));
+      // A source whose first sync is still running holds pages too; its running run stands for them.
+      const olderSource = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Older',
+        kind: 'folder',
+        locator: 'older',
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const running = await ctx.db.insert('docSyncRuns', {
+        sourceId: olderSource,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 4,
+      });
+      await ctx.db.patch(olderSource, { activeSyncId: running });
+      await ctx.db.insert('docPages', {
+        sourceId: olderSource,
+        ref: 'a.md',
+        title: 'A',
+        markdown: '# A\n\nAlpha.',
+        updatedAt: 4,
+      });
+      return { runId, olderSource };
+    });
+
+    await runAll(harness);
+
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(
+      blocks
+        .filter((block) => block.sourceId === sourceId)
+        .map((block) => [block.pageRef, block.text, block.generation, block.userId]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['refresh.md', 'Token: <credential: linear service token, stored>', runId, 'owner'],
+        ['看板.md', '请刷新管道看板然后在频道里发布结果', runId, 'owner'],
+      ]),
+    );
+    expect(blocks).toHaveLength(3);
+    expect(blocks.find((block) => block.sourceId === olderSource)?.text).toBe('Alpha.');
+    expect(blocks.find((block) => block.pageRef === '看板.md')?.searchText).toContain(
+      '管道 道看 看板',
+    );
+    expect(reached).toEqual([]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'docs-backfill-blocks')).toMatchObject({
+      release: '0.18.0',
+      read: 4,
+      changed: 3,
+    });
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'docs-backfill-blocks'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-backfill-blocks' }),
+    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+    expect(await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect())).toEqual(
+      blocks,
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('reads nothing on a deployment that stores no page, as the hosted mock deployment does', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await agent(harness, { userId: 'owner' });
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'docs-backfill-blocks')).toMatchObject({
+      read: 0,
+      changed: 0,
+    });
+  });
+});
+
+describe("the lift of W13-R8's evidence marker into the person's field (14-I)", (): void => {
+  it('is registered at 0.18.0 after the block backfill', (): void => {
+    expect(MIGRATIONS['people-not-their-addresses'].release).toBe('0.18.0');
+    expect(MIGRATION_NAMES.indexOf('people-not-their-addresses')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('docs-backfill-blocks'),
+    );
+  });
+
+  it('lifts every marked address into the field beside any already there, keeps the evidence, leaves a person with none, and is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const marker = (address: string, at: number) => ({
+      quote: `${address} is someone else's address`,
+      where: 'you, on A different person',
+      at,
+      ref: `not-their-address:${address}`,
+    });
+    const page = { quote: 'Aiko owns the ledger', where: 'Access owners', at: 1, ref: 'a.md' };
+    const ids = await harness.run(async (ctx) => {
+      const person = (fields: Partial<Doc<'people'>>) =>
+        ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: 'Aiko',
+          nameKey: 'aiko',
+          status: 'active',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+          ...fields,
+        });
+      return {
+        marked: await person({
+          evidence: [page, marker('aiko@other.example', 2), marker('a.t@other.example', 3)],
+        }),
+        both: await person({
+          evidence: [marker('aiko@other.example', 2)],
+          notTheirAddresses: ['old@other.example', 'aiko@other.example'],
+        }),
+        none: await person({ evidence: [page] }),
+      };
+    });
+
+    await runAll(harness);
+
+    const read = await harness.run(async (ctx) => ({
+      marked: await ctx.db.get(ids.marked),
+      both: await ctx.db.get(ids.both),
+      none: await ctx.db.get(ids.none),
+    }));
+    expect(read.marked?.notTheirAddresses).toEqual(['aiko@other.example', 'a.t@other.example']);
+    expect(read.marked?.evidence).toHaveLength(3);
+    expect(read.both?.notTheirAddresses).toEqual(['old@other.example', 'aiko@other.example']);
+    expect(read.none).not.toHaveProperty('notTheirAddresses');
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'people-not-their-addresses'),
+    ).toMatchObject({ release: '0.18.0', read: 3, changed: 1 });
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'people-not-their-addresses'))
+        .unique();
+      if (row !== null) await ctx.db.delete(row._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, {
+        name: 'people-not-their-addresses',
+      }),
+    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
   });
 });
