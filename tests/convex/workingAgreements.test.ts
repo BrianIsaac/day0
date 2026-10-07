@@ -80,8 +80,25 @@ afterEach((): void => {
 
 /** Run every scheduled job that is due, and every job those schedule. */
 async function drain(harness: Harness): Promise<void> {
-  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  // Each round starts what is due and awaits it in real time, until nothing due is left: an action
+  // that awaits real work on a busy machine outlasted convex-test's 10,000 macrotask pumps in
+  // `finishAllScheduledFunctions` (a flake seen on the pre-tag's runs, on `2478d192` too).
+  for (let round = 0; round < DRAIN_ROUND_LIMIT; round += 1) {
+    vi.advanceTimersByTime(0);
+    await harness.finishInProgressScheduledFunctions();
+    const due = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending' && job.scheduledTime <= Date.now(),
+        ).length,
+    );
+    if (due === 0) return;
+  }
+  throw new Error(`scheduled work still due after ${DRAIN_ROUND_LIMIT} rounds`);
 }
+
+/** Rounds of scheduled work a drain runs before it calls the chain endless. */
+const DRAIN_ROUND_LIMIT = 50;
 
 /** One employee of the owner with an approved charter that will not email customers directly. */
 async function seedEmployee(
