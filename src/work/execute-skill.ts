@@ -205,6 +205,15 @@ const RESUMED_READS_REAL =
 const DEPENDENT_PHASE_MOCK =
   '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
+/**
+ * How a mock run's writes land, and so how its messages are worded (finding 3 of the v0.17.0
+ * redeploy): every action waits for the manager, and a message is read once it has landed. The
+ * planner's line for the same mode tells a plan's step to say "waits for your approval"; a run
+ * that read it wrote "it waits for manager approval before it lands here" into posts that landed.
+ */
+const MOCK_ACTION_MODE =
+  "Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.";
+
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
@@ -221,7 +230,7 @@ const MOCK_PREAMBLE = [
   '  - ticket.update:        { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
-  `  - ${actionModeInstruction(false, 'mock')}`,
+  `  - ${MOCK_ACTION_MODE}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',

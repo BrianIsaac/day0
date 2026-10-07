@@ -2124,7 +2124,7 @@ describe('frozen prompt text', (): void => {
         - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
-        - Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.
+        - Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
         - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
@@ -2402,4 +2402,17 @@ it('keeps the mock phase-one provider schema byte-identical', () => {
   expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
     `"14a42d0cdc469ee250a192093743471840789385644c4a3d9b1235b4527af808"`,
   );
+});
+
+describe('the words a mock run writes into a message (finding 3 of the v0.17.0 redeploy)', (): void => {
+  // Pip's posts in #office-asks landed, after approval, reading "drafting a reply for you now ...;
+  // it waits for manager approval before it lands here": the mock preamble told the run to word
+  // a step as "waits for your approval", a line written for the planner's steps.
+  it('tells a mock run its messages are read once they land, never that they wait for approval', (): void => {
+    const preamble = executorPreamble('mock');
+    expect(preamble).toContain(
+      "  - Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.",
+    );
+    expect(preamble).not.toContain('waits for your approval');
+  });
 });
