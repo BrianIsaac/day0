@@ -185,6 +185,38 @@ export function withEvidence(held: readonly Evidence[], added: readonly Evidence
   return merged;
 }
 
+/** The `ref` of the evidence that records an address the manager said is someone else's. */
+const NOT_THEIR_ADDRESS_REF = 'not-their-address:';
+
+/**
+ * The evidence a person keeps of an address the manager said is someone else's, on **A different
+ * person** (W13-R8): shown on the card with the rest, and read so no source and no lookup gives
+ * the address back. Kept on the evidence the row already has; a field of its own is for the next
+ * schema step.
+ *
+ * @param address - The normalised address.
+ * @param at - When the manager said so.
+ */
+export function notTheirAddressEvidence(address: string, at: number): Evidence {
+  return {
+    quote: `${address} is someone else's address`,
+    where: 'you, on A different person',
+    at,
+    ref: `${NOT_THEIR_ADDRESS_REF}${address}`,
+  };
+}
+
+/** The addresses the manager said are not a person's ({@link notTheirAddressEvidence}). */
+export function notTheirAddresses(person: Pick<Doc<'people'>, 'evidence'>): ReadonlySet<string> {
+  return new Set(
+    person.evidence.flatMap((item) =>
+      item.ref?.startsWith(NOT_THEIR_ADDRESS_REF) === true
+        ? [item.ref.slice(NOT_THEIR_ADDRESS_REF.length)]
+        : [],
+    ),
+  );
+}
+
 /** Record the proposal's identities on a person, each unless the owner holds it already. */
 async function addIdentities(
   ctx: MutationCtx,
@@ -281,7 +313,9 @@ async function mergeProposal(
   origin: ProposalOrigin,
   now: number,
 ): Promise<void> {
-  const address = normaliseManagerAddress(proposal.email);
+  const notTheirs = notTheirAddresses(person);
+  const given = normaliseManagerAddress(proposal.email);
+  const address = given !== undefined && notTheirs.has(given) ? undefined : given;
   const fills = person.status === 'unverified';
   await ctx.db.patch(person._id, {
     evidence: withEvidence(person.evidence, proposal.evidence),
@@ -296,7 +330,13 @@ async function mergeProposal(
       : {}),
     updatedAt: now,
   });
-  await addIdentities(ctx, scope, person._id, proposal.identities, origin, now);
+  // An address the manager said is someone else's is not brought back as an identity either.
+  const identities = proposal.identities.filter(
+    (identity) =>
+      identity.provider !== 'email' ||
+      !notTheirs.has(normaliseManagerAddress(identity.externalId) ?? identity.externalId),
+  );
+  await addIdentities(ctx, scope, person._id, identities, origin, now);
   // The owner is the manager: no edge ends at their own row (the one-role rulings).
   if (person.isOwner !== true) await proposeEdges(ctx, scope, person._id, proposal, origin, now);
 }
@@ -918,11 +958,22 @@ const foundIdentityValidator = v.object({
  * @returns How many identities it added.
  */
 export const recordLookups = internalMutation({
-  args: { personId: v.id('people'), found: v.array(foundIdentityValidator) },
+  args: {
+    personId: v.id('people'),
+    /** The address looked up: a lookup of one the person no longer holds records nothing (W13-R8). */
+    address: v.optional(v.string()),
+    found: v.array(foundIdentityValidator),
+  },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const person = await ctx.db.get(args.personId);
     if (person === null || person.status === 'dismissed') return 0;
+    if (
+      args.address !== undefined &&
+      (person.primaryEmail !== args.address || notTheirAddresses(person).has(args.address))
+    ) {
+      return 0;
+    }
     const now = Date.now();
     let added = 0;
     for (const identity of args.found) {

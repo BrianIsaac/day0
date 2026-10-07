@@ -10,6 +10,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { graphRows, seedEdge, seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { proposePersonInTransaction, type ProposedPerson } from '../../convex/peopleProposals';
+import { resolvePerson } from '../../convex/people';
 import { PERSON_NOT_YOURS } from '../../src/people/vocabulary';
 import {
   CONFIRM_BEFORE_RELATING,
@@ -997,6 +998,55 @@ describe('people lookups at Confirm', (): void => {
     expect((await graphRows(harness)).people[0]?.primaryEmail).toBeUndefined();
     await owner.mutation(api.people.confirm, { personId, agentId });
     expect(await lookups(harness)).toEqual([]);
+  });
+
+  it('drops every looked-up identity on A different person, so a Linear ticket by that user resolves to nobody after Confirm (W13-R8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'sara@kestrel.test' });
+    const slackId = await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      displayName: 'sara',
+    });
+    await seedIdentity(harness, personId, {
+      provider: 'linear',
+      externalId: 'lin-user-sara',
+      displayName: 'Sara Lim',
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.people.notThisMatch, { personId, identityId: slackId, agentId });
+    await owner.mutation(api.people.confirm, { personId, agentId });
+    expect((await graphRows(harness)).identities).toEqual([]);
+    expect(
+      await harness.run(
+        async (ctx) =>
+          await resolvePerson(ctx, 'owner', { provider: 'linear', externalId: 'lin-user-sara' }),
+      ),
+    ).toEqual({ kind: 'unknown' });
+  });
+
+  it('remembers the address it was told is someone else, so the same page line and a late lookup bring it back to nobody (W13-R8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'sara@kestrel.test' });
+    const identityId = await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      displayName: 'sara',
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.people.notThisMatch, { personId, identityId, agentId });
+    expect(await proposePriya(harness, agentId, { email: 'sara@kestrel.test' })).toBe(personId);
+    expect((await graphRows(harness)).people[0]?.primaryEmail).toBeUndefined();
+    expect(
+      await harness.mutation(internal.peopleProposals.recordLookups, {
+        personId,
+        address: 'sara@kestrel.test',
+        found: [{ provider: 'slack', externalId: 'U0SARA', displayName: 'sara' }],
+      }),
+    ).toBe(0);
+    expect((await graphRows(harness)).identities).toEqual([]);
   });
 
   it('looks a confirmed person up when Same person brings them the address a page gave', async (): Promise<void> => {

@@ -18,7 +18,13 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
-import { EVIDENCE_SHOWN, GRAPH_READ_LIMIT, identitiesUnder, withEvidence } from './peopleProposals';
+import {
+  EVIDENCE_SHOWN,
+  GRAPH_READ_LIMIT,
+  identitiesUnder,
+  notTheirAddressEvidence,
+  withEvidence,
+} from './peopleProposals';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
 import type { RelationshipChange } from '../src/events/contract';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -534,8 +540,10 @@ export const notTheSame = mutation({
 /**
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **A different person**
  * on a proposal a lookup matched to a chat user. The lookup was by the proposal's address, so the
- * manager saying the user is someone else says the address is someone else's: the match and the
- * address go, and the proposal stays, for Confirm or Dismiss, which then looks nothing up.
+ * manager saying the user is someone else says the address is someone else's: every identity a
+ * lookup by it recorded (Slack and Linear alike) and the address go, the address is kept as
+ * evidence that it is someone else's so no source or lookup gives it back (W13-R8), and the
+ * proposal stays, for Confirm or Dismiss, which then looks nothing up.
  */
 export const notThisMatch = mutation({
   args: {
@@ -556,15 +564,26 @@ export const notThisMatch = mutation({
     ) {
       throw new ConvexError(NOT_THE_MATCH);
     }
-    await ctx.db.delete(identity._id);
-    const addressed = await ctx.db
+    const held = await ctx.db
       .query('personIdentities')
       .withIndex('by_person', (q) => q.eq('personId', proposal._id))
       .take(GRAPH_READ_LIMIT);
-    for (const row of addressed) {
-      if (row.provider === 'email') await ctx.db.delete(row._id);
+    for (const row of held) {
+      if (row.provider === 'email' || row.source === 'provider-lookup')
+        await ctx.db.delete(row._id);
     }
-    await ctx.db.patch(proposal._id, { primaryEmail: undefined, updatedAt: Date.now() });
+    const now = Date.now();
+    await ctx.db.patch(proposal._id, {
+      primaryEmail: undefined,
+      ...(proposal.primaryEmail === undefined
+        ? {}
+        : {
+            evidence: withEvidence(proposal.evidence, [
+              notTheirAddressEvidence(proposal.primaryEmail, now),
+            ]),
+          }),
+      updatedAt: now,
+    });
     return null;
   },
 });
