@@ -1025,6 +1025,24 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     });
   });
 
+  it('names the address a Same person would bring before it is pressed (W13-R24)', () => {
+    const [dana, sara, priya] = GRAPH.proposals;
+    settled({
+      'people:forEmployee': {
+        ...GRAPH,
+        proposals: [
+          dana,
+          sara,
+          { ...priya, possiblySameAs: { ...priya.possiblySameAs, bringsAddress: 'ceo@acme.test' } },
+        ],
+      },
+    });
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(section(view.container, 'Proposed').textContent).toContain(
+      'Same person also gives Priya Shah the address ceo@acme.test.',
+    );
+  });
+
   it("offers a source's proposed change on a confirmed person with Take and Dismiss, and says a failed lookup (W13-R3, W13-R25)", async () => {
     const [priya] = GRAPH.confirmed;
     settled({

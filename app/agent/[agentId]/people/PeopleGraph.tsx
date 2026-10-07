@@ -27,6 +27,7 @@ import {
   RELATIONSHIP_NOUNS,
   RELATIONSHIP_SCOPE_LIMIT,
   roleSuffix,
+  sameBringsAddressLine,
   sameOrDifferentHelp,
   waitingLine,
 } from '@/people/words';
@@ -253,6 +254,11 @@ function ProposalRow({
       {offered !== undefined ? (
         <p className="text-sm text-[var(--color-fg-2)]">
           {possiblySameLine(offered.name, offered.standing, offered.role)}
+        </p>
+      ) : null}
+      {offered?.bringsAddress !== undefined ? (
+        <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+          {sameBringsAddressLine(offered.name, offered.bringsAddress)}
         </p>
       ) : null}
       <EvidenceList evidence={proposal.evidence} zone={zone} />

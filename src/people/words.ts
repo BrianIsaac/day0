@@ -29,6 +29,16 @@ export const NO_PROPOSED_CHANGE = 'Nothing is proposed for this person any more.
 export const PROPOSED_ADDRESS_HELD =
   'Another person on your list has this address. Dismiss the change, or merge the two people first.';
 
+/** The refusal of a relationship the employee already has to the person, the same kind and scope (W13-R26). */
+export const RELATIONSHIP_HELD = 'This relationship is already there.';
+
+/**
+ * The refusal of Same person when the proposal's verified identity in a system contradicts the
+ * person's own there (W13-R24).
+ */
+export const SAME_PERSON_CONFLICT =
+  'These are not the same person: they hold different verified accounts in the same workspace. Keep them apart with Different.';
+
 /** The refusal of a change to an edge that has ended. */
 export const RELATIONSHIP_ENDED = 'This relationship has already ended.';
 
@@ -334,4 +344,15 @@ export function proposedChangeLine(where: string, change: ProposedChangeWords): 
  */
 export function lookupFailedLine(name: string, when: string): string {
   return `Looking up ${name} in Slack or Linear failed on ${when}: a message or ticket from them may not show their name yet.`;
+}
+
+/**
+ * The line under a Same person offer that names the address the merge would give the person kept
+ * (W13-R24, wording draft), so a page's wrong address is seen before it is merged.
+ *
+ * @param name - The person kept.
+ * @param address - The address the proposal holds.
+ */
+export function sameBringsAddressLine(name: string, address: string): string {
+  return `Same person also gives ${name} the address ${address}.`;
 }
