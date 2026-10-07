@@ -1,6 +1,3 @@
-import type { Charter } from '../agent/charter';
-import { charterWords } from './scope';
-
 /**
  * The mock office's company-wide asks and the roles whose work each is (finding 2 of the v0.17.0
  * redeploy, 13-FD's R4).
@@ -60,14 +57,16 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
 ];
 
 /**
- * The threads of the office's company-wide asks that are another role's work for this charter,
- * as `<channel>#<thread>`: those whose role words its role and will-do clauses carry none of.
+ * The threads of the office's company-wide asks that are another role's work for a charter, as
+ * `<channel>#<thread>`: those whose role words the charter's words (its role and will-do clauses,
+ * as `charterWords` reads them) carry none of. The words are passed in so the seed, which reads
+ * this list, imports nothing of the scope rule.
  *
- * @param charter - The approved charter the generator drafts for.
+ * @param charterWords - The charter's words the generator drafts for.
  * @returns The threads to leave out of what the generator is shown.
  */
-export function otherRolesAskThreads(charter: Charter): ReadonlySet<string> {
-  const words = new Set(charterWords(charter));
+export function otherRolesAskThreads(charterWords: Iterable<string>): ReadonlySet<string> {
+  const words = new Set(charterWords);
   return new Set(
     OFFICE_ASKS.filter((ask) => !ask.roleWords.some((word) => words.has(word))).map(
       (ask) => `${ask.channelSlug}#${ask.threadKey}`,

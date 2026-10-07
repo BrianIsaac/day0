@@ -158,7 +158,7 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
   const lines: string[] = [];
   // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
   // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
-  const otherRoles = otherRolesAskThreads(charter);
+  const otherRoles = otherRolesAskThreads(charterWords(charter));
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
     for (const c of env.slackChannels) {
