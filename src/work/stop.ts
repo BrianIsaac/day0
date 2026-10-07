@@ -21,6 +21,7 @@ import {
   isManagerDm,
   isSurfaceTool,
   parseSurfaceAction,
+  type ActionVerdict,
 } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -330,12 +331,16 @@ export function stopDetail(skipReason: string): string {
  * The run's landed rows as the completion note tells them: every landed or
  * outcome-unknown row in ledger order, reads included, each in a manager's
  * words. The manager DM is left out, as in `landedWork`: it reports on work
- * and is not work.
+ * and is not work. A DM the set held for the manager (one that reports a held
+ * write of its set waits with it) is counted in: the manager approved it as one
+ * of the set's writes, and the card counts it (W13V-6).
  *
  * Args:
  *   output: A run's persisted output, in either of its two shapes.
  *   surfaces: The agent's surfaces, for display names and the manager DM.
  *   replyTarget: The thread the work item answers, so a reply to it reads as one.
+ *   verdicts: The gate's verdicts on the set the manager decided (the output's own
+ *     actions, never a prerequisite phase's), which say which DM was held.
  *
  * Returns:
  *   One row per landed action, for `landedNoteText`.
@@ -344,8 +349,9 @@ export function landedNoteRows(
   output: unknown,
   surfaces: readonly SurfaceRecord[],
   replyTarget?: ReplyTarget,
+  verdicts: ReadonlyArray<Pick<ActionVerdict, 'disposition'> | undefined> = [],
 ): LandedNoteRow[] {
-  return ledgerPhases(output).flatMap(({ actions, applied }) =>
+  return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {
       const outcomeUnknown = entry.outcomeUnknown === true || isOutcomeUnknownReason(entry.reason);
       if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
@@ -354,7 +360,10 @@ export function landedNoteRows(
       const surface = parsed?.ok
         ? surfaces.find((row) => row.slug === parsed.action.surface)
         : undefined;
-      if (parsed?.ok && surface && isManagerDm(parsed.action, surface)) return [];
+      const heldForTheManager = phase !== 'prerequisite' && verdicts[index]?.disposition === 'held';
+      if (parsed?.ok && surface && isManagerDm(parsed.action, surface) && !heldForTheManager) {
+        return [];
+      }
       const read =
         !outcomeUnknown && parsed?.ok === true && actionIntent(parsed.action) !== 'write';
       const line = action

@@ -1251,6 +1251,65 @@ describe('a manager DM that reports a held write of its set (W12X-2, W12V-8)', (
     });
   });
 
+  it('counts the held DM in the finished note once the manager approved it with the comment it reports (W13V-6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    // A note goes through a channel that holds its credential and knows the manager.
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', ids.agentId))
+        .filter((q) => q.eq(q.field('slug'), 'slack'))
+        .first();
+      if (slack === null) throw new Error('no Slack card');
+      await ctx.db.patch(slack._id, { credentialId, managerUserId: 'UMANAGER' });
+    });
+    const output = {
+      draft: 'Commented on REVOPS-1.',
+      notes: '',
+      actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+    };
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output,
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: ids.workItemId,
+      pendingRunId: ids.runId,
+      approvedIndexes: [0, 1],
+    });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, {
+      workItemId: ids.workItemId,
+    });
+    if (!claim.claimed) throw new Error(`apply not claimed: ${claim.reason}`);
+
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId: ids.workItemId,
+      output: {
+        ...output,
+        applied: [
+          { tool: 'mcp.call', ok: true, effect: 'comment on REVOPS-1' },
+          { tool: 'http.request', ok: true, effect: 'message in D0MANAGER' },
+        ],
+      },
+    });
+
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    const landed = notes.find((note) => note.kind === 'landed');
+    expect(landed?.text).toContain(': 2 changes landed.');
+    expect(landed?.text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
+  });
+
   it('lets a DM that reports nothing of the set go on its own, as before', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

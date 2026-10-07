@@ -5586,7 +5586,12 @@ export async function failInTransaction(
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(
+          args.output,
+          surfaces,
+          replyTargetFor(row),
+          verdictList(row.actionVerdicts, actionsOf(row.output).length),
+        ),
         outcome: 'failed',
         reason: stopDetail(reason),
       }),
@@ -7144,7 +7149,12 @@ export const recoverInterruptedApply = internalMutation({
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows({ ...output, applied }, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(
+          { ...output, applied },
+          surfaces,
+          replyTargetFor(row),
+          verdictList(row.actionVerdicts, actionsOf(row.output).length),
+        ),
         outcome: 'failed',
         reason: INTERRUPTED_NOTE_REASON,
       }),
