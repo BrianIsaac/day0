@@ -320,6 +320,31 @@ describe('the support report', (): void => {
     }
   });
 
+  it('names each git host DAY0_GIT_HOSTS lists, and none when the list is refused (14-F)', (): void => {
+    const rows = egressHosts({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      DAY0_GIT_HOSTS: 'gitee.com, git.acme.example .code.acme.example',
+    });
+    expect(rows.filter((row) => row.purpose.includes('DAY0_GIT_HOSTS'))).toEqual([
+      { host: 'gitee.com', purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists' },
+      {
+        host: 'git.acme.example',
+        purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists',
+      },
+      {
+        host: '*.code.acme.example',
+        purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists',
+      },
+    ]);
+    const refused = egressHosts({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      DAY0_GIT_HOSTS: 'gitee.com localhost',
+    });
+    expect(refused.some((row) => row.purpose.includes('DAY0_GIT_HOSTS'))).toBe(false);
+  });
+
   it('names the Socket Mode host the slack-socket component dials, as the walk saw it (W12V-17), and no Slack method (W13V-10)', (): void => {
     const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
     const socket = rows.find((row) => row.host === 'wss-primary.slack.com');
@@ -637,6 +662,14 @@ describe('the settings worth a second look', (): void => {
     expect(lines).toContain('DAY0_APP_HOST=0.0.0.0 publishes the app');
     expect(lines).toContain('DAY0_PRIVATE_HOSTS is refused as it stands');
     expect(lines).toContain('every git source, GitHub and GitLab included');
+  });
+
+  it('warns on a refused git hosts list, which stops only the hosts it would list (14-F)', (): void => {
+    const lines =
+      settingsSection({ DAY0_GIT_HOSTS: 'gitee.com https://jihulab.com' })?.lines.join(' ') ?? '';
+    expect(lines).toContain('DAY0_GIT_HOSTS is refused as it stands');
+    expect(lines).toContain('no git source on a host it would list is read');
+    expect(settingsSection({ DAY0_GIT_HOSTS: 'gitee.com' })).toBeUndefined();
   });
 });
 

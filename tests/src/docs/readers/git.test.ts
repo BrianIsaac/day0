@@ -322,6 +322,18 @@ describe('a public git host listed in DAY0_GIT_HOSTS', (): void => {
     expect(() => archiveUrlFor(locator)).toThrow('no archive fallback');
   });
 
+  it('stops only the hosts it would list when the list is refused', (): void => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com localhost');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'git.corp.internal');
+    expect(parseGitLocator('https://github.com/acme/runbooks').url.hostname).toBe('github.com');
+    expect(parseGitLocator('https://git.corp.internal/acme/runbooks').url.hostname).toBe(
+      'git.corp.internal',
+    );
+    expect(() => parseGitLocator('https://gitee.com/acme/runbooks')).toThrow(
+      'DAY0_GIT_HOSTS lists "localhost"',
+    );
+  });
+
   it('takes the list the caller passes before the environment', (): void => {
     vi.stubEnv('DAY0_GIT_HOSTS', '');
     expect(

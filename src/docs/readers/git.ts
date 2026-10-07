@@ -39,14 +39,15 @@ const ARCHIVE_HOSTS = ['github.com', 'gitlab.com'];
  *
  * @param locator - Repository locator supplied by the owner.
  * @param privateHosts - Hosts inside the operator's network; the environment's by default.
- * @param gitHosts - Further public git hosts; the environment's by default.
+ * @param gitHosts - Further public git hosts; the environment's by default, read only for a
+ *   host neither GitHub, GitLab nor private, so a refused list stops only the hosts it would list.
  * @returns HTTPS repository URL and requested ref.
  * @throws Error when the locator is not an HTTPS URL, carries credentials, or names an unsupported host.
  */
 export function parseGitLocator(
   locator: string,
   privateHosts: PrivateHostAllowlist = configuredPrivateHosts(),
-  gitHosts: PrivateHostAllowlist = configuredGitHosts(),
+  gitHosts?: PrivateHostAllowlist,
 ): GitLocator {
   const separator = locator.lastIndexOf('#');
   const rawUrl = separator === -1 ? locator : locator.slice(0, separator);
@@ -66,8 +67,8 @@ export function parseGitLocator(
   }
   if (
     !ARCHIVE_HOSTS.includes(url.hostname) &&
-    !isGitHostListed(url.hostname, gitHosts) &&
-    !isPrivateHostAllowed(url.hostname, privateHosts)
+    !isPrivateHostAllowed(url.hostname, privateHosts) &&
+    !isGitHostListed(url.hostname, gitHosts ?? configuredGitHosts())
   ) {
     throw new Error(
       'Git documentation supports GitHub and GitLab archive URLs, and repositories on hosts ' +
