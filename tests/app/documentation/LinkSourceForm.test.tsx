@@ -104,6 +104,25 @@ describe('LinkSourceForm', (): void => {
     view.unmount();
   });
 
+  it('clears the folder default label when another kind is chosen, and keeps a typed one (14-F)', (): void => {
+    const view = mount(<LinkSourceForm />);
+    const kind = field<HTMLSelectElement>(view.container, 'source-kind');
+    const choose = (value: string): void => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      act((): void => {
+        setter?.call(kind, value);
+        kind.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    };
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('Team folder');
+    choose('feishu');
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('');
+    typeInto(field(view.container, 'source-label'), 'RevOps wiki');
+    choose('git');
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('RevOps wiki');
+    view.unmount();
+  });
+
   it('says a refusal under the form without the transport envelope', async (): Promise<void> => {
     backend.refusal =
       '[CONVEX A(docSources:link)] [Request ID: 1] Server Error\nUncaught Error: Documentation linking is a real-mode feature.\n    at handler (../convex/docSources.ts:1:1)';

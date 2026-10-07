@@ -39,6 +39,9 @@ const SERVER_KINDS: ReadonlyArray<readonly [ServerKind, string]> = [
   ['generic', 'Generic resources'],
 ];
 
+/** The label the form starts with, for the documentation folder it starts on. */
+const FOLDER_LABEL = 'Team folder';
+
 /** A field's label above it. */
 const LABEL = 'text-[13px] font-medium text-[var(--color-fg-2)]';
 
@@ -181,10 +184,9 @@ export function FeishuAppFields(): React.ReactNode {
         </div>
       </div>
       <p id="feishu-app-help" className={HELP}>
-        The app IT created for day0 on Feishu&apos;s or Lark&apos;s open platform. Choose Lark if
-        your company&apos;s Feishu address ends in larksuite.com; a pasted Lark or Feishu link names
-        its own region. The secret is encrypted when submitted, sent only to Feishu or Lark, and
-        never displayed again.
+        Choose Lark if your company&apos;s Feishu address ends in larksuite.com; a pasted Lark or
+        Feishu link names its own region. The secret is encrypted when submitted, sent only to
+        Feishu or Lark, and never displayed again.
       </p>
     </div>
   );
@@ -237,7 +239,7 @@ export function SourceKindHelp(props: {
 export function LinkSourceForm(): React.ReactNode {
   const link = useAction(api.docSources.link);
   const [kind, setKind] = useState<SourceKind>('folder');
-  const [label, setLabel] = useState('Team folder');
+  const [label, setLabel] = useState(FOLDER_LABEL);
   const [locator, setLocator] = useState('.');
   const [serverKind, setServerKind] = useState<ServerKind>('notion');
   const [busy, setBusy] = useState(false);
@@ -299,6 +301,8 @@ export function LinkSourceForm(): React.ReactNode {
               const nextKind = event.target.value as SourceKind;
               setKind(nextKind);
               setLocator(locatorForSourceKind(nextKind));
+              // The folder's default label names a folder; a label the manager typed stays.
+              if (label === FOLDER_LABEL && nextKind !== 'folder') setLabel('');
             }}
             className={`${INPUT_CLASS} w-full`}
           >
