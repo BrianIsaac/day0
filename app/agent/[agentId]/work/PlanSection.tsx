@@ -20,6 +20,13 @@ export interface ItemPlan {
   obligationsFailedOpen?: string;
   appliedCorrections?: string[];
   correctionsRedaction?: 'structural-only';
+  appliedAgreements?: string[];
+}
+
+/** A working agreement as the plan card names it: its id and its words. */
+export interface PlanAgreement {
+  readonly _id: string;
+  readonly statement: string;
 }
 
 /**
@@ -31,18 +38,25 @@ export interface ItemPlan {
  * @param plan - The row's plan.
  * @param surfaces - The employee's surfaces, to name a system the plan was drafted without.
  * @param corrections - The employee's kept corrections, for the line saying the plan applied one.
+ * @param agreements - The employee's working agreements, for the line saying the plan applied one
+ *   (W13-R29).
  */
 export function PlanSection({
   item,
   plan,
   surfaces,
   corrections,
+  agreements = [],
 }: {
   item: Doc<'workItems'>;
   plan: ItemPlan;
   surfaces: readonly SurfaceRecord[];
   corrections: readonly KeptCorrection[];
+  agreements?: readonly PlanAgreement[];
 }) {
+  const applied = (plan.appliedAgreements ?? []).flatMap((id) =>
+    agreements.filter((agreement) => agreement._id === id),
+  );
   const minutes = plan.estimatedMinutes;
   const drafted = item.state === 'plan-pending' ? item.planDraftedWithout : undefined;
   return (
@@ -61,6 +75,14 @@ export function PlanSection({
         workItemId={item._id}
         redaction={plan.correctionsRedaction}
       />
+      {applied.length > 0 ? (
+        // Drawn as the applied corrections are, beside them: what the plan carries, not a step.
+        <ul className="mt-2 space-y-1 rounded-md border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 p-2 text-[var(--color-fg)]">
+          {applied.map((agreement) => (
+            <li key={agreement._id}>Applies your working agreement: ‘{agreement.statement}’</li>
+          ))}
+        </ul>
+      ) : null}
       <PlanObligationsLine
         steps={plan.steps}
         obligations={plan.obligations}

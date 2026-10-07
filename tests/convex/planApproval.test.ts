@@ -9,6 +9,10 @@ import type { ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import {
+  AGREEMENT_NOT_A_SENTENCE,
+  AGREEMENT_STATEMENT_TOO_LONG,
+} from '../../convex/workingAgreements';
 
 /**
  * A plan's arrival and its approval (`convex/planApproval.ts`, moved out of `convex/work.ts` by
@@ -63,8 +67,25 @@ afterEach((): void => {
 });
 
 async function drain(harness: Harness): Promise<void> {
-  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  // Each round starts what is due and awaits it in real time, until nothing due is left: an action
+  // that awaits real work on a busy machine outlasted convex-test's 10,000 macrotask pumps in
+  // `finishAllScheduledFunctions` (a flake seen on the pre-tag's runs, on `2478d192` too).
+  for (let round = 0; round < DRAIN_ROUND_LIMIT; round += 1) {
+    vi.advanceTimersByTime(0);
+    await harness.finishInProgressScheduledFunctions();
+    const due = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending' && job.scheduledTime <= Date.now(),
+        ).length,
+    );
+    if (due === 0) return;
+  }
+  throw new Error(`scheduled work still due after ${DRAIN_ROUND_LIMIT} rounds`);
 }
+
+/** Rounds of scheduled work a drain runs before it calls the chain endless. */
+const DRAIN_ROUND_LIMIT = 50;
 
 /** One employee with an approved charter and one work item in the state the test names. */
 async function seed(
@@ -206,6 +227,39 @@ describe('the "Keep this note" tick at plan approval', (): void => {
     expect((await mock.run(async (ctx) => await ctx.db.get(seeded.workItemId)))?.state).toBe(
       'plan-pending',
     );
+  });
+});
+
+describe('the note the tick keeps, held to what an edit keeps (W13-R32)', (): void => {
+  it('refuses a note past the limit, as an edit does, and a word that is no sentence, approving nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    for (const [note, refusal] of [
+      [`Use template B ${'and say so again '.repeat(40)}`, AGREEMENT_STATEMENT_TOO_LONG],
+      ['Yes', AGREEMENT_NOT_A_SENTENCE],
+      ['Evergreen.', AGREEMENT_NOT_A_SENTENCE],
+    ] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const { workItemId } = await seed(harness, 'plan-pending');
+      await expect(
+        harness
+          .withIdentity(OWNER)
+          .mutation(api.planApproval.approvePlan, { workItemId, note, keepNote: true }),
+      ).rejects.toThrow(refusal);
+      expect(await agreementsOf(harness)).toEqual([]);
+      expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+        'plan-pending',
+      );
+    }
+  });
+
+  it('keeps a short direction of two words (the code reader: "Use UTC." is a sentence)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId, note: 'Use UTC.', keepNote: true });
+    expect((await agreementsOf(harness)).map((row) => row.statement)).toEqual(['Use UTC.']);
   });
 });
 

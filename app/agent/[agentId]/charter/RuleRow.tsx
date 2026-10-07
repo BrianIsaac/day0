@@ -5,6 +5,7 @@ import type { ListClauseField } from '@/agent/charter-amendment';
 import {
   listedRules,
   type CharterConstraint,
+  type KeptClause,
   type RulePlacement,
   type StrikePreview,
 } from '@/agent/charter-constraints';
@@ -190,10 +191,18 @@ function PlacementWords({
         <>{' · not verified: no clause carries these words'}</>
       );
     case 'bound':
+      // A confirmed rule is shown as the clauses that carry it; the others are said beneath it
+      // (W13-R6). A rule none carries shows every clause it binds, for the manager to check.
       return (
         <>
           {' · in the charter as '}
-          <BoundClauses clauses={placement.clauses} />
+          <BoundClauses
+            clauses={
+              placement.carriesWords
+                ? placement.clauses.filter((clause) => !placement.notCarrying.includes(clause))
+                : placement.clauses
+            }
+          />
         </>
       );
     case 'in-no-clause':
@@ -205,9 +214,27 @@ function PlacementWords({
   }
 }
 
+/** Why a strike keeps a clause its rule binds (W13-R6, W13-R7), in the row's muted line. */
+function keptClauseWords(kept: KeptClause): string {
+  const clause = quotedClauses([kept.clause]);
+  switch (kept.because) {
+    case 'another-rule':
+      return `keeps the clause ${clause} because another rule still needs it: ${quotedClauses([kept.rule ?? 'another rule'])}`;
+    case 'not-this-rule':
+      return `keeps the clause ${clause}: it does not carry your words`;
+    case 'no-words':
+      return `keeps the clause ${clause}: your words are not in it to take out`;
+    default: {
+      const unknown: never = kept.because;
+      throw new Error(`unknown kept clause ${String(unknown)}`);
+    }
+  }
+}
+
 /**
- * The muted line under a row that says what its strike would do, or why it does nothing. On a row
- * to be checked it says the clauses a strike takes may not be this rule.
+ * The muted lines under a row that say what its strike would do, or why it does nothing: the
+ * clauses it takes, then each bound clause it keeps and why. On a row to be checked it says the
+ * clauses a strike takes may not be this rule.
  */
 function StrikeLine({
   constraint,
@@ -221,6 +248,29 @@ function StrikeLine({
   check: boolean;
 }) {
   if (preview?.refusal) return <RowNote>cannot be struck: {preview.refusal}</RowNote>;
+  const kept = (preview?.keptClauses ?? []).map((clause, i) => (
+    <RowNote key={i}>{keptClauseWords(clause)}</RowNote>
+  ));
+  return (
+    <>
+      <TakenLine constraint={constraint} placement={placement} preview={preview} check={check} />
+      {kept}
+    </>
+  );
+}
+
+/** The line that says which clauses a strike takes, or why it takes none. */
+function TakenLine({
+  constraint,
+  placement,
+  preview,
+  check,
+}: {
+  constraint: CharterConstraint;
+  placement: RulePlacement;
+  preview: StrikePreview | undefined;
+  check: boolean;
+}) {
   if (preview && preview.removedClauses.length > 0) {
     const one = preview.removedClauses.length === 1;
     const lead = check
@@ -308,6 +358,13 @@ export function RuleRow({
   onKeep?: (index: number) => void;
 }) {
   const standing = ruleStanding(constraint, preview, placement);
+  // The bound clauses a confirmed rule does not carry, said once: a kept line already names its own.
+  const unnamed =
+    standing === 'confirmed' && placement.kind === 'bound'
+      ? placement.notCarrying.filter(
+          (clause) => !(preview?.keptClauses ?? []).some((kept) => kept.clause === clause),
+        )
+      : [];
   const chip = STANDING_CHIP[standing];
   const keepUnder = CLAUSE_LIST_WORDS[defaultRuleClause(constraint.quote)];
   return (
@@ -383,6 +440,15 @@ export function RuleRow({
               </RowNote>
             ))
           : null}
+        {/* After what Strike does, and only for a clause no kept line already names (the design pass). */}
+        {unnamed.length > 0 ? (
+          <RowNote>
+            {unnamed.length === 1
+              ? 'Also linked to this rule, but it does not carry your words: '
+              : 'Also linked to this rule, but they do not carry your words: '}
+            {quotedClauses(unnamed)}
+          </RowNote>
+        ) : null}
         {constraint.struck && onRestore ? (
           <RowNote>Its clauses leave the charter on approval; Restore puts them back.</RowNote>
         ) : null}
@@ -485,8 +551,8 @@ export function ConstraintList({
         </h3>
         {approved ? null : (
           <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            Each rule is a sentence you said, and what it became. Strike removes the clauses it
-            produced; nothing else changes.
+            Each rule is a sentence you said, and what it became. Strike removes the clauses that
+            carry it; each row says what it takes and what it keeps.
           </p>
         )}
       </div>

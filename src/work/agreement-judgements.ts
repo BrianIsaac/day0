@@ -8,6 +8,7 @@
  */
 
 import type { SpanModel } from '../redaction/client';
+import { redactText } from '../redaction/redact';
 import { agentJson, makeAgent } from '../lib/mastra';
 import {
   REFUSAL_JUDGEMENT_SYSTEM,
@@ -138,12 +139,19 @@ export type SamenessOutcome =
  * than two corrections, or with no new one among them and none that could join a waiting
  * proposal, since no group could be kept.
  *
+ * Each correction's words and the title of the item it was given on reach the model only through
+ * `redactText` for a prompt, the owner's stored values first, as every other prompt path of a
+ * correction does (W13-R4): a manager who pasted a token into a rejection reason sends a
+ * placeholder.
+ *
  * @param corrections - The employee's active corrections, the new ones marked.
+ * @param redaction - The owner's stored values and the span model the words are redacted with.
  * @param call - The model call; the deployment's client unless a test injects one.
  * @returns The groups, oldest first in each, or `unavailable` when the judgement failed.
  */
 export async function judgeSameness(
   corrections: readonly JudgedCorrection[],
+  redaction: { readonly model?: SpanModel; readonly known: readonly string[] },
   call: SamenessJudgementCall = samenessModelCall,
 ): Promise<SamenessOutcome> {
   const joinable =
@@ -153,7 +161,23 @@ export async function judgeSameness(
     return { outcome: 'judged', groups: [] };
   }
   try {
-    const reply = await call(samenessJudgementPrompt(corrections));
+    const scrub = async (value: string): Promise<string> =>
+      (
+        await redactText(value, 'prompt', {
+          model: redaction.model,
+          known: redaction.known,
+          onUnavailable: 'structural',
+        })
+      ).text;
+    const redacted: JudgedCorrection[] = [];
+    for (const correction of corrections) {
+      redacted.push({
+        ...correction,
+        text: await scrub(correction.text),
+        itemTitle: await scrub(correction.itemTitle),
+      });
+    }
+    const reply = await call(samenessJudgementPrompt(redacted));
     return { outcome: 'judged', groups: sameGroups(reply, corrections) };
   } catch (err: unknown) {
     return { outcome: 'unavailable', reason: unavailableReason(err) };

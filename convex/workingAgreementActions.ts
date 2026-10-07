@@ -24,6 +24,18 @@ import { CHECK_RETRY_DELAYS_MS, type CheckInputs, type ProposalInputs } from './
  * agreement in mock mode, and no correction is kept there.
  */
 
+/** Whether a step of the employee may start now (`workLoop.stepMayRun`): no pause holds it. */
+async function mayRun(ctx: ActionCtx, agentId: Id<'agents'>): Promise<boolean> {
+  const permission = await ctx.runQuery(internal.workLoop.stepPermission, { agentId });
+  if (!permission.mayRun) {
+    log.info('working agreements: held while the work is paused', {
+      agentId,
+      reason: permission.reason,
+    });
+  }
+  return permission.mayRun;
+}
+
 /** The owner's stored values for the exact layer, resolved once per action. */
 async function knownValuesOf(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
   return await ownerKnownValues(ctx, userId);
@@ -109,6 +121,9 @@ export const proposeFromCorrections = internalAction({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
+    // A paused employee, or the deployment's paused work, starts no model call (W13-R45); its
+    // corrections stay new for the run after the work resumes.
+    if (!(await mayRun(ctx, args.agentId))) return;
     const inputs = await ctx.runQuery(internal.workingAgreements.proposalInputs, {
       agentId: args.agentId,
     });
@@ -120,7 +135,13 @@ export const proposeFromCorrections = internalAction({
         attempt: 0,
       });
     }
-    const sameness = await judgeSameness(inputs.corrections);
+    // The owner's values are resolved before the judgement, whose prompt carries the manager's
+    // own words (W13-R4).
+    const known = await knownValuesOf(ctx, inputs.userId);
+    const sameness = await judgeSameness(inputs.corrections, {
+      model: spanModelFromEnv(),
+      known,
+    });
     if (sameness.outcome === 'unavailable') {
       log.warn('working agreements: the sameness judgement was unavailable; asked again later', {
         agentId: args.agentId,
@@ -129,7 +150,6 @@ export const proposeFromCorrections = internalAction({
     }
     const groups = sameness.outcome === 'judged' ? sameness.groups : [];
     const { drafts, joins } = proposalWork(inputs, groups);
-    const known = drafts.length > 0 ? await knownValuesOf(ctx, inputs.userId) : [];
     const proposals: Array<{
       correctionIds: Id<'corrections'>[];
       statement: string;
@@ -206,6 +226,10 @@ export const settleKept = internalAction({
   },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
+    // Held while the employee or the deployment's work is paused (W13-R45): no model call and no
+    // retry spent; the row stays kept and waiting, and the employee's next proposal run, which a
+    // stored plan or a kept correction schedules once the work resumes, checks it as a stale one.
+    if (!(await mayRun(ctx, args.agentId))) return;
     const inputs = await ctx.runQuery(internal.workingAgreements.checkInputs, {
       agreementId: args.agreementId,
     });

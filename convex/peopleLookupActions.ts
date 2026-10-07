@@ -205,6 +205,7 @@ export async function runLookups(
     if (found.length === 0) continue;
     added += await ctx.runMutation(internal.peopleProposals.recordLookups, {
       personId: target.personId,
+      address: target.address,
       found,
     });
   }

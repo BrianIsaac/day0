@@ -2,7 +2,7 @@ import { TransientProviderError } from '../lib/transport-error';
 import type { MockAction } from '../work/types';
 import { isSlackApiEndpoint, SLACK_API_ENDPOINT } from './slack-endpoint';
 import type { SurfaceRecord } from './types';
-import { channelAllowlist } from './slack-own-channel';
+import { channelAllowlist, mayReadChannel } from './slack-own-channel';
 
 /**
  * The chat reader over the ladder (A6): what any chat rung must answer for
@@ -186,13 +186,14 @@ const MEMBER_NAME_MAX = 80;
  * The reader for a Slack workspace reached over its documented Web API.
  *
  * Each read method is called only when the surface's probed allowlist admits
- * it, with the credential as a bearer token and no redirect followed.
+ * it (on an app Day0 created, also Day0's own `auth.test` and the manager's DM),
+ * with the credential as a bearer token and no redirect followed.
  *
  * @param surface - The connected Slack surface.
  * @param dependencies - The credential, the fetch and the API base.
  */
 export function slackChatReader(
-  surface: Pick<SurfaceRecord, 'slug' | 'toolAllowlist' | 'ownSlackApp'>,
+  surface: Pick<SurfaceRecord, 'slug' | 'toolAllowlist' | 'ownSlackApp' | 'managerDmChannelId'>,
   dependencies: ChatReaderDependencies,
 ): ChatReader {
   const base = dependencies.slackApiBase ?? new URL(SLACK_API_ENDPOINT);
@@ -202,9 +203,13 @@ export function slackChatReader(
     query: Record<string, string>,
   ): Promise<Record<string, unknown>> => {
     // Who the bot is is Day0's own question, a channel method on an app Day0 created (13-FS's
-    // design 1 (b)); every other read is the work's, as the page names it.
-    const allowed = method === 'auth.test' ? channelAllowlist(surface) : surface.toolAllowlist;
-    if (!allowed?.includes(method)) {
+    // design 1 (b)), and so is the manager's DM on such an app (W13-R1); every other read is the
+    // work's, as the page names it.
+    const allowed =
+      method === 'auth.test'
+        ? channelAllowlist(surface).includes(method)
+        : mayReadChannel(surface, method, query.channel);
+    if (!allowed) {
       throw new Error(`Connected Slack surface does not allow ${method}.`);
     }
     const url = new URL(method, base);
@@ -363,7 +368,13 @@ export function slackChatReader(
 export function chatReaderFor(
   surface: Pick<
     SurfaceRecord,
-    'slug' | 'displayName' | 'path' | 'endpoint' | 'toolAllowlist' | 'ownSlackApp'
+    | 'slug'
+    | 'displayName'
+    | 'path'
+    | 'endpoint'
+    | 'toolAllowlist'
+    | 'ownSlackApp'
+    | 'managerDmChannelId'
   >,
   dependencies: ChatReaderDependencies,
 ): ChatReaderResult {

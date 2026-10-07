@@ -1,3 +1,4 @@
+import { configurationTokenRefused } from './identity-issuers/slack';
 import { SLACK_APP_HOME } from './slack-manifest';
 import type { MessagesTabOpenHow } from './slack-messages-tab-hows';
 
@@ -85,13 +86,18 @@ const TRANSIENT_SLACK_ERRORS: ReadonlySet<string> = new Set([
 
 /**
  * Whether a failed opening is Slack's own refusal of the call, which the card records so its
- * routine checks stop asking (13-FS): an error word Slack gave that is not one it may not repeat.
+ * routine checks stop asking (13-FS): an error word Slack gave that is not one it may not repeat,
+ * and not a refusal of the configuration token, which the call rotates and tries again (W13-R10).
  * A failure with no word (a timeout, a network fault, a page that is not JSON) is not.
  *
  * @param slackError - Slack's error word, where the failure carried one.
  */
 export function slackRefusalIsDefinite(slackError: string | undefined): boolean {
-  return slackError !== undefined && !TRANSIENT_SLACK_ERRORS.has(slackError);
+  return (
+    slackError !== undefined &&
+    !TRANSIENT_SLACK_ERRORS.has(slackError) &&
+    !configurationTokenRefused(slackError)
+  );
 }
 
 /** Whether a manager can reply with a typed code: only while the app takes messages. */

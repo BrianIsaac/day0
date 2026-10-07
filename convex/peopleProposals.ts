@@ -185,6 +185,38 @@ export function withEvidence(held: readonly Evidence[], added: readonly Evidence
   return merged;
 }
 
+/** The `ref` of the evidence that records an address the manager said is someone else's. */
+const NOT_THEIR_ADDRESS_REF = 'not-their-address:';
+
+/**
+ * The evidence a person keeps of an address the manager said is someone else's, on **A different
+ * person** (W13-R8): shown on the card with the rest, and read so no source and no lookup gives
+ * the address back. Kept on the evidence the row already has; a field of its own is for the next
+ * schema step.
+ *
+ * @param address - The normalised address.
+ * @param at - When the manager said so.
+ */
+export function notTheirAddressEvidence(address: string, at: number): Evidence {
+  return {
+    quote: `${address} is someone else's address`,
+    where: 'you, on A different person',
+    at,
+    ref: `${NOT_THEIR_ADDRESS_REF}${address}`,
+  };
+}
+
+/** The addresses the manager said are not a person's ({@link notTheirAddressEvidence}). */
+export function notTheirAddresses(person: Pick<Doc<'people'>, 'evidence'>): ReadonlySet<string> {
+  return new Set(
+    person.evidence.flatMap((item) =>
+      item.ref?.startsWith(NOT_THEIR_ADDRESS_REF) === true
+        ? [item.ref.slice(NOT_THEIR_ADDRESS_REF.length)]
+        : [],
+    ),
+  );
+}
+
 /** Record the proposal's identities on a person, each unless the owner holds it already. */
 async function addIdentities(
   ctx: MutationCtx,
@@ -266,9 +298,12 @@ async function proposeEdges(
 }
 
 /**
- * Merge a proposal into a person the graph holds, as evidence: the new words, an address, title or
- * team the person has none of, identities nobody holds, and the edges it implies as proposals. A
- * fact the manager confirmed is never changed by it.
+ * Merge a proposal into a person the graph holds, as evidence: the new words, identities nobody
+ * holds, the edges it implies as proposals, and, while the person still waits on Confirm, an
+ * address, title or team it has none of. A person the manager confirmed (active, or inactive
+ * since) keeps the address, title and team as confirmed: a source never writes one, even where the
+ * person has none (W13-R3), since the People block prints them to the planner and the executor;
+ * the source's words stay as evidence.
  */
 async function mergeProposal(
   ctx: MutationCtx,
@@ -278,19 +313,30 @@ async function mergeProposal(
   origin: ProposalOrigin,
   now: number,
 ): Promise<void> {
-  const address = normaliseManagerAddress(proposal.email);
+  const notTheirs = notTheirAddresses(person);
+  const given = normaliseManagerAddress(proposal.email);
+  const address = given !== undefined && notTheirs.has(given) ? undefined : given;
+  const fills = person.status === 'unverified';
   await ctx.db.patch(person._id, {
     evidence: withEvidence(person.evidence, proposal.evidence),
-    ...(person.primaryEmail === undefined && address !== undefined
+    ...(fills && person.primaryEmail === undefined && address !== undefined
       ? { primaryEmail: address }
       : {}),
-    ...(person.title === undefined && proposal.title !== undefined
+    ...(fills && person.title === undefined && proposal.title !== undefined
       ? { title: proposal.title }
       : {}),
-    ...(person.team === undefined && proposal.team !== undefined ? { team: proposal.team } : {}),
+    ...(fills && person.team === undefined && proposal.team !== undefined
+      ? { team: proposal.team }
+      : {}),
     updatedAt: now,
   });
-  await addIdentities(ctx, scope, person._id, proposal.identities, origin, now);
+  // An address the manager said is someone else's is not brought back as an identity either.
+  const identities = proposal.identities.filter(
+    (identity) =>
+      identity.provider !== 'email' ||
+      !notTheirs.has(normaliseManagerAddress(identity.externalId) ?? identity.externalId),
+  );
+  await addIdentities(ctx, scope, person._id, identities, origin, now);
   // The owner is the manager: no edge ends at their own row (the one-role rulings).
   if (person.isOwner !== true) await proposeEdges(ctx, scope, person._id, proposal, origin, now);
 }
@@ -708,14 +754,20 @@ function documentationProposal(
 /**
  * Internal, for `peopleExtractionActions.extractSource`: propose the people a completed
  * generation's pages ground ({@link proposePersonInTransaction}, source `documentation`), each
- * with its page quote and the owner-wide approval and escalation edges its quote states, and
- * stamp the source's four extraction fields. Fenced as the read was: nothing for a generation
- * that is no longer the one to extract.
+ * with its page quote and the owner-wide approval and escalation edges its quote states, and,
+ * for the generation's last chunk, stamp the source's four extraction fields. Fenced as the read
+ * was: nothing for a generation that is no longer the one to extract.
  *
  * @returns Whether it applied, and the people proposed or merged whose address a lookup may match.
  */
 export const applyExtraction = internalMutation({
-  args: { ...extractionArgs, fingerprint: v.string(), people: v.array(extractedPersonValidator) },
+  args: {
+    ...extractionArgs,
+    fingerprint: v.string(),
+    people: v.array(extractedPersonValidator),
+    /** A chunk before the generation's last (W13-R9): proposed, the source not yet stamped. */
+    partial: v.optional(v.literal(true)),
+  },
   returns: v.object({ applied: v.boolean(), withAddress: v.array(v.id('people')) }),
   handler: async (ctx, args): Promise<{ applied: boolean; withAddress: Id<'people'>[] }> => {
     const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
@@ -735,13 +787,15 @@ export const applyExtraction = internalMutation({
         withAddress.add(outcome.personId);
       }
     }
-    await ctx.db.patch(args.sourceId, {
-      peopleExtractionSyncId: args.runId,
-      peopleExtractionFingerprint: args.fingerprint,
-      lastPeopleExtractionAt: now,
-      lastPeopleExtractionError: undefined,
-      updatedAt: now,
-    });
+    if (args.partial !== true) {
+      await ctx.db.patch(args.sourceId, {
+        peopleExtractionSyncId: args.runId,
+        peopleExtractionFingerprint: args.fingerprint,
+        lastPeopleExtractionAt: now,
+        lastPeopleExtractionError: undefined,
+        updatedAt: now,
+      });
+    }
     return { applied: true, withAddress: [...withAddress] };
   },
 });
@@ -912,11 +966,22 @@ const foundIdentityValidator = v.object({
  * @returns How many identities it added.
  */
 export const recordLookups = internalMutation({
-  args: { personId: v.id('people'), found: v.array(foundIdentityValidator) },
+  args: {
+    personId: v.id('people'),
+    /** The address looked up: a lookup of one the person no longer holds records nothing (W13-R8). */
+    address: v.optional(v.string()),
+    found: v.array(foundIdentityValidator),
+  },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const person = await ctx.db.get(args.personId);
     if (person === null || person.status === 'dismissed') return 0;
+    if (
+      args.address !== undefined &&
+      (person.primaryEmail !== args.address || notTheirAddresses(person).has(args.address))
+    ) {
+      return 0;
+    }
     const now = Date.now();
     let added = 0;
     for (const identity of args.found) {

@@ -162,4 +162,10 @@ describe('slackRefusalIsDefinite (13-FS second pass)', (): void => {
       expect(slackRefusalIsDefinite(error), String(error)).toBe(false);
     }
   });
+
+  it('reads a refused configuration token as not definite, since the call rotates it and tries again (W13-R10)', (): void => {
+    for (const error of ['invalid_auth', 'not_authed', 'token_expired', 'token_revoked']) {
+      expect(slackRefusalIsDefinite(error), error).toBe(false);
+    }
+  });
 });

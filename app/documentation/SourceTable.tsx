@@ -231,6 +231,14 @@ export function SourceTable({
                         System discovery: {source.lastDiscoveryError}
                       </span>
                     ) : null}
+                    {/* The people extraction after each sync proposes the people its pages name;
+                        a failure leaves the last proposals standing and nothing else says so
+                        (W13-R9). */}
+                    {source.lastPeopleExtractionError ? (
+                      <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                        People from its pages: {source.lastPeopleExtractionError}
+                      </span>
+                    ) : null}
                   </th>
                   <Cell label="Pages">
                     <span className="tabular-nums">{source.pageCount}</span>

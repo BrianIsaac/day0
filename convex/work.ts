@@ -12,6 +12,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
@@ -4990,8 +4991,11 @@ export async function approvePlanInTransaction(
   if (row.state !== 'plan-pending') {
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
   }
+  // An agreement retired since the plan was drafted no longer binds the run (W13-R29).
+  const settledPlan = await planAgreementsAtApproval(ctx, row);
   await ctx.db.patch(row._id, {
     state: 'plan-approved',
+    ...(settledPlan === undefined ? {} : { plan: settledPlan }),
     ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });

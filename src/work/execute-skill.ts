@@ -75,7 +75,7 @@ import {
   withheldWithClaimedWrite,
   type HeldExternalItem,
 } from './claim-key';
-import { notDoneStatements, runOwnWords } from './not-done';
+import { CLOSING_STATES_WORDS, notDoneStatements, runOwnWords } from './not-done';
 import {
   CLOSE_HELD_AGAINST_WORDS,
   closingAgainstFact,
@@ -2768,8 +2768,7 @@ export function mockActionContractIssues(
 const LIST_TOOL = /^list[_-]/i;
 
 /** How a real run takes a list read, shown when a connected surface allows one (W12V-12, wave 13 item 3). */
-export const LIST_READ_RULE =
-  '  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done or cancelled, such as Backlog, Todo or In Progress, so read open items with no state filter.';
+export const LIST_READ_RULE = `  - A list read (\`list_issues\` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (\`fields\`): the list answers with every field. Scope it by \`state\` only to a state the work names: an open item can be in any state that is not ${CLOSING_STATES_WORDS}, such as Backlog, Todo or In Progress, so read open items with no state filter.`;
 
 /**
  * Describe the connected surfaces and the two verbs that reach them.
@@ -3691,10 +3690,11 @@ const FAULTED_ARGUMENT = /(?:^|\s)-\s+([A-Za-z_][A-Za-z0-9_]*)(?:[.[][^:\s]*)?:\
 
 /**
  * The arguments that only select which fields of a record come back, which a read may leave out
- * and still read what it was asked (`fields` on `list_issues`). A filter (`state`, `project`)
- * scopes what is read: leaving one out would read wider than asked, so it is never left out.
+ * and still read what it was asked (`fields` on `list_issues`), listed by name. A filter (`state`,
+ * `project`, `includeArchived`) scopes what is read: leaving one out would read wider or narrower
+ * than asked, so it is never left out (W13-R42).
  */
-const FIELD_SELECTION = /^(?:fields|select|expand|include[A-Z]\w*)$/;
+const FIELD_SELECTION = /^(?:fields|select|expand)$/;
 
 /**
  * The top-level field-selection arguments of a call that a validation refusal names, in the

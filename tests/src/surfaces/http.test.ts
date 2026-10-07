@@ -1,5 +1,5 @@
 import { RedactorUnavailableError } from '../../../src/redaction/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
@@ -533,6 +533,45 @@ describe('the content type of a body the action sends', (): void => {
     expect(await sentHeaders(untypedPost('channel=D0MANAGER&text=Draft'))).toEqual({
       Authorization: 'Bearer xoxb-test-value',
     });
+  });
+});
+
+describe("a Slack card's transport, whatever its slug (the pre-tag bed)", (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("sends a Slack card's run to the local proof service its probe used, whatever the card is called", async (): Promise<void> => {
+    vi.stubEnv('DAY0_SURFACE_MODE', 'real');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('DAY0_TEST_SLACK_API_URL', 'http://fake-slack:8090/api/');
+    vi.resetModules();
+    const { HttpAdapter: LocalAdapter } = await import('../../../src/surfaces/http');
+    const sent: string[] = [];
+    const answer = async (input: URL): Promise<Response> => {
+      sent.push(input.toString());
+      return Response.json({ ok: true, channel: 'D0MANAGER', ts: '1787654400.000100' });
+    };
+    const surfaceAdapter = new LocalAdapter([{ ...slack, slug: 'team-chat' }], {
+      decrypt: vi.fn(async (): Promise<string> => 'xoxb-test-value'),
+      fetch: answer,
+      connect: async (endpoint: string) => ({ url: new URL(endpoint), fetch: answer }),
+      now: (): number => now,
+      spanModel: new RecordedSpanModel(),
+    });
+    const result = await surfaceAdapter.apply(
+      ctx,
+      run,
+      { ...post, args: { ...post.args, surface: 'team-chat' } },
+      0,
+      'k',
+    );
+    expect(result).toMatchObject({ ok: true });
+    // Before: a card not called `slack` was sent to slack.com while its probe read the fake.
+    expect(sent).toEqual(['http://fake-slack:8090/api/chat.postMessage']);
   });
 });
 

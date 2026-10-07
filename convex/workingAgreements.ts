@@ -22,6 +22,7 @@ import {
   type JudgedCorrection,
 } from '../src/work/agreements';
 import { awaitingCheck, type AgreementView } from '../src/work/agreement-words';
+import type { ExecutionPlan } from '../src/work/types';
 import {
   AGREEMENT_REFUSAL_REASONS,
   AGREEMENT_STATEMENT_LIMIT,
@@ -79,6 +80,22 @@ export const AGREEMENT_STATEMENT_EMPTY = 'Write the agreement before keeping it.
 
 /** The refusal of a statement longer than an agreement keeps. */
 export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most ${AGREEMENT_STATEMENT_LIMIT} characters.`;
+
+/**
+ * The refusal of an agreement for every employee of an owner with more employees than its check
+ * reads (W13-R28): kept, it would bind an employee whose charter nobody checked it against.
+ */
+export const EVERY_EMPLOYEE_TOO_MANY = `Day0 can check an agreement for every employee only when you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. Keep it for this employee instead.`;
+
+/**
+ * The fewest words a kept note must have: a direction a later plan can follow ("Use UTC."), never a
+ * one-word answer ("Yes") (W13-R32).
+ */
+const AGREEMENT_SENTENCE_WORDS = 2;
+
+/** The refusal of a note kept from the plan approval that is no sentence ("Yes", "Evergreen"). */
+export const AGREEMENT_NOT_A_SENTENCE =
+  'A working agreement needs a sentence a later plan can follow. A one-word answer such as “Yes” is not one.';
 
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
@@ -146,8 +163,49 @@ async function approvedBounds(
 }
 
 /**
+ * Refuse an agreement for every employee of an owner with more employees than its check reads
+ * (W13-R28), wherever one is kept or changed: the keep of one for every employee, and the edit of
+ * one that already is.
+ *
+ * @throws ConvexError `EVERY_EMPLOYEE_TOO_MANY`.
+ */
+async function refuseEveryEmployeePastTheCheck(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+): Promise<void> {
+  if ((await ownerEmployees(ctx, userId, EMPLOYEES_CHECKED + 1)).length > EMPLOYEES_CHECKED) {
+    throw new ConvexError(EVERY_EMPLOYEE_TOO_MANY);
+  }
+}
+
+/** The most rows under one user id the employee read scans past other owner scopes (standard 10.4). */
+const EMPLOYEE_SCAN_LIMIT = 500;
+
+/**
+ * An owner's employees, at most `limit`, read past rows of another owner scope under the same
+ * user id rather than counting them (W13-R28: the bound was taken before the filter).
+ */
+async function ownerEmployees(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+  limit: number,
+): Promise<Doc<'agents'>[]> {
+  const employees: Doc<'agents'>[] = [];
+  for (const agent of await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .take(EMPLOYEE_SCAN_LIMIT)) {
+    if (employeeOwnerScope(agent) !== userId) continue;
+    employees.push(agent);
+    if (employees.length >= limit) break;
+  }
+  return employees;
+}
+
+/**
  * The charters an agreement is checked against: its employee's, or, for one that binds every
- * employee, each of the owner's employees' newest approved charter.
+ * employee, each of the owner's employees' newest approved charter (`keep` refuses an owner with
+ * more than `EMPLOYEES_CHECKED`).
  */
 async function chartersBound(
   ctx: Pick<QueryCtx, 'db'>,
@@ -156,12 +214,7 @@ async function chartersBound(
   const employees =
     row.agentId !== undefined
       ? [await ctx.db.get(row.agentId)].filter((agent): agent is Doc<'agents'> => agent !== null)
-      : (
-          await ctx.db
-            .query('agents')
-            .withIndex('by_userId', (q) => q.eq('userId', row.userId))
-            .take(EMPLOYEES_CHECKED)
-        ).filter((agent) => employeeOwnerScope(agent) === row.userId);
+      : await ownerEmployees(ctx, row.userId, EMPLOYEES_CHECKED);
   const bounds = await Promise.all(
     employees.map(async (agent) => await approvedBounds(ctx, agent)),
   );
@@ -192,7 +245,8 @@ async function scheduleCheck(
  * @param row - The plan-pending work item.
  * @param note - The manager's note, as written.
  * @returns The kept agreement, or the one already kept for the same note.
- * @throws ConvexError in mock mode, or for an employee no owner holds.
+ * @throws ConvexError in mock mode, for an employee no owner holds, or for a note longer than an
+ *   agreement keeps or of fewer than three words (W13-R32).
  */
 export async function keepPlanNoteInTransaction(
   ctx: MutationCtx,
@@ -203,8 +257,17 @@ export async function keepPlanNoteInTransaction(
   const agent = await ctx.db.get(row.agentId);
   const userId = agent ? employeeOwnerScope(agent) : undefined;
   if (!agent || userId === undefined) throw new ConvexError(AGREEMENT_NOT_THIS_EMPLOYEES);
+  // Held to what an edit keeps (W13-R32): never cut silently, and a direction, not an answer.
+  if (note.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
+    throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
+  }
   const statement = agreementStatement(redactTokenShapes(note));
   if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+  if (
+    statement.split(' ').filter((word) => /\p{L}/u.test(word)).length < AGREEMENT_SENTENCE_WORDS
+  ) {
+    throw new ConvexError(AGREEMENT_NOT_A_SENTENCE);
+  }
   const scopeRef = surfaceSlug(row.sourceSystem);
   // The same note kept again keeps the agreement already in force, or already waiting on its check.
   const kept = [
@@ -270,6 +333,35 @@ export async function markAgreementsAppliedInTransaction(
     kept.push(id);
   }
   return kept;
+}
+
+/**
+ * The plan as the manager's approval leaves it (W13-R29): an agreement it applied that was retired,
+ * superseded or dismissed between the draft and the approval no longer binds the run the approval
+ * starts, so it leaves the plan's `appliedAgreements`.
+ *
+ * @param ctx - The approval's mutation context.
+ * @param row - The work item being approved.
+ * @returns The plan to store, or undefined when every agreement it applied still holds.
+ */
+export async function planAgreementsAtApproval(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<ExecutionPlan | undefined> {
+  const plan = row.plan as ExecutionPlan | undefined;
+  const ids = plan?.appliedAgreements;
+  if (plan === undefined || ids === undefined) return undefined;
+  const agent = await ctx.db.get(row.agentId);
+  const inForce: string[] = [];
+  for (const raw of ids) {
+    const id = ctx.db.normalizeId('workingAgreements', raw);
+    const agreement = id ? await ctx.db.get(id) : null;
+    if (agent && agreement?.status === 'active' && binds(agreement, agent)) inForce.push(raw);
+  }
+  if (inForce.length === ids.length) return undefined;
+  const settled: ExecutionPlan = { ...plan };
+  delete settled.appliedAgreements;
+  return inForce.length > 0 ? { ...settled, appliedAgreements: inForce } : settled;
 }
 
 /** How many distinct items a correction has governed: the one it was given on and those it was applied to. */
@@ -812,6 +904,8 @@ interface Replacement {
 /**
  * A kept replacement of an active agreement, waiting on its check: the same kind and scope, the
  * new binding or words, made on the manager's card, superseding the one it replaces once it passes.
+ * It carries the corrections the agreement came from, so once it is in effect the planner reads
+ * them as the agreement and not again beside it (W13-R5).
  */
 function replacementOf(
   agreement: Doc<'workingAgreements'>,
@@ -825,6 +919,9 @@ function replacementOf(
     scope: agreement.scope,
     ...(agreement.scopeRef !== undefined ? { scopeRef: agreement.scopeRef } : {}),
     ...(agreement.personId !== undefined ? { personId: agreement.personId } : {}),
+    ...(agreement.correctionIds !== undefined
+      ? { correctionIds: [...agreement.correctionIds] }
+      : {}),
     sourceType: 'manager-card',
     sourceRef: agreement._id,
     status: 'proposed',
@@ -853,6 +950,9 @@ export const keep = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+    if (args.forEveryEmployee || agreement.agentId === undefined) {
+      await refuseEveryEmployeePastTheCheck(ctx, agreement.userId);
+    }
     const now = Date.now();
     if (agreement.status === 'proposed' && agreement.approvedAt === undefined) {
       await ctx.db.patch(agreement._id, {
@@ -896,6 +996,9 @@ export const edit = mutation({
   handler: async (ctx, args): Promise<{ agreementId: Id<'workingAgreements'> }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
     if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
+    if (agreement.agentId === undefined) {
+      await refuseEveryEmployeePastTheCheck(ctx, agreement.userId);
+    }
     if (args.statement.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
       throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
     }
@@ -945,9 +1048,35 @@ export const dismiss = mutation({
 });
 
 /**
- * Retire an active agreement: no later plan reads it. Idempotent for one already retired. Public,
- * guarded by `assertOwnsAgreement` first and the card's employee after. Writes the status, when it
- * stopped, and `agreement.retired`.
+ * Retire the corrections a retired agreement came from, each as the Corrections panel's Retire
+ * does, so no later plan reads the same words as a correction (W13-R5). A correction already
+ * retired, gone, or of another owner's employee is left as it is.
+ */
+async function retireSourceCorrections(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  now: number,
+): Promise<void> {
+  for (const correctionId of agreement.correctionIds ?? []) {
+    const correction = await ctx.db.get(correctionId);
+    if (correction === null || correction.retiredAt !== undefined) continue;
+    const employee = await ctx.db.get(correction.agentId);
+    if (employee === null || employeeOwnerScope(employee) !== agreement.userId) continue;
+    await ctx.db.patch(correction._id, { retiredAt: now });
+    await appendEvent(ctx, {
+      agentId: correction.agentId,
+      type: 'work.correction-retired',
+      payload: { correctionId: correction._id, workItemId: correction.workItemId },
+      createdAt: now,
+    });
+  }
+}
+
+/**
+ * Retire an active agreement: no later plan reads it, nor the corrections it came from. Idempotent
+ * for one already retired. Public, guarded by `assertOwnsAgreement` first and the card's employee
+ * after. Writes the status, when it stopped, `agreement.retired`, and each source correction's
+ * `retiredAt` with its `work.correction-retired`.
  */
 export const retire = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
@@ -957,6 +1086,7 @@ export const retire = mutation({
     if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
     const now = Date.now();
     await ctx.db.patch(agreement._id, { status: 'retired', effectiveUntil: now });
+    await retireSourceCorrections(ctx, agreement, now);
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agreement.retired',

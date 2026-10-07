@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { ExecutionPlan } from '../../src/work/types';
 import { AGREEMENT_NOT_YOURS } from '../../src/work/agreement-vocabulary';
+import { EMPLOYEES_CHECKED, EVERY_EMPLOYEE_TOO_MANY } from '../../convex/workingAgreements';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -79,8 +80,25 @@ afterEach((): void => {
 
 /** Run every scheduled job that is due, and every job those schedule. */
 async function drain(harness: Harness): Promise<void> {
-  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  // Each round starts what is due and awaits it in real time, until nothing due is left: an action
+  // that awaits real work on a busy machine outlasted convex-test's 10,000 macrotask pumps in
+  // `finishAllScheduledFunctions` (a flake seen on the pre-tag's runs, on `2478d192` too).
+  for (let round = 0; round < DRAIN_ROUND_LIMIT; round += 1) {
+    vi.advanceTimersByTime(0);
+    await harness.finishInProgressScheduledFunctions();
+    const due = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending' && job.scheduledTime <= Date.now(),
+        ).length,
+    );
+    if (due === 0) return;
+  }
+  throw new Error(`scheduled work still due after ${DRAIN_ROUND_LIMIT} rounds`);
 }
+
+/** Rounds of scheduled work a drain runs before it calls the chain endless. */
+const DRAIN_ROUND_LIMIT = 50;
 
 /** One employee of the owner with an approved charter that will not email customers directly. */
 async function seedEmployee(
@@ -492,6 +510,76 @@ describe('keeping an agreement on a card', (): void => {
         workItemId: mateoSlack,
       }),
     ).toEqual([]);
+  });
+
+  it('asks no model while its employee is paused: the check waits, and so does the proposal run (W13-R45)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await proposal(harness, agentId);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+    recorded.model.length = 0;
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: false,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    await harness.action(internal.workingAgreementActions.proposeFromCorrections, { agentId });
+    expect(recorded.model).toEqual([]);
+    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'proposed' });
+    expect((await agreementsOf(harness))[0]?.approvedAt).toBeTypeOf('number');
+  });
+
+  it('refuses to keep one for every employee of an owner with more employees than the check reads, and says so (W13-R28)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    const agreementId = await proposal(harness, agentId);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+        agreementId,
+        agentId,
+        forEveryEmployee: true,
+        via: 'promotion-card',
+      }),
+    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
+    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'proposed' });
+    expect((await agreementsOf(harness))[0]?.approvedAt).toBeUndefined();
+  });
+
+  it('refuses an edit of an every-employee agreement past the employees its check reads, as keep does (the code reader)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: 'Name the vessel.',
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.edit, {
+        agreementId,
+        agentId,
+        statement: 'Name the vessel and the carrier.',
+      }),
+    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
+    expect(await agreementsOf(harness)).toHaveLength(1);
   });
 
   it("refuses an employee's own agreement for every employee when another charter forbids it, and keeps it for its employee", async (): Promise<void> => {

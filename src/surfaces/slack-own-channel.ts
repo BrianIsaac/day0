@@ -22,6 +22,37 @@ export const SLACK_CHANNEL_METHODS = [
   'chat.update',
 ] as const;
 
+/**
+ * The Slack reads Day0's own manager channel makes on an app it created, and only on the manager's
+ * DM: the manager's typed code at the top level and in the thread under a request (W13-R1, R-S1
+ * (a), the cockpit's ruling D-3 of 7 October). The kit's scopes already grant both; the restriction
+ * to the one channel is this module's, so they are never part of {@link channelAllowlist}.
+ */
+export const SLACK_DM_READ_METHODS = ['conversations.history', 'conversations.replies'] as const;
+
+/**
+ * Whether a read of one Slack channel may go through a card: the page names the method, or the
+ * card is an app Day0 created and the channel is the manager's DM it derived. Any other channel
+ * on any card is the work's, which the page alone decides.
+ *
+ * @param surface - The executor's record of the card.
+ * @param method - The Slack read method.
+ * @param channel - The channel the read names, where it names one.
+ */
+export function mayReadChannel(
+  surface: Pick<SurfaceRecord, 'toolAllowlist' | 'ownSlackApp' | 'managerDmChannelId'>,
+  method: string,
+  channel: string | undefined,
+): boolean {
+  if (surface.toolAllowlist?.includes(method)) return true;
+  return (
+    surface.ownSlackApp === true &&
+    (SLACK_DM_READ_METHODS as readonly string[]).includes(method) &&
+    surface.managerDmChannelId !== undefined &&
+    channel === surface.managerDmChannelId
+  );
+}
+
 /** The fields of a stored card the own-app question reads. */
 export interface OwnSlackAppCard {
   readonly class: string;

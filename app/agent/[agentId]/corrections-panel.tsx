@@ -116,7 +116,7 @@ export function KeptCorrectionsPanel({
           return (
             <li
               key={correction._id}
-              className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'opacity-60' : ''}`}
+              className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'border-dashed border-[var(--color-muted)]/40' : ''}`}
             >
               <p className="text-xs text-[var(--color-muted)] mb-0.5">
                 <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span>{' '}
@@ -125,7 +125,9 @@ export function KeptCorrectionsPanel({
                   {clockTime(correction.createdAt, zone)}
                 </span>
               </p>
-              <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">
+              <p
+                className={`${retired ? 'text-[var(--color-fg-2)]' : 'text-[var(--color-fg)]'} whitespace-pre-wrap break-words`}
+              >
                 {correction.text}
               </p>
               <p className="mt-0.5 text-xs text-[var(--color-muted)]">

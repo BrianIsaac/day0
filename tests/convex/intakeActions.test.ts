@@ -5375,3 +5375,124 @@ describe('the people intake asks the graph about (wave 13, 13-P; Q11, RM6)', ():
     expect(botless).not.toHaveProperty('people');
   });
 });
+
+describe("the typed code on an employee's own app whose page names no history method (W13-R1, R-S1 (a))", (): void => {
+  const pollAt = Date.parse('2026-10-07T09:05:00.000Z');
+  const credentialId = id<'credentials'>('credential-slack');
+
+  /** A connected Slack card whose documentation page names only the work's list and post. */
+  function thinPageCard(patch: Partial<Doc<'surfaces'>> = {}): Doc<'surfaces'> {
+    return surfaceRow('slack', 'Slack', 'chat', {
+      credentialId,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'chat.postMessage'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: Date.parse('2026-10-07T09:00:00.000Z'),
+      ...patch,
+    });
+  }
+
+  /** The same card as an app Day0 created through IT's connection and installed. */
+  function ownAppCard(): Doc<'surfaces'> {
+    return thinPageCard({
+      credentialKind: 'oauth',
+      provisioning: {
+        appId: 'A0PRIYA',
+        appName: 'Priya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: id<'credentials'>('credential-client-secret'),
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.local/api/slack/oauth',
+        scopes: ['chat:write', 'im:history'],
+        createdAt: 1,
+        installedAt: 2,
+      },
+    });
+  }
+
+  /** Slack's DM: the manager's typed code at the top level and again under the request. */
+  function managerDm(): {
+    fetcher: (input: string | URL | Request) => Promise<Response>;
+    calls: URL[];
+  } {
+    const calls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      calls.push(url);
+      return slackResponse({
+        ok: true,
+        messages: [{ ts: '1791363000.000100', user: 'UMANAGER', text: 'approve cg7e4p' }],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+    return { fetcher, calls };
+  }
+
+  it('reads the typed code from the DM and decides it, with no decision error', async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [ownAppCard()],
+      [],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    harness.openDecisions.set('surface-slack', openRequest('cg7e4p', '1791362900.000100'));
+    const { fetcher, calls } = managerDm();
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+    ).resolves.toMatchObject({ polled: 1, skipped: 0 });
+    expect(calls.map((url) => [url.pathname, url.searchParams.get('channel')])).toEqual([
+      ['/api/conversations.history', 'DMANAGER'],
+      ['/api/conversations.replies', 'DMANAGER'],
+    ]);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1791363000.000100',
+        reply: { verb: 'approve', id: 'cg7e4p' },
+      },
+    ]);
+    expect(harness.decisionPolls).toEqual([
+      { surfaceId: id<'surfaces'>('surface-slack'), polledAt: pollAt },
+    ]);
+  });
+
+  it("still refuses on a shared token, whose page's half decides", async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [thinPageCard()],
+      [],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    harness.openDecisions.set('surface-slack', openRequest('cg7e4p', '1791362900.000100'));
+    const { fetcher, calls } = managerDm();
+
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher });
+    expect(calls).toEqual([]);
+    expect(harness.decisions).toEqual([]);
+    expect(harness.decisionPolls).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        failure:
+          'decision poll failed: Connected Slack surface does not allow conversations.history.',
+      },
+    ]);
+  });
+
+  it("reads no work channel through the DM's widening: intake still needs the page to name the history method", async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [ownAppCard()],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    const { fetcher, calls } = managerDm();
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher });
+    expect(calls.filter((url) => url.pathname.endsWith('/conversations.history'))).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([
+      'intake failed: Connected Slack surface does not allow conversations.history.',
+    ]);
+  });
+});

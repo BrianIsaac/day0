@@ -17,7 +17,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { refusalText, useChange } from '../../../components/use-change';
 import { ENVIRONMENT_PANEL_ID } from '../environment-hash';
 import { useNow } from '../../../components/time';
-import { forgottenAppWords, type OrganisationSystem } from './card-words';
+import { forgetDoneWords, type OrganisationSystem } from './card-words';
 import {
   SurfaceCard,
   type AccessRequestView,
@@ -310,7 +310,7 @@ export function SurfaceCards({
         }),
       forgetApp: () =>
         operate('forget', surface, () => forgetEndedApp({ surfaceId: surface._id }), {
-          done: `${forgottenAppWords(surface.provisioning)} is forgotten. IT deletes it in Slack's app settings.`,
+          done: forgetDoneWords(surface.provisioning),
           refused: 'The app was not forgotten.',
         }),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),

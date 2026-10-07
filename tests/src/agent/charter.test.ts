@@ -21,7 +21,11 @@ import {
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../fixtures/charter-synthesis-notes-2026-09-16';
 import { MOCK_OFFICE_NAMED_SYSTEMS } from '../../../src/surfaces/mock-office';
-import { effectiveCharter } from '../../../src/agent/charter-constraints';
+import {
+  effectiveCharter,
+  rulePlacement,
+  strikePreview,
+} from '../../../src/agent/charter-constraints';
 import {
   BINDS_ANSWERS,
   GLM_BINDS_DRAFTS_2026_10_05,
@@ -351,6 +355,86 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     ).toEqual([
       'Contact any rep without asking the manager first.',
       'Own or change the deals, the sales lead owns the deals.',
+    ]);
+  });
+
+  /** Whether each rule of a recorded draft reads as carried by a clause it binds, by quote. */
+  function carriedOf(charter: Charter): Record<string, boolean> {
+    return Object.fromEntries(
+      (charter.constraints ?? []).map((rule) => {
+        const placement = rulePlacement(charter, rule);
+        return [rule.quote, placement.kind === 'bound' && placement.carriesWords];
+      }),
+    );
+  }
+
+  it("reads Rook's and Wren's right binds as Confirmed and Nell's and Moss's wrong binds as Check, clause by clause (W13-R6)", (): void => {
+    expect(
+      carriedOf(recorded('Rook'))[
+        'Finance owns the booked figures and sales owns the tracker. Go through me for both.'
+      ],
+    ).toBe(true);
+    const wren = recorded('Wren');
+    const goThroughMe =
+      'The support lead owns tone and billing owns refunds. Go through me for both.';
+    expect(carriedOf(wren)[goThroughMe]).toBe(true);
+    // The bind it shares with "Never promise a refund in a reply." is not this rule's words.
+    expect(
+      rulePlacement(wren, wren.constraints!.find((rule) => rule.quote === goThroughMe)!),
+    ).toMatchObject({ notCarrying: ['Promise a refund in a reply.'] });
+    expect(carriedOf(recorded('Nell'))['Never share a password in a ticket comment.']).toBe(false);
+    expect(carriedOf(recorded('Moss'))['Never post revenue figures in a public channel.']).toBe(
+      false,
+    );
+  });
+
+  it("leaves Wren's refund clause when its first rule is struck, since the refund rule binds it too, and says so (W13-R7)", (): void => {
+    const wren = recorded('Wren');
+    const goThroughMe =
+      'The support lead owns tone and billing owns refunds. Go through me for both.';
+    const struck = strike(wren, goThroughMe);
+    expect(struck.proposedBoundaries.willNotDo).toEqual([
+      'Own tone decisions, which belong to the support lead.',
+      'Own refunds, which belong to billing.',
+      'Promise a refund in a reply.',
+    ]);
+    const index = wren.constraints!.findIndex((rule) => rule.quote === goThroughMe);
+    expect(strikePreview(wren, index)).toMatchObject({
+      removedClauses: ['Contact the support lead or billing directly.'],
+      keptClauses: [
+        {
+          clause: 'Promise a refund in a reply.',
+          because: 'another-rule',
+          rule: 'Never promise a refund in a reply.',
+        },
+      ],
+    });
+  });
+
+  it("takes Wren's refund clause when the refund rule is struck: the rule that binds it too does not carry it (the pre-tag bed)", (): void => {
+    const wren = recorded('Wren');
+    const refund = 'Never promise a refund in a reply.';
+    expect(strike(wren, refund).proposedBoundaries.willNotDo).not.toContain(
+      'Promise a refund in a reply.',
+    );
+    const index = wren.constraints!.findIndex((rule) => rule.quote === refund);
+    expect(strikePreview(wren, index)).toMatchObject({
+      removedClauses: [
+        'Promise a refund in a reply.',
+        'If a reply might involve a refund, talk to the manager before promising anything.',
+      ],
+    });
+    expect(strikePreview(wren, index).keptClauses).toBeUndefined();
+  });
+
+  it("keeps Sage's main duty when its approval rule is struck, and says so (W13-R7)", (): void => {
+    const sage = recorded('Sage');
+    const rule = 'Never reply to a mention without my approval.';
+    const duty = 'Read each social mention and draft a reply for the manager to approve.';
+    expect(strike(sage, rule).proposedBoundaries.willDo).toContain(duty);
+    const index = sage.constraints!.findIndex((constraint) => constraint.quote === rule);
+    expect(strikePreview(sage, index).keptClauses).toEqual([
+      { clause: duty, because: 'not-this-rule' },
     ]);
   });
 

@@ -96,4 +96,26 @@ describe("the work's check on an app Day0 created", (): void => {
     expect(toolRefusal(parsed.action, ownApp)).toContain('conversations.open');
     expect(toolRefusal(parsed.action, withChannelMethods(ownApp))).toBeUndefined();
   });
+
+  it("refuses a run's read of the manager's DM where the page names no history method, Day0's own record included (W13-R1)", (): void => {
+    const thinPage: SurfaceRecord = {
+      ...record,
+      toolAllowlist: ['conversations.list', 'chat.postMessage'],
+      ownSlackApp: true,
+    };
+    for (const method of ['conversations.history', 'conversations.replies']) {
+      const parsed = parseSurfaceAction({
+        tool: 'http.request',
+        args: {
+          surface: 'team-chat',
+          method: 'GET',
+          path: `/${method}?channel=D0MANAGER`,
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+        },
+      });
+      if (!parsed.ok) throw new Error(parsed.reason);
+      expect(toolRefusal(parsed.action, thinPage)).toContain(method);
+      expect(toolRefusal(parsed.action, withChannelMethods(thinPage))).toContain(method);
+    }
+  });
 });

@@ -19,6 +19,9 @@ import {
   type PeopleExtractionResult,
 } from '../src/people/extraction';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { log } from '../src/lib/logger';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { stepHoldReason } from '../src/work/pause';
 
 /*
  * The documentation's people extraction (wave 13, 13-P; the wave file's section 5.2; A1, N20):
@@ -39,9 +42,10 @@ const FINGERPRINT_WINDOW = 100;
 const EXTRACT_BUDGET_MS = 4 * 60 * 1000;
 
 /**
- * The most people one generation proposes: they are applied in one transaction, each with a few
- * index reads and writes, which keeps it far inside a mutation's read and write limits (and a
- * continuation's arguments inside a scheduled call's).
+ * The most people one apply proposes: they are applied in one transaction, each with a few index
+ * reads and writes, which keeps it far inside a mutation's read and write limits (and a
+ * continuation's arguments inside a scheduled call's). A generation naming more is applied in
+ * chunks of this size (W13-R9).
  */
 const EXTRACTION_PEOPLE_LIMIT = 250;
 
@@ -66,6 +70,8 @@ interface ExtractionOutcome {
   readonly reason?: string;
   /** The rest of the generation was handed to a scheduled continuation. */
   readonly continued?: boolean;
+  /** How many applies this invocation made: one per chunk of `EXTRACTION_PEOPLE_LIMIT`. */
+  readonly applies?: number;
 }
 
 /** One window of the generation, as `peopleProposals.extractionContext` reads it. */
@@ -167,17 +173,22 @@ async function readGeneration(
   return source === undefined ? null : { source, fingerprint: fingerprintOf(digests) };
 }
 
-/** Propose what the extraction found, and record a refusal on the source. */
+/**
+ * Propose one chunk of what the extraction found; the last chunk of the generation (`final`) also
+ * stamps the source as extracted.
+ */
 async function applyPeople(
   ctx: ActionCtx,
   args: ExtractionArgs,
   fingerprint: string,
   people: readonly Infer<typeof extractedPersonValidator>[],
+  final: boolean,
 ): Promise<ExtractionOutcome> {
   const result = await ctx.runMutation(internal.peopleProposals.applyExtraction, {
     ...args,
     fingerprint,
     people: [...people],
+    ...(final ? {} : { partial: true as const }),
   });
   // A proposal whose address reached the graph is looked up on the owner's cards, so the card can
   // say whom it matches (`peopleLookupActions.lookUpAddresses`).
@@ -190,9 +201,10 @@ async function applyPeople(
 }
 
 /**
- * Extract the generation window by window from where it stands, then propose. An invocation that
- * has used its budget hands the rest to a scheduled continuation; a model failure is recorded on
- * the source and the last proposals stand.
+ * Extract the generation window by window from where it stands, proposing each chunk of
+ * `EXTRACTION_PEOPLE_LIMIT` people as it fills and the rest once the walk ends (W13-R9). An
+ * invocation that has used its budget hands the rest to a scheduled continuation; a model failure
+ * is recorded on the source and the proposals made stand.
  */
 async function extract(
   ctx: ActionCtx,
@@ -206,6 +218,8 @@ async function extract(
 ): Promise<ExtractionOutcome> {
   let { cursor } = progress;
   let people = [...progress.people];
+  let applied = 0;
+  let applies = 0;
   for (;;) {
     const window: GenerationWindow = await ctx.runQuery(
       internal.peopleProposals.extractionContext,
@@ -213,12 +227,22 @@ async function extract(
     );
     if (window === null) return { applied: false, people: 0 };
     people = [...people, ...(await windowPeople(extractionPages(window.pages)))];
-    if (people.length > EXTRACTION_PEOPLE_LIMIT) {
-      const reason = `The people extraction found more than ${EXTRACTION_PEOPLE_LIMIT.toLocaleString('en-GB')} people.`;
-      await ctx.runMutation(internal.peopleProposals.recordExtractionFailure, { ...args, reason });
-      return { applied: false, people: 0, reason };
+    while (people.length > EXTRACTION_PEOPLE_LIMIT) {
+      const chunk = people.slice(0, EXTRACTION_PEOPLE_LIMIT);
+      const outcome = await applyPeople(ctx, args, progress.fingerprint, chunk, false);
+      if (!outcome.applied) return { applied: false, people: applied };
+      applied += chunk.length;
+      applies += 1;
+      people = people.slice(EXTRACTION_PEOPLE_LIMIT);
     }
-    if (window.isDone) return await applyPeople(ctx, args, progress.fingerprint, people);
+    if (window.isDone) {
+      const outcome = await applyPeople(ctx, args, progress.fingerprint, people, true);
+      return {
+        ...outcome,
+        people: applied + outcome.people,
+        applies: applies + (outcome.applied ? 1 : 0),
+      };
+    }
     if (window.continueCursor === cursor) {
       throw new Error('The people extraction repeated its read cursor.');
     }
@@ -247,6 +271,16 @@ export const extractSource = internalAction({
     progress: v.optional(progressValidator),
   },
   handler: async (ctx, { progress, ...args }): Promise<ExtractionOutcome> => {
+    // The source is the owner's, not one employee's: only the deployment's pause holds it
+    // (W13-R45). Nothing is recorded, so the next completed generation extracts as usual.
+    const held = stepHoldReason(null, cronsPauseReason());
+    if (held !== undefined) {
+      log.info('the people extraction is held while scheduled work is paused', {
+        sourceId: args.sourceId,
+        reason: held,
+      });
+      return { applied: false, people: 0, reason: held };
+    }
     const startedAt = Date.now();
     try {
       if (progress !== undefined) return await extract(ctx, args, progress, startedAt);
