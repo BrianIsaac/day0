@@ -1269,6 +1269,55 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     );
   });
 
+  it("reads a grant carrying a rule's sentence that forbids nothing, or limiting the act, as carrying the rule (the second pass's probes)", (): void => {
+    const withDuty = (duty: string): Charter => {
+      const base = larkDraft();
+      return {
+        ...base,
+        proposedBoundaries: {
+          ...base.proposedBoundaries,
+          willDo: [...base.proposedBoundaries.willDo, duty],
+        },
+      };
+    };
+    const carries = (quote: string, duty: string): boolean => {
+      const rule: CharterConstraint = {
+        kind: 'reporting-line',
+        quote,
+        wording: [duty.replace(/\.$/, '')],
+        origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 3 }],
+      };
+      const placement = rulePlacement(withDuty(duty), rule);
+      return placement.kind === 'bound' && placement.carriesWords;
+    };
+    expect(
+      carries(
+        'Never contact clients directly. Go through the account manager.',
+        'Route all client contact through the account manager.',
+      ),
+    ).toBe(true);
+    expect(
+      carries(
+        'Do not send an invoice before I sign off.',
+        'Send invoices only after the manager signs off.',
+      ),
+    ).toBe(true);
+    expect(
+      carries(
+        'Always cc finance when you draft invoices. Never send without my sign-off.',
+        'Draft invoices and cc finance on each one.',
+      ),
+    ).toBe(true);
+    expect(carries('Never edit a booked figure.', 'Edit any booked figure.')).toBe(false);
+    expect(
+      carries(
+        'Never share a password in a ticket comment.',
+        'Draft replies for the routine access tickets using the wiki steps.',
+      ),
+    ).toBe(false);
+  });
+
   it("reads a prohibition anywhere in the rule, in any of its usual words, as not carried by a will-do granting the act (the code reader's probes)", (): void => {
     const base = larkDraft();
     const charter: Charter = {

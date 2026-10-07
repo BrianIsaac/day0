@@ -1321,23 +1321,23 @@ function holdsMostOf(sentence: string, text: string): boolean {
   return said.size >= 2 && shared * 2 > said.size;
 }
 
-/** A word that limits a granted act: "Draft replies, never sharing a password." */
-const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b`, 'i');
+/** A word that limits a granted act: "Draft replies, never sharing a password.", "Send only after". */
+const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 'i');
 
 /**
- * Whether a will-do or the function, which grant an act, states a prohibition itself (the
- * redeploy's finding 1): a word that limits the act, and more than half of the manager's words in
- * one sentence of the rule. "Answer access tickets, never sharing a password in a ticket comment."
- * states "Never share a password in a ticket comment."; "Edit any booked figure." does not state
- * "Never edit a booked figure.", and a will-do with none of the rule's words states nothing,
- * whatever phrase of it the drafter verified.
+ * Whether a will-do or the function, which grant an act, carries a rule that forbids one (the
+ * redeploy's finding 1): it holds more than half of the manager's words in one sentence of the rule,
+ * and, where that sentence forbids, a word that limits the act. "Answer access tickets, never
+ * sharing a password in a ticket comment." carries "Never share a password in a ticket comment.";
+ * "Route all client contact through the account manager." carries the rule's "Go through the
+ * account manager." (the second pass); "Edit any booked figure." does not carry "Never edit a
+ * booked figure.", and a will-do with none of the rule's words carries nothing, whatever phrase of
+ * it the drafter verified.
  */
 function statesTheProhibition(constraint: CharterConstraint, text: string): boolean {
-  return (
-    LIMITS_THE_ACT.test(text) &&
-    quoteSentences(constraint.quote).some((sentence: string): boolean =>
-      holdsMostOf(sentence, text),
-    )
+  return quoteSentences(constraint.quote).some(
+    (sentence: string): boolean =>
+      holdsMostOf(sentence, text) && (!forbidsAnAct(sentence) || LIMITS_THE_ACT.test(text)),
   );
 }
 
