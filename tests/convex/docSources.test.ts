@@ -3063,6 +3063,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
       title: 'Refresh the tile',
       markdown: RUNBOOK,
       updatedAt: 2,
+      contentHash: 'a'.repeat(32),
     };
     await harness.mutation(internal.docSources.upsertPage, page);
     const holders = await harness.run(async (ctx) => {
@@ -3104,6 +3105,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     await harness.mutation(internal.docSources.upsertPage, {
       ...page,
       title: 'Refresh the tile now',
+      contentHash: 'b'.repeat(32),
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const stamped = async (skillId: Id<'skills'>) =>
@@ -3113,6 +3115,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     await harness.mutation(internal.docSources.upsertPage, {
       ...page,
       markdown: RUNBOOK.replace('twice', 'three times'),
+      contentHash: 'c'.repeat(32),
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await stamped(holders.reads)).toBe(
@@ -3121,5 +3124,62 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     expect(await stamped(holders.readsAnother)).toBeNull();
     const row = await harness.run(async (ctx) => await ctx.db.get(holders.reads));
     expect(row).toMatchObject({ state: 'registered', recheckDueAt: Date.UTC(2026, 9, 8, 3, 0, 0) });
+  });
+
+  it('stamps nothing for a page stored before its hash whose redaction now reads otherwise: nothing says its text changed (second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const holder = await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'refresh.md',
+        title: 'Refresh the tile',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        surfaceClass: 'dashboard',
+        operation: 'refresh',
+        version: 1,
+        body: '# Refresh',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [{ sourceId, ref: 'refresh.md', title: 'Refresh the tile' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        body: '# Refresh',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK.replace('Press refresh twice.', 'Press refresh twice. <person: name>'),
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null),
+    ).toBeNull();
   });
 });
