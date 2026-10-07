@@ -5006,8 +5006,13 @@ async function queueManagerReplyNotice(
     ...args,
     createdAt: Date.now(),
   });
+  // The request's thread is read now, while the item still holds the decision: by the time the
+  // acknowledgement is sent the item may have moved on and cleared it (W13V-3, reproduced: rows 2
+  // and 3 of the walk went needs-skill at once and their acknowledgements landed outside it).
+  const threadTs = await requestThreadOf(ctx, workItem, args.decisionId);
   await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerReplyNotice, {
     noticeId,
+    ...(threadTs === undefined ? {} : { threadTs }),
   });
   return true;
 }

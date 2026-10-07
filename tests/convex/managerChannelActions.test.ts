@@ -577,6 +577,66 @@ describe('the outbound manager-channel action', (): void => {
   });
 });
 
+describe('where an acknowledgement lands once its item has moved on (W13V-3)', (): void => {
+  it("threads the acknowledgement under the request even when the item's decision is cleared before it is sent", async (): Promise<void> => {
+    // W13V-3, reproduced (14-FX): rows 2 and 3 of the walk went needs-skill at once, which clears
+    // the item's decision before the scheduled acknowledgement read its thread.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({
+          url: input.href,
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: String(init.body),
+        });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const { decision, surfaceId } = await harness.run(async (ctx) => {
+      const workItem = await ctx.db.get(workItemId);
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+      if (!workItem?.decision || !surface) throw new Error('decision fixture missing');
+      return { decision: workItem.decision, surfaceId: surface._id };
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768407.000100',
+      reply: { verb: 'approve', id: decision.id },
+    });
+    // The item goes needs-skill before the acknowledgement is sent, as `skillControls` writes it.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'needs-skill', decision: undefined });
+    });
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    const job = scheduled.find(
+      (entry) => entry.name === 'managerChannelActions:sendManagerReplyNotice',
+    );
+    if (!job) throw new Error('acknowledgement not scheduled');
+    await harness.action(
+      internal.managerChannelActions.sendManagerReplyNotice,
+      job.args[0] as { noticeId: Id<'managerDecisionNotices'>; threadTs?: string },
+    );
+    const acknowledgement = sent.find((call) => JSON.parse(call.body).text?.includes('received'));
+    expect(JSON.parse(acknowledgement!.body).thread_ts).toBe('provider-1');
+  });
+});
+
 /**
  * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), the deployment
  * its Socket Mode bridge's secret, and the bridge's live report on the app, so its requests can

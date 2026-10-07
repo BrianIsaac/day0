@@ -458,9 +458,17 @@ export const sendDecisionNotice = internalAction({
 
 /** Send the sole acknowledgement claimed for one parsed manager reply. */
 export const sendManagerReplyNotice = internalAction({
-  args: { noticeId: v.id('managerDecisionNotices') },
+  args: {
+    noticeId: v.id('managerDecisionNotices'),
+    /**
+     * The request's thread as it stood when the notice was queued (W13V-3): the item may have
+     * cleared its decision since, which would leave the acknowledgement outside the thread.
+     */
+    threadTs: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
-    const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, args);
+    const notice = { noticeId: args.noticeId };
+    const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, notice);
     if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
     try {
       const result = await deliverManagerMessage(
@@ -468,16 +476,16 @@ export const sendManagerReplyNotice = internalAction({
         prepared.workItemId,
         prepared,
         prepared.text,
-        { threadTs: prepared.threadTs },
+        { threadTs: args.threadTs ?? prepared.threadTs },
       );
       await ctx.runMutation(internal.work.recordManagerReplyNotice, {
-        ...args,
+        ...notice,
         providerTs: result.providerId,
       });
       return { sent: true };
     } catch (error) {
       const reason = safeFailureMessage(error, '', 'Decision acknowledgement failed.');
-      await ctx.runMutation(internal.work.recordManagerReplyNotice, { ...args, failure: reason });
+      await ctx.runMutation(internal.work.recordManagerReplyNotice, { ...notice, failure: reason });
       return { sent: false, reason };
     }
   },
