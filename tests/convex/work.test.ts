@@ -8565,7 +8565,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 });
 
 describe('work.listForAgent', (): void => {
-  it('names the confirmed person an ask resolved to, and nobody for a dismissed person or another answer (W13V-7)', async (): Promise<void> => {
+  it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
     const rowan = await seedPerson(harness, 'Rowan Hale');
@@ -8591,10 +8591,12 @@ describe('work.listForAgent', (): void => {
         });
       });
     };
+    const elsewhere = await seedPerson(harness, 'Rowan Elsewhere', { userId: 'another-owner' });
     await ask('C0ASKS:1', { kind: 'person', personId: rowan });
     await ask('C0ASKS:2', { kind: 'person', personId: gone });
     await ask('C0ASKS:3', { kind: 'ambiguous', candidates: 2 });
     await ask('C0ASKS:4');
+    await ask('C0ASKS:5', { kind: 'person', personId: elsewhere });
 
     const listed = await harness
       .withIdentity(managerIdentity())
@@ -8607,6 +8609,7 @@ describe('work.listForAgent', (): void => {
       'C0ASKS:2': null,
       'C0ASKS:3': null,
       'C0ASKS:4': null,
+      'C0ASKS:5': null,
     });
   });
 });

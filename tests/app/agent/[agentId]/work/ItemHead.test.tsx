@@ -2,13 +2,13 @@
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { Doc } from '../../../../../convex/_generated/dataModel';
 import type { SurfaceRecord } from '../../../../../src/surfaces/types';
+import type { ListedWorkItem } from '../../../../../src/work/item-display';
 import { ItemHead } from '../../../../../app/agent/[agentId]/work/ItemHead';
 import { AT, DRAWN, SLACK, SURFACES, ZONE } from '../../../../fixtures/work/drawn-states';
 
 function head(
-  item: Doc<'workItems'>,
+  item: ListedWorkItem,
   fields: { stampDecision?: boolean; now?: number; surfaces?: SurfaceRecord[] } = {},
 ) {
   return renderToStaticMarkup(
@@ -43,7 +43,7 @@ describe('the top of a work item', (): void => {
       requesterLabel: 'U0C78V6LAPP',
       requesterName: 'Rowan Hale',
       contentSummary: '<@U0C78V6LAPP> can you refresh the board?',
-    } as Doc<'workItems'>);
+    });
     expect(markup).toMatch(/Rowan Hale, in #revops-asks: <q [^>]*>can you refresh the board\?/);
     expect(markup).not.toContain('U0C78V6LAPP');
     expect(markup).not.toContain('A Slack member');
