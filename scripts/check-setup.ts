@@ -58,6 +58,7 @@ import {
 } from '../src/lib/customer-oidc';
 import { isManagerAddressShaped } from '../src/agent/manager-address';
 import { LOCAL_MANAGER_ADDRESS_VAR } from '../src/lib/dev-auth-token';
+import { FEISHU_REGIONS } from '../src/docs/feishu-source';
 import {
   GIT_HOSTS_VAR,
   gitHostAllowlist,
@@ -1837,6 +1838,14 @@ export function egressHosts(
     );
     add('github.com', 'a git documentation source on GitHub, when one is linked');
     add('gitlab.com', 'a git documentation source on GitLab, when one is linked');
+    add(
+      FEISHU_REGIONS.feishu,
+      'a Feishu documentation source in the Feishu region, when one is linked',
+    );
+    add(
+      FEISHU_REGIONS.lark,
+      'a Feishu documentation source in the Lark region, when one is linked',
+    );
     for (const host of listedGitHosts(values[GIT_HOSTS_VAR])) {
       add(host, `a git documentation source on a host ${GIT_HOSTS_VAR} lists`);
     }

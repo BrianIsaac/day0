@@ -320,6 +320,23 @@ describe('the support report', (): void => {
     }
   });
 
+  it('names the Feishu open platform host of each region for a Feishu source, in real mode only (14-F)', (): void => {
+    const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
+    expect(rows.filter((row) => row.host.startsWith('open.'))).toEqual([
+      {
+        host: 'open.feishu.cn',
+        purpose: 'a Feishu documentation source in the Feishu region, when one is linked',
+      },
+      {
+        host: 'open.larksuite.com',
+        purpose: 'a Feishu documentation source in the Lark region, when one is linked',
+      },
+    ]);
+    expect(egressHosts({ OPENAI_API_KEY: 'k' }).map((row) => row.host)).not.toContain(
+      'open.feishu.cn',
+    );
+  });
+
   it('names each git host DAY0_GIT_HOSTS lists, and none when the list is refused (14-F)', (): void => {
     const rows = egressHosts({
       DAY0_SURFACE_MODE: 'real',
