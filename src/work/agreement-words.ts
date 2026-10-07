@@ -5,10 +5,11 @@
  */
 
 import type { Id } from '../../convex/_generated/dataModel';
-import type {
-  AgreementRefusalReason,
-  AgreementSourceType,
-  AgreementStatus,
+import {
+  EMPLOYEES_CHECKED,
+  type AgreementRowRefusalReason,
+  type AgreementSourceType,
+  type AgreementStatus,
 } from './agreement-vocabulary';
 
 /** A working agreement as a card reads it; the `workingAgreements` row carries these fields. */
@@ -26,7 +27,7 @@ export interface AgreementView {
   readonly effectiveFrom?: number;
   readonly createdAt: number;
   readonly refusal?: {
-    readonly reason: AgreementRefusalReason;
+    readonly reason: AgreementRowRefusalReason;
     readonly clause?: string;
   };
 }
@@ -75,6 +76,17 @@ export const AGREEMENTS_LOADING = 'Reading the working agreements.';
 
 /** The kicker of a refused row. */
 export const NOT_KEPT = 'Not kept';
+
+/**
+ * Why an agreement kept for every employee was not kept (W13-R28, moved from
+ * `convex/workingAgreements.ts` for the card's row; wording draft): the owner has more employees
+ * than its check reads, so it would bind an employee whose charter nobody checked it against.
+ *
+ * @param name - The employee whose card it is drawn on.
+ */
+export function everyEmployeeTooMany(name: string): string {
+  return `Not kept for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. Keep it for ${name} alone instead.`;
+}
 
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
@@ -161,6 +173,8 @@ export function refusalSentence(
       return 'This would grant a permission, which only a connection you approve can give. It was not kept.';
     case 'names-credential':
       return 'This names a credential, which a working agreement never keeps. It was not kept.';
+    case 'every-employee-too-many':
+      return everyEmployeeTooMany(name);
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);

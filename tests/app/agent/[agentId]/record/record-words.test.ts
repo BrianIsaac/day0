@@ -1325,3 +1325,33 @@ describe('recordWords: the people graph (wave 13, 13-P)', (): void => {
     ).toBe("You ended Mira's escalation contact Dana Okafor.");
   });
 });
+
+describe('recordWords: a working agreement refused for every employee (14-FX, W13-R28)', (): void => {
+  it('says a keep for every employee refused past the employees its check reads, and a refusal by its clause as before', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement was not kept for every employee: you have more employees than its check reads.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: {
+            agreementId: 'a1',
+            everyEmployee: true,
+            reason: 'contradicts-will-not-do',
+            clause: 'email customers directly',
+          },
+        },
+        subject,
+      ),
+    ).toBe('A working agreement was refused: it contradicts “email customers directly”.');
+  });
+});

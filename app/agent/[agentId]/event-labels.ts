@@ -667,9 +667,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'working agreement kept for every employee'
       : 'working agreement kept',
   'agreement.refused': (payload) =>
-    text(payload.clause)
-      ? `working agreement refused: it contradicts “${text(payload.clause)}”`
-      : 'working agreement refused: it would go beyond the charter',
+    payload.reason === 'every-employee-too-many'
+      ? 'working agreement not kept for every employee: more employees than its check reads'
+      : text(payload.clause)
+        ? `working agreement refused: it contradicts “${text(payload.clause)}”`
+        : 'working agreement refused: it would go beyond the charter',
   'agreement.retired': (payload) =>
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'

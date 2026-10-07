@@ -76,6 +76,25 @@ export const AGREEMENT_REFUSAL_REASONS = [
 export type AgreementRefusalReason = (typeof AGREEMENT_REFUSAL_REASONS)[number];
 
 /**
+ * Why a keep was refused before any judgement (W13-R28, ruled for 14-FX): an agreement kept for
+ * every employee of an owner with more employees than its check reads. Not a verdict of the
+ * judgement, so a list of its own beside {@link AGREEMENT_REFUSAL_REASONS}, which is.
+ */
+export const AGREEMENT_KEEP_REFUSAL_REASONS = ['every-employee-too-many'] as const;
+
+/** One of {@link AGREEMENT_KEEP_REFUSAL_REASONS}. */
+export type AgreementKeepRefusalReason = (typeof AGREEMENT_KEEP_REFUSAL_REASONS)[number];
+
+/** Why a refused agreement's row was refused: by the judgement, or at the keep. */
+export type AgreementRowRefusalReason = AgreementRefusalReason | AgreementKeepRefusalReason;
+
+/**
+ * How many employees' charters the check of an agreement for every employee reads: an owner with
+ * more is refused such an agreement (W13-R28).
+ */
+export const EMPLOYEES_CHECKED = 50;
+
+/**
  * Where the manager made an agreement active: the promotion card on the Work tab, the "Keep this
  * note" tick of a plan approval, or the Agreements card on the Charter tab (A18).
  */

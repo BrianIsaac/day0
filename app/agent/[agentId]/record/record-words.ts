@@ -1070,9 +1070,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       p.everyEmployee === true ? ' for every employee' : ''
     }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
   'agreement.refused': (p) =>
-    text(p.clause)
-      ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
-      : `A working agreement was refused: it would go beyond the charter`,
+    p.reason === 'every-employee-too-many'
+      ? 'A working agreement was not kept for every employee: you have more employees than its check reads'
+      : text(p.clause)
+        ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+        : `A working agreement was refused: it would go beyond the charter`,
   'agreement.retired': (p, subject) =>
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`

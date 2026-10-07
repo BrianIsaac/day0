@@ -61,6 +61,17 @@ describe('what the cards say of a working agreement', (): void => {
     );
   });
 
+  it('says a keep for every employee refused past the employees its check reads, and offers no amendment (W13-R28)', (): void => {
+    const tooMany = { reason: 'every-employee-too-many' as const };
+    expect(refusalSentence(tooMany, 'Priya', 'charter')).toBe(
+      'Not kept for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you have more. Keep it for Priya alone instead.',
+    );
+    expect(refusalSentence(tooMany, 'Priya', 'work')).toBe(
+      refusalSentence(tooMany, 'Priya', 'charter'),
+    );
+    expect(refusalOffersAmendment(tooMany)).toBe(false);
+  });
+
   it('tells a kept agreement waiting on its check from a proposal waiting on the manager', (): void => {
     expect(awaitingCheck({ status: 'proposed', approvedAt: 5 })).toBe(true);
     expect(awaitingManager({ status: 'proposed', approvedAt: 5 })).toBe(false);

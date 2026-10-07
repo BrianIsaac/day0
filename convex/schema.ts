@@ -30,6 +30,7 @@ import {
 import {
   AGREEMENT_APPROVED_VIA,
   AGREEMENT_KINDS,
+  AGREEMENT_KEEP_REFUSAL_REASONS,
   AGREEMENT_REFUSAL_REASONS,
   AGREEMENT_SCOPES,
   AGREEMENT_SOURCE_TYPES,
@@ -1988,7 +1989,11 @@ export default defineSchema({
     /** Why a `refused` statement was refused before it was shown (F11), quoting the clause. */
     refusal: v.optional(
       v.object({
-        reason: v.union(...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason))),
+        /** A judgement's verdict, or a keep refused before any judgement (14-FX, W13-R28). */
+        reason: v.union(
+          ...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason)),
+          ...AGREEMENT_KEEP_REFUSAL_REASONS.map((reason) => v.literal(reason)),
+        ),
         clause: v.optional(v.string()),
         judgedAt: v.number(),
       }),

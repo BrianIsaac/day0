@@ -234,6 +234,15 @@ export const settleKept = internalAction({
       agreementId: args.agreementId,
     });
     if (inputs === null) return;
+    if (inputs.pastTheCheck) {
+      await ctx.runMutation(internal.workingAgreements.settleCheck, {
+        agreementId: args.agreementId,
+        agentId: args.agentId,
+        statement: inputs.agreement.statement,
+        refusal: { reason: 'every-employee-too-many' },
+      });
+      return;
+    }
     const outcome = await checkedOrUnavailable(ctx, inputs);
     if (outcome.outcome === 'unavailable') {
       const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
@@ -256,5 +265,64 @@ export const settleKept = internalAction({
       statement: outcome.statement,
       ...(outcome.outcome === 'refused' ? { refusal: outcome.refusal } : {}),
     });
+  },
+});
+
+/**
+ * Internal: check an employee's newly approved charter against its owner's active agreements for
+ * every employee (13-W's gap; scheduled by `charters.approve`), each as the keep's check would have:
+ * one the charter refuses, or every one once the owner has more employees than the check reads, is
+ * refused on its row (`settleCharterCheck`). A check that could not be had is tried again after each
+ * of `CHECK_RETRY_DELAYS_MS`, the rows already settled no longer read.
+ */
+export const checkForCharter = internalAction({
+  args: { agentId: v.id('agents'), attempt: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    if (SURFACE_MODE !== 'real') return;
+    if (!(await mayRun(ctx, args.agentId))) return;
+    const inputs = await ctx.runQuery(internal.workingAgreements.charterCheckInputs, {
+      agentId: args.agentId,
+    });
+    if (inputs === null) return;
+    if (inputs.pastTheCheck) {
+      for (const agreement of inputs.agreements) {
+        await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
+          agreementId: agreement._id,
+          agentId: args.agentId,
+          refusal: { reason: 'every-employee-too-many' },
+        });
+      }
+      return;
+    }
+    let unavailable = false;
+    for (const agreement of inputs.agreements) {
+      const outcome = await checkedOrUnavailable(ctx, {
+        agreement,
+        charters: [inputs.charter],
+        pastTheCheck: false,
+      });
+      if (outcome.outcome === 'unavailable') {
+        unavailable = true;
+        log.warn('working agreements: a new charter waits on its check', {
+          agreementId: agreement._id,
+          attempt: args.attempt,
+          reason: outcome.reason,
+        });
+        continue;
+      }
+      if (outcome.outcome !== 'refused') continue;
+      await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
+        agreementId: agreement._id,
+        agentId: args.agentId,
+        refusal: outcome.refusal,
+      });
+    }
+    const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
+    if (unavailable && delay !== undefined) {
+      await ctx.scheduler.runAfter(delay, internal.workingAgreementActions.checkForCharter, {
+        ...args,
+        attempt: args.attempt + 1,
+      });
+    }
   },
 });
