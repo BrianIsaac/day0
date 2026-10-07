@@ -411,6 +411,20 @@ applications. The matrix remains in its report: wiring a fixture-wide static
 measurement into a per-agent live metrics card would conflate two different
 populations.
 
+## Retrieval
+
+The documentation selection (wave 14) is graded on a labelled set in
+[`retrieval/`](retrieval/fixture.ts): thirty work items an employee of the company bed would be
+handed, each with the pages and sections a person would open, over the bed's fifteen handbook
+pages, the one rehearsal page that is not a copy of them, and a Chinese runbook
+([`retrieval/pages/`](retrieval/pages/warehouse-handover-zh.md)). `pnpm eval:retrieval` grades the
+selector at the checked-out commit without a model and writes `retrieval/<stamp>/grade.json` and
+`.md`: recall at 6 pages and at 12 blocks against R2's bar (0.9 and 0.8). The backend's search
+ranking cannot run in a test, so the scout is emulated: each query's blocks that hold a query term,
+at most 12 a source, ranked by how many terms they hold. The newest grade is the recall half of
+the supervision page's retrieval figure; a test reproduces every tracked grade from the current
+selector, so a change that moves recall is graded again before it lands.
+
 ## Controlled arms
 
 Both arms use the same model, the same non-zero temperature, the same fixed tasks

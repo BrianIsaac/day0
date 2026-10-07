@@ -71,6 +71,7 @@ export default defineConfig({
             'tests/scripts/**/*.test.tsx',
             'tests/bed/**/*.test.ts',
             'evaluation/gate/**/*.test.ts',
+            'evaluation/retrieval/**/*.test.ts',
           ],
           environment: 'node',
           // The script tests spawn processes, which a loaded machine starts slowly.
