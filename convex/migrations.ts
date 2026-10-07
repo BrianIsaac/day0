@@ -51,7 +51,6 @@ import {
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
-import { markKeptBeforeTheMarkPage } from './keptIdentities';
 import { backfillMessagesTabPage } from './slackMessagesTab';
 import { replacePageBlocks } from './docBlocks';
 import { notTheirAddresses } from './peopleProposals';
@@ -68,7 +67,10 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
  * Every migration, in the order the upgrade runs them. The access clocks come
  * first, so the hourly sweep has the least time to end a card on the clock
  * they restart. A migration leaves this list when the declaration it cleared
- * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`).
+ * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`), or the dual
+ * read it served goes: `surfaces-kept-identity-since` (0.17.0) left at 0.18.0
+ * with the kept-identity sweep's reason-word fallback (14-I). A deployment's
+ * finished row of a migration that left stays as its record.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
@@ -97,7 +99,6 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'work-decision-closed',
-  'surfaces-kept-identity-since',
   'surfaces-messages-tab',
   'docs-backfill-blocks',
   'people-not-their-addresses',
@@ -317,12 +318,6 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SUPERVISION_RELEASE,
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
-  },
-  'surfaces-kept-identity-since': {
-    release: PEOPLE_RELEASE,
-    does: 'marks each card a handover kept the employee’s own identity on before the mark existed, which the kept-identity sweep read by the card’s reason words alone, dated by the card’s newest surface.proposed line as the sweep dated it, or by the upgrade when its record holds none, so no wait ends sooner; a marked card and every other card are left',
-    thenRemoves:
-      'nothing in the schema: the sweep’s reason-word fallback (keptByHandover and its reason set in convex/keptIdentities.ts) goes the release after',
   },
   'surfaces-messages-tab': {
     release: PEOPLE_RELEASE,
@@ -961,8 +956,6 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
-  'surfaces-kept-identity-since': async (ctx, cursor) =>
-    await markKeptBeforeTheMarkPage(ctx, cursor, Date.now()),
   'surfaces-messages-tab': async (ctx, cursor) => await backfillMessagesTabPage(ctx, cursor),
   'docs-backfill-blocks': backfillBlocks,
   'people-not-their-addresses': liftNotTheirAddresses,

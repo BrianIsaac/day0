@@ -73,8 +73,12 @@ async function seedKept(
   card: {
     readonly heldKey?: 'issued' | 'pasted';
     readonly reason?: string;
-    /** The mark the handover's keep leaves on the card (`keptIdentitySince`), when it left one. */
-    readonly marked?: number;
+    /**
+     * The mark the handover's keep leaves on the card (`keptIdentitySince`): the move's time unless
+     * the test gives another, or null for a card no keep marked. Every kept card carries one since
+     * 0.17.0's pass, and from 0.18.0 the sweep reads nothing else (14-I).
+     */
+    readonly marked?: number | null;
   } = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
@@ -130,7 +134,7 @@ async function seedKept(
       credentialLanded: false,
       // The handover's re-approval says why the card is back at proposed (A25).
       reason: card.reason ?? HANDOVER_REAPPROVE_REASON,
-      ...(card.marked === undefined ? {} : { keptIdentitySince: card.marked }),
+      ...(card.marked === null ? {} : { keptIdentitySince: card.marked ?? MOVED_AT }),
       credentialId: accessId,
       credentialKind: issued ? 'oauth' : 'value',
       ...(issued ? { actsAs: { kind: 'delegated' as const, label: MANAGER_ADDRESS } } : {}),
@@ -227,6 +231,7 @@ describe('a kept identity its new manager has not approved again (the review’s
     const seeded = await seedKept(harness, {
       reason:
         'A documented intake queue changed. Reject this card and re-run orientation before approval.',
+      marked: null,
     });
 
     expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS * 2)).toBe(0);
@@ -273,16 +278,17 @@ describe("the mark a handover's keep leaves on the card (the round review's m16)
     expect(access?.revokedAt).toBe(MOVED_AT + DAY + KEPT_IDENTITY_WAIT_MS);
   });
 
-  it('still knows a card kept before the mark by its words, until a later release backfills it', async (): Promise<void> => {
+  it('takes an unmarked card for no kept one, whatever its words, since 0.17.0 marked every kept card (N10, 14-I)', async (): Promise<void> => {
     const harness = await realHarness();
-    await seedKept(harness);
+    const seeded = await seedKept(harness, { marked: null });
 
-    expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS)).toBe(1);
+    expect(await sweep(harness, MOVED_AT + KEPT_IDENTITY_WAIT_MS * 2)).toBe(0);
+    expect((await rows(harness, seeded)).surface?.credentialId).toBe(seeded.accessId);
   });
 });
 
-describe("the words the sweep knows a kept card by (the round review's m16)", (): void => {
-  it('pins the two reasons the sweep matches, since an edit leaves every card written with the old words unswept', (): void => {
+describe("the words a handover's re-approval leaves on a card (the round review's m16)", (): void => {
+  it('pins the two reasons, which the sweep matched until 0.18.0 and the card still shows', (): void => {
     expect(HANDOVER_REAPPROVE_REASON).toBe(
       "Handed over to a new manager: approve this connection again. It keeps acting as the employee's own identity, so there is no credential to land.",
     );

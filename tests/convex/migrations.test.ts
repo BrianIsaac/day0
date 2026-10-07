@@ -2826,148 +2826,28 @@ describe('the decision close record (12-W, N-3; 12-S3)', (): void => {
   });
 });
 
-describe('the kept identity mark backfill (the round review m16; 13-K)', (): void => {
-  /** A Slack bot token of the employee's own app, as Day0 obtained it at install, live or revoked. */
-  async function token(
-    harness: Harness,
-    fields: Partial<Doc<'credentials'>> = {},
-  ): Promise<Id<'credentials'>> {
-    return await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('credentials', {
-          userId: ORGANISATION_OWNER_KEY,
-          holder: ORGANISATION_HOLDER,
-          kind: 'oauth',
-          label: 'Priya Slack bot token',
-          source: 'oauth',
-          issuedBy: { system: 'slack', grant: 'oauth-install', appId: 'A0123' },
-          createdAt: 1,
-          ...fields,
-        }),
-    );
-  }
-
-  /** A `proposed` card of the employee, with what a handover left on it. */
-  async function card(
-    harness: Harness,
-    agentId: Id<'agents'>,
-    slug: string,
-    fields: Partial<Doc<'surfaces'>> = {},
-  ): Promise<Id<'surfaces'>> {
-    return await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('surfaces', {
-          agentId,
-          slug,
-          displayName: slug,
-          class: 'chat',
-          verdict: 'proposed',
-          whereFound: [],
-          credentialLanded: true,
-          createdAt: 1,
-          ...fields,
-        }),
-    );
-  }
-
-  it('is registered at 0.17.0 after the wave 12 passes', (): void => {
-    expect(MIGRATIONS['surfaces-kept-identity-since'].release).toBe('0.17.0');
-    // Re-pinned at 0.18.0: the wave 14 passes are now the newest release a migration names.
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.18.0');
-    expect(MIGRATION_NAMES.indexOf('surfaces-kept-identity-since')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('work-decision-closed'),
-    );
+describe('the kept identity mark pass, retired at 0.18.0 with the reason-word fallback (N10, 14-I)', (): void => {
+  it('leaves the list: 0.17.0 marked every kept card, and a stamp waits for every pass', (): void => {
+    expect(MIGRATION_NAMES).not.toContain('surfaces-kept-identity-since');
+    expect(Object.keys(MIGRATIONS)).not.toContain('surfaces-kept-identity-since');
   });
 
-  it('marks each card a handover kept before the mark, dated as the sweep dates it, leaves every other card, and is safe to run twice', async (): Promise<void> => {
-    const { HANDOVER_CUT_REASON, HANDOVER_CUT_REPROPOSE_REASON, HANDOVER_REAPPROVE_REASON } =
-      await import('../../convex/surfaces');
+  it("runs every pass and stamps 0.18.0 over a 0.17.0 deployment's finished row of it", async (): Promise<void> => {
     const harness = limitedHarness();
-    const priya = await agent(harness, { userId: 'owner' });
-    const kept = await card(harness, priya, 'slack', {
-      reason: HANDOVER_REAPPROVE_REASON,
-      credentialId: await token(harness),
-    });
-    const keptAddressWent = await card(harness, priya, 'slack-2', {
-      reason: HANDOVER_CUT_REPROPOSE_REASON,
-      credentialId: await token(harness),
-    });
-    const untouched = {
-      cut: await card(harness, priya, 'linear', { reason: HANDOVER_CUT_REASON }),
-      marked: await card(harness, priya, 'slack-3', {
-        reason: HANDOVER_REAPPROVE_REASON,
-        credentialId: await token(harness),
-        keptIdentitySince: 7,
-      }),
-      approved: await card(harness, priya, 'slack-4', {
-        reason: HANDOVER_REAPPROVE_REASON,
-        credentialId: await token(harness),
-        managerApprovedAt: 8,
-      }),
-      pasted: await card(harness, priya, 'slack-5', {
-        reason: HANDOVER_REAPPROVE_REASON,
-        credentialId: await token(harness, { issuedBy: undefined, source: 'entered' }),
-      }),
-      revoked: await card(harness, priya, 'slack-6', {
-        reason: HANDOVER_REAPPROVE_REASON,
-        credentialId: await token(harness, { revokedAt: 9 }),
-      }),
-      otherReason: await card(harness, priya, 'slack-7', {
-        reason: 'Proposed again: the queue changed.',
-        credentialId: await token(harness),
-      }),
-    };
     await harness.run(async (ctx) => {
-      for (const [createdAt, surfaceId] of [
-        [30, kept],
-        [40, kept],
-        [35, untouched.marked],
-      ] as const) {
-        await ctx.db.insert('events', {
-          agentId: priya,
-          type: 'surface.proposed',
-          payload: { surfaceId, slug: 'slack', displayName: 'Slack' },
-          createdAt,
-        });
-      }
-    });
-    const before = await harness.run(
-      async (ctx) =>
-        await Promise.all(Object.values(untouched).map(async (id) => await ctx.db.get(id))),
-    );
-    const upgradeStart = Date.now();
-
-    await runAll(harness);
-
-    const read = await harness.run(async (ctx) => ({
-      kept: (await ctx.db.get(kept))?.keptIdentitySince,
-      keptAddressWent: (await ctx.db.get(keptAddressWent))?.keptIdentitySince,
-      untouched: await Promise.all(
-        Object.values(untouched).map(async (id) => await ctx.db.get(id)),
-      ),
-    }));
-    // Dated by the newest `surface.proposed` line its own record holds, as the sweep's fallback
-    // dates it; a card with none waits from the upgrade, so nothing ends sooner than before.
-    expect(read.kept).toBe(40);
-    expect(read.keptAddressWent).toBeGreaterThanOrEqual(upgradeStart);
-    expect(read.untouched).toEqual(before);
-    const status = await harness.query(internal.migrations.status, {});
-    expect(
-      status.migrations.find((row) => row.name === 'surfaces-kept-identity-since'),
-    ).toMatchObject({ release: '0.17.0', changed: 2, completedAt: expect.any(Number) });
-
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'surfaces-kept-identity-since'))
-        .unique();
-      if (row !== null) await ctx.db.delete(row._id);
-    });
-    await expect(
-      harness.mutation(internal.migrations.runMigrationPage, {
+      await ctx.db.insert('migrations', {
         name: 'surfaces-kept-identity-since',
-      }),
-    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+        release: '0.17.0',
+        read: 2,
+        changed: 1,
+        startedAt: 1,
+        completedAt: 2,
+      });
+    });
+    await runAll(harness);
+    await expect(
+      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0' }),
+    ).resolves.toMatchObject({ release: '0.18.0' });
   });
 });
 
@@ -3017,10 +2897,11 @@ describe('the messages tab state backfill (W12V-7; 13-K)', (): void => {
     });
   }
 
-  it('is registered at 0.17.0 after the kept identity mark', (): void => {
+  it('is registered at 0.17.0 after the wave 12 passes', (): void => {
     expect(MIGRATIONS['surfaces-messages-tab'].release).toBe('0.17.0');
+    // Re-pinned at 0.18.0: the kept identity mark it followed left the list (14-I).
     expect(MIGRATION_NAMES.indexOf('surfaces-messages-tab')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('surfaces-kept-identity-since'),
+      MIGRATION_NAMES.indexOf('work-decision-closed'),
     );
   });
 

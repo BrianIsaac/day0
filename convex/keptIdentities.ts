@@ -1,13 +1,7 @@
 import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { internalMutation, type MutationCtx } from './_generated/server';
-import { eventsOfType } from './eventLog';
-import {
-  endKeptIdentity,
-  HANDOVER_CUT_REPROPOSE_REASON,
-  HANDOVER_REAPPROVE_REASON,
-} from './surfaces';
-import { isEventOf } from '../src/events/contract';
+import { endKeptIdentity } from './surfaces';
 import { KEPT_IDENTITY_WAIT_MS } from '../src/agent/manager-transfer';
 
 /*
@@ -20,23 +14,13 @@ import { KEPT_IDENTITY_WAIT_MS } from '../src/agent/manager-transfer';
 /** How many `proposed` cards one page of the sweep reads. */
 const KEPT_SWEEP_PAGE = 100;
 
-/** The most `surface.proposed` lines of one employee read to find a card's latest. */
-const PROPOSED_EVENTS_READ = 100;
-
 /**
- * The reasons a handover's re-approval left on a card that kept the employee's own identity, read
- * only for a card kept before the move marked it (`keptIdentitySince`, v0.16.0): a later release's
- * backfill marks those, and this fallback goes then (12-S3's handover).
+ * Whether a handover kept the card's identity: the mark its keep leaves (`keptIdentitySince`). A
+ * card kept before the mark existed was known by its reason words until 0.17.0's
+ * `surfaces-kept-identity-since` pass marked every one; 0.18.0 reads the mark alone (N10).
  */
-const HANDOVER_REAPPROVAL_REASONS: ReadonlySet<string> = new Set([
-  HANDOVER_REAPPROVE_REASON,
-  HANDOVER_CUT_REPROPOSE_REASON,
-]);
-
-/** Whether a handover kept the card's identity: its mark, or on an unmarked card the move's words. */
 function keptByHandover(surface: Doc<'surfaces'>): boolean {
-  if (surface.keptIdentitySince !== undefined) return true;
-  return surface.reason !== undefined && HANDOVER_REAPPROVAL_REASONS.has(surface.reason);
+  return surface.keptIdentitySince !== undefined;
 }
 
 /**
@@ -57,75 +41,6 @@ async function holdsKeptIdentity(ctx: MutationCtx, surface: Doc<'surfaces'>): Pr
   return (
     credential !== null && credential.revokedAt === undefined && credential.issuedBy !== undefined
   );
-}
-
-/**
- * Since when the card has waited: the move's mark, or on a card kept before the mark the latest
- * `surface.proposed` line its own record holds; undefined when neither says.
- */
-async function waitingSince(
-  ctx: MutationCtx,
-  surface: Doc<'surfaces'>,
-): Promise<number | undefined> {
-  if (surface.keptIdentitySince !== undefined) return surface.keptIdentitySince;
-  const proposed = await eventsOfType(ctx, surface.agentId, 'surface.proposed')
-    .order('desc')
-    .take(PROPOSED_EVENTS_READ);
-  const latest = proposed.find(
-    (event) => isEventOf(event, 'surface.proposed') && event.payload.surfaceId === surface._id,
-  );
-  return latest?.createdAt;
-}
-
-/** How many `proposed` cards one page of the mark's backfill reads; each may read its record. */
-const MARK_BACKFILL_PAGE = 25;
-
-/** One page of a pass over the deployment's `proposed` cards. */
-export interface ProposedCardsPage {
-  readonly read: number;
-  readonly changed: number;
-  readonly cursor: string;
-  readonly isDone: boolean;
-}
-
-/**
- * Mark each card a handover kept before the mark existed (the `surfaces-kept-identity-since`
- * pass, 13-K; the round review's m16): every `proposed` card the sweep now holds a kept identity
- * by its reason's words alone ({@link holdsKeptIdentity} with no mark), dated as the sweep dates
- * it ({@link waitingSince}: its newest `surface.proposed` line), or by the upgrade when its record
- * holds none, so no card's wait ends sooner than it would have. A marked card and every other card
- * are left, so a second run changes nothing. Once every deployment has run it, the sweep's
- * reason-word fallback has nothing left to read and goes in the release after.
- *
- * @param ctx - The migration page's mutation context.
- * @param cursor - Where the previous page stopped, or null for the first.
- * @param now - The upgrade's time, for a card whose record names no proposal.
- */
-export async function markKeptBeforeTheMarkPage(
-  ctx: MutationCtx,
-  cursor: string | null,
-  now: number,
-): Promise<ProposedCardsPage> {
-  const page = await ctx.db
-    .query('surfaces')
-    .withIndex('by_verdict', (index) => index.eq('verdict', 'proposed'))
-    .paginate({ numItems: MARK_BACKFILL_PAGE, cursor });
-  let changed = 0;
-  for (const surface of page.page) {
-    if (surface.keptIdentitySince !== undefined || !(await holdsKeptIdentity(ctx, surface))) {
-      continue;
-    }
-    await ctx.db.patch(surface._id, {
-      keptIdentitySince: (await waitingSince(ctx, surface)) ?? now,
-    });
-    changed += 1;
-  }
-  return {
-    read: page.page.length,
-    changed,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
 }
 
 /** One page of {@link endUnapproved}: how many it ended, and where the next page starts. */
@@ -155,7 +70,8 @@ export const endUnapproved = internalMutation({
     let ended = 0;
     for (const surface of page.page) {
       if (!(await holdsKeptIdentity(ctx, surface))) continue;
-      const since = await waitingSince(ctx, surface);
+      // A kept card carries its mark, the start of its wait.
+      const since = surface.keptIdentitySince;
       if (since === undefined || args.now - since < KEPT_IDENTITY_WAIT_MS) continue;
       await endKeptIdentity(ctx, surface, args.now);
       ended += 1;

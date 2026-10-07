@@ -884,8 +884,8 @@ export default defineSchema({
      * re-approval (A25): the marker the kept-identity sweep reads in place of the card's reason
      * words, and the start of its `KEPT_IDENTITY_WAIT_MS` wait (the round's review m16). Written by
      * the handover's keep (`reapprovePatch`) from v0.16.0 and cleared by an approval, a cut, a
-     * rejection and the identity's end; the `surfaces-kept-identity-since` pass marks the cards
-     * kept before it, after which the sweep's reason-word fallback goes (the release after).
+     * rejection and the identity's end; the `surfaces-kept-identity-since` pass (0.17.0) marked
+     * the cards kept before it, so from 0.18.0 the sweep reads the mark alone (14-I).
      */
     keptIdentitySince: v.optional(v.number()),
     createdAt: v.number(),
