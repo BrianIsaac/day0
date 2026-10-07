@@ -563,7 +563,11 @@ function ProposedChange({
   const take = useMutation(api.personChanges.take);
   const dismiss = useMutation(api.personChanges.dismiss);
   return (
-    <div className="grid gap-2">
+    // Its own inset, so the change does not read as one of the edges above it (the second pass).
+    <div className="grid gap-2 rounded-lg border border-[var(--color-border)] p-3">
+      <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">
+        Proposed change
+      </p>
       <p className="text-sm text-[var(--color-fg)] [overflow-wrap:anywhere]">
         {proposedChangeLine(proposed.where, proposed)}
       </p>

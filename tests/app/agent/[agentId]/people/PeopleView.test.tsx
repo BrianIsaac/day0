@@ -1073,6 +1073,7 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     });
     const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
     const confirmed = section(view.container, 'Confirmed');
+    expect(confirmed.textContent).toContain('Proposed changeTeam directory proposes a change');
     expect(confirmed.textContent).toContain(
       'Team directory proposes a change: title “Head of revenue operations”, address priya.shah@kestrel.test. What you confirmed stays until you take it.',
     );
