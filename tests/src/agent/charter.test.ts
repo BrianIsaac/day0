@@ -411,6 +411,22 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     });
   });
 
+  it("takes Wren's refund clause when the refund rule is struck: the rule that binds it too does not carry it (the pre-tag bed)", (): void => {
+    const wren = recorded('Wren');
+    const refund = 'Never promise a refund in a reply.';
+    expect(strike(wren, refund).proposedBoundaries.willNotDo).not.toContain(
+      'Promise a refund in a reply.',
+    );
+    const index = wren.constraints!.findIndex((rule) => rule.quote === refund);
+    expect(strikePreview(wren, index)).toMatchObject({
+      removedClauses: [
+        'Promise a refund in a reply.',
+        'If a reply might involve a refund, talk to the manager before promising anything.',
+      ],
+    });
+    expect(strikePreview(wren, index).keptClauses).toBeUndefined();
+  });
+
   it("keeps Sage's main duty when its approval rule is struck, and says so (W13-R7)", (): void => {
     const sage = recorded('Sage');
     const rule = 'Never reply to a mention without my approval.';

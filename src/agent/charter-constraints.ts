@@ -747,7 +747,7 @@ function functionWithout(proposedFunction: string, phrases: readonly string[]): 
 /**
  * What a strike does with one clause its rule binds (W13-R6, W13-R7): takes it (a will-not-do or
  * escalation whole, a will-do minus the rule's words), or keeps it because it does not carry the
- * rule, because another rule left standing binds it too, or because it is a will-do the rule's
+ * rule, because another rule left standing binds and carries it too, or because it is a will-do the rule's
  * words are not in, which a strike would otherwise take whole with the duty it names.
  */
 type BoundClauseFate =
@@ -761,9 +761,12 @@ function boundClauseFate(
   clause: string,
   standing: readonly CharterConstraint[],
 ): BoundClauseFate {
+  // Kept only for a rule that binds the clause and carries it: a wrong bind of another rule never
+  // keeps a clause the struck rule is lifting (found on the pre-tag bed, Wren's refund clause).
   const other = standing.find(
     (candidate: CharterConstraint): boolean =>
-      candidate.binds?.some((bind: ClauseRef): boolean => sameRef(bind, ref)) === true,
+      candidate.binds?.some((bind: ClauseRef): boolean => sameRef(bind, ref)) === true &&
+      clauseCarriesRule(candidate, clause, ref.field),
   );
   if (other !== undefined) return { kind: 'keep', because: 'another-rule', rule: other.quote };
   if (!clauseCarriesRule(rule, clause, ref.field)) {
