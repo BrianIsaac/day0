@@ -47,6 +47,12 @@ The entry points a reader is most likely to want:
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
 
+## The documentation blocks
+
+A stored documentation page (`docPages`, real mode only) is also split into blocks for search (`docBlocks`): at its headings, a long section cut into windows of at most 1,200 characters on paragraph boundaries, and tables, fenced code and lists kept as blocks of their own. Each block carries its source owner's key (`userId`), its source and page reference, the sync run that wrote it (`generation`), its place in the page (`index`), the headings it sits under (`headingPath`), its text, its `kind` (`text`, `table`, `code` or `list`), a SHA-256 `hash` of the three and its length in characters. The splitter is `splitPage` in `src/docs/blocks.ts`, pure and the same for the sync and the upgrade's backfill.
+
+The search index reads `searchText`: the heading path and the text, then the overlapping bigrams of every run of Chinese, Japanese or Korean characters and any Latin word set against one, since the backend's tokeniser keeps an unspaced run as one term and does not index a run of eleven or more such characters. A query is written by the same tokeniser (`searchTerms`, `blockSearchQuery` in `src/docs/blocks.ts`). Measured on the self-hosted backend this release pins: the search reads the first 16 terms and drops the rest without a word, a query takes at most 8 filter expressions, two equalities on one field are an AND, and a search scans at most 1,024 results. The internal `docBlocks:searchBlocks` therefore searches one source a query, filtered by owner and source, its query cut to 16 terms; nothing public reads a block yet.
+
 ## The skill contract
 
 A skill is a Markdown procedure the agent can be handed at execution. The one that ships, `see-internal-docs`, is installed at deploy from `convex/seed.ts`; every other skill is authored by the agent, in response to a work item that matched no registered skill, and is callable only after it has been verified in a sandbox. The registry is the `skills` table in `convex/schema.ts`, keyed by surface class and operation, with seven states:

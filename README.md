@@ -904,7 +904,8 @@ It resolves values the way the running app does, which matters more than it soun
 | `config.ts` | Non-secret deployment configuration for the UI and harness: surface-mode label, model name, sandbox backend and browser-component presence |
 | `devAuth.ts` | Local no-auth issuer constants and the guarded custom-JWT provider built from `DEV_NO_AUTH_JWKS` |
 | `docSources.ts` | Owner-level documentation locations: link, rotate, resync, unlink, inheritance and fenced sync-generation persistence |
-| `docSyncActions.ts` (Node) | Reads sources in 25-page batches, redacts and seals credentials, mirrors safe pages to agents and schedules system discovery |
+| `docSyncActions.ts` (Node) | Reads sources in 25-page batches, redacts and seals credentials (a page whose keyed hash is unchanged is kept as stored, not redacted again), mirrors safe pages to agents and schedules system discovery |
+| `docBlocks.ts` | Each stored page's blocks for the documentation search: split from the page as stored, kept row for row when unchanged, pruned with the page and its source, and searched by owner one source a query, cut to the sixteen terms the search reads |
 | `documentationDiscovery.ts` | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set, and re-admits the out-of-scope skips of every reading agent once per changed generation |
 | `documentationDiscoveryActions.ts` (Node) | Fingerprints pages, combines structural and model-derived system candidates, then applies the fenced discovery generation |
 | `credentials.ts` | Encrypted credential metadata plus internal store/decrypt/touch and owner-visible summary/revocation operations |
