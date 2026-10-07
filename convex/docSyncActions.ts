@@ -11,6 +11,7 @@ import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
 import { pageContentHash } from '../src/docs/content-hash';
+import { credentialKeyId } from '../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
@@ -208,7 +209,7 @@ export async function persistPageBatch(
   // Every value the owner already stores is removed from every page before
   // the model is asked; resolved once for the batch.
   const known = knownValues ?? (await ownerKnownValues(ctx, source.userId));
-  const key = process.env.DAY0_CREDENTIAL_KEY || undefined;
+  const key = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
   for (const page of pages) {
     try {
       const stored = await persistPage(ctx, source, page, syncRunId, { model, known, key });
@@ -235,6 +236,23 @@ export async function persistPageBatch(
     redactions,
     unread,
   };
+}
+
+/**
+ * The key the batch's page hashes are taken under: the deployment's credential key, or none when
+ * it has none or holds one that is not a key, logged, so every page is redacted as before the
+ * hash rather than every page failing on it.
+ */
+function pageHashKey(key: string | undefined): string | undefined {
+  if (key === undefined || key === '') return undefined;
+  try {
+    credentialKeyId(key);
+    return key;
+  } catch {
+    // Not a key: the value itself is never logged, only that no hash is taken.
+    log.warn('documentation sync takes no page hash: the credential key is not a usable key');
+    return undefined;
+  }
 }
 
 /**

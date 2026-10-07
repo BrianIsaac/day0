@@ -364,6 +364,16 @@ describe('the unchanged-page skip at the persistence boundary (P8-10, 14-I)', ()
     expect(upserts[0].contentHash).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it('takes no hash, and stores every page as before, where the deployment key is not a usable key', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', 'not-a-key');
+    const { ctx, queries, upserts } = contextWith(null);
+    const result = await persistPageBatch(ctx, source(), [page], [], undefined, []);
+    expect(result.unread).toEqual([]);
+    expect(queries).not.toContain(getFunctionName(internal.docBlocks.unchangedPage));
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).not.toHaveProperty('contentHash');
+  });
+
   it('takes no hash and asks for no stored page where the deployment has no key', async (): Promise<void> => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
     const { ctx, queries, upserts } = contextWith(null);
