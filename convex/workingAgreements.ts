@@ -825,10 +825,9 @@ export async function scheduleHeldChecks(ctx: MutationCtx, agentId: Id<'agents'>
 }
 
 /**
- * Schedule the check of an employee's newly approved charter/**
  * Schedule the check of an employee's newly approved charter against its owner's agreements for
- * every employee (13-W's gap), in the approval's transaction. Real mode only: no agreement is kept
- * in mock mode.
+ * every employee (13-W's gap), in the approval's transaction, when the owner has one. Real mode
+ * only: no agreement is kept in mock mode.
  */
 export async function scheduleCharterCheck(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
   if (SURFACE_MODE !== 'real') return;

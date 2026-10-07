@@ -738,6 +738,14 @@ describe('URL attribution', (): void => {
         'the-team-wiki',
       ),
     ).toEqual([]);
+    // The second pass: a name led by a common word is not a vendor.
+    expect(
+      attributedUrls(
+        'Support questions go to https://support.slack.com/help.',
+        'Support desk',
+        'support-desk',
+      ),
+    ).toEqual([]);
   });
 
   it('matches a system as a whole word, so Slackbot text is not Slack evidence', (): void => {

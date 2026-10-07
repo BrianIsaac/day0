@@ -652,7 +652,24 @@ function vendorWord(system: string): string | undefined {
 }
 
 /** Lead words of a page title that name no vendor ("The team wiki", "Our CRM"). */
-const NOT_A_VENDOR: ReadonlySet<string> = new Set(['the', 'our', 'your', 'team', 'company']);
+const NOT_A_VENDOR: ReadonlySet<string> = new Set([
+  'the',
+  'our',
+  'your',
+  'team',
+  'company',
+  'support',
+  'internal',
+  'customer',
+  'shared',
+  'general',
+  'main',
+  'help',
+  'service',
+  'admin',
+  'access',
+  'policy',
+]);
 
 /**
  * Decide whether a host is private to this machine or the compose network.

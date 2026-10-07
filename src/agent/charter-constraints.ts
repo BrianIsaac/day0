@@ -289,8 +289,11 @@ export function removeWording(text: string, phrase: string): string {
     String.raw`${separator}${p}(?![A-Za-z0-9])(?!${separator})`,
     'gi',
   );
+  // Joined on the right, the phrase takes its own comma and leaves a list's "and" to the rest
+  // (the second pass: "A, X, and B" minus X is "A, and B").
+  const following = String.raw`(?:\s*,\s*|\s+(?:and|or)\s+)`;
   const withFollowing = new RegExp(
-    String.raw`(?<![A-Za-z0-9])${p}(?![A-Za-z0-9])(?:${separator}|\s*)`,
+    String.raw`(?<![A-Za-z0-9])${p}(?![A-Za-z0-9])(?:${following}|\s*)`,
     'gi',
   );
   const removed = text.replace(withPreceding, ' ').replace(withFollowing, ' ');

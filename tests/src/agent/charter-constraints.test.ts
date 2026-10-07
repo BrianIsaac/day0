@@ -127,6 +127,8 @@ describe('removeWording after the wave 13 review (14-FX, W13-R38)', (): void => 
         'Keep the tracker clean',
       ),
     ).toBe('Flag deals that look stuck.');
+    // The second pass: a phrase taken from the middle of a list keeps the list's "and".
+    expect(removeWording('Reconcile A, X, and B.', 'X')).toBe('Reconcile A, and B.');
   });
 });
 
