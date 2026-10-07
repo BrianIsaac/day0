@@ -167,7 +167,7 @@ function workDoneOutput(item: number): string {
  * lists, and the words stay a tripwire over the list (`src/work/evidence-claims.ts`).
  */
 function reportsOutput(item: number): string {
-  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the zero-based indexes in \`actions\` of the writes earlier in this response that the message reports as made, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
+  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action from 0, reads included (a comment after a read and two posts lists [1, 2]), and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
 }
 
 const REAL_PROCEDURE_TRAIL_INDEX =

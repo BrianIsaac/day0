@@ -1045,6 +1045,23 @@ describe("the run's declared reports on a message (the wave 13 review's D-5 (b))
     ]);
   });
 
+  // Phase one's claim check reads only chat messages; the apply binds every message, so the
+  // tripwire reads a ticket comment there too.
+  it('reads every message for the tripwire, the ones the claim check leaves out included', (): void => {
+    const read: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/conversations.list', body: '{}' },
+    };
+    const findings = unsupportedClaimFindings(
+      [read, NOTE_1, NOTE_2, comment('Both stop-drill notes are now in #revops.', [0, 1])],
+      empty,
+      () => false,
+    );
+    expect(findings.map((finding) => finding.index)).toEqual([3, 3]);
+    expect(findings[0]!.issue).toContain('names in `reports` [0], which is not a write before it');
+    expect(findings[1]!.issue).toContain('while its words report [1, 2]');
+  });
+
   it('holds nothing when the reports cover what the words report, or are empty', (): void => {
     expect(
       unsupportedClaimFindings(

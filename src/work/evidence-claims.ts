@@ -1108,7 +1108,8 @@ export interface ClaimFinding {
  * Args:
  *   actions: The actions as the executor emitted them.
  *   evidence: The ledger, the documentation and the manager's words.
- *   only: Which actions to read; absent, every message is read.
+ *   only: Which actions the claim check reads; absent, every message is read. The tripwire over
+ *     a declared `reports` reads every message whatever it says.
  *
  * Returns:
  *   One finding per unsupported sentence, inconsistent note or message whose declared `reports`
@@ -1121,7 +1122,13 @@ export function unsupportedClaimFindings(
 ): ClaimFinding[] {
   const findings: ClaimFinding[] = [];
   actions.forEach((action, index): void => {
-    if (only && !only(action, index)) return;
+    // The tripwire over a declared `reports` reads every message, a ticket comment phase one's
+    // claim check leaves to the closing phase included: the apply binds them all.
+    const disagreements = reportsDisagreements(action, index, actions.slice(0, index));
+    if (only && !only(action, index)) {
+      for (const issue of disagreements) findings.push({ index, issue });
+      return;
+    }
     const beside = actions.filter((_, other) => other !== index).map(payloadWithoutMessages);
     const withResponse: ClaimEvidence = {
       ...evidence,
@@ -1142,9 +1149,7 @@ export function unsupportedClaimFindings(
         });
       }
     }
-    for (const issue of reportsDisagreements(action, index, actions.slice(0, index))) {
-      findings.push({ index, issue });
-    }
+    for (const issue of disagreements) findings.push({ index, issue });
   });
   return findings;
 }
