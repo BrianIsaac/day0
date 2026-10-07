@@ -2098,6 +2098,8 @@ describe('the people graph and the working agreements at a retire and a deletion
         }),
     );
     expect((await caller.query(api.reset.holdings, {})).people).toBe(false);
+    // The empty state names the owner's own entry, which the deletion removes too (W13-R51).
+    expect((await caller.query(api.reset.holdings, {})).ownEntry).toBe(true);
 
     const agreement = await harness.run(
       async (ctx) =>

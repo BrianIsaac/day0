@@ -12,6 +12,7 @@ interface Holdings {
   retiredBoundaries: boolean;
   documentation: boolean;
   credentials: boolean;
+  ownEntry?: true;
 }
 
 const reset = vi.hoisted(() => vi.fn());
@@ -61,7 +62,9 @@ describe('ResetCard', (): void => {
   it('says what it deletes in the manager’s word for the employees (N29)', (): void => {
     // Re-pinned (11-FD): the deletion names the library and the handover notes it takes too.
     const html = renderToStaticMarkup(<ResetCard />);
-    expect(html).toContain('Deletes your employees and everything they made');
+    expect(html).toContain(
+      'Deletes your employees and everything they made, your skill library, the people and working agreements you keep (your own entry too) and the notes on your handover requests.',
+    );
     expect(html).toContain('your skill library');
     expect(html).toContain('Your sign-in stays');
     expect(html).not.toMatch(/\bagents?\b/i);
@@ -134,6 +137,10 @@ describe('ResetCard', (): void => {
 
   it('says what is stored for the manager now, and that nothing is when the button is disabled', (): void => {
     expect(heldNow(holding({}), false)).toBe('Nothing of yours is stored now.');
+    // W13-R51: the owner's own entry is said, not left out of "nothing".
+    expect(heldNow(holding({ ownEntry: true }), false)).toBe(
+      'Nothing of yours is stored now but your own entry among your people, which your next sign-in writes again.',
+    );
     expect(heldNow(holding({ skillLibrary: true, handoverWords: true }), false)).toBe(
       'Stored for you now: your skill library and the notes on your handover requests.',
     );

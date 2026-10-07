@@ -1312,10 +1312,15 @@ export const deleteMyData = mutation({
 
 /**
  * Whether the owner scope holds a person other than the owner's own row, an edge or a working
- * agreement: what of the people graph a deletion would take that a sign-in does not write again.
- * Each read stops at its first match; the people read takes two rows, past the one owner row.
+ * agreement: what of the people graph a deletion would take that a sign-in does not write again;
+ * and whether it holds the owner's own row, which the deletion takes too and the card names
+ * (W13-R51). Each read stops at its first match; the people read takes two rows, past the one
+ * owner row.
  */
-async function holdsPeople(db: DatabaseReader, scope: string): Promise<boolean> {
+async function holdsPeople(
+  db: DatabaseReader,
+  scope: string,
+): Promise<{ readonly people: boolean; readonly ownEntry: boolean }> {
   const [people, edge, agreement] = await Promise.all([
     // At most one row is the owner's own, so two rows always name another person when there is one.
     db
@@ -1332,7 +1337,10 @@ async function holdsPeople(db: DatabaseReader, scope: string): Promise<boolean> 
       .first(),
   ]);
   const person = people.some((row) => row.isOwner !== true);
-  return person || edge !== null || agreement !== null;
+  return {
+    people: person || edge !== null || agreement !== null,
+    ownEntry: people.some((row) => row.isOwner === true),
+  };
 }
 
 /** Whether the owner holds each kind of row a deletion of their data removes or changes. */
@@ -1350,6 +1358,11 @@ const holdingsValidator = v.object({
   documentation: v.boolean(),
   /** A credential the owner stored that the unlink choice's purge would take. */
   credentials: v.boolean(),
+  /**
+   * The owner's own person is stored (W13-R51): the deletion takes it, though it alone never makes
+   * the control live, so the card's empty state names it. Present only when it is.
+   */
+  ownEntry: v.optional(v.literal(true)),
 });
 
 /**
@@ -1419,13 +1432,14 @@ async function deletionHoldings(
   return {
     employees: employee !== null,
     skillLibrary: version !== null,
-    people,
+    people: people.people,
     handoverWords: requests.some((request) => request !== null),
     retiredBoundaries: retirements.some(
       (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
     ),
     documentation: source !== null,
     credentials: credential,
+    ...(people.ownEntry ? { ownEntry: true as const } : {}),
   };
 }
 
