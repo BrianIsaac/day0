@@ -1065,7 +1065,10 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
       expect(refused.applied.ok).toBe(false);
       expect(refused.applied.reason).toContain('not_in_channel');
 
-      // A write whose headers name no content type goes as text, which Slack refuses (13-FS).
+      // Re-pinned for 13-S: a write whose headers name no content type went as text, which Slack
+      // refuses with invalid_arguments (13-FS); the transport now labels a JSON body JSON when the
+      // action names no type, so the same write lands (the fake's own refusal stays pinned in
+      // tests/fake-slack/server.test.ts).
       const untyped = await approvedWrite(harness, 'slack', credentialId, {
         managerDm: 'D_DAY0_MANAGER',
         channel: 'D_DAY0_MANAGER',
@@ -1073,8 +1076,8 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
       });
       await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: untyped });
       const untypedLanded = await landed(harness, untyped);
-      expect(untypedLanded.applied.ok).toBe(false);
-      expect(untypedLanded.applied.reason).toContain('invalid_arguments');
+      expect(untypedLanded.applied.ok).toBe(true);
+      expect(untypedLanded.applied.reason).toBeUndefined();
     } finally {
       fake.stop();
     }
