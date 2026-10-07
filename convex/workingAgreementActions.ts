@@ -120,7 +120,13 @@ export const proposeFromCorrections = internalAction({
         attempt: 0,
       });
     }
-    const sameness = await judgeSameness(inputs.corrections);
+    // The owner's values are resolved before the judgement, whose prompt carries the manager's
+    // own words (W13-R4).
+    const known = await knownValuesOf(ctx, inputs.userId);
+    const sameness = await judgeSameness(inputs.corrections, {
+      model: spanModelFromEnv(),
+      known,
+    });
     if (sameness.outcome === 'unavailable') {
       log.warn('working agreements: the sameness judgement was unavailable; asked again later', {
         agentId: args.agentId,
@@ -129,7 +135,6 @@ export const proposeFromCorrections = internalAction({
     }
     const groups = sameness.outcome === 'judged' ? sameness.groups : [];
     const { drafts, joins } = proposalWork(inputs, groups);
-    const known = drafts.length > 0 ? await knownValuesOf(ctx, inputs.userId) : [];
     const proposals: Array<{
       correctionIds: Id<'corrections'>[];
       statement: string;

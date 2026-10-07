@@ -81,7 +81,7 @@ describe('judging whether two corrections say the same thing (F10)', (): void =>
 
   it('answers the groups the judgement found', async (): Promise<void> => {
     const call: SamenessJudgementCall = async () => ({ groups: [{ ids: ['c2', 'c1'] }] });
-    await expect(judgeSameness(corrections, call)).resolves.toEqual({
+    await expect(judgeSameness(corrections, { known: [] }, call)).resolves.toEqual({
       outcome: 'judged',
       groups: [['c1', 'c2']],
     });
@@ -93,22 +93,48 @@ describe('judging whether two corrections say the same thing (F10)', (): void =>
       asked += 1;
       return { groups: [] };
     };
-    await expect(judgeSameness([corrections[1]!], call)).resolves.toEqual({
+    await expect(judgeSameness([corrections[1]!], { known: [] }, call)).resolves.toEqual({
       outcome: 'judged',
       groups: [],
     });
     await expect(
       judgeSameness(
         corrections.map((correction) => ({ ...correction, isNew: false })),
+        { known: [] },
         call,
       ),
     ).resolves.toEqual({ outcome: 'judged', groups: [] });
     expect(asked).toBe(0);
   });
 
+  it("shows the judgement each correction's words and item redacted, the owner's values first (W13-R4)", async (): Promise<void> => {
+    const seen: string[] = [];
+    const call: SamenessJudgementCall = async (user) => {
+      seen.push(user);
+      return { groups: [] };
+    };
+    await judgeSameness(
+      [
+        {
+          ...corrections[0]!,
+          text: 'Use token: xoxb-1234567890-abcdefghij for the carrier post.',
+          itemTitle: 'SH-1 portal login hunter2',
+        },
+        { ...corrections[1]!, text: 'The carrier password is hunter2, use it.' },
+      ],
+      { known: ['hunter2'] },
+      call,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain('xoxb-1234567890-abcdefghij');
+    expect(seen[0]).not.toContain('hunter2');
+    expect(seen[0]).toContain('"text":"Use token: <redacted> for the carrier post."');
+    expect(seen[0]).toContain('"from":"SH-1 portal login <redacted>"');
+  });
+
   it('answers unavailable when the judgement cannot be had', async (): Promise<void> => {
     await expect(
-      judgeSameness(corrections, async () => {
+      judgeSameness(corrections, { known: [] }, async () => {
         throw new Error('model down');
       }),
     ).resolves.toEqual({ outcome: 'unavailable', reason: 'model down' });
