@@ -261,6 +261,12 @@ export interface MockActionArgs {
 export interface MockAction {
   tool: ActionTool;
   args: MockActionArgs;
+  /**
+   * On a message, the places in its own set of the earlier writes it reports as made, as the run
+   * declared them (the wave 13 review's D-5 (b)). The apply binds the message to them. Absent on
+   * an action that is not a message and on every action written before the field.
+   */
+  reports?: number[];
 }
 
 /** Legacy mock-mode accounting row retained byte-for-byte for the hosted comparison. */

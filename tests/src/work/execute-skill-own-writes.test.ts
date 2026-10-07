@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockAction, WithheldAction } from '../../../src/work/types';
 import {
   BRAM_CHARTER,
   LINEAR,
@@ -155,6 +156,45 @@ describe('a write withheld after its set was authored (W12X-2)', (): void => {
     expect(withReportsOfWithheld([NOTE_1, question], [{ index: 0, reason: 'withheld' }])).toEqual([
       { index: 0, reason: 'withheld' },
     ]);
+  });
+});
+
+describe('a write withheld beside a message bound by its declared reports (D-5 (b))', (): void => {
+  const missed = (reports: number[]): MockAction => ({
+    ...OWN_WRITES_COMMENT,
+    args: {
+      ...OWN_WRITES_COMMENT.args,
+      toolArgsJson: JSON.stringify({
+        issueId: 'REVOPS-6',
+        body: 'Both stop-drill notes reached #revops.',
+      }),
+    },
+    reports,
+  });
+
+  it('withholds the message its reports bind to the withheld write, though its words name none', (): void => {
+    expect(
+      withReportsOfWithheld([NOTE_1, NOTE_2, missed([1])], [{ index: 1, reason: 'withheld' }]),
+    ).toEqual([
+      { index: 1, reason: 'withheld' },
+      { index: 2, reason: 'withheld with a write it reports, which was withheld: withheld' },
+    ]);
+  });
+
+  it('takes the bound message out with the write whatever withheld it, and renumbers what stays', (): void => {
+    const gone = withholdActions(
+      { actions: [NOTE_1, NOTE_2, missed([1])], withheldActions: [] as WithheldAction[] },
+      [{ index: 1, reason: 'withheld' }],
+    );
+    expect(gone.actions).toEqual([NOTE_1]);
+    expect(gone.withheldActions?.map((row) => row.reason)).toEqual([
+      'withheld',
+      'withheld with a write it reports, which was withheld: withheld',
+    ]);
+    const kept = withholdActions({ actions: [NOTE_1, NOTE_2, missed([1])] }, [
+      { index: 0, reason: 'withheld' },
+    ]);
+    expect(kept.actions).toEqual([NOTE_2, missed([0])]);
   });
 });
 

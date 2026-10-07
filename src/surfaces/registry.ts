@@ -2,7 +2,7 @@ import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
-import { reportedEarlierWrites } from '../work/evidence-claims';
+import { boundEarlierWrites, messageTexts } from '../work/evidence-claims';
 import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
@@ -339,7 +339,7 @@ function writeDidNotLand(
  * (not approved, withheld, held by a claim) or with its outcome unknown. A carried row that landed
  * counts as landed; a write the message does not report is not its business.
  *
- * @param reported - The places of the writes the message reports (`reportedEarlierWrites`).
+ * @param reported - The places of the writes the message is bound to (`boundEarlierWrites`).
  */
 function reportedWriteNotLanded(
   applied: readonly AppliedAction[],
@@ -629,6 +629,15 @@ export async function applySurfaceActions(
         continue;
       }
       if (!isSurfaceTool(action.tool)) {
+        // A mock office message is bound to the writes its run declared it reports (D-5 (b)): one
+        // the manager withheld leaves the report untrue, as on a connected surface.
+        if (
+          messageTexts(action).length > 0 &&
+          reportedWriteNotLanded(applied, boundEarlierWrites(action, actions.slice(0, index)))
+        ) {
+          await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
+          continue;
+        }
         const outcome = await adapter.apply(
           ctx,
           run as AdapterRun,
@@ -766,11 +775,12 @@ export async function applySurfaceActions(
         continue;
       }
       // A message that reports a write of its own set is bound to the writes
-      // it reports (the evidence check counted them as its evidence): one held
-      // back (not approved, held by a claim) leaves its report untrue too.
+      // it reports, as the run declared them and as its words read (the
+      // evidence check counted them as its evidence): one held back (not
+      // approved, held by a claim) leaves its report untrue too.
       if (
         isMessage(parsed.action, surface) &&
-        reportedWriteNotLanded(applied, reportedEarlierWrites(action, actions.slice(0, index)))
+        reportedWriteNotLanded(applied, boundEarlierWrites(action, actions.slice(0, index)))
       ) {
         await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
         continue;

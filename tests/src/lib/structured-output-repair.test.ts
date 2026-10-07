@@ -15,6 +15,15 @@ const schemaFor = (fixture: (typeof fixtures)[number]) =>
   executeSchema.omit({ workDone: true, workDoneWhy: true }).extend({
     actions: z.array(generatedActionSchema).min(fixture.actionsMinimum),
   });
+// They also predate the run's declaration of what each message reports (the wave 13 review's
+// D-5 (b)): a reply built from one declares nothing, `reports: null` on each action, as the
+// recorded-reply double gives a recording (`tests/convex/fakes/executor-reply.ts`).
+const undeclared = <T extends { actions: object[] }>(
+  value: T,
+): Omit<T, 'actions'> & { actions: object[] } => ({
+  ...value,
+  actions: value.actions.map((action) => ({ ...action, reports: null })),
+});
 const violation = (fixture: { message: string; value: unknown }) =>
   Object.assign(new Error(fixture.message), {
     id: 'STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED',
@@ -33,10 +42,11 @@ describe('the shipped executor schema over a GLM reply (12-D)', () => {
     const shipped = executeSchema.extend({
       actions: z.array(generatedActionSchema).min(priya.actionsMinimum),
     });
-    const valid = structuredClone(priya.value);
+    const valid = undeclared(structuredClone(priya.value));
     valid.actions.push({
       tool: 'slack.postMessage',
       args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared the message.' },
+      reports: [],
     });
     expect(shipped.safeParse(valid).success).toBe(false);
     expect(
@@ -58,7 +68,7 @@ describe('prompt-mode structured repair', () => {
 
   it('feeds the actual schema error and rejected object back before one bounded replacement', async () => {
     const schema = schemaFor(priya);
-    const valid = structuredClone(priya.value);
+    const valid = undeclared(structuredClone(priya.value));
     valid.actions.push({
       tool: 'slack.postMessage',
       args: {
@@ -66,6 +76,7 @@ describe('prompt-mode structured repair', () => {
         threadKey: null,
         body: 'Prepared the requested Priya verification message.',
       },
+      reports: [],
     });
     expect(schema.safeParse(valid).success).toBe(true);
     const generate = vi
@@ -204,10 +215,11 @@ describe('repair bounds and evidence', () => {
     'repairs captured wrapper and schema through real Mastra for $captureId',
     async (fixture) => {
       const requests: Record<string, unknown>[] = [];
-      const valid = structuredClone(fixture.value);
+      const valid = undeclared(structuredClone(fixture.value));
       valid.actions.push({
         tool: 'slack.postMessage',
         args: { channelSlug: 'dm-manager', threadKey: null, body: 'Requested message prepared.' },
+        reports: [],
       });
       vi.stubGlobal(
         'fetch',

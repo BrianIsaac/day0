@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { appliedLedgerPrompt } from '../../../src/work/execute-skill';
 import type { MockAction } from '../../../src/work/types';
 import {
+  boundEarlierWrites,
   heldWithReportedWrites,
   isChatMessage,
   itemEvidence,
@@ -979,5 +980,99 @@ describe("the report binding, the second pass's probes (W13-R2)", (): void => {
         commentOn('REVOPS-6', 'Close-week step logged.'),
       ]),
     ).toContain(0);
+  });
+});
+
+describe("the run's declared reports on a message (the wave 13 review's D-5 (b))", (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  const comment = (body: string, reports?: number[]): MockAction => ({
+    ...commentOn('REVOPS-6', body),
+    ...(reports === undefined ? {} : { reports }),
+  });
+
+  it('binds a message to the writes its reports name, where the words read no report', (): void => {
+    const missed = 'Both stop-drill notes reached #revops.';
+    expect(reportedEarlierWrites(comment(missed), [NOTE_1, NOTE_2])).toEqual([]);
+    expect(boundEarlierWrites(comment(missed, [0, 1]), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment(missed, [1]), [NOTE_1, NOTE_2])).toEqual([1]);
+  });
+
+  it('binds by the words alone when reports is empty or was never declared, as before', (): void => {
+    const said = 'Posted both stop-drill notes in #revops.';
+    expect(boundEarlierWrites(comment(said, []), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment(said), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment('Which channel?', []), [NOTE_1, NOTE_2])).toEqual([]);
+  });
+
+  it('binds no place that is not a write before the message', (): void => {
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-6"}' },
+    };
+    expect(
+      boundEarlierWrites(comment('Both stop-drill notes reached #revops.', [0, 1, 2, 7]), [
+        read,
+        NOTE_1,
+      ]),
+    ).toEqual([1]);
+  });
+
+  it('holds a message whose words report a write its reports leave out, naming the sentence', (): void => {
+    const findings = unsupportedClaimFindings(
+      [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [0])],
+      empty,
+    );
+    expect(findings).toEqual([
+      {
+        index: 2,
+        issue:
+          'action 2 (linear save_comment) reports a write its `reports` does not name: it says "Posted both stop-drill notes in #revops." and `reports` names [0], while its words report [0, 1]; list in `reports` every earlier write of this set the message reports, or word the message as what it reports',
+      },
+    ]);
+  });
+
+  it('holds a message whose reports name a place that is not a write before it', (): void => {
+    const findings = unsupportedClaimFindings(
+      [NOTE_1, comment('Both stop-drill notes reached #revops.', [0, 2])],
+      empty,
+    );
+    expect(findings).toEqual([
+      {
+        index: 1,
+        issue:
+          'action 1 (linear save_comment) names in `reports` [2], which is not a write before it in this set; a message reports only the writes this response emits before it',
+      },
+    ]);
+  });
+
+  it('holds nothing when the reports cover what the words report, or are empty', (): void => {
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [0, 1])],
+        empty,
+      ),
+    ).toEqual([]);
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [])],
+        empty,
+      ),
+    ).toEqual([]);
+  });
+
+  it('holds a message with the held writes its reports name, though its words name none', (): void => {
+    const held = { disposition: 'held', reason: 'write held for the manager' } as const;
+    expect(
+      heldWithReportedWrites(
+        [NOTE_1, comment('Both stop-drill notes reached #revops.', [0])],
+        [held, { disposition: 'auto' }],
+      ),
+    ).toEqual([
+      held,
+      {
+        disposition: 'held',
+        reason: 'held with the writes it reports: it is sent only once they land',
+      },
+    ]);
   });
 });

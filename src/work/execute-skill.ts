@@ -55,9 +55,9 @@ import {
 } from '../people/prompt-block';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
+  boundEarlierWrites,
   isChatMessage,
   itemEvidence,
-  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -161,6 +161,15 @@ function workDoneOutput(item: number): string {
   return `  ${item}. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.`;
 }
 
+/**
+ * The run's declaration of what each message reports (the wave 13 review's D-5 (b)): asked in both
+ * modes, in the executor's reply and the closing set's. The apply binds a message to the writes it
+ * lists, and the words stay a tripwire over the list (`src/work/evidence-claims.ts`).
+ */
+function reportsOutput(item: number): string {
+  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the zero-based indexes in \`actions\` of the writes earlier in this response that the message reports as made, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
+}
+
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 /**
@@ -201,6 +210,7 @@ const MOCK_PREAMBLE = [
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   workDoneOutput(5),
+  reportsOutput(6),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
@@ -496,6 +506,7 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
   workDoneOutput(6),
+  reportsOutput(7),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -564,6 +575,13 @@ const cellsSchema = z
   )
   .min(1);
 
+/**
+ * On an action that can carry a message, the places in this response of the earlier writes the
+ * message reports as made (the wave 13 review's D-5 (b)): required-but-nullable, null on an action
+ * that is no message, an empty list on a message that reports none.
+ */
+const reportsSchema = z.array(z.number().int().nonnegative()).nullable();
+
 /** One emitted action as the model returns it, either verb, validated before it reaches the gate. */
 export const generatedActionSchema = z.union([
   z
@@ -588,6 +606,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -599,6 +618,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -611,6 +631,7 @@ export const generatedActionSchema = z.union([
           comment: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -623,6 +644,7 @@ export const generatedActionSchema = z.union([
           toolArgsJson: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -637,6 +659,7 @@ export const generatedActionSchema = z.union([
           body: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
 ]);
@@ -969,14 +992,21 @@ function recordedPlanStepBasis(
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
+/** An action's declared reports as the output keeps them: absent when the model gave null. */
+function reportsOf(action: GeneratedAction): Pick<MockAction, 'reports'> {
+  return 'reports' in action && action.reports !== null ? { reports: action.reports } : {};
+}
+
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
   switch (action.tool) {
     case 'spreadsheet.appendRow':
+      return action;
     case 'twitter.reply':
     case 'mcp.call':
-      return action;
+      return { tool: action.tool, args: action.args, ...reportsOf(action) };
     case 'slack.postMessage':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           channelSlug: action.args.channelSlug,
@@ -986,6 +1016,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'ticket.update':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           slug: action.args.slug,
@@ -995,6 +1026,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'http.request':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           surface: action.args.surface,
@@ -1322,7 +1354,17 @@ function dropActions<T extends CorrectableOutput>(
     index - indices.filter((removedIndex) => removedIndex < index).length;
   return {
     ...output,
-    actions: output.actions.filter((_, index) => !removed.has(index)),
+    actions: output.actions
+      .filter((_, index) => !removed.has(index))
+      .map((action) =>
+        // A kept message's declared reports follow the writes they name to their new places.
+        action.reports === undefined
+          ? action
+          : {
+              ...action,
+              reports: action.reports.filter((at) => !removed.has(at)).map(reindex),
+            },
+      ),
     ...(output.procedureTrailLimitations
       ? {
           procedureTrailLimitations: output.procedureTrailLimitations
@@ -1385,14 +1427,17 @@ export function withholdActions<T extends CorrectableOutput>(
   by: string = 'by the evidence check',
 ): T {
   if (refusals.length === 0) return output;
-  const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
-  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({
+  // A message whose declared reports name a write withheld here goes with it (D-5 (b)): its words
+  // may report nothing the evidence check reads, so no later round would take it out.
+  const all = withDeclaredReportsOf(output.actions, refusals);
+  const reasons = new Map(all.map(({ index, reason }) => [index, reason]));
+  const withheld: WithheldAction[] = all.map(({ index, reason }) => ({
     action: output.actions[index]!,
     reason,
   }));
   const dropped = dropActions(
     output,
-    refusals.map(({ index }) => index),
+    all.map(({ index }) => index),
     (trailId, actionIndex) => ({
       trailId,
       state: 'inapplicable' as const,
@@ -1419,14 +1464,33 @@ export function withReportsOfWithheld(
   actions: readonly MockAction[],
   given: readonly AuditRefusal[],
 ): AuditRefusal[] {
+  return withBoundOf(actions, given, (action, index) =>
+    boundEarlierWrites(action, actions.slice(0, index)),
+  );
+}
+
+/**
+ * The refusals with every message whose declared `reports` names a withheld write added, the
+ * words left to the evidence check's own rounds (D-5 (b)).
+ */
+function withDeclaredReportsOf(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+): AuditRefusal[] {
+  return withBoundOf(actions, given, (action) => action.reports ?? []);
+}
+
+/** The refusals with every action whose bound earlier writes include a withheld one added, in index order. */
+function withBoundOf(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+  boundOf: (action: MockAction, index: number) => readonly number[],
+): AuditRefusal[] {
   const refusals = [...given];
   const withheld = new Map(given.map((refusal) => [refusal.index, refusal.reason]));
   actions.forEach((action, index): void => {
     if (withheld.has(index)) return;
-    const at = [...withheld.keys()]
-      .filter((earlier) => earlier < index)
-      .sort((a, b) => a - b)
-      .find((earlier) => reportsEarlierWrite(action, [actions[earlier]!]));
+    const at = boundOf(action, index).find((earlier) => earlier < index && withheld.has(earlier));
     if (at === undefined) return;
     const reason = `withheld with a write it reports, which was withheld: ${withheld.get(at)}`;
     withheld.set(index, reason);

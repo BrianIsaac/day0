@@ -310,6 +310,7 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+            reports: null,
           },
         ],
       }).success,
@@ -321,10 +322,12 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+            reports: null,
           },
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'lead-desk', threadKey: null, body: 'Recap.' },
+            reports: null,
           },
         ],
       }).success,
@@ -377,6 +380,7 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'lead-desk', threadKey: null, body: 'Escalation.' },
+            reports: null,
           },
         ],
         procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
@@ -1384,18 +1388,22 @@ describe('executor output contract', (): void => {
       'slack.postMessage': {
         tool: 'slack.postMessage',
         args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared.' },
+        reports: null,
       },
       'twitter.reply': {
         tool: 'twitter.reply',
         args: { tweetSlug: 'tweet-1', body: 'Thanks.' },
+        reports: null,
       },
       'ticket.update': {
         tool: 'ticket.update',
         args: { slug: 'REVOPS-1', status: 'done', comment: 'Complete.' },
+        reports: [],
       },
       'mcp.call': {
         tool: 'mcp.call',
         args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"x"}' },
+        reports: null,
       },
       'http.request': {
         tool: 'http.request',
@@ -1406,6 +1414,7 @@ describe('executor output contract', (): void => {
           headersJson: null,
           body: '{"channel":"D0MANAGER","text":"hi"}',
         },
+        reports: null,
       },
     } satisfies Record<(typeof ACTION_TOOLS)[number], unknown>;
 
@@ -1552,6 +1561,7 @@ describe('executor output contract', (): void => {
     const action = {
       tool: 'mcp.call' as const,
       args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{}' },
+      reports: null,
     };
     expect(DEPENDENT_ACTION_CAP).toBe(CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE);
     expect(
@@ -1630,7 +1640,7 @@ describe('executor output contract', (): void => {
           charterClause: null,
         },
       ],
-      actions: Array.from({ length: count }, () => read),
+      actions: Array.from({ length: count }, () => ({ ...read, reports: null })),
     });
     const closingSetOnly = dependentExecuteSchemaForProcedureContract(
       { trails: [] },
@@ -1680,6 +1690,7 @@ describe('executor output contract', (): void => {
         headersJson: null,
         body: '',
       },
+      reports: null,
     };
     const validParsed = dependentExecuteSchema.safeParse({
       draft: 'd',
@@ -2097,6 +2108,7 @@ describe('frozen prompt text', (): void => {
         3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
         4. Procedure trails: one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
         5. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.
+        6. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the zero-based indexes in \`actions\` of the writes earlier in this response that the message reports as made, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
@@ -2388,6 +2400,6 @@ it('keeps the mock phase-one provider schema byte-identical', () => {
     z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')),
   );
   expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
-    `"51b468bba40b43bab5184557185981354603c6f854599746100e42628f3ea0c2"`,
+    `"14a42d0cdc469ee250a192093743471840789385644c4a3d9b1235b4527af808"`,
   );
 });
