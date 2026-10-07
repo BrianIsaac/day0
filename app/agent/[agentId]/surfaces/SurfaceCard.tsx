@@ -18,7 +18,7 @@ import {
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { keepsPageScan, scopeFieldsFor } from '@/surfaces/intake-scope';
-import { organisationSystemOf, servedByIssuer } from '@/surfaces/access-request';
+import { organisationSystemOf, scopesRequestedOf, servedByIssuer } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
 import { typedCodeReaches } from '@/surfaces/slack-messages-tab';
 import { Button } from '../../../components/Button';
@@ -758,7 +758,9 @@ function ProposalFacts({
     <>
       {surface.verdict === 'connected' ? null : (
         <Fact label="Scopes requested">
-          {request.scopeRequested?.join(', ') || 'none requested'}
+          {organisationSystemOf(surface) === 'slack'
+            ? scopesRequestedOf(surface).join(', ')
+            : request.scopeRequested?.join(', ') || 'none requested'}
         </Fact>
       )}
       <Fact label="Blast radius">{request.blastRadius || 'not stated'}</Fact>
