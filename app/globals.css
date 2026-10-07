@@ -96,10 +96,10 @@ body {
   }
 }
 
-/* The site header is sticky: a control scrolled to as it takes focus keeps clear of it (14-FX's
-   bed, the deploy form's name field at 390 by 844). */
+/* The site header is sticky: a control scrolled to as it takes focus keeps clear of it, with its
+   label above it (14-FX's bed, the deploy form's name field at 390 by 844). */
 html {
-  scroll-padding-top: 4.5rem;
+  scroll-padding-top: 6rem;
 }
 
 /* Cross-browser fade on overflowing edges (subtle hint there's more) */
