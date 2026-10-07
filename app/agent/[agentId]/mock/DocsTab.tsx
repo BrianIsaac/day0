@@ -26,6 +26,9 @@ export const LOADING_DOCS: Record<'mock' | 'real', string> = {
   real: 'Loading linked documentation…',
 };
 
+/** What the pane says when the documents listed so far are none the employee reads. */
+export const NONE_READ_YET = 'None of the documents listed so far is one this employee reads.';
+
 /** What the page beside the list says while its body loads, and once it is gone. */
 export const PAGE_STATES = {
   loading: 'Loading the page…',
@@ -71,8 +74,33 @@ export function DocsTab({
   const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
   const page = useQuery(api.mock.getDoc, active ? { agentId, slug: active.slug } : 'skip');
 
+  const more =
+    status === 'CanLoadMore' || status === 'LoadingMore' ? (
+      <Button
+        size="small"
+        className="mt-4"
+        disabled={status === 'LoadingMore'}
+        onClick={() => {
+          // A page the list adds can sort before the open one; the open one stays open.
+          if (active) setActiveSlug(active.slug);
+          loadMore(DOCS_AT_A_TIME);
+        }}
+      >
+        {status === 'LoadingMore' ? 'Loading…' : 'Show more documents'}
+      </Button>
+    ) : null;
+
   if (status === 'LoadingFirstPage')
     return <p className="text-sm text-[var(--color-muted)]">{LOADING_DOCS[mode]}</p>;
+  // A page of the list can hold none the employee reads (a moved employee's old mirrors, until
+  // they are deleted), so the list is empty only once it is read to its end.
+  if (sortedDocs.length === 0 && more !== null)
+    return (
+      <div>
+        <p className="text-sm text-[var(--color-muted)]">{NONE_READ_YET}</p>
+        {more}
+      </div>
+    );
   if (sortedDocs.length === 0)
     return <p className="text-sm text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</p>;
 
@@ -142,16 +170,7 @@ export function DocsTab({
               </li>
             ))}
         </ul>
-        {status === 'CanLoadMore' || status === 'LoadingMore' ? (
-          <Button
-            size="small"
-            className="mt-4"
-            disabled={status === 'LoadingMore'}
-            onClick={() => loadMore(DOCS_AT_A_TIME)}
-          >
-            {status === 'LoadingMore' ? 'Loading…' : 'Show more documents'}
-          </Button>
-        ) : null}
+        {more}
       </nav>
 
       <article
