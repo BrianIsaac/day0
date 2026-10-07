@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 vi.hoisted(() => {
@@ -34,7 +33,10 @@ import { planSchema } from '../../../src/work/plan';
  * reply.
  */
 
-const secretToken = ['sk', 'live', randomUUID().replaceAll('-', '')].join('-');
+// A fixed token: a random one can contain a run such as 503 that the retry
+// policy reads as a transient status, and the test then backs off past its
+// limit (about one gate run in 140).
+const secretToken = 'sk-live-fedcbafedcbafedcbafedcbafedcbafe';
 const SECRET_PROMPT = `labelled secret: ${secretToken}`;
 
 afterEach((): void => {
