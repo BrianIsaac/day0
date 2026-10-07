@@ -200,7 +200,7 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
       ),
     ).toEqual([
       "Iris's Slack app: deleted in Slack.",
-      "Iris's forgotten Slack app, Iris (Day0) (Slack app A0C88EX6116): Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, if IT has not already.",
+      "Iris's forgotten Slack app, Iris (Day0), Slack app A0C88EX6116: Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, unless IT has already done so.",
     ]);
   });
 

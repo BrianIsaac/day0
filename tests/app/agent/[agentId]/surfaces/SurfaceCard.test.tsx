@@ -587,7 +587,7 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).not.toContain('Provision a dedicated app');
     expect(markup).not.toContain('the control above');
-    expect(markup).toContain('Ask IT to connect Slack automation policy');
+    expect(markup).toContain('Ask IT how to connect Slack automation policy');
   });
 
   it('says on its chip that a card waits on IT or is ready to connect, never that it needs a credential nobody pastes (bed, 2 Oct)', (): void => {

@@ -153,7 +153,7 @@ export function revokedLines(
   });
   const forgotten = (preview.forgottenApps ?? []).map(
     ({ appId, appName }) =>
-      `${name}'s forgotten Slack app, ${appName} (Slack app ${appId}): Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, if IT has not already.`,
+      `${name}'s forgotten Slack app, ${appName}, Slack app ${appId}: Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, unless IT has already done so.`,
   );
   atVendor.push(...forgotten);
   if (pasted.length === 0) return atVendor;

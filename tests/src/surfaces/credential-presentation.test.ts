@@ -439,7 +439,7 @@ describe('the dedicated-app procedure on the card', (): void => {
     expect(shown.landingLabel).toBe(OAUTH_FALLBACK_LABEL);
     expect(shown.landingNote).toBe(oauthNoProvisioningNote('Slack automation policy'));
     expect(shown.landingNote).not.toContain('the control above');
-    expect(shown.landingNote).toContain('Ask IT to connect Slack automation policy');
+    expect(shown.landingNote).toContain('Ask IT how to connect Slack automation policy');
     expect(
       presentSurfaceCredential({ credential: oauth, provisioningRowShown: true }).landingNote,
     ).toBe(OAUTH_FALLBACK_NOTE);

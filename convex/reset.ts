@@ -1497,8 +1497,9 @@ const previewOutcome = v.object({
 });
 
 /**
- * The employee's own Slack apps its manager forgot, each once, by `surface.app-forgotten` (the one
- * pointer left to such an app once the card forgets it, and which the retire deletes).
+ * The employee's own Slack apps its manager forgot, each once, by `surface.app-forgotten`: the one
+ * pointer left to such an app once the card forgets it, removed with the employee's record at the
+ * retire, so the dialog is the last place it is named.
  *
  * @param ctx - The preview's query.
  * @param agentId - The retiring employee.

@@ -101,7 +101,8 @@ export const OAUTH_FALLBACK_NOTE =
  */
 export function oauthNoProvisioningNote(system: string): string {
   return (
-    `Day0 offers no dedicated app on this card. Ask IT to connect ${system}, or, where the ` +
+    `Day0 offers no dedicated app on this card: the documentation does not show it that ${system} ` +
+    `is a system it can create one in. Ask IT how to connect ${system}, or, where the ` +
     'administrator would rather hand over the workspace token, land it here: it is stored ' +
     'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
     'so they stay attributable.'
