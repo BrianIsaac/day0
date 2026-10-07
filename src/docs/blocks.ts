@@ -20,7 +20,7 @@ export const BLOCK_KINDS = ['text', 'table', 'code', 'list'] as const;
 /** A block's kind. */
 export type BlockKind = (typeof BLOCK_KINDS)[number];
 
-/** The most characters one block holds, unless one table row, code line or word is longer. */
+/** The most characters one block holds; a longer line or word is cut at the window. */
 export const BLOCK_WINDOW_CHARS = 1_200;
 
 /**
@@ -75,6 +75,18 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const TABLE_ROW = /^ {0,3}\|/;
 const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
 const INDENTED = /^(?: {2,}|\t)\S/;
+
+/**
+ * The most characters of one heading a block's path keeps: every block of a section carries its
+ * whole path twice (`headingPath` and `searchText`), so a heading of thousands of characters would
+ * otherwise multiply into rows past a document's size.
+ */
+const HEADING_PATH_CHARS = 200;
+
+/** The first `limit` characters (code points) of a string. */
+function truncated(text: string, limit: number): string {
+  return charCount(text) <= limit ? text : [...text].slice(0, limit).join('');
+}
 
 /** One piece of a section: a paragraph, a table, a fenced block or a list. */
 interface Unit {
@@ -160,7 +172,7 @@ function sectionsOf(markdown: string): Section[] {
       path.pop();
     }
     levels.push(level);
-    path.push(heading[2].trim());
+    path.push(truncated(heading[2].trim(), HEADING_PATH_CHARS));
   }
   close();
   return sections;
@@ -224,9 +236,13 @@ function listEnd(lines: readonly string[], from: number): number {
   while (index < lines.length) {
     const line = lines[index];
     if (line.trim() === '') {
-      const next = lines.slice(index + 1).find((later) => later.trim() !== '');
-      if (next === undefined || !(LIST_ITEM.test(next) || INDENTED.test(next))) return index;
-      index += 1;
+      // Past the run of blank lines in one step, so a loose list is read in one pass.
+      let next = index + 1;
+      while (next < lines.length && lines[next].trim() === '') next += 1;
+      if (next === lines.length || !(LIST_ITEM.test(lines[next]) || INDENTED.test(lines[next]))) {
+        return index;
+      }
+      index = next;
       continue;
     }
     const kind = lineKind(line);

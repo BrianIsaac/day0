@@ -173,6 +173,23 @@ describe('splitPage', (): void => {
     }
   });
 
+  it('splits a loose list of sixty thousand items in one pass, not one scan per blank line', (): void => {
+    const items = Array.from({ length: 60_000 }, (_unused, index) => `- item ${index}`).join(
+      '\n\n',
+    );
+    const started = performance.now();
+    const blocks = splitPage(items);
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(blocks.every((block) => block.kind === 'list')).toBe(true);
+    expect(blocks.at(-1)?.text.endsWith('- item 59999')).toBe(true);
+  });
+
+  it('keeps at most 200 characters of each heading in the path a block carries', (): void => {
+    const [block] = splitPage(`# ${'h'.repeat(5_000)}\n\nBody.`);
+    expect(block.headingPath[0]).toHaveLength(200);
+    expect(block.searchText.length).toBeLessThan(300);
+  });
+
   it('counts characters, not UTF-16 units', (): void => {
     expect(splitPage('Ship it 🚢')[0].chars).toBe(9);
   });
