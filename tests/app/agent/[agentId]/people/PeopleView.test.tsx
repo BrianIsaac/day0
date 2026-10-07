@@ -1025,6 +1025,14 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     });
   });
 
+  it('says when older people are left out past the read bound (W13-R23)', () => {
+    settled({ 'people:forEmployee': { ...GRAPH, more: true } });
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(section(view.container, 'Proposed').textContent).toContain(
+      'Only the newest 500 people of each standing are listed here; decide these and older ones follow.',
+    );
+  });
+
   it('names the address a Same person would bring before it is pressed (W13-R24)', () => {
     const [dana, sara, priya] = GRAPH.proposals;
     settled({

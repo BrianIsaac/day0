@@ -17,6 +17,7 @@ import {
   lookupFailedLine,
   matchesSlackLine,
   moreEvidence,
+  PEOPLE_MORE,
   possiblySameLine,
   proposedChangeLine,
   proposedEdgeLine,
@@ -138,6 +139,9 @@ export function ProposedPeopleCard({
               />
             ))}
           </ul>
+          {people.more === true ? (
+            <p className="text-[13px] text-[var(--color-muted)]">{PEOPLE_MORE}</p>
+          ) : null}
         </div>
       )}
       <div className="mt-1">

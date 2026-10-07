@@ -356,3 +356,7 @@ export function lookupFailedLine(name: string, when: string): string {
 export function sameBringsAddressLine(name: string, address: string): string {
   return `Same person also gives ${name} the address ${address}.`;
 }
+
+/** The Proposed card's line when a standing holds more people than the tab reads (W13-R23, wording draft). */
+export const PEOPLE_MORE =
+  'Only the newest 500 people of each standing are listed here; decide these and older ones follow.';

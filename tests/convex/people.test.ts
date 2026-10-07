@@ -1381,3 +1381,68 @@ describe('the people graph after the wave 13 review (14-FX)', (): void => {
     expect(view.proposals[0]?.possiblySameAs).toMatchObject({ bringsAddress: 'ceo@acme.test' });
   });
 });
+
+describe('the people graph past its read bound (14-FX, W13-R23)', (): void => {
+  it('lists the newest people of each standing and says when older ones are left out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 501; index += 1) {
+        const name = `Proposal ${String(index).padStart(3, '0')}`;
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: name,
+          nameKey: name.toLowerCase(),
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [{ quote: `${name} on the team page.`, where: 'Team page', at: index }],
+          createdAt: index,
+          updatedAt: index,
+        });
+      }
+    });
+    const view = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.forEmployee, { agentId });
+    const names = view.proposals.map((row) => row.name);
+    expect(names).toHaveLength(500);
+    expect(names).toContain('Proposal 500');
+    expect(names).not.toContain('Proposal 000');
+    expect(view.more).toBe(true);
+  });
+
+  it('answers the newest escalation contact for everyone past the oldest edges (W13-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const lee = await seedPerson(harness, 'Lee Tan');
+    const mei = await seedPerson(harness, 'Mei Ling');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          toPersonId: lee,
+          type: 'escalation-contact',
+          effectiveFrom: 1,
+          effectiveUntil: 2,
+          status: 'superseded',
+          source: 'manager',
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('relationships', {
+        userId: 'owner',
+        toPersonId: mei,
+        type: 'escalation-contact',
+        effectiveFrom: 3,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 3,
+        createdAt: 3,
+      });
+    });
+    const answer = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.escalationContactFor, { agentId });
+    expect(answer).toMatchObject({ kind: 'person', personId: mei });
+  });
+});

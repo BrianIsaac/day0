@@ -978,9 +978,11 @@ async function ownerWideEdges(
   scope: string,
   type: RelationshipType,
 ): Promise<Doc<'relationships'>[]> {
+  // Newest first (W13-R23): the readers want the edge in force now, never the oldest ones.
   const edges = await ctx.db
     .query('relationships')
     .withIndex('by_user_type', (q) => q.eq('userId', scope).eq('type', type))
+    .order('desc')
     .take(GRAPH_READ_LIMIT);
   return edges.filter((edge) => edge.fromAgentId === undefined && edge.fromPersonId === undefined);
 }
@@ -1356,6 +1358,8 @@ const confirmedShownValidator = v.object({
 const employeePeopleValidator = v.object({
   proposals: v.array(proposalShownValidator),
   confirmed: v.array(confirmedShownValidator),
+  /** Set when a standing holds more people than the tab reads: only the newest are listed (W13-R23). */
+  more: v.optional(v.boolean()),
 });
 
 /** What {@link forEmployee} answers. */
@@ -1479,16 +1483,22 @@ async function employeePeople(
 ): Promise<EmployeePeople> {
   const scope = employeeOwnerScope(agent);
   if (scope === undefined) return { proposals: [], confirmed: [] };
+  // The newest of each standing, one past the bound to tell whether any were left out (W13-R23).
   const [unverified, active] = await Promise.all(
     (['unverified', 'active'] as const).map(
       async (status) =>
         await ctx.db
           .query('people')
           .withIndex('by_user_status', (q) => q.eq('userId', scope).eq('status', status))
-          .take(GRAPH_READ_LIMIT),
+          .order('desc')
+          .take(GRAPH_READ_LIMIT + 1),
     ),
   );
-  const people = [...(unverified ?? []), ...(active ?? [])];
+  const more = [unverified, active].some((rows) => (rows?.length ?? 0) > GRAPH_READ_LIMIT);
+  const people = [
+    ...(unverified ?? []).slice(0, GRAPH_READ_LIMIT),
+    ...(active ?? []).slice(0, GRAPH_READ_LIMIT),
+  ];
   const [proposals, confirmed] = await Promise.all([
     Promise.all(people.map(async (person) => await proposalShown(ctx, person, agent._id))),
     Promise.all(people.map(async (person) => await confirmedShown(ctx, person, agent._id, now))),
@@ -1498,6 +1508,7 @@ async function employeePeople(
   return {
     proposals: proposals.filter((row) => row !== undefined).sort(byName),
     confirmed: confirmed.filter((row) => row !== undefined).sort(byName),
+    ...(more ? { more: true } : {}),
   };
 }
 
@@ -1505,7 +1516,8 @@ async function employeePeople(
  * Public, owner-guarded (`assertOwnsAgent` first): what the People tab draws from the graph for one
  * employee: the people waiting on the manager (a proposal, or a confirmed person with edges
  * proposed) that concern this employee or everyone, and the confirmed people its edges in force
- * reach. The owner's own row is the Manager card's. Reads only; empty for a graph not kept (mock
+ * reach, the newest of each standing within the read bound, saying when older ones are left out.
+ * The owner's own row is the Manager card's. Reads only; empty for a graph not kept (mock
  * mode keeps none).
  */
 export const forEmployee = query({
