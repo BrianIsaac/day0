@@ -3635,7 +3635,10 @@ async function rememberDecidedUnmarked(
     decision.decidedAt === undefined ||
     decision.ts === undefined ||
     decision.requestText === undefined ||
-    decision.closeClaimedAt !== undefined
+    // An edit that recorded a result marked the message or said why not; one claimed with no
+    // result may have died, and the park leaves nothing its sweep could settle (the second pass).
+    decision.closedAt !== undefined ||
+    decision.closeFailure !== undefined
   ) {
     return;
   }

@@ -9733,6 +9733,33 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     ).toEqual({ prepared: false });
   });
 
+  it('marks the decided request when its own edit was claimed and never finished before the park (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+      text: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+    });
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The edit's claim was taken and its action died before it recorded a result.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, closeClaimedAt: 5 } });
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept.map((row) => [row.decisionId, row.outcome])).toEqual([['gh6npq', 'approved']]);
+  });
+
   it('then the close approved on its card lands alone, and the item completes', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
