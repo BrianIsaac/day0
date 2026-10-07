@@ -189,6 +189,21 @@ describe("what a retire does at the vendor, one line per credential (11-AR's out
     ]);
   });
 
+  it('names an app the manager forgot as still in Slack for IT to delete, beside the app the retire deletes (W13V-9)', (): void => {
+    expect(
+      revokedLines(
+        {
+          ...preview([outcome('Slack', 'slack', 'app-deleted')]),
+          forgottenApps: [{ appId: 'A0C88EX6116', appName: 'Iris (Day0)' }],
+        },
+        'Iris',
+      ),
+    ).toEqual([
+      "Iris's Slack app: deleted in Slack.",
+      "Iris's forgotten Slack app, Iris (Day0) (Slack app A0C88EX6116): Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, if IT has not already.",
+    ]);
+  });
+
   it('says the revoked credentials as before where the preview carries no outcome for them', (): void => {
     expect(revokedLines(preview([], [{ slug: 'linear', displayName: 'Linear' }]), 'Leo')).toEqual([
       'The Linear credential: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.',

@@ -127,16 +127,17 @@ function outcomeLine(outcome: PreviewOutcome, name: string): string | undefined 
 /**
  * The retire dialog's Revoked lines (11-AR's `retirePreview.outcomes`; the wave file's words,
  * flagged as a product call): one per connection Day0 obtained access for, saying what happens at
- * the vendor ("Leo's Slack app: deleted in Slack."), then the sentence for the keys someone pasted,
- * kept as it was: Day0 deletes its copy and the key stays valid until revoked where it was made
- * (D5). A revoked connection the preview gives no outcome for is said with the pasted keys, as
- * before the outcomes existed.
+ * the vendor ("Leo's Slack app: deleted in Slack."), then one per Slack app the manager forgot,
+ * which Day0 cannot delete and which stays in Slack for IT (W13V-9), then the sentence for the keys
+ * someone pasted, kept as it was: Day0 deletes its copy and the key stays valid until revoked where
+ * it was made (D5). A revoked connection the preview gives no outcome for is said with the pasted
+ * keys, as before the outcomes existed.
  *
- * @param preview - The preview's outcomes and its revoked connections.
+ * @param preview - The preview's outcomes, forgotten apps and revoked connections.
  * @param name - The employee's name.
  */
 export function revokedLines(
-  preview: Pick<RetirePreview, 'outcomes' | 'revoked'>,
+  preview: Pick<RetirePreview, 'outcomes' | 'revoked' | 'forgottenApps'>,
   name: string,
 ): string[] {
   const described = new Set(preview.outcomes.map((outcome) => outcome.slug));
@@ -150,6 +151,11 @@ export function revokedLines(
     const line = outcomeLine(outcome, name);
     return line === undefined ? [] : [line];
   });
+  const forgotten = (preview.forgottenApps ?? []).map(
+    ({ appId, appName }) =>
+      `${name}'s forgotten Slack app, ${appName} (Slack app ${appId}): Day0 cannot delete it, so it stays in Slack's app settings for IT to delete, if IT has not already.`,
+  );
+  atVendor.push(...forgotten);
   if (pasted.length === 0) return atVendor;
   const words = credentialsWords(pasted);
   return [
