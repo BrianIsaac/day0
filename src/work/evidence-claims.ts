@@ -82,11 +82,13 @@ const SETTLED_STATE =
 /**
  * A clause that sets a condition ("only when all three checks are
  * confirmed", "if the figure is confirmed") states what must hold, not
- * what does, so a settled form inside it asserts nothing. A past form
- * ("once the tile was refreshed") presupposes the event and is left in.
+ * what does, so a settled form inside it asserts nothing; so does a clause
+ * that sets the order ("for your approval before anything is posted", W13-R2).
+ * A past form ("once the tile was refreshed") presupposes the event and is
+ * left in.
  */
 const CONDITIONAL_CLAUSE =
-  /\b(?:if|unless|when|whenever|once|until|as soon as|provided(?: that)?|(?:so|as) long as)\b(?:(?!\b(?:was|were|had been)\b)[^,;.?!])*/gi;
+  /\b(?:if|unless|when|whenever|once|until|before|as soon as|provided(?: that)?|(?:so|as) long as)\b(?:(?!\b(?:was|were|had been)\b)[^,;.?!])*/gi;
 
 const HEDGED =
   /\b(?:not|no|never|cannot|can't|could not|couldn't|unable|unconfirmed|unverified|pending|awaiting|outstanding|still open|to be confirmed|please confirm|needs? (?:your )?confirmation|did not|didn't|has not|hasn't|have not|haven't|was not|wasn't|were not|weren't|is not|isn't|are not|aren't)\b/i;
@@ -267,7 +269,7 @@ function supported(
   prepared: PreparedEvidence,
   earlier: readonly MockAction[] = [],
 ): boolean {
-  if (HEDGED.test(sentence) || asks(sentence)) return true;
+  if (negatesReport(sentence) || asks(sentence)) return true;
   if (
     quotedSpans(sentence).some((span) =>
       prepared.quotable.some((source) => source.includes(normalised(span))),
@@ -285,7 +287,8 @@ function supported(
 }
 
 /** Verbs that report a message the set wrote: a post, a DM, a reply. */
-const MESSAGE_VERBS = 'posted|sent|shared|messaged|replied|announced|wrote|written';
+const MESSAGE_VERBS =
+  'posted|sent|shared|messaged|replied|announced|wrote|written|published|delivered|put|left';
 /** The verb that reports a ticket comment and nothing else. */
 const COMMENT_VERBS = 'commented';
 /** Verbs that report a ticket's state change. */
@@ -312,12 +315,70 @@ function reportForm(verbs: string): RegExp {
   );
 }
 
-const MESSAGE_REPORT = reportForm(MESSAGE_VERBS);
+/**
+ * A message reported by where it now is, with no report verb (W13-R2): the kind noun placed
+ * ("Both notes are now in #revops.", "Done: notes in #revops.", "The post is live.") or sent out
+ * ("The notes went out to #revops.").
+ */
+const MESSAGE_PLACED =
+  /\b(?:notes?|posts?|messages?|replies|reply|dms?|announcements?|comments?)\s+(?:(?:is|are|was|were)\s+)?(?:now\s+)?(?:in\s+#|live\b|up\b)|\b(?:went|gone)\s+out\b/i;
+const MESSAGE_VERB_REPORT = reportForm(MESSAGE_VERBS);
+const MESSAGE_REPORT = {
+  test: (sentence: string): boolean =>
+    MESSAGE_VERB_REPORT.test(sentence) || MESSAGE_PLACED.test(sentence),
+};
 const COMMENT_REPORT = reportForm(COMMENT_VERBS);
 const STATE_REPORT = reportForm(STATE_VERBS);
 const WRITE_REPORT = reportForm(WRITE_VERBS);
-/** The nouns a report names a message's kind by: a comment is a ticket's, a post a chat's. */
-const COMMENT_NOUN = /\bcomments?\b/i;
+/** The report verbs' plain forms, for a negation before one ("yet to post", "did not comment"). */
+const REPORT_BASE_FORMS =
+  'post|send|share|message|reply|announce|write|publish|deliver|put|leave|comment|move|close|mark|resolve|reopen|update|save|create|add|record|file|log|enter|change|apply|land';
+
+/** Every report verb, in the forms the binding reads and in its plain form. */
+const ANY_REPORT_VERB = [
+  MESSAGE_VERBS,
+  COMMENT_VERBS,
+  STATE_VERBS,
+  WRITE_VERBS,
+  REPORT_BASE_FORMS,
+].join('|');
+
+/**
+ * A negation of a report verb within three words before it ("were not posted", "yet to post"; "no"
+ * negates the act it determines: "No customer notice is sent by me"), or of a placed form ("not in
+ * #revops").
+ */
+const NEGATED_REPORT_VERB = new RegExp(
+  `\\b(?:not|never|no|no longer|yet to|cannot|can't|unable to|didn't|hasn't|haven't|wasn't|weren't|isn't|aren't)\\s+(?:\\w+\\s+){0,3}?(?:${ANY_REPORT_VERB})\\b|\\b(?:not|never|no longer|isn't|aren't|wasn't|weren't)\\s+(?:yet\\s+)?(?:in\\s+#|live\\b|out\\b)`,
+  'i',
+);
+
+/**
+ * Whether a hedge takes a sentence's report back (W13-R2). A sentence with a hedge and no report
+ * verb is excused as before (wave 12's floor: "the figure is not confirmed"); a sentence with a
+ * report verb is excused only when the hedge negates that verb ("The notes were not posted."), so
+ * "Posted both notes with no edits." still reports the posts.
+ */
+function negatesReport(sentence: string): boolean {
+  if (!HEDGED.test(sentence)) return false;
+  return reportableKinds(sentence).size === 0 || NEGATED_REPORT_VERB.test(sentence);
+}
+
+/**
+ * A plan or a promise, not a report: a sentence opening "Plan:" or carrying "will" (W13-R2), which
+ * says what is to be done ("Plan: post both notes, then comment that both were posted.").
+ */
+function intends(sentence: string): boolean {
+  return /^\s*plan\s*:/i.test(sentence) || /\bwill\b/i.test(sentence);
+}
+
+/**
+ * The nouns a report names a message's kind by: a comment is a ticket's, a post a chat's. A
+ * message put on a ticket ("on the ticket", "on REVOPS-6") or the comment verb itself names a
+ * comment too (W13-R2).
+ */
+const COMMENT_NOUN =
+  /\bcomments?\b|\bcommented\b|\b(?:on|to)\s+(?:the|this|that)\s+(?:ticket|issue)\b|\bon\s+[a-z]+-\d+\b/i;
 const CHAT_NOUN = /\b(?:posts?|messages?|replies|reply|dms?|announcements?)\b/i;
 const NOTE_NOUN = /\bnotes?\b/i;
 /** Words that name no particular write: the report verbs and the counts a report gives. */
@@ -327,6 +388,22 @@ const REPORT_WORDS = new Set(
     'both',
     'every',
     'each',
+    'done',
+    'went',
+    'live',
+    // The kind and place words name the kind, which binds by itself; they name no one write.
+    'note',
+    'notes',
+    'post',
+    'posts',
+    'message',
+    'messages',
+    'comment',
+    'comments',
+    'reply',
+    'replies',
+    'ticket',
+    'issue',
   ].map(stem),
 );
 
@@ -394,21 +471,28 @@ function reportedWrites(sentence: string, earlier: readonly MockAction[]): MockA
 
 /** The places in `earlier` of the writes a sentence reports ({@link reportedWrites}). */
 function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]): number[] {
+  if (intends(sentence)) return [];
   const kinds = reportableKinds(sentence);
   if (kinds.size === 0) return [];
   const named = namingStems(sentence);
   const keys = distinctiveTokens(sentence);
-  const byKind = namesMessageKind(sentence);
-  return earlier.flatMap((action, index): number[] => {
+  const sharing: number[] = [];
+  const ofKind: number[] = [];
+  earlier.forEach((action, index): void => {
     const write = writeOf(action);
-    if (!write || !kinds.has(write.kind)) return [];
-    if (byKind && (write.kind === 'comment' || write.kind === 'chat')) return [index];
+    if (!write || !kinds.has(write.kind)) return;
+    if (write.kind === 'comment' || write.kind === 'chat') ofKind.push(index);
     const carried = namingStems(write.text);
     const carriedKeys = new Set(distinctiveTokens(write.text));
-    return [...named].some((word) => carried.has(word)) || keys.some((key) => carriedKeys.has(key))
-      ? [index]
-      : [];
+    if ([...named].some((word) => carried.has(word)) || keys.some((key) => carriedKeys.has(key))) {
+      sharing.push(index);
+    }
   });
+  // A report that names a message's kind binds every message of that kind, unless some carry its
+  // own words: then those alone, so an unrelated post beside the reported ones is not bound
+  // (W13-R2).
+  if (sharing.length > 0 || !namesMessageKind(sentence)) return sharing;
+  return ofKind;
 }
 
 /**
@@ -496,11 +580,11 @@ export function reportedEarlierWrites(
   earlier: readonly MockAction[],
 ): number[] {
   // Any sentence that reports such a write as made binds the message, whether or not the check
-  // read it as a claim ("Commented the audit note." is not one); a hedge or a condition reports
-  // nothing made.
+  // read it as a claim ("Commented the audit note." is not one); a negated report verb, a
+  // condition, a plan or a promise reports nothing made.
   const reported = messageTexts(action).flatMap((text) =>
     sentencesOf(text).flatMap((sentence) =>
-      HEDGED.test(sentence)
+      negatesReport(sentence)
         ? []
         : reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier),
     ),
@@ -554,7 +638,7 @@ function unsupportedBeside(
 
 /** Whether a sentence asserts a settled state outside any condition it sets. */
 function claims(sentence: string): boolean {
-  return SETTLED_STATE.test(sentence.replace(CONDITIONAL_CLAUSE, ' '));
+  return !intends(sentence) && SETTLED_STATE.test(sentence.replace(CONDITIONAL_CLAUSE, ' '));
 }
 
 function messageFields(record: Record<string, unknown>): string[] {
