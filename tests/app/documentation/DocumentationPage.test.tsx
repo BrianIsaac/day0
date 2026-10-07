@@ -34,6 +34,8 @@ vi.mock('convex/react', () => ({
 import { DocumentationPage } from '../../../app/documentation/DocumentationPage';
 import {
   AUTHOR_GUIDE_URL,
+  FEISHU_GUIDE_URL,
+  FeishuAppFields,
   ReaderSecretField,
   SourceKindHelp,
   credentialForLink,
@@ -111,9 +113,9 @@ describe('the link form and the components a source needs', (): void => {
     expect(markup).toContain('No day0 component has to be running.');
   });
 
-  it('offers the four source kinds', (): void => {
+  it('offers the five source kinds', (): void => {
     const markup = renderToStaticMarkup(<DocumentationPage />);
-    for (const kind of ['folder', 'git', 'urls', 'mcp']) {
+    for (const kind of ['folder', 'git', 'urls', 'mcp', 'feishu']) {
       expect(markup).toContain(`value="${kind}"`);
     }
   });
@@ -123,6 +125,26 @@ describe('the link form and the components a source needs', (): void => {
       const markup = renderToStaticMarkup(<SourceKindHelp kind={kind} serverKind="notion" />);
       expect(markup).toContain('No day0 component has to be running.');
     }
+  });
+
+  it('says a Feishu source needs nothing running and links the guide for the app IT sets up (14-F)', (): void => {
+    const markup = renderToStaticMarkup(<SourceKindHelp kind="feishu" serverKind="notion" />);
+    expect(markup).toContain('No day0 component has to be running.');
+    expect(markup).toContain(FEISHU_GUIDE_URL);
+    expect(FEISHU_GUIDE_URL).toMatch(/\/docs\/running\/reader-feishu\.md$/);
+  });
+
+  it('asks a Feishu source for its region, its app ID and its secret, the secret as a password (14-F)', (): void => {
+    const markup = renderToStaticMarkup(<FeishuAppFields />);
+    expect(markup).toContain('value="feishu"');
+    expect(markup).toContain('value="lark"');
+    expect(markup).toMatch(
+      /id="feishu-app-secret"[^>]*type="password"|type="password"[^>]*id="feishu-app-secret"/,
+    );
+    expect(credentialForLink('feishu', 'cli_fixture_app:fixture-app-secret')).toBe(
+      'cli_fixture_app:fixture-app-secret',
+    );
+    expect(locatorForSourceKind('feishu')).toBe('');
   });
 
   it('names the component and the profile for a Notion source', (): void => {
