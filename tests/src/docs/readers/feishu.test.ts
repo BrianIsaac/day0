@@ -144,12 +144,12 @@ describe('the Feishu documentation reader', (): void => {
     expect(batch.unread).toContainEqual({
       ref: NODES.sheet.node,
       reason:
-        '"Q3 numbers" is a Feishu sheet, which Day0 does not read: only documents (docx) are read, as Markdown.',
+        '"Q3 numbers" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
     });
     expect(batch.unread).toContainEqual({
       ref: NODES.map.node,
       reason:
-        '"Pipeline map" is a Feishu mind note, which Day0 does not read: only documents (docx) are read, as Markdown.',
+        '"Pipeline map" is a Feishu mind note, which day0 does not read: only documents (docx) are read, as Markdown.',
     });
     // Nothing is asked of a node the reader does not read.
     expect(requests.some((request) => request.url.href.includes(NODES.sheet.obj))).toBe(false);
@@ -185,7 +185,8 @@ describe('the Feishu documentation reader', (): void => {
     const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
     expect(batch.unread).toContainEqual({
       ref: NODES.zh2.node,
-      reason: '"运维规则" was deleted or moved in Feishu after it was listed (Feishu code 2889906).',
+      reason:
+        '"运维规则" was deleted or moved in Feishu after it was listed (Feishu code 2889906).',
     });
   });
 
@@ -286,7 +287,7 @@ describe('the Feishu documentation reader', (): void => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message).toBe(
-      "Feishu refused the app ID and secret this source was linked with (Feishu code 10014, app secret invalid); link it again with the app's current secret.",
+      "Feishu refused the app ID and secret this source uses (Feishu code 10014, app secret invalid): use Rotate on the source's row to enter the app's current ID and secret.",
     );
     expect(message).not.toContain('not-the-fixture-secret');
   });
@@ -305,7 +306,7 @@ describe('the Feishu documentation reader', (): void => {
           : undefined,
     });
     await expect(reader.listPageBatch(wiki, SECRET, undefined, 25)).rejects.toThrow(
-      "The Feishu app is not a member of this wiki space (Feishu code 131006): add a group chat that has the app as its bot to the space's members.",
+      "The Feishu app is not a member of this wiki space, or may not read its pages (Feishu code 131006): add a group chat that has the app as its bot to the space's members.",
     );
   });
 

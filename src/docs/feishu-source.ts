@@ -53,8 +53,9 @@ const SPACE_ID = /^\d{1,32}$/;
 const FOLDER_TOKEN = /^[A-Za-z0-9]{8,64}$/;
 
 const LOCATOR_REFUSAL =
-  "A Feishu location is a wiki space's ID, or a link to a wiki space or a Drive folder, " +
-  'on Feishu or Lark; this one is none of those.';
+  "A Feishu location is a wiki space's ID (the number at the end of the address of the " +
+  "space's Settings page) or a Drive folder's address as the browser shows it; the address of " +
+  'a single wiki page does not work.';
 
 /** The region whose open platform host this is. */
 function regionOfHost(host: string): FeishuRegion | undefined {
@@ -99,11 +100,20 @@ export function parseFeishuLocator(locator: string): FeishuLocator {
   throw new Error(LOCATOR_REFUSAL);
 }
 
+/** The region a tenant site's host is in, or undefined for a host of neither. */
+function linkRegion(hostname: string): FeishuRegion | undefined {
+  const host = hostname.toLowerCase();
+  if (host === 'feishu.cn' || host.endsWith('.feishu.cn')) return 'feishu';
+  if (host === 'larksuite.com' || host.endsWith('.larksuite.com')) return 'lark';
+  return undefined;
+}
+
 /**
  * The stored locator for what the link form was given: a space ID, a folder
  * token, or a link copied from the tenant's site to a wiki space (its page or
- * its settings) or a Drive folder. The region is the form's choice, whatever
- * host a copied link names.
+ * its settings) or a Drive folder. A copied link's own host names its region
+ * (`*.feishu.cn` or `*.larksuite.com`), whatever the form's choice; a bare ID
+ * or token takes the form's.
  *
  * @param region - The region the form names.
  * @param typed - What the manager typed.
@@ -112,31 +122,31 @@ export function parseFeishuLocator(locator: string): FeishuLocator {
  */
 export function feishuLocator(region: FeishuRegion, typed: string): string {
   const text = typed.trim();
-  const host = FEISHU_REGIONS[region];
-  const space = (id: string): string => `https://${host}/wiki/spaces/${id}`;
-  const folder = (token: string): string => `https://${host}/drive/folders/${token}`;
-  if (SPACE_ID.test(text)) return space(text);
-  if (FOLDER_TOKEN.test(text)) return folder(text);
+  const space = (host: string, id: string): string => `https://${host}/wiki/spaces/${id}`;
+  const folder = (host: string, token: string): string => `https://${host}/drive/folders/${token}`;
+  if (SPACE_ID.test(text)) return space(FEISHU_REGIONS[region], text);
+  if (FOLDER_TOKEN.test(text)) return folder(FEISHU_REGIONS[region], text);
   let url: URL;
   try {
     url = new URL(text);
   } catch {
     return text;
   }
+  const host = FEISHU_REGIONS[linkRegion(url.hostname) ?? region];
   const [, area, kind, id = '', ...rest] = url.pathname.replace(/\/$/, '').split('/');
   if (rest.length > 0) return text;
   if (area === 'wiki' && ['space', 'spaces', 'settings'].includes(kind) && SPACE_ID.test(id)) {
-    return space(id);
+    return space(host, id);
   }
   if (area === 'drive' && ['folder', 'folders'].includes(kind) && FOLDER_TOKEN.test(id)) {
-    return folder(id);
+    return folder(host, id);
   }
   return text;
 }
 
 const SECRET_REFUSAL =
-  "A Feishu reader secret is the app's ID and its secret, joined by a colon: the link form " +
-  'joins them from its two fields.';
+  'A Feishu secret is the app ID and the app secret joined by a colon, as app ID:app secret, ' +
+  'with no spaces.';
 
 /**
  * Join an app's ID and secret into the source's one reader secret.

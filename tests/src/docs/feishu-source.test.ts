@@ -59,6 +59,13 @@ describe('the Feishu locator and reader secret', (): void => {
     expect(feishuLocator('lark', 'fldcnArchive000000000000000')).toBe(
       'https://open.larksuite.com/drive/folders/fldcnArchive000000000000000',
     );
+    // A copied link names its own region, whatever the form's choice.
+    expect(
+      feishuLocator('feishu', 'https://acme.larksuite.com/wiki/settings/7300000000000000001'),
+    ).toBe('https://open.larksuite.com/wiki/spaces/7300000000000000001');
+    expect(
+      feishuLocator('lark', 'https://acme.feishu.cn/drive/folder/fldcnArchive000000000000000'),
+    ).toBe('https://open.feishu.cn/drive/folders/fldcnArchive000000000000000');
     // What it cannot read as a space or a folder is kept as typed, for the link to refuse.
     expect(feishuLocator('feishu', 'https://acme.feishu.cn/docx/doxcnRevOpsHandbook00000000')).toBe(
       'https://acme.feishu.cn/docx/doxcnRevOpsHandbook00000000',
@@ -81,7 +88,7 @@ describe('the Feishu locator and reader secret', (): void => {
       'a b:c',
     ]) {
       expect(() => parseFeishuSecret(secret), secret).toThrow(
-        "A Feishu reader secret is the app's ID and its secret",
+        'A Feishu secret is the app ID and the app secret joined by a colon',
       );
     }
   });

@@ -116,7 +116,7 @@ describe('the secret a source reads with', (): void => {
       'A Feishu source needs its app ID and secret.',
     );
     expect(() => validateReaderSecret(wiki, 'cli_fixture_app')).toThrow(
-      "A Feishu reader secret is the app's ID and its secret",
+      'A Feishu secret is the app ID and the app secret joined by a colon',
     );
     expect(() => validateReaderSecret(wiki, 'cli_fixture_app:fixture-app-secret')).not.toThrow();
     for (const locator of [

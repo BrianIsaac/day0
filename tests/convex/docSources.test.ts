@@ -437,7 +437,7 @@ describe('documentation sources in real mode', (): void => {
     expect(rotated?.credentialId).not.toBe(linked.credential?._id);
     await expect(
       owner.action(api.docSources.rotateCredential, { sourceId, credential: 'only-a-secret' }),
-    ).rejects.toThrow("A Feishu reader secret is the app's ID and its secret");
+    ).rejects.toThrow('A Feishu secret is the app ID and the app secret joined by a colon');
     vi.unstubAllEnvs();
   });
 

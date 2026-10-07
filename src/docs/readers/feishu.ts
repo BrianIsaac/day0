@@ -173,10 +173,10 @@ const TYPE_NOUNS: Readonly<Record<string, string>> = {
 /** Why a listed node is not read, when it is not a document. */
 function notReadReason(entry: ListedEntry): string {
   if (entry.shortcut) {
-    return `"${entry.title}" is a shortcut; Day0 reads the page it points to where that page lives.`;
+    return `"${entry.title}" is a shortcut; day0 reads the page it points to where that page lives, if that is in this source.`;
   }
   const noun = TYPE_NOUNS[entry.type] ?? `${entry.type} node`;
-  return `"${entry.title}" is a Feishu ${noun}, which Day0 does not read: only documents (docx) are read, as Markdown.`;
+  return `"${entry.title}" is a Feishu ${noun}, which day0 does not read: only documents (docx) are read, as Markdown.`;
 }
 
 /** Why a document could not be read, from Feishu's refusal. */
@@ -194,14 +194,19 @@ function pageFailureReason(entry: ListedEntry, error: FeishuApiError): string {
       'the document, or to its wiki space as a member.'
     );
   }
-  return `Feishu could not give "${entry.title}" as Markdown (Feishu code ${error.code}, ${error.feishuMessage}).`;
+  return (
+    `Feishu could not give "${entry.title}" as Markdown (Feishu code ${error.code}, ` +
+    `${error.feishuMessage}). Re-sync to try again; if it repeats, ask IT to look the code up in ` +
+    "Feishu's documentation."
+  );
 }
 
 /** The sentence for a listing Feishu refused. */
 function listingFailure(scope: FeishuLocator['scope'], error: FeishuApiError): Error {
   if (scope.kind === 'wiki' && error.code === 131006) {
     return new Error(
-      'The Feishu app is not a member of this wiki space (Feishu code 131006): add a group chat ' +
+      'The Feishu app is not a member of this wiki space, or may not read its pages (Feishu code ' +
+        '131006): add a group chat ' +
         "that has the app as its bot to the space's members.",
       { cause: error },
     );
@@ -263,7 +268,7 @@ export class FeishuReader implements DocumentationReader {
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
-        'A Feishu source reads with its app ID and secret, and this one has none; link it again with them.',
+        "A Feishu source reads with its app ID and secret, and this one has none: use Rotate on the source's row to give them.",
       );
     }
     const session: FeishuSession = {
@@ -508,8 +513,9 @@ export class FeishuReader implements DocumentationReader {
     } catch (error) {
       if (!(error instanceof FeishuApiError)) throw error;
       throw new Error(
-        `Feishu refused the app ID and secret this source was linked with (Feishu code ${error.code}, ` +
-          `${error.feishuMessage}); link it again with the app's current secret.`,
+        `Feishu refused the app ID and secret this source uses (Feishu code ${error.code}, ` +
+          `${error.feishuMessage}): use Rotate on the source's row to enter the app's current ID ` +
+          'and secret.',
         { cause: error },
       );
     }
@@ -602,7 +608,7 @@ function nextPageToken(
 /** The refusal for a source past the listing bound. */
 function tooManyNodes(): Error {
   return new Error(
-    `This Feishu source lists more than ${MAX_LISTED_NODES.toLocaleString('en-GB')} pages, more ` +
-      'than Day0 reads from one source; link a smaller wiki space or folder.',
+    `This Feishu source has more than ${MAX_LISTED_NODES.toLocaleString('en-GB')} pages, the ` +
+      'most day0 reads from one source: link a smaller wiki space or a Drive folder.',
   );
 }

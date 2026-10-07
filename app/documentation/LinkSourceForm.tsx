@@ -22,7 +22,7 @@ const SOURCE_KINDS: ReadonlyArray<readonly [SourceKind, string]> = [
   ['git', 'Git repository'],
   ['urls', 'List of URLs'],
   ['mcp', 'MCP server'],
-  ['feishu', 'Feishu or Lark wiki'],
+  ['feishu', 'Feishu or Lark wiki or folder'],
 ];
 
 /** The regions a Feishu source can be in, with the name the manager reads. */
@@ -181,8 +181,10 @@ export function FeishuAppFields(): React.ReactNode {
         </div>
       </div>
       <p id="feishu-app-help" className={HELP}>
-        The app IT created for day0 on Feishu&apos;s open platform. The secret is encrypted when
-        submitted, sent only to Feishu, and never displayed again.
+        The app IT created for day0 on Feishu&apos;s or Lark&apos;s open platform. Choose Lark if
+        your company&apos;s Feishu address ends in larksuite.com; a pasted Lark or Feishu link names
+        its own region. The secret is encrypted when submitted, sent only to Feishu or Lark, and
+        never displayed again.
       </p>
     </div>
   );
@@ -207,8 +209,8 @@ export function SourceKindHelp(props: {
   if (props.kind === 'feishu') {
     return (
       <p className={HELP}>
-        The backend reads this wiki space or folder through Feishu&apos;s open platform, as your
-        app. No day0 component has to be running.{' '}
+        The backend reads this wiki space or folder through Feishu&apos;s or Lark&apos;s open
+        platform, as the app IT created. No day0 component has to be running.{' '}
         <a href={FEISHU_GUIDE_URL} target="_blank" rel="noreferrer">
           How IT sets up the app
         </a>
@@ -333,7 +335,7 @@ export function LinkSourceForm(): React.ReactNode {
                 : kind === 'mcp' && serverKind === 'notion'
                   ? DOCS_NOTION_LOCATOR
                   : kind === 'feishu'
-                    ? 'Wiki space ID, or a link to the wiki space or Drive folder'
+                    ? "Wiki space ID, or a Drive folder's address"
                     : 'Location URL, or one URL per line'
             }
             className={`${INPUT_CLASS} min-h-20 w-full`}

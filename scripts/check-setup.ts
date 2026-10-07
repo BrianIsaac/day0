@@ -639,8 +639,8 @@ export function settingsSection(v: Values): Section | undefined {
     gitHostAllowlist(v[GIT_HOSTS_VAR]);
   } catch (error) {
     lines.push(
-      `${GIT_HOSTS_VAR} is refused as it stands, so no git source on a host it would list is read`,
-      `(GitHub, GitLab and ${PRIVATE_HOSTS_VAR} are unaffected): ${error instanceof Error ? error.message : String(error)}`,
+      `${GIT_HOSTS_VAR} is refused as it stands, so no git source outside GitHub, GitLab and`,
+      `${PRIVATE_HOSTS_VAR} is read: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return lines.length === 0

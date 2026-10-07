@@ -685,7 +685,9 @@ describe('the settings worth a second look', (): void => {
     const lines =
       settingsSection({ DAY0_GIT_HOSTS: 'gitee.com https://jihulab.com' })?.lines.join(' ') ?? '';
     expect(lines).toContain('DAY0_GIT_HOSTS is refused as it stands');
-    expect(lines).toContain('no git source on a host it would list is read');
+    expect(lines).toContain(
+      'so no git source outside GitHub, GitLab and DAY0_PRIVATE_HOSTS is read',
+    );
     expect(settingsSection({ DAY0_GIT_HOSTS: 'gitee.com' })).toBeUndefined();
   });
 });
