@@ -682,6 +682,21 @@ export type SkillAuthoringHeldPayload = SkillReason;
 /** The payload of `skill.authoring-resumed` (wave 13, D-8 (b)): the authoring a pause held goes on. */
 export type SkillAuthoringResumedPayload = SkillNamed;
 
+/**
+ * Why a resume did not start an authoring a pause held (W13-R46): the skill is no longer one a
+ * claim takes (the manager decided it, its attempts are spent, or it is gone), a run holds it
+ * now, or it was claimed since its hold.
+ */
+export type HeldAuthoringSpentWhy = 'decided' | 'running' | 'claimed' | 'gone';
+
+/**
+ * The payload of `skill.authoring-hold-spent` (W13-R46): a resume left a held authoring as it was,
+ * and its hold is spent, so no later resume reads it again.
+ */
+export interface SkillAuthoringHoldSpentPayload extends SkillNamed {
+  readonly why: HeldAuthoringSpentWhy;
+}
+
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
@@ -816,6 +831,15 @@ export interface SurfaceOrientationHeldPayload extends SurfaceReason {
 
 /** The payload of `surface.orientation-resumed` (wave 13, D-8 (b)): the orientation a pause held goes on. */
 export type SurfaceOrientationResumedPayload = SurfaceNamed;
+
+/**
+ * The payload of `surface.orientation-hold-spent` (W13-R46): a resume left a held orientation as
+ * it was, the system no longer waiting to be found (`settled`: oriented since, found absent, or
+ * gone), and its hold is spent.
+ */
+export interface SurfaceOrientationHoldSpentPayload extends SurfaceNamed {
+  readonly why: 'settled';
+}
 
 /** The payload of `surface.app-provisioned`. */
 export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
@@ -1796,6 +1820,7 @@ export interface EventPayloads {
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
   'skill.authoring-held': SkillAuthoringHeldPayload;
   'skill.authoring-resumed': SkillAuthoringResumedPayload;
+  'skill.authoring-hold-spent': SkillAuthoringHoldSpentPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
@@ -1815,6 +1840,7 @@ export interface EventPayloads {
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
   'surface.orientation-held': SurfaceOrientationHeldPayload;
   'surface.orientation-resumed': SurfaceOrientationResumedPayload;
+  'surface.orientation-hold-spent': SurfaceOrientationHoldSpentPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.app-forgotten': SurfaceAppForgottenPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
@@ -1996,6 +2022,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.authoring-superseded',
   'skill.authoring-held',
   'skill.authoring-resumed',
+  'skill.authoring-hold-spent',
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
@@ -2015,6 +2042,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.orientation-failed',
   'surface.orientation-held',
   'surface.orientation-resumed',
+  'surface.orientation-hold-spent',
   'surface.app-provisioned',
   'surface.app-forgotten',
   'surface.socket-token-landed',

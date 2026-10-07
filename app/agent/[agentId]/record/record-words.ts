@@ -189,6 +189,22 @@ function registeredVia(via: unknown): string {
 }
 
 /** The connection an event is about, by name, or a plain stand-in when it names none. */
+/** Why a held authoring did not go on after the pause, as the record says it (W13-R46). */
+function heldAuthoringSpentWords(why: unknown): string {
+  switch (why) {
+    case 'decided':
+      return 'it was decided while the pause held it';
+    case 'running':
+      return 'a run held it when the pause ended';
+    case 'claimed':
+      return 'it was started while the pause held it';
+    case 'gone':
+      return 'it is gone';
+    default:
+      return 'it was settled while the pause held it';
+  }
+}
+
 function connectionOf(subject: RecordSubject): string {
   return subject.connection ? `the ${subject.connection} connection` : 'a connection';
 }
@@ -806,6 +822,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Writing the skill ${text(p.name) ?? 'unnamed'} was held${because(p.reason)}`,
   'skill.authoring-resumed': (p) =>
     `Writing the skill ${text(p.name) ?? 'unnamed'} went on after the pause`,
+  'skill.authoring-hold-spent': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} did not go on after the pause: ${heldAuthoringSpentWords(p.why)}`,
   'skill.authoring-claimed': (p, { name }) =>
     p.purpose === 'verify-stored'
       ? `${name} started checking the skill ${text(p.name) ?? 'unnamed'} in the sandbox`
@@ -861,6 +879,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Finding a way to reach ${subject.connection ?? 'a system'} was held${because(p.reason)}`,
   'surface.orientation-resumed': (_p, subject) =>
     `Finding a way to reach ${subject.connection ?? 'a system'} went on after the pause`,
+  'surface.orientation-hold-spent': (_p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} did not go on after the pause: it was settled while the pause held it`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
   'surface.app-forgotten': (p, subject) => {

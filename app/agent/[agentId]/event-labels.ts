@@ -479,6 +479,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill authoring held: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.authoring-resumed': (payload) =>
     `skill authoring resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.authoring-hold-spent': (payload) =>
+    `skill authoring not resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring-claimed': (payload) =>
     payload.purpose === 'verify-stored'
       ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
@@ -524,6 +526,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.orientation-held': (payload) => `orientation held${because(payload.reason)}`,
   'surface.orientation-resumed': 'orientation resumed after the pause',
+  'surface.orientation-hold-spent': 'orientation not resumed after the pause',
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
   'surface.app-forgotten': (payload) =>

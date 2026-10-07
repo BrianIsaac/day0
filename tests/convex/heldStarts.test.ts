@@ -240,6 +240,50 @@ describe("a paused employee's skill authoring (D-8 (b))", (): void => {
   });
 });
 
+describe('a held start the resume does not take up (W13-R46)', (): void => {
+  it('spends the hold of a skill it does not start, saying why, so a later resume never starts it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    await pause(harness, agentId);
+    await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    await harness.run(async (ctx) => await ctx.db.patch(skillId, { state: 'rejected' }));
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+
+    expect(await eventsOf(harness, 'skill.authoring-hold-spent')).toEqual([
+      { skillId, name: expect.any(String), why: 'decided' },
+    ]);
+
+    // The skill is approved again and the employee paused and resumed: the spent hold stays spent.
+    await harness.run(async (ctx) => await ctx.db.patch(skillId, { state: 'approved' }));
+    await pause(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toEqual([]);
+    expect(await eventsOf(harness, 'skill.authoring-hold-spent')).toHaveLength(1);
+  });
+
+  it('spends the hold of a system no longer waiting to be found, saying why', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    const surfaceId = await declaredSurface(harness, agentId);
+    await pause(harness, agentId);
+    await harness.action(internal.orientationActions.orientOne, { surfaceId });
+    await harness.run(
+      async (ctx) => await ctx.db.patch(surfaceId, { verdict: 'absent', reason: 'not documented' }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+
+    expect(await eventsOf(harness, 'surface.orientation-hold-spent')).toEqual([
+      { surfaceId, why: 'settled' },
+    ]);
+  });
+});
+
 describe("a paused employee's orientation (D-8 (b))", (): void => {
   it('is held before it reads anything, the card saying why, and recorded with how it was asked for', async (): Promise<void> => {
     useSurfaceMode('real');
