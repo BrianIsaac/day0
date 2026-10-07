@@ -64,6 +64,14 @@ export interface LookupDependencies {
   ) => Promise<void>;
 }
 
+/** Slack's errors that say the failure was its own and may pass. */
+const SLACK_TRANSIENT: ReadonlySet<string> = new Set([
+  'internal_error',
+  'fatal_error',
+  'service_unavailable',
+  'request_timeout',
+]);
+
 /** A provider's refusal a later ask would meet again (a missing scope, a revoked token). */
 class LookupRefused extends Error {}
 
@@ -126,17 +134,19 @@ async function slackUserByAddress(
     headers: { Authorization: `Bearer ${credential}` },
     signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
   });
-  const payload = asRecord(await response.json().catch((): unknown => ({})));
+  const payload = asRecord(await response.json().catch((): unknown => undefined));
   if (response.status === 429 || payload?.error === 'ratelimited') {
     throw new LookupRateLimited(retryAfterMs(response));
   }
   if (payload?.ok !== true) {
     if (payload?.error === 'users_not_found') return undefined;
-    const reason = `Slack users.lookupByEmail failed: ${text(payload?.error) ?? `HTTP ${response.status}`}`;
-    // A refusal Slack states is met again on the next ask; a server's failure may pass.
-    throw response.status >= 500 || payload === undefined
-      ? new Error(reason)
-      : new LookupRefused(reason);
+    const error = text(payload?.error);
+    const reason = `Slack users.lookupByEmail failed: ${error ?? `HTTP ${response.status}`}`;
+    // A refusal Slack states is met again on the next ask; a server's failure, an answer that is
+    // not Slack's (a proxy's page) and Slack's own transient errors may pass (the second pass).
+    const passes =
+      response.status >= 500 || payload === undefined || SLACK_TRANSIENT.has(error ?? '');
+    throw passes ? new Error(reason) : new LookupRefused(reason);
   }
   const user = asRecord(payload.user);
   const userId = text(user?.id);

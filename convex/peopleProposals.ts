@@ -1061,9 +1061,15 @@ export const recordLookups = internalMutation({
       });
       added += 1;
     }
-    // Never the owner's own row: the manager is never a merge target (the one-role rulings).
+    // Never the owner's own row (the manager is never a merge target, the one-role rulings), nor a
+    // person the manager dismissed.
     const holder = offerable === undefined ? null : await ctx.db.get(offerable);
-    if (holder !== null && holder.isOwner !== true && person.possiblySameAs === undefined) {
+    if (
+      holder !== null &&
+      holder.isOwner !== true &&
+      holder.status !== 'dismissed' &&
+      person.possiblySameAs === undefined
+    ) {
       await ctx.db.patch(person._id, { possiblySameAs: holder._id, updatedAt: now });
     }
     return added;
