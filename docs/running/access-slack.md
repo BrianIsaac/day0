@@ -14,11 +14,13 @@ page carrying a manifest, section 2) offers the app with a configuration token
 pasted on the card, a page that records a bot token makes the card a
 pasted-token card, and with neither the card says what is missing.
 
-A dedicated Slack page titled otherwise than "Slack", such as the "Slack
-automation policy" page of the repository's own examples, is not read as
-Slack's Web API at v0.17.0: its card is reached by escalation and offers no app
-of its own. Until that is fixed, title the page "Slack", or link Slack from a
-page whose sentence giving `https://slack.com/api/` names Slack as the system.
+A dedicated Slack page that Day0 names after its own title rather than
+"Slack", such as the "Slack automation policy" page of the repository's own
+examples, is not read as Slack's Web API at v0.17.0: its card is reached by
+escalation and offers no app of its own. Until that is fixed, title the page
+"Slack", or link Slack from a page whose sentence giving
+`https://slack.com/api/` names Slack as the system; neither has yet been tried
+on a real workspace.
 
 Slack is connected **per employee** only: one app per employee, its own bot
 user, its own permissions. The organisation's connection holds what Day0
@@ -106,8 +108,9 @@ that issues an app-level token, so a person generates one per app:
 
 1. Signed in to <https://api.slack.com/apps> as a collaborator on the
    employee's app (`<employee name> (Day0)`), open it.
-2. **If Socket Mode is off** (every app Day0 created before v0.16.0, and one
-   created before v0.17.0 from a policy page's manifest that left it off): on its
+2. **If Socket Mode is off** (every app Day0 created before v0.16.0, and any
+   app created before v0.17.0 from a policy page's manifest that left it off):
+   on its
    **Socket Mode** page turn on **Enable Socket Mode**. Slack's own dialog,
    "Generate an app-level token to enable Socket Mode", already carries the
    scope `connections:write`: give it any name (for example `day0-buttons`),
@@ -129,7 +132,8 @@ that issues an app-level token, so a person generates one per app:
    with it, keeps it encrypted and held by the organisation, and never shows it
    again. Then:
    - The `slack-socket` component dials the app and reports a live connection
-     for it, within half a minute (it reads the app list every 30 seconds). The card then says "Decisions in Slack: buttons are
+     for it within half a minute (it reads the app list every 30 seconds). The
+     card then says "Decisions in Slack: buttons are
      on", and each new request carries the buttons, beside its typed code where
      the app takes messages; a request asked before the token landed carries no
      buttons.
@@ -151,15 +155,16 @@ Slack sets no expiry on the token. It ends when the app is deleted (a retire
 deletes it) or when a collaborator revokes it on the same page. An app a
 manager forgot on its card keeps its token until IT deletes the app or revokes
 the token: Forget purges Day0's copy only, so IT deletes a forgotten app in
-Slack's app settings soon after. Once a token ends, presses
-stop reaching Day0 until a new token is landed on the card, and each request is
-decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last, and the `slack-socket` component dials
-with it at its next read of the app list, within half a minute, so a token of
-another app shows in `check:access` (the `socket` row) by then. The `slack-socket` component must run (real-mode setup starts
-it) and reach Slack's Socket Mode host outbound over `wss://`: the host in the
-URL Slack's `apps.connections.open` answers, which was `wss-primary.slack.com`
-in October 2026 (`pnpm check:setup --report` lists it under `egress`); nothing
-inbound is opened.
+Slack's app settings soon after. Once a token ends, presses stop reaching Day0
+until a new token is landed on the card, and each request is decided by its
+typed code where the app takes messages, or in Day0. A token landed again
+replaces the last, and the `slack-socket` component dials with it at its next
+read of the app list, within half a minute, so a token of another app shows in
+`check:access` (the `socket` row) by then. The `slack-socket` component must
+run (real-mode setup starts it) and reach Slack's Socket Mode host outbound
+over `wss://`: the host in the URL Slack's `apps.connections.open` answers,
+which was `wss-primary.slack.com` in October 2026 (`pnpm check:setup --report`
+lists it under `egress`); nothing inbound is opened.
 
 ## 2. The manifest or the form
 
@@ -237,36 +242,38 @@ the codes and tokens come back on the redirect.
 ## 3. The scopes
 
 Each employee's app asks for the scopes of exactly the methods Day0 calls in
-Slack (and any further scope a policy page's manifest asks, section 2): `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
+Slack (and any further scope a policy page's manifest asks, section 2):
+`chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
 (`channels:read`, `im:read`), `conversations.history` and
-`conversations.replies` (`channels:history`, `im:history`), `conversations.open`
-(`im:write`), `users.lookupByEmail` (`users:read.email`, which Slack grants
-only with `users:read`) and `conversations.join` (`channels:join`). `auth.test`
-needs none. When an employee's access is renewed after it expired or was
-disconnected, Slack has taken its bot out of every channel; with
-`channels:join` the employee re-joins the public channels its approved intake
-scope names itself. There is no `groups:` scope: a private channel is added by
-hand by someone in it, and the employee's card names each one that needs it.
+`conversations.replies` (`channels:history`, `im:history`),
+`conversations.open` (`im:write`), `users.lookupByEmail` (`users:read.email`,
+which Slack grants only with `users:read`) and `conversations.join`
+(`channels:join`). `auth.test` needs none. When an employee's access is renewed
+after it expired or was disconnected, Slack has taken its bot out of every
+channel; with `channels:join` the employee re-joins the public channels its
+approved intake scope names itself. There is no `groups:` scope: a private
+channel is added by hand by someone in it, and the employee's card names each
+one that needs it.
 
 **What a card may call is read from the documentation, except Day0's own
-channel on an app it created.** The scopes let the app call these methods.
-On an employee's own app (one Day0 created and the administrator installed),
+channel on an app it created.** The scopes let the app call these methods. On
+an employee's own app (one Day0 created and the administrator installed),
 Day0's manager channel is Day0's own: whatever the pages name, it may always
 ask who the bot is (`auth.test`), who the manager is (`users.lookupByEmail`),
-open the manager's DM (`conversations.open`), post there
-(`chat.postMessage`), edit its own request (`chat.update`) and read the
-manager's replies in that DM alone (`conversations.history`,
-`conversations.replies`). The employee's work calls only the methods its
-linked documentation names: `conversations.list`, `conversations.history` and
-`conversations.replies` (intake reads nothing without them),
-`chat.postMessage` (the employee posts nothing in a channel without it) and
-`users.info` (without it an ask is shown under the asker's id). On a card that
-holds a shared bot token pasted on it instead, the Slack page must name each of
-`auth.test`, `users.lookupByEmail` and `conversations.open` too (the card does
-not connect without them), `chat.update` (without it a decided request keeps
-its buttons) and `conversations.history` (without it a code typed in Slack is
-not read). A manager's **Change approved tools** cannot add a method the pages
-do not name: the card says it is approved but not offered.
+open the manager's DM (`conversations.open`), post there (`chat.postMessage`),
+edit its own request (`chat.update`) and read the manager's replies in that DM
+alone (`conversations.history`, `conversations.replies`). The employee's work
+calls only the methods its linked documentation names: `conversations.list`,
+`conversations.history` and `conversations.replies` (intake reads nothing
+without them), `chat.postMessage` (the employee posts nothing in a channel
+without it) and `users.info` (without it an ask is shown under the asker's id).
+On a card that holds a shared bot token pasted on it instead, the Slack page
+must name each of `auth.test`, `users.lookupByEmail` and `conversations.open`
+too (the card does not connect without them), `chat.update` (without it a
+decided request keeps its buttons) and `conversations.history` (without it a
+code typed in Slack is not read; `conversations.replies` reads one typed in the
+request's thread). A manager's **Change approved tools** cannot add a method
+the pages do not name: the card says it is approved but not offered.
 
 <!-- access-kit: scopes per-employee -->
 
