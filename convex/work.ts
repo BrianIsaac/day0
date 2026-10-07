@@ -18,6 +18,7 @@ import {
   getCallerOrThrow,
 } from './ownership';
 import { confirmedPersonOf } from './itemPeople';
+import { resolvePerson } from './people';
 import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
@@ -153,7 +154,11 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import type { ListedWorkItem, TicketHolderView } from '../src/work/item-display';
+import {
+  slackMentionIds,
+  type ListedWorkItem,
+  type TicketHolderView,
+} from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -360,8 +365,9 @@ export const listForAgent = query({
 
 /**
  * Each item with the name of the confirmed person its requester resolved to, where it resolved to
- * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member").
- * Each person is read once.
+ * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member"),
+ * and the confirmed people its text mentions by Slack user id (W13V-7's second half). Each person
+ * is read once.
  */
 async function withRequesterNames(
   ctx: QueryCtx,
@@ -379,10 +385,31 @@ async function withRequesterNames(
     names.set(resolution.personId, read);
     return read;
   };
+  const mentioned = new Map<string, Promise<string | undefined>>();
+  const mentionedName = (id: string): Promise<string | undefined> => {
+    const known = mentioned.get(id);
+    if (known !== undefined) return known;
+    const read = resolvePerson(ctx, scope, { provider: 'slack', externalId: id })
+      .then(async (resolution) => await confirmedPersonOf(ctx, scope, resolution))
+      .then((person) => person?.displayName);
+    mentioned.set(id, read);
+    return read;
+  };
   return await Promise.all(
     items.map(async (item): Promise<ListedWorkItem> => {
-      const requesterName = await nameOf(item.requesterPerson);
-      return requesterName === undefined ? item : { ...item, requesterName };
+      const ids = slackMentionIds(`${item.title}\n${item.contentSummary}`);
+      const [requesterName, names] = await Promise.all([
+        nameOf(item.requesterPerson),
+        Promise.all(ids.map(async (id) => [id, await mentionedName(id)] as const)),
+      ]);
+      const mentionNames = Object.fromEntries(
+        names.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]])),
+      );
+      return {
+        ...item,
+        ...(requesterName === undefined ? {} : { requesterName }),
+        ...(Object.keys(mentionNames).length === 0 ? {} : { mentionNames }),
+      };
     }),
   );
 }
