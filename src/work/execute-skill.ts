@@ -167,7 +167,7 @@ function workDoneOutput(item: number): string {
  * lists, and the words stay a tripwire over the list (`src/work/evidence-claims.ts`).
  */
 function reportsOutput(item: number): string {
-  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action from 0, reads included (a comment after a read and two posts lists [1, 2]), and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
+  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action of this response from 0, reads included (a comment after a read and two posts lists [1, 2]), never a row of the applied ledger, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
 }
 
 const REAL_PROCEDURE_TRAIL_INDEX =
@@ -215,7 +215,7 @@ const DEPENDENT_PHASE_MOCK =
  * says, that the approval is what sends each write.
  */
 const MOCK_ACTION_MODE =
-  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands.";
+  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
