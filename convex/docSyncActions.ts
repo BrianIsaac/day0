@@ -11,6 +11,7 @@ import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
 import { pageContentHash } from '../src/docs/content-hash';
+import { knownValueSpans } from '../src/redaction/redact';
 import { credentialKeyId } from '../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
@@ -346,7 +347,11 @@ async function keptUnchangedPage(
     contentHash,
   });
   if (stored === null) return undefined;
-  if (known.some((value) => stored.markdown.includes(value) || stored.title.includes(value))) {
+  // In any form the exact layer removes (literal, JSON-escaped, URL-encoded).
+  if (
+    knownValueSpans(stored.markdown, known).length > 0 ||
+    knownValueSpans(stored.title, known).length > 0
+  ) {
     return undefined;
   }
   const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {

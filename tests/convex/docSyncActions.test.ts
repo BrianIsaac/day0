@@ -364,6 +364,16 @@ describe('the unchanged-page skip at the persistence boundary (P8-10, 14-I)', ()
     expect(upserts[0].contentHash).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it('redacts a page again when its stored text holds a value stored since in its address form', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const known = 'p@ss/word-contract-0123456789';
+    const stored = `# Runbook\n\npostgres://svc:${encodeURIComponent(known)}@db.example.test/ledger`;
+    const { ctx, upserts } = contextWith({ title: 'Runbook', markdown: stored });
+    await persistPageBatch(ctx, source(), [{ ...page, markdown: stored }], [], undefined, [known]);
+    expect(upserts).toHaveLength(1);
+    expect(JSON.stringify(upserts)).not.toContain(encodeURIComponent(known));
+  });
+
   it('takes no hash, and stores every page as before, where the deployment key is not a usable key', async (): Promise<void> => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', 'not-a-key');
     const { ctx, queries, upserts } = contextWith(null);
