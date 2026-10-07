@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SLACK_KIT_BOT_SCOPES } from '../../../src/surfaces/access-kit/slack';
 import {
   accessRequestReason,
   issuerServesSystem,
@@ -328,6 +329,48 @@ describe('the access request’s words, the same wherever they are shown', (): v
       'The organisation’s Linear connection was revoked: an administrator connects it again, and every employee’s card then uses that connection.',
     );
     expect(draft.text).not.toContain('not connected for the organisation yet');
+  });
+
+  it("lists the Slack scopes an employee's own app holds, never the page's method names, whether a manifest on the page built it or the kit's (W13V-5)", (): void => {
+    const slack = (scopeRequested: readonly string[]) =>
+      draftAccessRequest({
+        ...base,
+        card: {
+          ...card,
+          slug: 'slack',
+          displayName: 'Slack',
+          endpoint: 'https://slack.com/api/',
+          request: { scopeRequested },
+        },
+      });
+    const kit = slack(['conversations.list', 'chat.postMessage']);
+    expect(kit.scopes).toEqual([...SLACK_KIT_BOT_SCOPES]);
+    expect(kit.text).toContain(`Access needed: ${SLACK_KIT_BOT_SCOPES.join(', ')}.`);
+    expect(kit.text).not.toContain('chat.postMessage');
+    const fromManifest = slack([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'chat:write.customize',
+    ]);
+    expect(fromManifest.scopes).toEqual([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'chat:write.customize',
+      'channels:join',
+    ]);
+    expect(slack(['slack:read', 'slack:write']).scopes).toEqual([...SLACK_KIT_BOT_SCOPES]);
   });
 
   it('carries the system, the scopes, the evidence, the length and how IT connects it', (): void => {
