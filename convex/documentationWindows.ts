@@ -3,6 +3,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
 import { PAGED_READ } from './docSources';
+import { linkedRunbookExcerpts, type AuthorPromptSkill } from './skillAuthorPrompt';
+import type { SurfaceRecord } from '../src/surfaces/types';
 import { log } from '../src/lib/logger';
 
 /**
@@ -60,4 +62,37 @@ export async function forEachDocumentationWindow(
       cursor = window.continueCursor;
     }
   }
+}
+
+/**
+ * The employee's pages that can be a skill's linked runbooks, read a window at a time: of each
+ * window, only the pages `linkedRunbookExcerpts` would take from it, in the order the whole read
+ * gave them. A page among the skill's linked runbooks is among its own window's, since the pages
+ * that outrank it there are a subset of those that outrank it across the corpus and leave it at
+ * least as much of the character budget, so selecting again over what is kept takes the pages a
+ * whole read would. A skill with no target surface links no page, and nothing is read.
+ *
+ * @param ctx - The action's context.
+ * @param agentId - The employee whose documentation is read.
+ * @param skill - The skill whose runbooks are wanted.
+ * @param surfaces - The employee's surfaces, which name the target.
+ * @param reader - What the read is for, named in the log.
+ */
+export async function linkedRunbookPages(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  skill: AuthorPromptSkill,
+  surfaces: readonly SurfaceRecord[],
+  reader: string,
+): Promise<Doc<'docPages'>[]> {
+  if (!skill.targetSurface) return [];
+  const kept: Doc<'docPages'>[] = [];
+  await forEachDocumentationWindow(ctx, agentId, reader, (pages) => {
+    const linked = new Set(
+      linkedRunbookExcerpts(skill, surfaces, pages).map(({ page }) => page._id),
+    );
+    kept.push(...pages.filter((page) => linked.has(page._id)));
+    return 'continue';
+  });
+  return kept;
 }

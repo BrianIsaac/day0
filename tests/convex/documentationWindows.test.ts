@@ -107,4 +107,44 @@ describe('forEachDocumentationWindow', (): void => {
     });
     expect(refs).toEqual(['second-000.md']);
   });
+
+  it("walks only its owner's sources, and nothing for an employee with no owner", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seed(harness, 1);
+    const { foreign, ownerless } = await harness.run(async (ctx) => {
+      const foreign = await ctx.db.insert('docSources', {
+        userId: 'other-owner',
+        label: 'Foreign',
+        kind: 'folder',
+        locator: 'foreign',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId: foreign,
+        ref: 'foreign.md',
+        title: 'Foreign',
+        markdown: '# Foreign',
+        updatedAt: 1,
+      });
+      const ownerless = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'legacy agent',
+        state: 'active',
+        createdAt: 1,
+      });
+      return { foreign, ownerless };
+    });
+    const read = async (id: Id<'agents'>): Promise<Doc<'docPages'>[]> => {
+      const pages: Doc<'docPages'>[] = [];
+      await forEachDocumentationWindow(actionContext(harness), id, 'test', (window) => {
+        pages.push(...window);
+        return 'continue';
+      });
+      return pages;
+    };
+    expect((await read(agentId)).map((page) => page.sourceId)).not.toContain(foreign);
+    expect(await read(ownerless)).toEqual([]);
+  });
 });

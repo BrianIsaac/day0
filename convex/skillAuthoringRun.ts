@@ -11,7 +11,6 @@ import { declaredInputsNote, declareUndeclaredInputs } from '../src/work/skill-i
 import { FENCE_REMOVED_NOTE, unwrapMarkdownFence } from '../src/work/smoke-test';
 import { smokeHarnessContract, type SmokeHarnessContract } from '../src/work/smoke-harness';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import type { SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { errorMessage } from '../src/lib/errors';
@@ -26,7 +25,7 @@ import {
   type LinkedRunbookPage,
 } from './skillAuthorPrompt';
 import { holdSandboxLease, namedHarnessSurfaces, verifyAuthoredSkill } from './skillSandboxCheck';
-import { forEachDocumentationWindow } from './documentationWindows';
+import { linkedRunbookPages } from './documentationWindows';
 import {
   FAILED_VERIFICATION_LOG_CHARS,
   keepRefusedDraft,
@@ -163,10 +162,13 @@ export async function authorAndRegister(
     internal.orientationData.surfacesForAgent,
     { agentId: claim.skill.agentId },
   );
-  const pageRows = await linkedRunbookCandidates(
+  // Read a window at a time, keeping only the pages the run can link (F2 D5).
+  const pageRows = await linkedRunbookPages(
     ctx,
+    claim.skill.agentId,
     claim.skill,
     surfaceRows.map(toSurfaceRecord),
+    'skill-authoring',
   );
   const run: AuthoringRun = {
     ctx,
@@ -200,29 +202,6 @@ export async function authorAndRegister(
   const shortfall = await recordShortfall(run, draft, checked);
   if (shortfall !== undefined) return shortfall.result;
   return await register(run, draft, checked, linkedPages);
-}
-
-/**
- * The employee's pages that can be the skill's linked runbooks, read a window at a time (F2 D5):
- * of each window, only the pages `linkedRunbookExcerpts` would take from it, in the order the
- * whole read gave them. A page among the run's linked runbooks is among its own window's, since
- * the pages that outrank it there are a subset of those that outrank it across the corpus, so
- * selecting again over what is kept takes the pages a whole read would.
- */
-async function linkedRunbookCandidates(
-  ctx: ActionCtx,
-  skill: Doc<'skills'>,
-  surfaces: readonly SurfaceRecord[],
-): Promise<Doc<'docPages'>[]> {
-  const kept: Doc<'docPages'>[] = [];
-  await forEachDocumentationWindow(ctx, skill.agentId, 'skill-authoring', (pages) => {
-    const linked = new Set(
-      linkedRunbookExcerpts(skill, surfaces, pages).map(({ page }) => page._id),
-    );
-    kept.push(...pages.filter((page) => linked.has(page._id)));
-    return 'continue';
-  });
-  return kept;
 }
 
 /**
