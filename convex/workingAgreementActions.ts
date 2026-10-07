@@ -136,6 +136,9 @@ export const proposeFromCorrections = internalAction({
         attempt: 0,
       });
     }
+    // Nothing to judge, propose or join: the owner's values are never read (the first pre-tag's
+    // item for wave 14, read lazily).
+    if (inputs.corrections.length === 0) return;
     // The owner's values are resolved before the judgement, whose prompt carries the manager's
     // own words (W13-R4).
     const known = await knownValuesOf(ctx, inputs.userId);
@@ -158,8 +161,12 @@ export const proposeFromCorrections = internalAction({
     }> = [];
     // A group whose check could not be had is judged again next run, so its corrections stay new.
     const unshown = new Set<Id<'corrections'>>();
-    for (const draft of drafts) {
-      const outcome = await checked(draft.text, [inputs.charter], known);
+    // Each draft's check is its own redaction and model call: they run together.
+    const outcomes = await Promise.all(
+      drafts.map(async (draft) => await checked(draft.text, [inputs.charter], known)),
+    );
+    for (const [at, draft] of drafts.entries()) {
+      const outcome = outcomes[at]!;
       if (outcome.outcome === 'unavailable') {
         log.warn('working agreements: a proposal was not shown, its check was unavailable', {
           agentId: args.agentId,
