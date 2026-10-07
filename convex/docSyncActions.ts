@@ -10,6 +10,7 @@ import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
+import { pageContentHash } from '../src/docs/content-hash';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
@@ -166,6 +167,10 @@ async function mirrorPages(
 /**
  * Store credentials, redact the raw body, and persist only safe page content.
  *
+ * A page whose hash before redaction is the one stored with it is kept as stored, with no
+ * redaction and no split (P8-10; 14-I): its stored credentials stay stated, and it is mirrored
+ * as before. Without a credential key no hash is taken and every page is redacted, as before.
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -203,9 +208,10 @@ export async function persistPageBatch(
   // Every value the owner already stores is removed from every page before
   // the model is asked; resolved once for the batch.
   const known = knownValues ?? (await ownerKnownValues(ctx, source.userId));
+  const key = process.env.DAY0_CREDENTIAL_KEY || undefined;
   for (const page of pages) {
     try {
-      const stored = await persistPage(ctx, source, page, syncRunId, { model, known });
+      const stored = await persistPage(ctx, source, page, syncRunId, { model, known, key });
       safePages.push(stored.page);
       credentialRefs.push(...stored.credentialRefs);
       redactions += stored.credentialRefs.length;
@@ -232,7 +238,8 @@ export async function persistPageBatch(
 }
 
 /**
- * Redact one page, store its credentials and then the page.
+ * Redact one page, store its credentials and then the page; or keep it as stored when its hash
+ * is unchanged.
  *
  * @throws Error when the page is too large to store, or any step refuses it.
  */
@@ -241,13 +248,24 @@ async function persistPage(
   source: Doc<'docSources'>,
   page: DocPage,
   syncRunId: Id<'docSyncRuns'>,
-  redaction: { readonly model: SpanModel | undefined; readonly known: readonly string[] },
+  redaction: {
+    readonly model: SpanModel | undefined;
+    readonly known: readonly string[];
+    /** The deployment's credential key, which keys the page's hash; none, no hash. */
+    readonly key: string | undefined;
+  },
 ): Promise<{ page: DocPage; credentialRefs: string[] }> {
   const bytes = Buffer.byteLength(page.markdown);
   if (bytes > MAX_STORED_PAGE_BYTES) {
     throw new Error(
       `The page is ${Math.ceil(bytes / 1024)} KiB, larger than the ${MAX_STORED_PAGE_BYTES / 1024} KiB Day0 stores.`,
     );
+  }
+  const contentHash =
+    redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  if (contentHash !== undefined) {
+    const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
+    if (kept !== undefined) return kept;
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
   const result = await redactCredentials(
@@ -282,8 +300,49 @@ async function persistPage(
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
   };
-  await ctx.runMutation(internal.docSources.upsertPage, { ...safePage, syncRunId });
+  await ctx.runMutation(internal.docSources.upsertPage, {
+    ...safePage,
+    syncRunId,
+    ...(contentHash !== undefined ? { contentHash } : {}),
+  });
   return { page: safePage, credentialRefs };
+}
+
+/**
+ * A page stored under the hash it has now, as the batch keeps it: the stored (redacted) title,
+ * address and body, and the refs of the credentials the page states, which are its stored rows
+ * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
+ * its stored text holds a value the owner stored since it was redacted, which only a new
+ * redaction removes.
+ */
+async function keptUnchangedPage(
+  ctx: ActionCtx,
+  source: Doc<'docSources'>,
+  page: DocPage,
+  contentHash: string,
+  known: readonly string[],
+): Promise<{ page: DocPage; credentialRefs: string[] } | undefined> {
+  const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
+    sourceId: source._id,
+    ref: page.ref,
+    contentHash,
+  });
+  if (stored === null) return undefined;
+  if (known.some((value) => stored.markdown.includes(value) || stored.title.includes(value))) {
+    return undefined;
+  }
+  const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
+    userId: source.userId,
+    sourceId: source._id,
+    pageRef: page.ref,
+  });
+  const credentialRefs = rows.flatMap((row): string[] =>
+    typeof row.source !== 'string' && row.status !== 'superseded' ? [row.source.ref] : [],
+  );
+  return {
+    page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
+    credentialRefs,
+  };
 }
 
 /**

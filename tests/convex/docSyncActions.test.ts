@@ -290,6 +290,90 @@ describe('documentation sync action helpers', (): void => {
   });
 });
 
+describe('the unchanged-page skip at the persistence boundary (P8-10, 14-I)', (): void => {
+  /** A fixed 32-byte credential key in standard base64. */
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A fake action context: the stored page the skip reads, and every mutation it asks for. */
+  function contextWith(stored: { title: string; markdown: string } | null): {
+    ctx: ActionCtx;
+    queries: string[];
+    upserts: Array<Record<string, unknown>>;
+  } {
+    const queries: string[] = [];
+    const upserts: Array<Record<string, unknown>> = [];
+    const ctx = {
+      runQuery: async (reference: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as never);
+        queries.push(name);
+        if (name === getFunctionName(internal.docBlocks.unchangedPage)) return stored;
+        return [];
+      },
+      runAction: async (reference: unknown): Promise<string> =>
+        getFunctionName(reference as never) ===
+        getFunctionName(internal.credentialCryptoActions.fingerprint)
+          ? 'f'.repeat(32)
+          : 'credential-1',
+      runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        if (
+          getFunctionName(reference as never) === getFunctionName(internal.docSources.upsertPage)
+        ) {
+          upserts.push(args);
+        }
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    return { ctx, queries, upserts };
+  }
+
+  const page: DocPage = {
+    sourceId: 'source-contract' as Id<'docSources'>,
+    ref: 'runbook.md',
+    title: 'Runbook',
+    markdown: '# Runbook\n\nPress refresh.',
+    updatedAt: 1,
+  };
+
+  it('keeps a page stored under its hash as stored, with nothing redacted or written', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, upserts } = contextWith({ title: 'Runbook', markdown: '# Runbook\n\nStored.' });
+    const result = await persistPageBatch(ctx, source(), [page], [], undefined, []);
+    expect(upserts).toEqual([]);
+    expect(result).toMatchObject({ refs: ['runbook.md'], pages: 1, redactions: 0, unread: [] });
+  });
+
+  it('redacts a page again when its stored text holds a value the owner stored since', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const known = token(['lin', 'api'], '_', 'known-contract-0123456789abcdef');
+    const { ctx, upserts } = contextWith({ title: 'Runbook', markdown: `# Runbook\n\n${known}` });
+    const result = await persistPageBatch(
+      ctx,
+      source(),
+      [{ ...page, markdown: `# Runbook\n\n${known}` }],
+      [],
+      undefined,
+      [known],
+    );
+    expect(result.unread).toEqual([]);
+    expect(upserts).toHaveLength(1);
+    expect(JSON.stringify(upserts)).not.toContain(known);
+    expect(upserts[0].contentHash).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('takes no hash and asks for no stored page where the deployment has no key', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    const { ctx, queries, upserts } = contextWith(null);
+    await persistPageBatch(ctx, source(), [page], [], undefined, []);
+    expect(queries).not.toContain(getFunctionName(internal.docBlocks.unchangedPage));
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).not.toHaveProperty('contentHash');
+  });
+});
+
 describe('documentation sync batching', (): void => {
   /**
    * Lay out a 60-page folder with one token-bearing page under a fresh root.
@@ -426,6 +510,83 @@ describe('documentation sync batching', (): void => {
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({ status: 'synced', running: false, pageCount: 60 });
+  });
+
+  it('neither redacts nor splits again a page whose hash is unchanged, and redoes the one page that changed (P8-10, 14-I)', async (): Promise<void> => {
+    const root = temporary('day0-sync-unchanged-');
+    await mkdir(join(root, 'few'));
+    const value = token(['lin', 'api'], '_', 'unchanged-contract-0123456789abcdef');
+    const write = async (name: string, body: string): Promise<void> =>
+      await writeFile(join(root, 'few', name), body, 'utf8');
+    await write('a.md', '# A\n\nAlpha body.\n');
+    await write('b.md', `# B\n\nService token: ${value}\n`);
+    await write('c.md', '# C\n\nCharlie body.\n');
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    // Every request the redaction component receives, by its body.
+    const redacted: string[] = [];
+    const origin = new URL(SPAN_MODEL_TEST_URL).origin;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const address = input instanceof Request ? input.url : String(input);
+      if (new URL(address).origin === origin) redacted.push(String(init?.body ?? ''));
+      return await redactorFetch(input, init);
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Few',
+      kind: 'folder',
+      locator: 'few',
+    });
+    const sync = async (): Promise<void> => {
+      redacted.length = 0;
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(drainScheduled);
+    };
+    const stored = async () =>
+      await harness.run(async (ctx) => ({
+        pages: await ctx.db.query('docPages').collect(),
+        blocks: await ctx.db.query('docBlocks').collect(),
+        credentials: await ctx.db.query('credentials').collect(),
+        runs: await ctx.db.query('docSyncRuns').collect(),
+      }));
+    await sync();
+    expect(redacted.length).toBeGreaterThan(0);
+    const first = await stored();
+    expect(first.pages.every((page) => page.contentHash !== undefined)).toBe(true);
+    expect(first.blocks.map((block) => block.text).sort()).toEqual([
+      'Alpha body.',
+      'Charlie body.',
+      'Service token: <credential: linear service token, stored>',
+    ]);
+
+    await sync();
+    expect(redacted).toEqual([]);
+    const second = await stored();
+    expect(second.pages).toEqual(first.pages);
+    expect(second.blocks).toEqual(first.blocks);
+    expect(second.credentials).toEqual(first.credentials);
+    const runs = second.runs.sort((left, right) => left.createdAt - right.createdAt);
+    expect(runs.map((run) => [run.state, run.pageCount, run.redactionCount])).toEqual([
+      ['completed', 3, 1],
+      ['completed', 3, 1],
+    ]);
+
+    await write('a.md', '# A\n\nAlpha body, edited.\n');
+    await sync();
+    expect(redacted.length).toBeGreaterThan(0);
+    expect(redacted.join('\n')).toContain('Alpha body, edited.');
+    expect(redacted.join('\n')).not.toContain('Charlie body.');
+    expect(redacted.join('\n')).not.toContain('Service token');
+    const third = await stored();
+    expect(third.blocks.map((block) => block.text).sort()).toEqual([
+      'Alpha body, edited.',
+      'Charlie body.',
+      'Service token: <credential: linear service token, stored>',
+    ]);
+    const unchangedBlock = (rows: typeof first.blocks) =>
+      rows.find((block) => block.pageRef.endsWith('c.md'));
+    expect(unchangedBlock(third.blocks)).toEqual(unchangedBlock(first.blocks));
+    expect(third.credentials.map((row) => row.status ?? null)).toEqual([null]);
   });
 
   it('records a reader failure as an error without losing the pages already stored', async (): Promise<void> => {
