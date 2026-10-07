@@ -219,6 +219,28 @@ describe('searchBlocks', (): void => {
     ]);
   });
 
+  it('refuses a search whose sources and blocks a source together pass what one read may hold (second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sources: Id<'docSources'>[] = [];
+    for (let index = 0; index < 9; index += 1) sources.push((await sourceOf(harness)).sourceId);
+    await expect(
+      harness.query(internal.docBlocks.searchBlocks, {
+        userId: 'owner',
+        sourceIds: sources,
+        query: 'refresh',
+        limit: 64,
+      }),
+    ).rejects.toThrow('at most 512 blocks');
+    await expect(
+      harness.query(internal.docBlocks.searchBlocks, {
+        userId: 'owner',
+        sourceIds: sources.slice(0, 8),
+        query: 'refresh',
+        limit: 64,
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it('refuses more sources or blocks a source than one search reads', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await sourceOf(harness);

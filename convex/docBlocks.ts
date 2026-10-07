@@ -30,6 +30,12 @@ export const SEARCH_LIMIT_PER_SOURCE = 64;
 /** The most sources one call searches; each is its own query (two equalities on `sourceId` are an AND). */
 export const SEARCH_SOURCES_LIMIT = 32;
 
+/**
+ * The most blocks one search call reads across its sources: a CJK block's text and search text
+ * can reach about 16 KB, so 512 stays well inside a query's 16 MiB read.
+ */
+export const SEARCH_BLOCKS_LIMIT = 512;
+
 /** One bounded page of a pruned page's blocks: under a mutation's read and write limits. */
 const PRUNE_READ = { numItems: 200, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
@@ -239,7 +245,8 @@ export const unchangedPage = internalQuery({
  * backend's relevance order, within its 1,024-result scan.
  *
  * @returns Every source's blocks, source by source in the order given, each with its rank.
- * @throws Error past `SEARCH_SOURCES_LIMIT` sources or `SEARCH_LIMIT_PER_SOURCE` blocks.
+ * @throws Error past `SEARCH_SOURCES_LIMIT` sources, `SEARCH_LIMIT_PER_SOURCE` blocks a source or
+ *   `SEARCH_BLOCKS_LIMIT` blocks in all.
  */
 export const searchBlocks = internalQuery({
   args: {
@@ -260,10 +267,16 @@ export const searchBlocks = internalQuery({
     ) {
       throw new Error(`A block search answers 1 to ${SEARCH_LIMIT_PER_SOURCE} blocks a source.`);
     }
+    const sourceIds = [...new Set(args.sourceIds)];
+    if (sourceIds.length * limit > SEARCH_BLOCKS_LIMIT) {
+      throw new Error(
+        `A block search reads at most ${SEARCH_BLOCKS_LIMIT} blocks: fewer sources, or fewer a source.`,
+      );
+    }
     const query = blockSearchQuery(args.query);
     if (query === '') return [];
     const perSource = await Promise.all(
-      [...new Set(args.sourceIds)].map(
+      sourceIds.map(
         async (sourceId) =>
           await ctx.db
             .query('docBlocks')
