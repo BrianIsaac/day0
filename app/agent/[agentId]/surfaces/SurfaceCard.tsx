@@ -57,6 +57,7 @@ import { CredentialField } from './CredentialField';
 import { DisconnectDialog } from './DisconnectDialog';
 import { ExpiryBlock, type MoveOffer, type Renewed } from './ExpiryBlock';
 import { ToolsRow } from './SurfaceControls';
+import { holdsOwnSlackApp } from '@/surfaces/slack-own-channel';
 import {
   AccessRequestRow,
   ApprovalRow,
@@ -552,7 +553,11 @@ export function SurfaceCard({
           />
         ) : null}
         {keepsPageScan(surface) ? <PageScanRow system={surface.displayName} /> : null}
-        <ToolsRow surface={surface} onApprove={actions.approveTools} />
+        <ToolsRow
+          surface={surface}
+          ownSlackApp={holdsOwnSlackApp(surface)}
+          onApprove={actions.approveTools}
+        />
         <ExpiryBlock
           surface={surface}
           now={context.now}
