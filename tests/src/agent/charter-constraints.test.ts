@@ -954,7 +954,9 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     ]);
   });
 
-  it('strikes a bound will-not-do and escalation clause whole, whatever words they use', (): void => {
+  // Re-pinned for W13-R6 (the cockpit's D-4 (a)): a strike takes only the bound clauses that carry
+  // the rule, judged one by one; the escalation line here shares no words with it and stays.
+  it('strikes a bound will-not-do that carries the rule whole, in its own words, and keeps a bound escalation that does not', (): void => {
     const charter = larkDraft([
       {
         ...amountRule,
@@ -971,11 +973,15 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     expect(result.proposedBoundaries.willNotDo).toEqual([
       'Own the forecast, which belongs to finance.',
     ]);
-    expect(result.proposedBoundaries.escalationTriggers).toEqual([]);
+    expect(result.proposedBoundaries.escalationTriggers).toEqual([
+      'Anything unusual: talk to the manager first.',
+    ]);
     expect(result.proposedBoundaries.willDo).toEqual(charter.proposedBoundaries.willDo);
   });
 
-  it("strikes a bound will-do minus the rule's words when it carries them, and whole when it does not", (): void => {
+  // Re-pinned for W13-R7: a bound will-do without the rule's words is kept whole, not taken with
+  // the duty it names; the preview says so.
+  it("strikes a bound will-do minus the rule's words when it carries them, and keeps it whole when it does not", (): void => {
     const minusWords = effectiveCharter(
       larkDraft([
         {
@@ -992,21 +998,30 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
       'when updating the tracker.',
       'Flag deals that look stuck.',
     ]);
-    const whole = effectiveCharter(
-      larkDraft([
-        {
-          ...amountRule,
-          wording: [],
-          origin: 'synthesis',
-          binds: [{ field: 'willDo', index: 1 }],
-          struck: true,
-        },
-      ]),
-    );
-    expect(whole.proposedBoundaries.willDo).toEqual([
-      'Keep the Q4 Revenue Tracker current from what is said in Slack.',
-      'Flag deals that look stuck.',
+    const bare = larkDraft([
+      {
+        ...amountRule,
+        wording: [],
+        origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 1 }],
+      },
     ]);
+    const kept = effectiveCharter({
+      ...bare,
+      constraints: bare.constraints!.map((rule) => ({ ...rule, struck: true })),
+    });
+    expect(kept.proposedBoundaries.willDo).toEqual(bare.proposedBoundaries.willDo);
+    expect(strikePreview(bare, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      changes: false,
+      keptClauses: [
+        {
+          clause: 'Never touch a deal amount when updating the tracker.',
+          because: 'not-this-rule',
+        },
+      ],
+    });
   });
 
   it("takes only the rule's words from a bound function and never the sentence", (): void => {
@@ -1056,7 +1071,9 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
       { field: 'willNotDo', index: 0 },
       { field: 'escalationTriggers', index: 0 },
     ]);
-    expect(result.constraints?.[0]?.binds).toEqual([]);
+    // Re-pinned for W13-R6: the will-do grants the act the struck prohibition names, so it is not
+    // this rule's clause and stays, its bind with it.
+    expect(result.constraints?.[0]?.binds).toEqual([{ field: 'willDo', index: 1 }]);
   });
 
   it('lists a bound rule whose words the clauses do not carry, and offers its strike', (): void => {
@@ -1089,7 +1106,9 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     expect(listedRules(charter.constraints ?? []).map(({ index }) => index)).toEqual([0]);
   });
 
-  it('refuses a strike that takes the last clause bound to a standing system boundary', (): void => {
+  // Re-pinned for W13-R7: a strike keeps a clause a standing rule binds and says so, so the last
+  // clause bound to a standing system boundary is never taken (an edit is still refused).
+  it('keeps the last clause bound to a standing system boundary when another rule is struck, and says so', (): void => {
     const charter = larkDraft([
       {
         kind: 'candidate-property',
@@ -1106,11 +1125,63 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
         binds: [{ field: 'willNotDo', index: 0 }],
       },
     ]);
-    expect(strikeOutcome(charter)).toEqual({
-      ok: false,
-      reason:
-        'strike refused: “Change a deal amount in the tracker.” is the only clause that enforces “Never change a deal amount in the tracker.”',
+    const outcome = strikeOutcome(charter);
+    expect(outcome.ok && outcome.charter.proposedBoundaries.willNotDo).toEqual(
+      charter.proposedBoundaries.willNotDo,
+    );
+    const unstruck = {
+      ...charter,
+      constraints: charter.constraints!.map((rule) => ({ ...rule, struck: false })),
+    };
+    expect(strikePreview(unstruck, 0).keptClauses).toEqual([
+      {
+        clause: 'Change a deal amount in the tracker.',
+        because: 'another-rule',
+        rule: 'Never change a deal amount in the tracker.',
+      },
+    ]);
+  });
+
+  it('reads a prohibition bound to a will-do granting its act as not carried, and its strike keeps the will-do (W13-R6)', (): void => {
+    const never: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never edit a booked figure.',
+      wording: [],
+      origin: 'synthesis',
+      binds: [{ field: 'willDo', index: 3 }],
+    };
+    const charter: Charter = {
+      ...larkDraft([never]),
+      proposedBoundaries: {
+        ...larkDraft().proposedBoundaries,
+        willDo: [...larkDraft().proposedBoundaries.willDo, 'Edit any booked figure.'],
+      },
+    };
+    expect(rulePlacement(charter, never)).toEqual({
+      kind: 'bound',
+      clauses: ['Edit any booked figure.'],
+      carriesWords: false,
+      notCarrying: ['Edit any booked figure.'],
     });
+    expect(
+      effectiveCharter({ ...charter, constraints: [{ ...never, struck: true }] }).proposedBoundaries
+        .willDo,
+    ).toContain('Edit any booked figure.');
+    const password: CharterConstraint = {
+      ...never,
+      quote: 'Never share a password in a ticket comment.',
+    };
+    const commenting: Charter = {
+      ...charter,
+      proposedBoundaries: {
+        ...charter.proposedBoundaries,
+        willDo: [
+          ...larkDraft().proposedBoundaries.willDo,
+          'Add a comment to the ticket when a password reset is done.',
+        ],
+      },
+    };
+    expect(rulePlacement(commenting, password)).toMatchObject({ carriesWords: false });
   });
 
   it('says where a rule is placed: by its words, in no clause, or in the clauses it binds', (): void => {
@@ -1135,6 +1206,8 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
       kind: 'bound',
       clauses: ['Change a deal amount in the tracker.', 'Flag deals that look stuck.'],
       carriesWords: true,
+      // Re-pinned for W13-R6: each clause is judged on its own, and the will-do is not this rule.
+      notCarrying: ['Flag deals that look stuck.'],
     });
     expect(
       rulePlacement(charter, {
@@ -1143,7 +1216,12 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
         origin: 'synthesis',
         binds: [{ field: 'willDo', index: 2 }],
       }),
-    ).toEqual({ kind: 'bound', clauses: ['Flag deals that look stuck.'], carriesWords: false });
+    ).toEqual({
+      kind: 'bound',
+      clauses: ['Flag deals that look stuck.'],
+      carriesWords: false,
+      notCarrying: ['Flag deals that look stuck.'],
+    });
   });
 
   it('shifts the binds after a removed clause and drops the binds to it', (): void => {
@@ -1207,6 +1285,7 @@ describe("the v0.16.0 redeploy walk's three rules", (): void => {
       kind: 'bound',
       clauses: ['Change a deal amount in the tracker.'],
       carriesWords: true,
+      notCarrying: [],
     });
     expect(strikePreview(charter, 0).removedClauses).toEqual([
       'Change a deal amount in the tracker.',
@@ -1222,6 +1301,7 @@ describe("the v0.16.0 redeploy walk's three rules", (): void => {
       ],
       // The line carries the manager's own words ("refund", "reply", "promising"), not a phrase.
       carriesWords: true,
+      notCarrying: [],
     });
     expect(strikePreview(charter, 0).removedClauses).toEqual([
       'If a reply might involve a refund, talk to the manager before promising anything.',
@@ -1259,6 +1339,7 @@ describe("verifying a bound clause by the manager's words (the 13-R bed)", (): v
       kind: 'bound',
       clauses: ['Edit any booked figure.'],
       carriesWords: true,
+      notCarrying: [],
     });
   });
 });
@@ -1277,6 +1358,7 @@ describe('a rule bound to the proposed function (13-R)', (): void => {
         'Sign off the close, which stays with the controller.',
       ],
       carriesWords: true,
+      notCarrying: [],
     });
   });
 
@@ -1365,7 +1447,7 @@ describe('the second pass on the binding (13-R)', (): void => {
     ).not.toThrow();
   });
 
-  it('previews a bound will-do taken whole and another trimmed as the strike leaves them', (): void => {
+  it('previews a bound will-do kept and another trimmed as the strike leaves them', (): void => {
     const charter = base(
       ['Draft replies.', 'Take owned tickets.'],
       [],
@@ -1382,10 +1464,12 @@ describe('the second pass on the binding (13-R)', (): void => {
         },
       ],
     );
+    // Re-pinned for W13-R7: the will-do that does not carry the rule is kept, and said so.
     expect(strikePreview(charter, 0)).toEqual({
-      removedClauses: ['Draft replies.'],
+      removedClauses: [],
       rewrittenClauses: [{ from: 'Take owned tickets.', to: 'Take tickets.' }],
       changes: true,
+      keptClauses: [{ clause: 'Draft replies.', because: 'not-this-rule' }],
     });
   });
 });

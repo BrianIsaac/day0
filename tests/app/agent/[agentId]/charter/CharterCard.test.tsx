@@ -752,7 +752,9 @@ describe('a rule in no clause on the charter card (13-R, a product call)', (): v
     view.unmount();
   });
 
-  it('counts a rule whose clauses the pending strikes take with another rule', (): void => {
+  // Re-pinned for W13-R7: a pending strike keeps the clauses a standing rule binds, so the second
+  // rule stays in the charter and only the password rule is in no clause.
+  it('keeps in the charter a rule whose clauses a pending strike of another rule would take', (): void => {
     const shared = nell(false);
     const body = shared.body as CharterCardBody;
     const rules = body.constraints ?? [];
@@ -768,7 +770,7 @@ describe('a rule in no clause on the charter card (13-R, a product call)', (): v
       },
     } as unknown as Doc<'charters'>;
     const html = renderToStaticMarkup(<CharterCard charter={draft} name="Nell" />);
-    expect(html).toContain('>2 rules are in no clause, so the charter will not enforce them.</p>');
+    expect(html).toContain('>1 rule is in no clause, so the charter will not enforce it.</p>');
   });
 
   it('offers the request for changes on a draft', (): void => {
