@@ -2350,3 +2350,35 @@ describe("a message bound by the run's declared reports (the wave 13 review's D-
     expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
   });
 });
+
+describe('a write whose own words report the writes before it (W13-R43)', (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+
+  it('holds back a new issue whose description reports a post that was not approved', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const described: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({
+          team: 'REVOPS',
+          title: 'Stop drill follow-up',
+          description: 'Posted both stop-drill notes in #revops.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, described],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+});

@@ -777,9 +777,11 @@ export async function applySurfaceActions(
       // A message that reports a write of its own set is bound to the writes
       // it reports, as the run declared them and as its words read (the
       // evidence check counted them as its evidence): one held back (not
-      // approved, held by a claim) leaves its report untrue too.
+      // approved, held by a claim) leaves its report untrue too. Any write
+      // that carries words the evidence check reads (an issue's description,
+      // a note) is bound as a message is (W13-R43).
       if (
-        isMessage(parsed.action, surface) &&
+        (isMessage(parsed.action, surface) || messageTexts(action).length > 0) &&
         reportedWriteNotLanded(applied, boundEarlierWrites(action, actions.slice(0, index)))
       ) {
         await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
