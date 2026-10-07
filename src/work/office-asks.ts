@@ -26,6 +26,11 @@ export interface OfficeAsk {
    * is: a charter whose role or will-do clauses carry one is shown the ask.
    */
   readonly roleWords: readonly string[];
+  /**
+   * Words that mark another role however the role words read: a charter carrying one is not
+   * shown the ask. "support" is a customer support role's word and an IT support role's too.
+   */
+  readonly notWith?: readonly string[];
 }
 
 /** The channel the office's company-wide asks arrive in. */
@@ -38,7 +43,8 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
     threadKey: 'thread-drive-access',
     sender: 'Kofi',
     body: 'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
-    roleWords: ['helpdesk', 'access', 'password', 'passwords'],
+    // Not "access": a customer support role grants access to articles and help centres.
+    roleWords: ['helpdesk', 'password', 'passwords'],
   },
   {
     channelSlug: OFFICE_ASKS_CHANNEL,
@@ -53,14 +59,15 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
     sender: 'Hana',
     body: 'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
     roleWords: ['support', 'customer', 'customers', 'billing', 'invoice', 'invoices'],
+    notWith: ['helpdesk', 'password', 'passwords'],
   },
 ];
 
 /**
  * The threads of the office's company-wide asks that are another role's work for a charter, as
  * `<channel>#<thread>`: those whose role words the charter's words (its role and will-do clauses,
- * as `charterWords` reads them) carry none of. The words are passed in so the seed, which reads
- * this list, imports nothing of the scope rule.
+ * as `charterWords` reads them) carry none of, or that carry a word marking another role. The
+ * words are passed in so the seed, which reads this list, imports nothing of the scope rule.
  *
  * @param charterWords - The charter's words the generator drafts for.
  * @returns The threads to leave out of what the generator is shown.
@@ -68,8 +75,10 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
 export function otherRolesAskThreads(charterWords: Iterable<string>): ReadonlySet<string> {
   const words = new Set(charterWords);
   return new Set(
-    OFFICE_ASKS.filter((ask) => !ask.roleWords.some((word) => words.has(word))).map(
-      (ask) => `${ask.channelSlug}#${ask.threadKey}`,
-    ),
+    OFFICE_ASKS.filter(
+      (ask) =>
+        !ask.roleWords.some((word) => words.has(word)) ||
+        (ask.notWith ?? []).some((word) => words.has(word)),
+    ).map((ask) => `${ask.channelSlug}#${ask.threadKey}`),
   );
 }
