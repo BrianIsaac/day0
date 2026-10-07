@@ -1370,7 +1370,7 @@ function dropActions<T extends CorrectableOutput>(
       .filter((_, index) => !removed.has(index))
       .map((action) =>
         // A kept message's declared reports follow the writes they name to their new places.
-        action.reports === undefined
+        !Array.isArray(action.reports)
           ? action
           : {
               ...action,
@@ -1543,7 +1543,8 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    const refusals = refusalsOf(findings);
+    // The messages a withheld write's declared reports bind go with it, and are recorded with it.
+    const refusals = withDeclaredReportsOf(corrected.actions, refusalsOf(findings));
     corrected = withholdActions(corrected, refusals);
     await record?.(
       refusals.map((refusal) => refusal.index),

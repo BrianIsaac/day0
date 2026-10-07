@@ -196,6 +196,15 @@ describe('a write withheld beside a message bound by its declared reports (D-5 (
     ]);
     expect(kept.actions).toEqual([NOTE_2, missed([0])]);
   });
+
+  it('carries an action stored with reports null through a withhold unchanged (the second pass)', (): void => {
+    const stored = { ...missed([]), reports: null } as unknown as MockAction;
+    const kept = withholdActions(
+      { actions: [NOTE_1, stored], withheldActions: [] as WithheldAction[] },
+      [{ index: 0, reason: 'withheld' }],
+    );
+    expect(kept.actions).toEqual([stored]);
+  });
 });
 
 describe("a resumed closing set (Wren's second Retry, wave 13 item 8)", (): void => {

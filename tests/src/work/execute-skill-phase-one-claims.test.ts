@@ -207,6 +207,32 @@ describe('phase-one messages under the evidence check', (): void => {
     expect(audits.map((audit) => audit.indices)).toEqual([[6]]);
   });
 
+  it('records the message its declared reports bind to a withheld one beside it (the second pass)', async (): Promise<void> => {
+    const follow = {
+      tool: 'http.request' as const,
+      args: {
+        ...auditNotePrerequisites[6]!.args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Two notes for you follow below.' }),
+      },
+      reports: [6],
+    };
+    const bound = { ...phaseOne, actions: [...auditNotePrerequisites.slice(0, 7), follow] };
+    recorded.outputs.push(bound, bound);
+    const audits: Array<{ indices: number[]; reason: string }> = [];
+    const output = await runSkill({
+      skill: { name: 'kanban-comment-and-close', description: 'Audit note.', body: '# Skill' },
+      plan: auditNotePlan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces,
+      onAuditCorrection: (indices, reason) => void audits.push({ indices, reason }),
+    });
+    expect(output.withheldActions).toHaveLength(2);
+    expect(audits.map((audit) => audit.indices)).toEqual([[6, 7]]);
+  });
+
   it('lets a phase-one DM describe what the response does, and cite the manager', async (): Promise<void> => {
     recorded.outputs.push(honest);
     const output = await run();
