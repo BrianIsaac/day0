@@ -174,6 +174,21 @@ describe('the Feishu documentation reader', (): void => {
     );
   });
 
+  it('names a document deleted after the listing as deleted, though Feishu answers it with 403', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content' &&
+        request.url.searchParams.get('doc_token') === NODES.zh2.obj
+          ? new Response(JSON.stringify({ code: 2889906, msg: 'docs deleted' }), { status: 403 })
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.unread).toContainEqual({
+      ref: NODES.zh2.node,
+      reason: '"运维规则" was deleted or moved in Feishu after it was listed (Feishu code 2889906).',
+    });
+  });
+
   it('honours the rate-limit reset', async (): Promise<void> => {
     const limited = new Set<string>();
     const { reader, sleeps } = readerOnTenant({

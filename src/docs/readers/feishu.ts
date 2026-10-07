@@ -184,14 +184,15 @@ function pageFailureReason(entry: ListedEntry, error: FeishuApiError): string {
   if (error.code === CONTENT_TOO_LARGE) {
     return `"${entry.title}" is larger than the 10 MB Feishu exports as Markdown, so it is not read.`;
   }
+  // Feishu answers a deleted document with 403 too, so the code is read before the status.
+  if (DOCUMENT_GONE.has(error.code)) {
+    return `"${entry.title}" was deleted or moved in Feishu after it was listed (Feishu code ${error.code}).`;
+  }
   if (DOCUMENT_FORBIDDEN.has(error.code) || error.status === 403) {
     return (
       `The Feishu app cannot read "${entry.title}" (Feishu code ${error.code}): add the app to ` +
       'the document, or to its wiki space as a member.'
     );
-  }
-  if (DOCUMENT_GONE.has(error.code)) {
-    return `"${entry.title}" was deleted or moved in Feishu after it was listed (Feishu code ${error.code}).`;
   }
   return `Feishu could not give "${entry.title}" as Markdown (Feishu code ${error.code}, ${error.feishuMessage}).`;
 }
