@@ -36,7 +36,7 @@ import {
 } from '../src/surfaces/chat-reader';
 import { slackApiBaseUrl } from '../src/surfaces/slack-endpoint';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { channelAllowlist } from '../src/surfaces/slack-own-channel';
+import { channelAllowlist, mayReadChannel } from '../src/surfaces/slack-own-channel';
 import {
   approvedChannelNames,
   approvedLinearScope,
@@ -1651,11 +1651,18 @@ async function pollChatReader(
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
-  const requiredMethods = include.work
-    ? ['conversations.list', 'conversations.history']
-    : ['conversations.history'];
-  for (const method of requiredMethods) {
-    if (!surface.toolAllowlist?.includes(method)) {
+  // The work's reads are the page's alone; the manager's DM is also Day0's own on an app it
+  // created, so a decision poll there needs no page method (W13-R1, R-S1 (a)).
+  const record = toSurfaceRecord(surface);
+  const dm = surface.managerDmChannelId;
+  const requiredReads: ReadonlyArray<readonly [string, string | undefined]> = include.work
+    ? [
+        ['conversations.list', undefined],
+        ['conversations.history', undefined],
+      ]
+    : [['conversations.history', dm]];
+  for (const [method, channel] of requiredReads) {
+    if (!mayReadChannel(record, method, channel)) {
       throw new Error(`Connected Slack surface does not allow ${method}.`);
     }
   }
@@ -1709,16 +1716,15 @@ async function pollChatReader(
   const missingThreads: string[] = [];
   const unreadThreads: string[] = [];
   const open = include.decisions;
-  if (open && surface.managerDmChannelId && surface.managerUserId) {
-    const dm = surface.managerDmChannelId;
+  if (open && dm && surface.managerUserId) {
     // The top-level read is the poll: when it fails nothing is resolved and
     // the checkpoint holds.
     collectManagerMessages(found, surface, await reader.readSince(dm, surface.lastPolledAt));
     // `conversations.history` lists only top-level messages. A manager who answers in
     // the thread under the request is answering all the same, so each open request's
-    // thread is read too, when the probe allowlisted the replies method. A thread
+    // thread is read too, when the card may read replies there. A thread
     // that cannot be read holds only the replies to its own request (Q13).
-    if (surface.toolAllowlist?.includes('conversations.replies')) {
+    if (mayReadChannel(record, 'conversations.replies', dm)) {
       for (const request of open.requests) {
         if (request.ts === undefined) continue;
         try {

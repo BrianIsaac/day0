@@ -570,6 +570,23 @@ export function noWayOnWords(system: string, employee: string): string {
   return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
 }
 
+/** The poll's refusal of a Slack history read the card's page never named (`chat-reader.ts`). */
+const HISTORY_REFUSAL =
+  /Connected Slack surface does not allow conversations\.(?:history|replies)\.$/;
+
+/**
+ * A failing manager decision poll in the manager's words (W13-R1): a history read the page never
+ * named is a typed code Day0 cannot read, so the manager decides in day0; any other failure is
+ * said as the poll recorded it.
+ *
+ * @param error - The card's `lastDecisionError`.
+ */
+export function decisionErrorWords(error: string): string {
+  return HISTORY_REFUSAL.test(error)
+    ? "Day0 cannot read a typed code you send in Slack: the documentation's Slack page does not let it read the DM's history. Decide in day0 until the page does."
+    : error;
+}
+
 /** What a Slack card says about where the manager's decisions reach them, and what it asks for. */
 export interface DecisionButtonsWords {
   readonly title: string;

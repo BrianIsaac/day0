@@ -8,6 +8,7 @@ import {
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
+  decisionErrorWords,
   typedCodeWords,
   disconnectLines,
   documentedKeyUnusedWords,
@@ -576,5 +577,25 @@ describe('the app a forget names (13-S)', (): void => {
       'Leo (Day0) (Slack app A0LEO)',
     );
     expect(forgottenAppWords(undefined)).toBe('The app');
+  });
+});
+
+describe("a failing manager decision poll in the manager's words (W13-R1)", (): void => {
+  it('says a history refusal as a typed code Day0 cannot read, and to decide in day0', (): void => {
+    for (const method of ['conversations.history', 'conversations.replies']) {
+      expect(
+        decisionErrorWords(
+          `decision poll failed: Connected Slack surface does not allow ${method}.`,
+        ),
+      ).toBe(
+        "Day0 cannot read a typed code you send in Slack: the documentation's Slack page does not let it read the DM's history. Decide in day0 until the page does.",
+      );
+    }
+  });
+
+  it('passes any other failure through as the poll gave it', (): void => {
+    expect(decisionErrorWords('decision poll failed: Slack returned HTTP 502.')).toBe(
+      'decision poll failed: Slack returned HTTP 502.',
+    );
   });
 });

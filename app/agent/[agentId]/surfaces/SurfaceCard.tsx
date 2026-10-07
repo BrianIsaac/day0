@@ -46,6 +46,7 @@ import {
   NOT_REINSTALLED_ACCESS,
   NOT_REINSTALLED_ACTS_AS,
   itsReasonWords,
+  decisionErrorWords,
   reachedWords,
   rejoinWords,
   stateChip,
@@ -456,7 +457,7 @@ export function SurfaceCard({
         ) : null}
         {surface.lastDecisionError ? (
           <p className="text-sm text-[var(--color-warn)]">
-            Manager decisions: {surface.lastDecisionError}
+            Manager decisions: {decisionErrorWords(surface.lastDecisionError)}
           </p>
         ) : null}
         {channelsNotJoined ? (
