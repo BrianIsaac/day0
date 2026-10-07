@@ -197,8 +197,8 @@ export function moreEvidence(count: number): string {
 
 /**
  * The aside's words under "What {name} reads from this" (F9, the prototype's words): what the
- * People block of the planner's and executor's prompts carries (the joins unit's, after 13-P and
- * 13-W land).
+ * People block of the planner's and both executor phases' prompts carries (`src/people/prompt-block.ts`,
+ * read from the graph at every prompt, real mode only).
  */
 export const READS_FROM_THIS =
   'Names and roles, at most eight lines, regenerated when the graph changes. Never identities or credentials.';

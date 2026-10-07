@@ -949,26 +949,44 @@ export const collaboratorsOf = query({
  * keeps only edges covering it.
  */
 export type EscalationAnswer =
-  | (PersonAnswer & { readonly kind: 'person'; readonly via: 'employee' | 'owner' })
+  | (PersonAnswer & {
+      readonly kind: 'person';
+      readonly via: 'employee' | 'owner';
+      /** What the escalation edge covers, in its source's words (the People block prints it). */
+      readonly scope?: string;
+    })
   | { readonly kind: 'manager'; readonly personId: Id<'people'> | null };
 
-/** The newest edge in force among some, for its person. */
+/** The newest edge in force among some whose person is confirmed, with that person. */
 async function newestInForce(
   ctx: QueryCtx,
   scope: string,
   edges: readonly Doc<'relationships'>[],
   covering: string | undefined,
   now: number,
-): Promise<Doc<'people'> | undefined> {
+): Promise<{ person: Doc<'people'>; edge: Doc<'relationships'> } | undefined> {
   const standing = edges
     .filter((edge) => edgeInForce(edge, now))
     .filter((edge) => covering === undefined || scopeCovers(edge.scope, covering))
     .sort((left, right) => right.effectiveFrom - left.effectiveFrom);
   for (const edge of standing) {
     const person = await personAt(ctx, scope, edge, ['active']);
-    if (person !== undefined) return person;
+    if (person !== undefined) return { person, edge };
   }
   return undefined;
+}
+
+/** A person escalation answer from the edge that named them. */
+function escalationTo(
+  found: { person: Doc<'people'>; edge: Doc<'relationships'> },
+  via: 'employee' | 'owner',
+): EscalationAnswer {
+  return {
+    kind: 'person',
+    via,
+    ...answerOf(found.person),
+    ...(found.edge.scope === undefined ? {} : { scope: found.edge.scope }),
+  };
 }
 
 /**
@@ -994,7 +1012,7 @@ export async function escalationContactOfEmployee(
     covering,
     now,
   );
-  if (own !== undefined) return { kind: 'person', via: 'employee', ...answerOf(own) };
+  if (own !== undefined) return escalationTo(own, 'employee');
   const shared = await newestInForce(
     ctx,
     scope,
@@ -1002,7 +1020,7 @@ export async function escalationContactOfEmployee(
     covering,
     now,
   );
-  if (shared !== undefined) return { kind: 'person', via: 'owner', ...answerOf(shared) };
+  if (shared !== undefined) return escalationTo(shared, 'owner');
   const owner = await ctx.db
     .query('people')
     .withIndex('by_user_owner', (q) => q.eq('userId', scope).eq('isOwner', true))
@@ -1021,6 +1039,7 @@ export const escalationContactFor = query({
       kind: v.literal('person'),
       via: v.union(v.literal('employee'), v.literal('owner')),
       ...personAnswerFields,
+      scope: v.optional(v.string()),
     }),
     v.object({ kind: v.literal('manager'), personId: v.union(v.id('people'), v.null()) }),
   ),

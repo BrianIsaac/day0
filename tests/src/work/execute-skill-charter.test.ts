@@ -259,7 +259,7 @@ describe('executorCharterLines: who approves, after a handover', (): void => {
   });
 
   it('names the current manager when the run is given one', (): void => {
-    const lines = executorCharterLines(handedOver, 'real', 'priya@new.example');
+    const lines = executorCharterLines(handedOver, 'real', { currentManager: 'priya@new.example' });
 
     expect(lines).toContain('Charter approvalChain: priya@new.example');
     expect(lines.join('\n')).not.toContain('sam@old.example');

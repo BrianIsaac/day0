@@ -50,3 +50,16 @@ export function tabOfSegment(segment: string | null): EmployeeTab {
 export function employeeTabHref(agentId: string, tab: EmployeeTab): string {
   return tab === 'needs-you' ? `/agent/${agentId}` : `/agent/${agentId}/${tab}`;
 }
+
+/** The Charter tab's amend disclosure, as an address fragment opens it (13-W's Amend the charter). */
+export const AMEND_CHARTER_ANCHOR = 'amend-charter';
+
+/**
+ * The address of the Charter tab with its amend disclosure open, where a refused working
+ * agreement's Amend the charter leads.
+ *
+ * @param agentId - The employee.
+ */
+export function amendCharterHref(agentId: string): string {
+  return `${employeeTabHref(agentId, 'charter')}#${AMEND_CHARTER_ANCHOR}`;
+}

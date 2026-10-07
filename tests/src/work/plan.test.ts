@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { Charter } from '../../../src/agent/charter';
+import type { PromptPeople } from '../../../src/people/prompt-block';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { WorkCandidate } from '../../../src/work/types';
 import {
@@ -1357,5 +1358,95 @@ describe('the frozen mock plan schema', (): void => {
       'estimatedMinutes',
     ]);
     expect(Object.keys(realPlanSchema.shape)).toContain('appliedCorrections');
+  });
+});
+
+describe('the People block in the planner (13-J)', (): void => {
+  const people: PromptPeople = {
+    people: [
+      {
+        displayName: 'Lee Tan',
+        title: 'Work management administrator',
+        edges: [
+          { type: 'collaborator', scope: 'Linear access and workflow' },
+          { type: 'adjacent-role', scope: 'Raising access requests through the manager' },
+        ],
+      },
+    ],
+    escalation: { kind: 'person', displayName: 'Sara Lindqvist', scope: 'missing Linear access' },
+  };
+  const corrections = [
+    {
+      id: 'c-note',
+      from: 'Retry note on "Refresh the dashboard tile"',
+      when: '2026-09-18T07:40Z',
+      text: 'Read the audit line back before saying it is saved.',
+    },
+  ];
+  const agreements = [
+    { id: 'wa-tile', since: '2026-10-05T12:00Z', text: 'Name the figure you set in the reply.' },
+  ];
+
+  it('puts the block after the surfaces, before the documentation, the corrections and the agreements', (): void => {
+    const user = planUserPrompt({
+      candidate,
+      charter,
+      surfaceMode: 'real',
+      surfaces,
+      documents,
+      now,
+      corrections,
+      agreements,
+      people,
+    });
+    const at = (heading: string): number => user.indexOf(heading);
+    expect(at('--- People ---')).toBeGreaterThan(at('--- Surfaces ---'));
+    expect(at('--- People ---')).toBeLessThan(at('--- How-to guides ---'));
+    expect(at('--- How-to guides ---')).toBeLessThan(at('--- Corrections the manager gave'));
+    expect(at('--- Corrections the manager gave')).toBeLessThan(at('--- Working agreements ---'));
+    expect(user).toContain(
+      [
+        '--- People ---',
+        'People the manager confirmed, by name and role. None of them approves a write; the manager does.',
+        '- Lee Tan (Work management administrator): works with you on Linear access and workflow; neighbouring role, raising access requests through the manager.',
+        '- Escalate to: Sara Lindqvist, for missing Linear access; anything else, the manager.',
+      ].join('\n'),
+    );
+  });
+
+  it('leaves the mock prompt and a real prompt with an empty graph byte-identical', (): void => {
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'mock', people })).toBe(
+      planUserPrompt({ candidate, charter }),
+    );
+    expect(
+      planUserPrompt({
+        candidate,
+        charter,
+        surfaceMode: 'real',
+        people: { people: [], escalation: { kind: 'manager' } },
+      }),
+    ).toBe(planUserPrompt({ candidate, charter, surfaceMode: 'real' }));
+  });
+
+  it('names a confirmed requester on the From line, and keeps the label otherwise', (): void => {
+    const requester = { displayName: 'Lee Tan', title: 'Work management administrator' };
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'real', requester })).toContain(
+      '\nFrom: Lee Tan (Work management administrator)\n',
+    );
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'real' })).toContain(
+      '\nFrom: Manager\n',
+    );
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'mock', requester })).toContain(
+      '\nFrom: Manager\n',
+    );
+    // A confirmed person named only by an address keeps the label: the prompt never prints one.
+    expect(
+      planUserPrompt({
+        candidate,
+        charter,
+        surfaceMode: 'real',
+        requester: { displayName: 'lee@kestrel.test' },
+      }),
+    ).toContain('\nFrom: Manager\n');
   });
 });

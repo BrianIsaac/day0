@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
 import { appendEvent } from './eventLog';
+import { itemPersonIds } from './itemPeople';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { surfaceSlug } from '../src/surfaces/slug';
@@ -665,8 +666,9 @@ export const settleCheck = internalMutation({
 /**
  * Internal: the active agreements a candidate is planned with, selected in code (8 rows, 2,000
  * characters, newest kept first) from this employee's and every employee's of its owner. The
- * candidate's people (a `person` scope) are 13-P's `personFor`, which the joins unit wires; until
- * then no person-scoped agreement applies, and none is made by this release.
+ * candidate's people (a `person` scope) are the confirmed people its requester and owner resolve to
+ * (13-P's `requesterPerson` / `ownerPerson`, read by `itemPersonIds`), so an agreement scoped to
+ * one of them applies.
  */
 export const selectedForCandidate = internalQuery({
   args: { workItemId: v.id('workItems') },
@@ -676,12 +678,15 @@ export const selectedForCandidate = internalQuery({
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (!item || !agent || userId === undefined) return [];
     const skill = item.skillId ? await ctx.db.get(item.skillId) : null;
-    const rows = await bindingAgreements(ctx, userId, agent._id, 'active');
+    const [rows, personIds] = await Promise.all([
+      bindingAgreements(ctx, userId, agent._id, 'active'),
+      itemPersonIds(ctx, item, agent),
+    ]);
     return selectAgreements(rows, {
       agentId: agent._id,
       sourceSystem: item.sourceSystem,
       ...(skill?.operation ? { operation: skill.operation } : {}),
-      personIds: [],
+      personIds,
     });
   },
 });
