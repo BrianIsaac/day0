@@ -1025,6 +1025,49 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     });
   });
 
+  it("offers a source's proposed change on a confirmed person with Take and Dismiss, and says a failed lookup (W13-R3, W13-R25)", async () => {
+    const [priya] = GRAPH.confirmed;
+    settled({
+      'people:forEmployee': {
+        ...GRAPH,
+        confirmed: [
+          {
+            ...priya,
+            proposedChange: {
+              title: 'Head of revenue operations',
+              primaryEmail: 'priya.shah@kestrel.test',
+              quote: 'Priya Shah, Head of revenue operations, priya.shah@kestrel.test',
+              where: 'Team directory',
+              at: Date.UTC(2026, 9, 6, 2, 0),
+            },
+            lookupFailedAt: Date.UTC(2026, 9, 6, 3, 0),
+          },
+        ],
+      },
+    });
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    const confirmed = section(view.container, 'Confirmed');
+    expect(confirmed.textContent).toContain(
+      'Team directory proposes a change: title “Head of revenue operations”, address priya.shah@kestrel.test. What you confirmed stays until you take it.',
+    );
+    expect(confirmed.textContent).toContain(
+      'Evidence: “Priya Shah, Head of revenue operations, priya.shah@kestrel.test” (Team directory, 6 Oct 2026, 02:00).',
+    );
+    expect(confirmed.textContent).toContain(
+      'Looking up Priya Shah in Slack or Linear failed on 6 Oct 2026, 03:00: a message or ticket from them may not show their name yet.',
+    );
+    await press(confirmed, 'Take the proposed change for Priya Shah');
+    expect(backend.calls.at(-1)).toEqual({
+      name: 'personChanges:take',
+      args: { personId: 'person-priya', agentId: 'agent-1' },
+    });
+    expect(said(confirmed)).toEqual(['Took the proposed change for Priya Shah.']);
+    await press(confirmed, 'Dismiss the proposed change for Priya Shah');
+    expect(backend.calls.at(-1)?.name).toBe('personChanges:dismiss');
+    expect(said(confirmed)).toEqual(['Dismissed the proposed change for Priya Shah.']);
+    expect(await axeViolations(view.container)).toEqual([]);
+  });
+
   it('says so while the graph is read, when nobody waits, and in mock mode, with no button to press', () => {
     settled({ 'people:forEmployee': undefined });
     const reading = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));

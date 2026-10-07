@@ -22,6 +22,13 @@ export const SAME_PERSON_GONE = 'The person this was offered as is no longer in 
 /** The refusal of A different person on an identity that is not the proposal's own match. */
 export const NOT_THE_MATCH = 'This identity is not the match proposed for this person.';
 
+/** The refusal of Take or Dismiss on a person whose proposed change is gone (W13-R3). */
+export const NO_PROPOSED_CHANGE = 'Nothing is proposed for this person any more.';
+
+/** The refusal of Take on a proposed address another of the owner's people holds (W13-R3). */
+export const PROPOSED_ADDRESS_HELD =
+  'Another person on your list has this address. Dismiss the change, or merge the two people first.';
+
 /** The refusal of a change to an edge that has ended. */
 export const RELATIONSHIP_ENDED = 'This relationship has already ended.';
 
@@ -294,4 +301,37 @@ export function edgeLine(
   return `${named}${covered === undefined ? '' : `: ${covered}`} · since ${since}${
     everyone ? ' · for everyone you manage' : ''
   }`;
+}
+
+/** The values of a source's proposed change, as the confirmed person's row names them. */
+export interface ProposedChangeWords {
+  readonly title?: string;
+  readonly team?: string;
+  readonly primaryEmail?: string;
+}
+
+/**
+ * The line a confirmed person's row says a source's proposed change in (W13-R3, wording draft):
+ * "Team directory proposes a change: title “Head of revenue operations”, address
+ * priya.shah@kestrel.test. What you confirmed stays until you take it."
+ *
+ * @param where - Where the words came from, as the evidence says it.
+ */
+export function proposedChangeLine(where: string, change: ProposedChangeWords): string {
+  const parts = [
+    ...(change.title === undefined ? [] : [`title \u201c${change.title}\u201d`]),
+    ...(change.team === undefined ? [] : [`team \u201c${change.team}\u201d`]),
+    ...(change.primaryEmail === undefined ? [] : [`address ${change.primaryEmail}`]),
+  ];
+  return `${where} proposes a change: ${parts.join(', ')}. What you confirmed stays until you take it.`;
+}
+
+/**
+ * The line a confirmed person's row says a failed lookup in (W13-R25, wording draft).
+ *
+ * @param name - The person.
+ * @param when - When it failed, in the employee's zone.
+ */
+export function lookupFailedLine(name: string, when: string): string {
+  return `Looking up ${name} in Slack or Linear failed on ${when}: a message or ticket from them may not show their name yet.`;
 }

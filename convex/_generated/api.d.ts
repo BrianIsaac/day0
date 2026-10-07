@@ -68,6 +68,7 @@ import type * as peopleExtractionActions from '../peopleExtractionActions.js';
 import type * as peopleLookupActions from '../peopleLookupActions.js';
 import type * as peoplePrompt from '../peoplePrompt.js';
 import type * as peopleProposals from '../peopleProposals.js';
+import type * as personChanges from '../personChanges.js';
 import type * as planApproval from '../planApproval.js';
 import type * as probeActions from '../probeActions.js';
 import type * as refreshLease from '../refreshLease.js';
@@ -182,6 +183,7 @@ declare const fullApi: ApiFromModules<{
   peopleLookupActions: typeof peopleLookupActions;
   peoplePrompt: typeof peoplePrompt;
   peopleProposals: typeof peopleProposals;
+  personChanges: typeof personChanges;
   planApproval: typeof planApproval;
   probeActions: typeof probeActions;
   refreshLease: typeof refreshLease;

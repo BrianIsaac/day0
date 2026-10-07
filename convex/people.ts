@@ -1246,6 +1246,19 @@ const confirmedShownValidator = v.object({
   evidence: v.optional(evidenceShownValidator),
   identities: v.array(identityAnswerValidator),
   edges: v.array(edgeShownValidator),
+  /** A source's change to the confirmed values, with its words, for Take or Dismiss (W13-R3). */
+  proposedChange: v.optional(
+    v.object({
+      title: v.optional(v.string()),
+      team: v.optional(v.string()),
+      primaryEmail: v.optional(v.string()),
+      quote: v.string(),
+      where: v.string(),
+      at: v.number(),
+    }),
+  ),
+  /** When a lookup of the person's address last failed past its asks (W13-R25). */
+  lookupFailedAt: v.optional(v.number()),
 });
 
 /** What the People tab draws from the graph for one employee. */
@@ -1331,6 +1344,7 @@ async function confirmedShown(
   if (edges.length === 0) return undefined;
   const role = roleOf(person);
   const first = person.evidence[0];
+  const change = person.proposedChange;
   return {
     personId: person._id,
     name: person.displayName,
@@ -1340,6 +1354,19 @@ async function confirmedShown(
       ? {}
       : { evidence: { quote: first.quote, where: first.where, at: first.at } }),
     identities: await identitiesOfPerson(ctx, person, undefined),
+    ...(change === undefined
+      ? {}
+      : {
+          proposedChange: {
+            ...(change.title === undefined ? {} : { title: change.title }),
+            ...(change.team === undefined ? {} : { team: change.team }),
+            ...(change.primaryEmail === undefined ? {} : { primaryEmail: change.primaryEmail }),
+            quote: change.evidence.quote,
+            where: change.evidence.where,
+            at: change.evidence.at,
+          },
+        }),
+    ...(person.lookupFailedAt === undefined ? {} : { lookupFailedAt: person.lookupFailedAt }),
     edges: edges.map((edge) => ({
       relationshipId: edge._id,
       type: edge.type,

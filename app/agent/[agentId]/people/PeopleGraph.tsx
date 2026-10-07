@@ -14,9 +14,11 @@ import {
   evidenceLine,
   evidenceText,
   identityLabel,
+  lookupFailedLine,
   matchesSlackLine,
   moreEvidence,
   possiblySameLine,
+  proposedChangeLine,
   proposedEdgeLine,
   proposedEmpty,
   proposedInMock,
@@ -492,6 +494,21 @@ function ConfirmedRow({
       {person.evidence !== undefined ? (
         <EvidenceList evidence={[person.evidence]} zone={zone} />
       ) : null}
+      {person.lookupFailedAt !== undefined ? (
+        <p className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]">
+          {lookupFailedLine(name, clockTime(person.lookupFailedAt, zone))}
+        </p>
+      ) : null}
+      {person.proposedChange !== undefined ? (
+        <ProposedChange
+          name={name}
+          proposed={person.proposedChange}
+          args={{ personId: person.personId, agentId }}
+          zone={zone}
+          change={change}
+          landed={landed}
+        />
+      ) : null}
       {form.kind === 'add' ? (
         edgeForm(undefined)
       ) : (
@@ -511,6 +528,72 @@ function ConfirmedRow({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * A source's proposed change to a confirmed person (W13-R3): what it proposes, the words it came
+ * from, and Take or Dismiss.
+ */
+function ProposedChange({
+  name,
+  proposed,
+  args,
+  zone,
+  change,
+  landed,
+}: {
+  readonly name: string;
+  readonly proposed: NonNullable<Confirmed['proposedChange']>;
+  readonly args: { readonly personId: Id<'people'>; readonly agentId: Id<'agents'> };
+  readonly zone: string | undefined;
+  readonly change: Change;
+  readonly landed: () => HTMLElement | null;
+}) {
+  const take = useMutation(api.personChanges.take);
+  const dismiss = useMutation(api.personChanges.dismiss);
+  return (
+    <div className="grid gap-2">
+      <p className="text-sm text-[var(--color-fg)] [overflow-wrap:anywhere]">
+        {proposedChangeLine(proposed.where, proposed)}
+      </p>
+      <EvidenceList
+        evidence={[{ quote: proposed.quote, where: proposed.where, at: proposed.at }]}
+        zone={zone}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="small"
+          variant="approve"
+          disabled={change.busy}
+          aria-label={`Take the proposed change for ${name}`}
+          onClick={() =>
+            change.run(() => take(args), {
+              done: `Took the proposed change for ${name}.`,
+              refused: `The proposed change for ${name} was not taken.`,
+              focus: landed,
+            })
+          }
+        >
+          Take
+        </Button>
+        <Button
+          size="small"
+          variant="quiet"
+          disabled={change.busy}
+          aria-label={`Dismiss the proposed change for ${name}`}
+          onClick={() =>
+            change.run(() => dismiss(args), {
+              done: `Dismissed the proposed change for ${name}.`,
+              refused: `The proposed change for ${name} was not dismissed.`,
+              focus: landed,
+            })
+          }
+        >
+          Dismiss
+        </Button>
+      </div>
+    </div>
   );
 }
 
