@@ -203,6 +203,32 @@ describe('the People block', (): void => {
     expect(contact('a good-to-go checklist')).toBe(
       '- Escalate to: Mei Ling (Close lead), for a good-to-go checklist; anything else, the manager.',
     );
+    // Only a trailing phrase routed to the contact goes: a matter that says "go to" stays whole.
+    expect(contact('questions about how to go to market go to her')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for questions about how to go to market; anything else, the manager.',
+    );
+    expect(contact('tickets that go to legal review')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for tickets that go to legal review; anything else, the manager.',
+    );
+    expect(contact('the Q3 close queue goes to her; the rest to Dana')).toBe(
+      '- Escalate to: Mei Ling (Close lead), for the Q3 close queue; anything else, the manager.',
+    );
+  });
+
+  it("keeps an edge's scope as written, routing words and all: only the escalation line drops them (W13V-8)", (): void => {
+    const [, line] = peopleBlockLines({
+      people: [
+        {
+          displayName: 'Dana Okafor',
+          title: 'Finance systems owner',
+          edges: [{ type: 'collaborator', scope: 'invoices that go to her' }],
+        },
+      ],
+      escalation: { kind: 'manager' },
+    });
+    expect(line).toBe(
+      '- Dana Okafor (Finance systems owner): works with you on invoices that go to her.',
+    );
   });
 
   it('heads the planner section with its own heading', (): void => {
