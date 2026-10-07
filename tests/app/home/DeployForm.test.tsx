@@ -191,6 +191,24 @@ describe('DeployForm, deploying', (): void => {
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it('says the missing name under the field, above the fold at 390, and ties it to the field (13-FD R12)', async (): Promise<void> => {
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
+    const field = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+    act(() => type(field, '   '));
+    await act(async () => {
+      host.querySelector('form')!.requestSubmit();
+    });
+    const alert = host.querySelector<HTMLElement>('[role="alert"]')!;
+    const deployButton = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Deploy',
+    )!;
+    expect(
+      alert.compareDocumentPosition(deployButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(field.getAttribute('aria-describedby')?.split(' ')).toContain(alert.id);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+  });
+
   it('deploys the named employee with the chosen face and the unticked sources, then opens its page', async (): Promise<void> => {
     deploy.mockResolvedValue('agent-mira');
     act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));

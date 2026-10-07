@@ -102,9 +102,13 @@ export function DeployForm({
   const headingId = useId();
   const nameId = useId();
   const nameHelpId = useId();
+  const nameErrorId = useId();
   const nameInput = useRef<HTMLInputElement>(null);
   const avatar = avatarById(avatarId);
   const trimmed = name.trim();
+  // The missing name is said under its field, in view where it is typed (13-FD's R12); every other
+  // error still goes under Deploy.
+  const nameMissing = error === NAME_NEEDED;
 
   useEffect(() => {
     if (focusOnMount) nameInput.current?.focus();
@@ -192,12 +196,18 @@ export function DeployForm({
               // A name being typed answers the form's ask for one; any other error stays.
               setError((current) => (current === NAME_NEEDED ? null : current));
             }}
-            aria-describedby={nameHelpId}
+            aria-describedby={nameMissing ? `${nameHelpId} ${nameErrorId}` : nameHelpId}
+            aria-invalid={nameMissing ? true : undefined}
             className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />
           <p id={nameHelpId} className="mt-1.5 text-xs text-[var(--color-muted)]">
             The name the team will see. It cannot be changed after deploy.
           </p>
+          {nameMissing ? (
+            <p id={nameErrorId} role="alert" className="mt-1.5 text-sm text-[var(--color-danger)]">
+              {error}
+            </p>
+          ) : null}
           {docSources && docSources.length > 0 ? (
             <fieldset className="mt-4">
               <legend className="mb-1.5 text-xs uppercase tracking-wider text-[var(--color-muted)]">
@@ -269,7 +279,7 @@ export function DeployForm({
           {UNVERIFIED_FOR_DEPLOY}
         </p>
       ) : null}
-      {error ? (
+      {error && !nameMissing ? (
         <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}
         </p>
