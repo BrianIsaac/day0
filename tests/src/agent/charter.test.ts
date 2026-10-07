@@ -470,6 +470,28 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     ).toBe(true);
   });
 
+  it('takes a reply whose binds or goals-stated the schema cannot read, each rule then read by its words (W13-R36)', (): void => {
+    const reply = structuredClone(GLM_BINDS_DRAFTS_2026_10_05.Nell) as Record<string, unknown>;
+    const goals = reply.shortTermGoals as Record<string, unknown>;
+    delete goals.stated;
+    const [first, second] = reply.constraints as Array<Record<string, unknown>>;
+    first!.binds = [{ field: 'scope', index: 0 }];
+    second!.binds = [{ field: 'willDo', index: 1.5 }];
+    const parsed = charterSchema.parse(reply);
+    expect(parsed.constraints.map((rule) => rule.binds)).toEqual([undefined, undefined]);
+    const nell = assemble(
+      parsed,
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-08T00:00:00.000Z',
+    );
+    expect(nell.shortTermGoals).not.toHaveProperty('stated');
+    for (const rule of nell.constraints ?? []) {
+      if (rule.origin !== 'synthesis') continue;
+      expect(rule).not.toHaveProperty('binds');
+      expect(rulePlacement(nell, rule).kind).toBe('by-wording');
+    }
+  });
+
   it("keeps the model's binds on the recorded draft, and a rule it bound to nothing as in no clause", (): void => {
     const wren = recorded('Wren');
     expect(
