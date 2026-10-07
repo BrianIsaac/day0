@@ -808,7 +808,9 @@ export function eventItemTitle(
  * most failures are the run stopping, not anyone refusing it; a draft is noted too, since the
  * line outlives the decision it waited for.
  */
-const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'noted'>>>> = {
+const RECORD_KINDS: Readonly<
+  Partial<Record<EventType, Exclude<RecordKind, 'noted' | 'partly-done' | 'not-done'>>>
+> = {
   'work.completed': 'landed',
   'work.provider-reconciled': 'landed',
   'charter.approved': 'landed',
@@ -852,11 +854,20 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
 
 /**
  * What a record line's dot says an event did: landed, refused, withheld, held for the manager,
- * or, for every other event, noted. A type the contract no longer lists (a row an older release
- * wrote) is noted too.
+ * or, for every other event, noted. A finished run is drawn by its own answer when that says it
+ * was partly done or not done, as the line's words and its card say it (13-FD's R3, a product
+ * call built as the walk recommends): its writes landed, but the work did not. A type the
+ * contract no longer lists (a row an older release wrote) is noted too.
  *
  * @param event - The stored event.
  */
-export function recordKindOf(event: Pick<Doc<'events'>, 'type'>): RecordKind {
+export function recordKindOf(
+  event: Pick<Doc<'events'>, 'type'> & { payload?: unknown },
+): RecordKind {
+  if (event.type === 'work.completed') {
+    const output = (event.payload as { output?: unknown } | null | undefined)?.output;
+    const end = finishedAs(output);
+    if (end !== 'done') return end === 'partly done' ? 'partly-done' : 'not-done';
+  }
   return (isEventType(event.type) ? RECORD_KINDS[event.type] : undefined) ?? 'noted';
 }
