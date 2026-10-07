@@ -31,6 +31,7 @@ import {
   GLM_BINDS_DRAFTS_2026_10_05,
   GLM_BINDS_PROMPT_2026_10_05,
 } from '../../fixtures/charter-paraphrase-2026-09-30';
+import { REDEPLOY_NELL_DRAFT_2026_10_07 } from '../../fixtures/charter-redeploy-nell-2026-10-07';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -436,6 +437,37 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     expect(strikePreview(sage, index).keptClauses).toEqual([
       { clause: duty, because: 'not-this-rule' },
     ]);
+  });
+
+  it("reads Nell's password rule bound by the drafter to an unrelated will-do as Check, and its strike takes nothing (the v0.17.0 redeploy's finding 1)", (): void => {
+    const nell = assemble(
+      charterSchema.parse(REDEPLOY_NELL_DRAFT_2026_10_07),
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-07T15:40:00.000Z',
+    );
+    const password = 'Never share a password in a ticket comment.';
+    const duty = 'Draft replies for the routine access tickets using the wiki steps.';
+    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
+    expect(nell.constraints![index]!.binds).toEqual([{ field: 'willDo', index: 1 }]);
+    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+      kind: 'bound',
+      clauses: [duty],
+      carriesWords: false,
+      notCarrying: [duty],
+    });
+    expect(strikePreview(nell, index)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      keptClauses: [{ clause: duty, because: 'not-this-rule' }],
+      changes: false,
+    });
+    expect(strike(nell, password).proposedBoundaries.willDo).toContain(duty);
+    // The reporting-line rule beside it is a right bind, and still reads as one.
+    expect(
+      carriedOf(nell)[
+        'The security lead owns access policy; the facilities team owns hardware. Go through me.'
+      ],
+    ).toBe(true);
   });
 
   it("keeps the model's binds on the recorded draft, and a rule it bound to nothing as in no clause", (): void => {

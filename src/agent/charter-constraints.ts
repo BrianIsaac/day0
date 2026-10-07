@@ -797,7 +797,7 @@ function withoutBoundClauses(
   for (const rule of struck) {
     for (const ref of rule.binds ?? []) {
       if (ref.field === 'proposedFunction') {
-        functionPhrases.push(...rule.wording);
+        functionPhrases.push(...ruleWordsInFunction(rule, target.proposedFunction));
         continue;
       }
       const clause = target.lists[ref.field].find(
@@ -1249,14 +1249,16 @@ const THROUGH_THE_MANAGER =
   /\b(?:through|via)\s+the\s+manager\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b|\b(?:contact|message|email|ask|reach|call|talk to|write to|go to)\b[^.;]*\bdirectly\b/i;
 
 /**
- * Whether one clause carries a rule, judged on its own (W13-R6): one of the rule's verified phrases
- * is in it; or, unless the rule opens on a prohibition and the clause is a will-do or the function
- * (which would grant the act: "Never edit a booked figure." against "Edit any booked figure."), it
- * holds more than half of the manager's own words in one sentence of the rule, the manager's first
- * person read as "the manager"; or the sentence routes work through the manager and the clause, a
- * bounding one, keeps a contact going through the manager ("Contact the support lead or billing
- * directly."). On the recorded GLM drafts every right bind carries the rule this way and neither
- * wrong one does (`GLM_BINDS_DRAFTS_2026_10_05`).
+ * Whether one clause carries a rule, judged on its own (W13-R6). A will-do or the function, which
+ * grant an act, carries a rule forbidding one only when one of the rule's verified phrases is in it
+ * and it states the prohibition itself (`statesTheProhibition`): "Edit any booked figure." never
+ * carries "Never edit a booked figure.", nor does a will-do the drafter bound by a phrase of its own
+ * (the v0.17.0 redeploy's finding 1). Any other clause carries the rule when one of its verified
+ * phrases is in it; or when it holds more than half of the manager's own words in one sentence of
+ * the rule, the manager's first person read as "the manager"; or when the sentence routes work
+ * through the manager and the clause, a bounding one, keeps a contact going through the manager
+ * ("Contact the support lead or billing directly."). On the recorded GLM drafts every right bind
+ * carries the rule this way and no wrong one does (`GLM_BINDS_DRAFTS_2026_10_05`).
  *
  * @param constraint - The rule.
  * @param clause - The clause's words.
@@ -1267,22 +1269,74 @@ function clauseCarriesRule(
   clause: string,
   field: ClauseRef['field'],
 ): boolean {
-  if (constraint.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
-    return true;
-  }
   const grants = field === 'willDo' || field === 'proposedFunction';
-  if (grants && forbidsAnAct(constraint.quote)) return false;
-  const inClause = contentStems(clause);
-  // A sentence ends before a capital, so "e.g. in a ticket comment" stays inside its sentence; a
-  // fragment of one word is too little to read as the rule.
-  return constraint.quote
-    .split(/(?<=[.!?;])\s+(?=[A-Z"\u201c])/)
-    .some((sentence: string): boolean => {
-      const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
-      const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
-      if (said.size >= 2 && shared * 2 > said.size) return true;
-      return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
-    });
+  // A phrase the drafter verified in a grant is a phrase of the grant, not the rule: the v0.17.0
+  // redeploy drew Nell's "Never share a password in a ticket comment." as carried by "Draft replies
+  // for the routine access tickets using the wiki steps." that way.
+  const verified = constraint.wording.some((phrase: string): boolean =>
+    wordingPresent(phrase, [clause]),
+  );
+  if (grants && forbidsAnAct(constraint.quote)) {
+    return verified && statesTheProhibition(constraint, clause);
+  }
+  if (verified) return true;
+  return quoteSentences(constraint.quote).some((sentence: string): boolean => {
+    if (holdsMostOf(sentence, clause)) return true;
+    return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
+  });
+}
+
+/**
+ * The rule's sentences. A sentence ends before a capital, so "e.g. in a ticket comment" stays
+ * inside its sentence.
+ */
+function quoteSentences(quote: string): string[] {
+  return quote.split(/(?<=[.!?;])\s+(?=[A-Z"\u201c])/);
+}
+
+/**
+ * Whether a text holds more than half of the manager's own words in one sentence of a rule, the
+ * manager's first person read as "manager"; a fragment of one word is too little to read as the
+ * rule.
+ */
+function holdsMostOf(sentence: string, text: string): boolean {
+  const inText = contentStems(text);
+  const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
+  const shared = [...said].filter((word: string): boolean => inText.has(word)).length;
+  return said.size >= 2 && shared * 2 > said.size;
+}
+
+/** A word that limits a granted act: "Draft replies, never sharing a password." */
+const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b`, 'i');
+
+/**
+ * Whether a will-do or the function, which grant an act, states a prohibition itself (the
+ * redeploy's finding 1): a word that limits the act, and more than half of the manager's words in
+ * one sentence of the rule. "Answer access tickets, never sharing a password in a ticket comment."
+ * states "Never share a password in a ticket comment."; "Edit any booked figure." does not state
+ * "Never edit a booked figure.", and a will-do with none of the rule's words states nothing,
+ * whatever phrase of it the drafter verified.
+ */
+function statesTheProhibition(constraint: CharterConstraint, text: string): boolean {
+  return (
+    LIMITS_THE_ACT.test(text) &&
+    quoteSentences(constraint.quote).some((sentence: string): boolean =>
+      holdsMostOf(sentence, text),
+    )
+  );
+}
+
+/**
+ * The rule's verified phrases the function carries: each one in it, and, for a rule that forbids
+ * an act, only one that states the prohibition, since the function grants what it names.
+ */
+function ruleWordsInFunction(constraint: CharterConstraint, proposedFunction: string): string[] {
+  const forbids = forbidsAnAct(constraint.quote);
+  return constraint.wording.filter(
+    (phrase: string): boolean =>
+      wordingPresent(phrase, [proposedFunction]) &&
+      (!forbids || statesTheProhibition(constraint, phrase)),
+  );
 }
 
 /**
@@ -1301,9 +1355,7 @@ export function rulePlacement(
   if (constraint.binds === undefined) return { kind: 'by-wording' };
   // The function is the role's one sentence and a strike only ever takes the rule's words from it,
   // so a function bind is shown, and verified, as those words, and as nothing when it has none.
-  const inFunction = constraint.wording.filter((phrase: string): boolean =>
-    wordingPresent(phrase, [charter.proposedFunction]),
-  );
+  const inFunction = ruleWordsInFunction(constraint, charter.proposedFunction);
   const listed = constraint.binds.flatMap((ref: ClauseRef): Array<[string, boolean]> => {
     if (ref.field === 'proposedFunction') return [];
     const clause = clauseAt(charter, ref);

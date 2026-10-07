@@ -1184,6 +1184,45 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     expect(rulePlacement(commenting, password)).toMatchObject({ carriesWords: false });
   });
 
+  it('reads a prohibition as carried by a grant only where the grant states it, whatever phrase of the grant the drafter verified (the v0.17.0 redeploy)', (): void => {
+    const password: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share a password in a ticket comment.',
+      wording: ['Draft replies for the routine access tickets'],
+      origin: 'synthesis',
+      binds: [{ field: 'willDo', index: 3 }],
+    };
+    const withDuty = (duty: string): Charter => {
+      const base = larkDraft();
+      return {
+        ...base,
+        proposedBoundaries: {
+          ...base.proposedBoundaries,
+          willDo: [...base.proposedBoundaries.willDo, duty],
+        },
+      };
+    };
+    const unrelated = withDuty(
+      'Draft replies for the routine access tickets using the wiki steps.',
+    );
+    expect(rulePlacement(unrelated, password)).toMatchObject({ carriesWords: false });
+    const stated = withDuty(
+      'Draft replies for the routine access tickets, never sharing a password in a ticket comment.',
+    );
+    expect(rulePlacement(stated, password)).toMatchObject({ carriesWords: true, notCarrying: [] });
+    // The function grants the role whole: a phrase of it is not the prohibition either.
+    const inFunction: CharterConstraint = {
+      ...password,
+      quote: 'Never touch the forecast.',
+      wording: ['flag deals that look stuck'],
+      binds: [{ field: 'proposedFunction', index: 0 }],
+    };
+    expect(rulePlacement(larkDraft([inFunction]), inFunction)).toEqual({ kind: 'in-no-clause' });
+    expect(effectiveCharter(larkDraft([{ ...inFunction, struck: true }])).proposedFunction).toBe(
+      'Keep the Q4 Revenue Tracker clean and flag deals that look stuck.',
+    );
+  });
+
   it("reads a prohibition anywhere in the rule, in any of its usual words, as not carried by a will-do granting the act (the code reader's probes)", (): void => {
     const base = larkDraft();
     const charter: Charter = {
