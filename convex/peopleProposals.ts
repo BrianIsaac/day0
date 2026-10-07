@@ -10,6 +10,7 @@ import { appendEvent } from './eventLog';
 import { employeeOwnerScope, ownerScope } from './ownership';
 import { retireEdgesOf } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { proposedValues, sameValues } from '../src/people/proposed-change';
 import { normaliseManagerAddress } from '../src/agent/manager-address';
 import { transcriptTurns, type TranscriptTurn } from '../src/agent/transcript-turns';
 import { charterPeople, charterQuote, type CharterPerson } from '../src/people/charter-people';
@@ -302,12 +303,40 @@ async function proposeEdges(
 }
 
 /**
+ * The change a source proposes to a person the manager confirmed (W13-R3): the title, team and
+ * address it gives that differ from the confirmed ones, with the words that gave them; nothing
+ * when it gives none that differ, has no words, or proposes what the person already holds as its
+ * proposed change. The owner's own row is the Manager card's and is offered no change.
+ */
+function proposedChangeOf(
+  person: Doc<'people'>,
+  proposal: ProposedPerson,
+  address: string | undefined,
+  origin: ProposalOrigin,
+  now: number,
+): NonNullable<Doc<'people'>['proposedChange']> | undefined {
+  if (person.isOwner === true) return undefined;
+  const values = proposedValues(person, {
+    title: proposal.title,
+    team: proposal.team,
+    primaryEmail: address,
+  });
+  const evidence = proposal.evidence[0];
+  if (values === undefined || evidence === undefined) return undefined;
+  if (person.proposedChange !== undefined && sameValues(person.proposedChange, values)) {
+    return undefined;
+  }
+  return { ...values, source: origin.source, evidence, proposedAt: now };
+}
+
+/**
  * Merge a proposal into a person the graph holds, as evidence: the new words, identities nobody
  * holds, the edges it implies as proposals, and, while the person still waits on Confirm, an
  * address, title or team it has none of. A person the manager confirmed (active, or inactive
  * since) keeps the address, title and team as confirmed: a source never writes one, even where the
  * person has none (W13-R3), since the People block prints them to the planner and the executor;
- * the source's words stay as evidence.
+ * the source's words stay as evidence, and what it gives that differs is kept as the person's
+ * proposed change, for the manager to take or dismiss on the card.
  */
 async function mergeProposal(
   ctx: MutationCtx,
@@ -321,8 +350,10 @@ async function mergeProposal(
   const given = normaliseManagerAddress(proposal.email);
   const address = given !== undefined && notTheirs.has(given) ? undefined : given;
   const fills = person.status === 'unverified';
+  const change = fills ? undefined : proposedChangeOf(person, proposal, address, origin, now);
   await ctx.db.patch(person._id, {
     evidence: withEvidence(person.evidence, proposal.evidence),
+    ...(change === undefined ? {} : { proposedChange: change }),
     ...(fills && person.primaryEmail === undefined && address !== undefined
       ? { primaryEmail: address }
       : {}),
