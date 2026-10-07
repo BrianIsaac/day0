@@ -714,8 +714,9 @@ interface PilotTotals {
   /** The items whose prompts carried a documentation selection, and their characters summed. */
   retrievalItems: number;
   retrievalChars: number;
-  /** Of those items, the ones a provider reported usage for, and their input tokens summed. */
+  /** Of those items, the ones a provider reported usage for, their characters and input tokens. */
   tokenItems: number;
+  billedChars: number;
   inputTokens: number;
 }
 
@@ -726,16 +727,40 @@ interface PilotTotals {
 function retrievalTotals(
   documentationChars: ReadonlyMap<string, number>,
   inputTokens: ReadonlyMap<string, number>,
-): Pick<PilotTotals, 'retrievalItems' | 'retrievalChars' | 'tokenItems' | 'inputTokens'> {
-  const billed = [...documentationChars.keys()].flatMap((workItemId) => {
+): Pick<
+  PilotTotals,
+  'retrievalItems' | 'retrievalChars' | 'tokenItems' | 'billedChars' | 'inputTokens'
+> {
+  const billed = [...documentationChars].flatMap(([workItemId, chars]) => {
     const tokens = inputTokens.get(workItemId);
-    return tokens === undefined ? [] : [tokens];
+    return tokens === undefined ? [] : [{ chars, tokens }];
   });
   return {
     retrievalItems: documentationChars.size,
     retrievalChars: [...documentationChars.values()].reduce((total, chars) => total + chars, 0),
     tokenItems: billed.length,
-    inputTokens: billed.reduce((total, tokens) => total + tokens, 0),
+    billedChars: billed.reduce((total, item) => total + item.chars, 0),
+    inputTokens: billed.reduce((total, item) => total + item.tokens, 0),
+  };
+}
+
+/**
+ * The tokens half of the retrieval figure: over the items a provider reported usage for when any
+ * did, so the characters and the tokens describe the same items; else the characters alone.
+ */
+function retrievalTokens(totals: PilotTotals): PilotFigures['retrieval']['tokens'] {
+  if (totals.tokenItems > 0) {
+    return {
+      items: totals.tokenItems,
+      charsPerItem: totals.billedChars / totals.tokenItems,
+      inputTokensPerItem: totals.inputTokens / totals.tokenItems,
+    };
+  }
+  if (totals.retrievalItems === 0) return null;
+  return {
+    items: totals.retrievalItems,
+    charsPerItem: totals.retrievalChars / totals.retrievalItems,
+    inputTokensPerItem: null,
   };
 }
 
@@ -865,15 +890,7 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       hours: totals.estimatedItems > 0 ? totals.estimatedMinutes / 60 : null,
     },
     retrieval: {
-      tokens:
-        totals.retrievalItems === 0
-          ? null
-          : {
-              items: totals.retrievalItems,
-              charsPerItem: totals.retrievalChars / totals.retrievalItems,
-              inputTokensPerItem:
-                totals.tokenItems === 0 ? null : totals.inputTokens / totals.tokenItems,
-            },
+      tokens: retrievalTokens(totals),
       recall: RETRIEVAL_RECALL,
     },
   };
@@ -893,6 +910,7 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),
     retrievalChars: rows.reduce((total, row) => total + row.retrievalChars, 0),
     tokenItems: rows.reduce((total, row) => total + row.tokenItems, 0),
+    billedChars: rows.reduce((total, row) => total + row.billedChars, 0),
     inputTokens: rows.reduce((total, row) => total + row.inputTokens, 0),
   };
 }

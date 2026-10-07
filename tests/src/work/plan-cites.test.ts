@@ -3,13 +3,21 @@ import { goneCitesReason, resolvedPlanCites } from '../../../src/work/plan-cites
 
 const documentation = {
   citations: [
-    { label: 'Handbook/runbooks/refresh-tile.md#Refresh', blockIds: ['b1', 'b2'] },
-    { label: 'Handbook/team/holidays.md#Office holidays', blockIds: ['b3'] },
+    {
+      label: 'Handbook/runbooks/refresh-tile.md#Refresh',
+      blocks: [
+        { id: 'b1', hash: 'h1' },
+        { id: 'b2', hash: 'h2' },
+      ],
+    },
+    { label: 'Handbook/team/holidays.md#Office holidays', blocks: [{ id: 'b3', hash: 'h3' }] },
+    // The same heading printed again further down the page.
+    { label: 'Handbook/team/holidays.md#Office holidays', blocks: [{ id: 'b4', hash: 'h4' }] },
   ],
 };
 
 describe('resolvedPlanCites', (): void => {
-  it('keeps each step’s cites the selection printed, with the blocks under them', (): void => {
+  it('keeps each step’s cites the selection printed, with every block under them', (): void => {
     expect(
       resolvedPlanCites(
         [
@@ -21,8 +29,22 @@ describe('resolvedPlanCites', (): void => {
         documentation,
       ),
     ).toEqual([
-      { step: 1, label: 'Handbook/runbooks/refresh-tile.md#Refresh', blockIds: ['b1', 'b2'] },
-      { step: 3, label: 'Handbook/team/holidays.md#Office holidays', blockIds: ['b3'] },
+      {
+        step: 1,
+        label: 'Handbook/runbooks/refresh-tile.md#Refresh',
+        blocks: [
+          { id: 'b1', hash: 'h1' },
+          { id: 'b2', hash: 'h2' },
+        ],
+      },
+      {
+        step: 3,
+        label: 'Handbook/team/holidays.md#Office holidays',
+        blocks: [
+          { id: 'b3', hash: 'h3' },
+          { id: 'b4', hash: 'h4' },
+        ],
+      },
     ]);
   });
 
@@ -45,9 +67,21 @@ describe('resolvedPlanCites', (): void => {
 });
 
 describe('goneCitesReason', (): void => {
-  it('names each cite whose documentation is gone and says the item needs a new plan', (): void => {
+  it('names the first cite whose documentation is gone or changed and counts the rest', (): void => {
     expect(goneCitesReason(['Handbook/runbooks/refresh-tile.md#Refresh'])).toBe(
-      'The plan cited documentation that is no longer there ("Handbook/runbooks/refresh-tile.md#Refresh"): the page changed after the plan was approved, so the closing phase did not run on steps drawn from it. The item needs a plan drawn from the documentation as it is now.',
+      'Documentation the plan followed has since been changed or removed ("Handbook/runbooks/refresh-tile.md#Refresh"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
     );
+    expect(goneCitesReason(['Handbook/a.md#A', 'Handbook/b.md#B', 'Handbook/c.md#C'])).toContain(
+      '("Handbook/a.md#A" and 2 more)',
+    );
+  });
+
+  it('stays under the failure line’s 300 characters, however long the cite', (): void => {
+    const reason = goneCitesReason([
+      `Handbook/${'deep/'.repeat(40)}page.md#Heading`,
+      'Handbook/b.md#B',
+    ]);
+    expect(reason.length).toBeLessThanOrEqual(300);
+    expect(reason).toContain('..." and 1 more)');
   });
 });

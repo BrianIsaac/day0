@@ -135,9 +135,12 @@ const DOCUMENTATION_SITE_WORDS: Readonly<Record<string, string>> = {
 function documentationSelectedLabel(payload: Read<'work.documentation-selected'>): string {
   const site = text(payload.site);
   const siteWords = site ? ` · ${DOCUMENTATION_SITE_WORDS[site] ?? site}` : '';
-  const chars = typeof payload.chars === 'number' ? payload.chars.toLocaleString('en-GB') : '?';
-  const blocks = Array.isArray(payload.blockIds) ? payload.blockIds.length : 0;
-  return `documentation${siteWords} · ${chars} characters in ${blocks} ${blocks === 1 ? 'block' : 'blocks'}`;
+  const sections = Array.isArray(payload.blockIds) ? payload.blockIds.length : 0;
+  const amount =
+    typeof payload.chars === 'number'
+      ? ` · ${payload.chars.toLocaleString('en-GB')} characters from ${sections} ${sections === 1 ? 'section' : 'sections'}`
+      : '';
+  return `documentation${siteWords}${amount}`;
 }
 
 /**

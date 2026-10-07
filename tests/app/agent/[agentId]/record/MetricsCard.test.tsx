@@ -80,7 +80,7 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toMatch(/hours saved<span[^>]*>your estimates, internal gauge<\/span>/);
     expect(markup).toContain('1.3 h over 2 items');
     // The retrieval figure is measured since wave 14 (14-R): this backend shape carries no recall.
-    expect(markup).toContain('no selection read yet; recall not graded');
+    expect(markup).toContain('no documentation counted yet; recall not tested yet');
   });
 });
 

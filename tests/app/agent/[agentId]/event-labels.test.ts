@@ -477,13 +477,13 @@ describe('the live feed labels', (): void => {
         type: 'work.documentation-selected',
         payload: { site: 'plan', blockIds: ['b1', 'b2'], chars: 6210 },
       }),
-    ).toBe('documentation · plan draft · 6,210 characters in 2 blocks');
+    ).toBe('documentation · plan draft · 6,210 characters from 2 sections');
     expect(
       eventLabel({
         type: 'work.documentation-selected',
         payload: { site: 'closing', blockIds: ['b1'], chars: 980 },
       }),
-    ).toBe('documentation · closing · 980 characters in 1 block');
+    ).toBe('documentation · closing · 980 characters from 1 section');
   });
 
   it('labels the model-call and restart events in words (P7-18)', (): void => {

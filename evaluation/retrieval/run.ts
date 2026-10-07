@@ -21,7 +21,13 @@ function stamp(now: Date): string {
  */
 export async function runRetrievalGrade(now = new Date()): Promise<string> {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const evidence = buildRetrievalGrade(commit, now);
+  // A grade taken before the change it grades is committed (the commit that tracks it carries
+  // the change too) says so, rather than naming a commit whose selector it did not grade.
+  const uncommitted =
+    execFileSync('git', ['status', '--porcelain', '--', 'src', 'evaluation/retrieval'], {
+      encoding: 'utf8',
+    }).trim() !== '';
+  const evidence = { ...buildRetrievalGrade(commit, now), uncommittedChanges: uncommitted };
   const directory = resolve('evaluation/retrieval', stamp(now));
   await mkdir(directory, { recursive: true });
   await Promise.all([

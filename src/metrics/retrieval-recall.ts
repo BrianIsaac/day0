@@ -10,6 +10,6 @@ export const RETRIEVAL_RECALL: RetrievalRecall = {
   pages: 0.95,
   blocks: 0.9333333333333333,
   cases: 30,
-  gradedAt: '2026-10-07T19:39:48.260Z',
-  commit: '6c2963b22cbb6d5bdd3a055702a2732ba8d6578f',
+  gradedAt: '2026-10-07T20:11:36.367Z',
+  commit: 'b86760654f0a6aae45193178420d4ff8b24f1ead',
 };

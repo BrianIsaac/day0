@@ -330,7 +330,9 @@ describe('the company supervision card', (): void => {
     expect(priyaRow).toContain('1 of 2 answers');
     expect(priyaRow).toContain('1.5 h over 2 items');
     // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
-    expect(priyaRow).toContain('no selection read yet; recall 95% of pages, 93% of sections');
+    expect(priyaRow).toContain(
+      'no documentation counted yet; recall 95% of pages and 93% of sections on 30 test items',
+    );
     expect(pilot).not.toContain('not measured yet');
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
@@ -354,13 +356,13 @@ describe('the retrieval figure (14-R)', (): void => {
         }),
       ),
     ).toBe(
-      '6,210 characters an item against 31,403 input tokens; recall 95% of pages, 93% of sections',
+      '6,210 characters of documentation an item; 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items',
     );
   });
 
-  it('says the recall is not graded when a backend before 0.18.0 answers none', (): void => {
+  it('says the recall is not tested yet when a backend before 0.18.0 answers none', (): void => {
     expect(retrievalFigure.value(figures({ tokens: null, recall: null }))).toBe(
-      'no selection read yet; recall not graded',
+      'no documentation counted yet; recall not tested yet',
     );
   });
 
@@ -372,7 +374,9 @@ describe('the retrieval figure (14-R)', (): void => {
           recall: GRADED_RECALL,
         }),
       ),
-    ).toBe('980 characters an item; recall 95% of pages, 93% of sections');
+    ).toBe(
+      '980 characters of documentation an item; recall 95% of pages and 93% of sections on 30 test items',
+    );
   });
 });
 

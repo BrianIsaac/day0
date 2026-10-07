@@ -261,12 +261,14 @@ describe('plan drafter grounding', (): void => {
           site: 'plan',
           blockIds: ['b1'],
           chars: 100,
-          citations: [{ label: 'Handbook/tile.md#Refresh', blockIds: ['b1'] }],
+          citations: [{ label: 'Handbook/tile.md#Refresh', blocks: [{ id: 'b1', hash: 'h1' }] }],
         },
       },
       now,
     });
-    expect(plan.cites).toEqual([{ step: 1, label: 'Handbook/tile.md#Refresh', blockIds: ['b1'] }]);
+    expect(plan.cites).toEqual([
+      { step: 1, label: 'Handbook/tile.md#Refresh', blocks: [{ id: 'b1', hash: 'h1' }] },
+    ]);
   });
 
   it('asks the real planner, and only the real planner, to name each step’s cites (14-R)', (): void => {

@@ -28,13 +28,26 @@ export const RECALL_BAR = { pages: 0.9, blocks: 0.8 } as const;
 /** The most blocks the emulated scout keeps of one source for one query, as the selection asks. */
 const SCOUT_LIMIT_PER_SOURCE = 12;
 
+/** Labels and the share of them found. */
+export interface RecallOf {
+  expected: string[];
+  missed: string[];
+  recall: number;
+}
+
 /** One labelled item's grade. */
 export interface RetrievalObservation {
   id: string;
   /** The labelled pages and the share of them the prompt carries. */
-  pages: { expected: string[]; missed: string[]; recall: number };
+  pages: RecallOf;
   /** The labelled sections and the share of them the prompt carries a block of. */
-  sections: { expected: string[]; missed: string[]; recall: number };
+  sections: RecallOf;
+  /**
+   * The ranked pick alone (at most 6 pages and 12 blocks) against the labels the pages always
+   * included do not cover: what the search and the re-score found. Null where those pages cover
+   * every label.
+   */
+  ranked: { pages: RecallOf | null; sections: RecallOf | null };
   /** The pages always included, then the picked pages, by key. */
   promptPages: string[];
   /** The documentation characters the prompt carries. */
@@ -47,10 +60,14 @@ export interface RetrievalGradeEvidence {
   experiment: 'day0-retrieval-recall';
   generatedAt: string;
   commit: string;
+  /** Whether the selector or the set had changes not yet committed at `commit` when graded. */
+  uncommittedChanges?: boolean;
   cases: number;
   observations: RetrievalObservation[];
-  /** The mean recall over the cases, at 6 pages and at 12 blocks. */
+  /** The mean recall over the cases of what the prompt carries, at 6 pages and at 12 blocks. */
   recall: { pages: number; blocks: number };
+  /** The mean recall of the ranked pick alone, over the cases with labels left to find. */
+  rankedRecall: { pages: number; blocks: number; pageCases: number; blockCases: number };
   bar: typeof RECALL_BAR;
   meetsBar: boolean;
   noModelCalls: true;
@@ -104,10 +121,14 @@ export function scoutedBlocks(
   return [...found.values()];
 }
 
-/** The share of `expected` in `found`; 1 when nothing was expected. */
-function recallOf(expected: readonly string[], found: ReadonlySet<string>): number {
-  if (expected.length === 0) return 1;
-  return expected.filter((key) => found.has(key)).length / expected.length;
+/** The labels, those of them not found, and the share found; 1 when nothing was expected. */
+function recallOf(expected: readonly string[], found: ReadonlySet<string>): RecallOf {
+  const missed = expected.filter((key) => !found.has(key));
+  return {
+    expected: [...expected],
+    missed,
+    recall: expected.length === 0 ? 1 : (expected.length - missed.length) / expected.length,
+  };
 }
 
 /** Grade one labelled item: the planner's selection for it, against what a person would open. */
@@ -136,27 +157,28 @@ export function gradeCase(
   const promptPages = [...new Set([...selection.always, ...picked.map((block) => block.page)])];
   const sectionOf = (page: string, headingPath: readonly string[]): string =>
     `${page}#${headingPath[headingPath.length - 1] ?? ''}`;
-  const sections = new Set([
-    ...selection.always.flatMap((key) =>
-      pageBlocksOf(byKey.get(key)!).map((block) => sectionOf(key, block.headingPath)),
-    ),
-    ...picked.map((block) =>
-      sectionOf(block.page, pageBlocksOf(byKey.get(block.page)!)[block.index].headingPath),
-    ),
-  ]);
+  const pickedSections = picked.map((block) =>
+    sectionOf(block.page, pageBlocksOf(byKey.get(block.page)!)[block.index].headingPath),
+  );
+  const alwaysSections = selection.always.flatMap((key) =>
+    pageBlocksOf(byKey.get(key)!).map((block) => sectionOf(key, block.headingPath)),
+  );
   const expectedSections = entry.sections.map((section) => `${section.page}#${section.heading}`);
-  const foundPages = new Set(promptPages);
+  const always = new Set(selection.always);
+  const leftPages = entry.pages.filter((key) => !always.has(key));
+  const leftSections = entry.sections
+    .filter((section) => !always.has(section.page))
+    .map((section) => `${section.page}#${section.heading}`);
   return {
     id: entry.id,
-    pages: {
-      expected: [...entry.pages],
-      missed: entry.pages.filter((key) => !foundPages.has(key)),
-      recall: recallOf(entry.pages, foundPages),
-    },
-    sections: {
-      expected: expectedSections,
-      missed: expectedSections.filter((key) => !sections.has(key)),
-      recall: recallOf(expectedSections, sections),
+    pages: recallOf(entry.pages, new Set(promptPages)),
+    sections: recallOf(expectedSections, new Set([...alwaysSections, ...pickedSections])),
+    ranked: {
+      pages:
+        leftPages.length === 0
+          ? null
+          : recallOf(leftPages, new Set(picked.map((block) => block.page))),
+      sections: leftSections.length === 0 ? null : recallOf(leftSections, new Set(pickedSections)),
     },
     promptPages,
     chars: selection.chars,
@@ -178,6 +200,18 @@ export function buildRetrievalGrade(commit: string, now = new Date()): Retrieval
     pages: mean(observations.map((row) => row.pages.recall)),
     blocks: mean(observations.map((row) => row.sections.recall)),
   };
+  const rankedPages = observations.flatMap((row) =>
+    row.ranked.pages ? [row.ranked.pages.recall] : [],
+  );
+  const rankedBlocks = observations.flatMap((row) =>
+    row.ranked.sections ? [row.ranked.sections.recall] : [],
+  );
+  const rankedRecall = {
+    pages: mean(rankedPages),
+    blocks: mean(rankedBlocks),
+    pageCases: rankedPages.length,
+    blockCases: rankedBlocks.length,
+  };
   return {
     schemaVersion: 1,
     experiment: 'day0-retrieval-recall',
@@ -186,8 +220,11 @@ export function buildRetrievalGrade(commit: string, now = new Date()): Retrieval
     cases: observations.length,
     observations,
     recall,
+    rankedRecall,
     bar: RECALL_BAR,
-    meetsBar: recall.pages >= RECALL_BAR.pages && recall.blocks >= RECALL_BAR.blocks,
+    meetsBar: [recall, rankedRecall].every(
+      (row) => row.pages >= RECALL_BAR.pages && row.blocks >= RECALL_BAR.blocks,
+    ),
     noModelCalls: true,
   };
 }
@@ -201,19 +238,23 @@ function percent(value: number): string {
 export function renderRetrievalGrade(evidence: RetrievalGradeEvidence): string {
   const rows = evidence.observations.map(
     (row) =>
-      `| ${row.id} | ${percent(row.pages.recall)} | ${percent(row.sections.recall)} | ${row.chars.toLocaleString('en-GB')} | ${
+      `| ${row.id} | ${percent(row.pages.recall)} | ${percent(row.sections.recall)} | ${row.ranked.pages ? percent(row.ranked.pages.recall) : '-'} | ${row.ranked.sections ? percent(row.ranked.sections.recall) : '-'} | ${row.chars.toLocaleString('en-GB')} | ${
         [...row.pages.missed, ...row.sections.missed].join(', ') || 'none'
       } |`,
   );
   return [
     '# Retrieval recall',
     '',
-    `Generated ${evidence.generatedAt} at commit \`${evidence.commit}\`, without a model: the selector over the labelled set (n=${evidence.cases}), the scout emulated (the backend's ranking cannot run in a test).`,
+    `Generated ${evidence.generatedAt} at commit \`${evidence.commit}\`${evidence.uncommittedChanges ? ' with the uncommitted changes the commit that tracks this grade carries' : ''}, without a model: the selector over the labelled set (n=${evidence.cases}), the scout emulated (the backend's ranking cannot run in a test).`,
     '',
-    `Recall at 6 pages: **${percent(evidence.recall.pages)}** (bar ${percent(evidence.bar.pages)}). Recall at 12 blocks: **${percent(evidence.recall.blocks)}** (bar ${percent(evidence.bar.blocks)}). ${evidence.meetsBar ? 'At or above the bar.' : 'Below the bar.'}`,
+    `What the prompt carries (the pages always included and the ranked pick of at most 6 pages and 12 blocks): recall of pages **${percent(evidence.recall.pages)}**, of sections **${percent(evidence.recall.blocks)}**.`,
     '',
-    '| Item | Pages | Sections | Characters | Missed |',
-    '|---|---|---|---|---|',
+    `The ranked pick alone, against the labels the pages always included leave (${evidence.rankedRecall.pageCases} items with pages left, ${evidence.rankedRecall.blockCases} with sections left): recall at 6 pages **${percent(evidence.rankedRecall.pages)}**, at 12 blocks **${percent(evidence.rankedRecall.blocks)}**.`,
+    '',
+    `R2's bar: ${percent(evidence.bar.pages)} of pages, ${percent(evidence.bar.blocks)} of blocks, on both. ${evidence.meetsBar ? 'At or above the bar.' : 'Below the bar.'}`,
+    '',
+    '| Item | Pages | Sections | Ranked pages | Ranked sections | Characters | Missed |',
+    '|---|---|---|---|---|---|---|',
     ...rows,
     '',
   ].join('\n');

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-retrieval-recall",
-  "generatedAt": "2026-10-07T19:39:48.260Z",
-  "commit": "6c2963b22cbb6d5bdd3a055702a2732ba8d6578f",
+  "generatedAt": "2026-10-07T20:11:36.367Z",
+  "commit": "b86760654f0a6aae45193178420d4ff8b24f1ead",
   "cases": 30,
   "observations": [
     {
@@ -22,6 +22,16 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": null
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -54,6 +64,26 @@
         ],
         "recall": 0.5
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/runbooks/close-status-note.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:finance/runbooks/close-status-note.md#Rules",
+            "company:finance/handbook.md#How the team works"
+          ],
+          "missed": [
+            "company:finance/handbook.md#How the team works"
+          ],
+          "recall": 0.5
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:finance/runbooks/close-status-note.md",
@@ -82,6 +112,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/netledger.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/netledger.md#NetLedger",
+            "company:finance/handbook.md#How the team works"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -113,6 +161,23 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/handbook.md",
+            "company:finance/runbooks/close-status-note.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:finance/handbook.md#The close calendar"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:finance/handbook.md",
@@ -137,6 +202,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/netledger.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/netledger.md#NetLedger",
+            "company:finance/handbook.md#The close calendar"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -170,6 +253,24 @@
         ],
         "recall": 0.5
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#Notices and ETAs"
+          ],
+          "missed": [
+            "company:logistics/handbook.md#Notices and ETAs"
+          ],
+          "recall": 0
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/runbooks/how-to-update-ticket.md",
@@ -197,6 +298,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/exception-note.md",
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/exception-note.md#Thread reply shape",
+            "company:logistics/handbook.md#The exception process"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -226,6 +345,22 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#Customer notice templates"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -260,6 +395,29 @@
         ],
         "recall": 0
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md",
+            "company:onboarding.md"
+          ],
+          "missed": [
+            "company:onboarding.md"
+          ],
+          "recall": 0.5
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#The exception process",
+            "company:onboarding.md#Working rules for every team"
+          ],
+          "missed": [
+            "company:logistics/handbook.md#The exception process",
+            "company:onboarding.md#Working rules for every team"
+          ],
+          "recall": 0
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:logistics/handbook.md",
@@ -287,6 +445,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md",
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Where it is",
+            "company:logistics/handbook.md#What the desk uses"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -321,6 +497,22 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Current approved figure"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-refresh-the-tile.md",
         "company:revops/runbooks/q3-close-checklist.md",
@@ -347,6 +539,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:revops/runbooks/how-to-refresh-the-tile.md",
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Action shapes",
+            "company:systems/looker-pipeline-tile.md#Working rules"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -375,6 +585,10 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -406,6 +620,16 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": null
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -439,6 +663,22 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Current approved figure"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/handbook.md",
@@ -468,6 +708,24 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/northstar-crm.md",
+            "company:revops/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/northstar-crm.md#Northstar CRM",
+            "company:revops/handbook.md#Cold-start posture"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:systems/northstar-crm.md",
@@ -494,6 +752,22 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Access"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -523,6 +797,23 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "rehearsal:slack-day0-app.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "rehearsal:slack-day0-app.md#How an automation gets its own Slack identity",
+            "rehearsal:slack-day0-app.md#Manifest template"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "rehearsal:slack-day0-app.md",
@@ -549,6 +840,23 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:slack-automation-policy.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:slack-automation-policy.md#The channels, by team"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -580,6 +888,25 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:revops/handbook.md",
+            "company:onboarding.md"
+          ],
+          "missed": [
+            "company:onboarding.md"
+          ],
+          "recall": 0.5
+        },
+        "sections": {
+          "expected": [
+            "company:revops/handbook.md#First week"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/handbook.md",
@@ -606,6 +933,23 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:onboarding.md",
+            "notion:slack-automation-policy.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:onboarding.md#Escalation"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:onboarding.md",
@@ -631,6 +975,10 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -660,6 +1008,10 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -694,6 +1046,18 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:slack-automation-policy.md"
+          ],
+          "missed": [
+            "notion:slack-automation-policy.md"
+          ],
+          "recall": 0
+        },
+        "sections": null
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/runbooks/how-to-update-ticket.md",
@@ -727,6 +1091,24 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md",
+            "company:revops/runbooks/how-to-refresh-the-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Working rules",
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/handbook.md",
@@ -755,6 +1137,24 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md",
+            "company:revops/runbooks/how-to-refresh-the-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Working rules",
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -787,6 +1187,22 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Working rules"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:revops/runbooks/how-to-update-ticket.md",
@@ -814,6 +1230,22 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#交接前检查"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:logistics/runbooks/warehouse-handover-zh.md"
@@ -836,6 +1268,22 @@
         ],
         "missed": [],
         "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#记录异常"
+          ],
+          "missed": [],
+          "recall": 1
+        }
       },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
@@ -863,6 +1311,22 @@
         "missed": [],
         "recall": 1
       },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#发布交接结果"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
       "promptPages": [
         "company:revops/runbooks/how-to-post-slack.md",
         "company:logistics/runbooks/warehouse-handover-zh.md"
@@ -874,10 +1338,17 @@
     "pages": 0.95,
     "blocks": 0.9333333333333333
   },
+  "rankedRecall": {
+    "pages": 0.9259259259259259,
+    "blocks": 0.8958333333333334,
+    "pageCases": 27,
+    "blockCases": 24
+  },
   "bar": {
     "pages": 0.9,
     "blocks": 0.8
   },
   "meetsBar": true,
-  "noModelCalls": true
+  "noModelCalls": true,
+  "uncommittedChanges": true
 }

@@ -44,7 +44,9 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  CITE_LINES_EXECUTOR,
   deferralAudit,
+  executorInstructions,
   executorPreamble,
   runDependentSkill,
   runSkill,
@@ -174,6 +176,31 @@ describe('documentation grounding in the executor prompts', (): void => {
     expect(before(phaseOne)).toBe(true);
     expect(before(closing)).toBe(true);
     expect(before(mock)).toBe(false);
+  });
+
+  it('tells a real run what the cite lines are only when its documentation carries them (14-R)', (): void => {
+    const cited = {
+      ...mockEnv,
+      teamDocs: [
+        {
+          slug: 'team-handbook',
+          title: 'Team handbook',
+          body: '[cite: Handbook/handbook.md#Close]\nClose checklist: reconcile the ledger.',
+        },
+      ],
+    } as MockSurfaceSnapshot;
+    const prompt = (mode: 'real' | 'mock', env: MockSurfaceSnapshot): string =>
+      executorInstructions({
+        mode,
+        autonomousActions: false,
+        skillBody: '# Skill',
+        surfaces: [],
+        mockEnv: env,
+        now: 0,
+      });
+    expect(prompt('real', cited)).toContain(CITE_LINES_EXECUTOR);
+    expect(prompt('real', mockEnv)).not.toContain(CITE_LINES_EXECUTOR);
+    expect(prompt('mock', cited)).not.toContain(CITE_LINES_EXECUTOR);
   });
 
   it('tells the real-mode executor that loaded documentation is citable evidence', (): void => {

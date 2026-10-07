@@ -2241,13 +2241,18 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(
       computeAgentMetrics(events, [item('a'), item('b'), item('c')], []).pilot.retrieval,
     ).toEqual({
-      tokens: { items: 2, charsPerItem: 6_000, inputTokensPerItem: 20_000 },
+      // Item a alone reported usage, so both halves describe it: b's 2,000 characters wait.
+      tokens: { items: 1, charsPerItem: 10_000, inputTokensPerItem: 20_000 },
       recall: RETRIEVAL_RECALL,
     });
     expect(computeAgentMetrics([], [], []).pilot.retrieval).toEqual({
       tokens: null,
       recall: RETRIEVAL_RECALL,
     });
+    const unbilled = events.filter((row) => row.type === 'work.documentation-selected');
+    expect(
+      computeAgentMetrics(unbilled, [item('a'), item('b')], []).pilot.retrieval.tokens,
+    ).toEqual({ items: 2, charsPerItem: 6_000, inputTokensPerItem: null });
   });
 
   it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {

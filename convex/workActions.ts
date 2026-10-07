@@ -1272,6 +1272,7 @@ async function holdDay0Actions(
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
+    await refuseGoneCites(ctx, args.plan);
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
     const mockEnv = await siteSnapshot(ctx, {
       agentId: args.agentId,
@@ -1449,7 +1450,12 @@ async function holdDay0Actions(
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
-    if (SURFACE_MODE === 'real' && itemBoundModelFailure(err) === undefined) {
+    // Gone or changed documentation is about the item: a resume would read the same blocks.
+    if (
+      SURFACE_MODE === 'real' &&
+      itemBoundModelFailure(err) === undefined &&
+      !(err instanceof GoneCitesError)
+    ) {
       const resumed = await ctx.runMutation(internal.work.resumeExecution, {
         workItemId: args.workItemId,
         runId: args.runId,
@@ -4110,29 +4116,50 @@ async function planGrounding(
 }
 
 /**
- * Refuse a closing phase whose plan cites documentation that is gone (wave 14, 14-R): a block
- * the plan's steps were drawn from was deleted, or its page removed, after the plan was
- * approved, so the steps no longer rest on what the team has written down. Real mode only;
- * a plan with no cites passes.
+ * Refuse to run a plan whose cited documentation is gone or changed (wave 14, 14-R): a block a
+ * step was drawn from was deleted, rewritten, or its page removed, after the plan was approved,
+ * so the step no longer rests on what the team has written down. Checked before the first phase
+ * writes and again before the closing phase authors. Real mode only; a plan with no cites passes.
  *
- * @throws Error naming each cite whose block is gone.
+ * @throws Error naming the cites whose blocks are gone or changed.
  */
 async function refuseGoneCites(ctx: ActionCtx, plan: Pick<ExecutionPlan, 'cites'>): Promise<void> {
   if (SURFACE_MODE !== 'real' || plan.cites === undefined || plan.cites.length === 0) return;
-  const missing = new Set(
-    await ctx.runQuery(internal.docSelection.missingCitedBlocks, {
-      blockIds: plan.cites.flatMap((cite) => cite.blockIds),
-    }),
+  const blocks = plan.cites.flatMap((cite) => cite.blocks);
+  const parts: Array<typeof blocks> = [];
+  for (let start = 0; start < blocks.length; start += CITE_CHECK_BATCH) {
+    parts.push(blocks.slice(start, start + CITE_CHECK_BATCH));
+  }
+  const changed = new Set(
+    (
+      await Promise.all(
+        parts.map(
+          async (part) =>
+            await ctx.runQuery(internal.docSelection.changedCitedBlocks, {
+              blocks: part.map((block) => ({
+                id: block.id,
+                ...(block.hash !== undefined ? { hash: block.hash } : {}),
+              })),
+            }),
+        ),
+      )
+    ).flat(),
   );
   const gone = [
     ...new Set(
       plan.cites
-        .filter((cite) => cite.blockIds.some((id) => missing.has(id)))
+        .filter((cite) => cite.blocks.some((block) => changed.has(block.id)))
         .map((cite) => cite.label),
     ),
   ];
-  if (gone.length > 0) throw new Error(goneCitesReason(gone));
+  if (gone.length > 0) throw new GoneCitesError(goneCitesReason(gone));
 }
+
+/** A plan whose cited documentation is gone or changed: a failure of the item, not a retryable one. */
+class GoneCitesError extends Error {}
+
+/** The cited blocks one check reads; the check's own bound is the search's 512. */
+const CITE_CHECK_BATCH = 256;
 
 /**
  * Read an employee's environment for one model call site. In real mode the guides and team

@@ -12,6 +12,8 @@ import {
   selectDocumentation,
   selectionRequestFor,
   selectionSwitchedOff,
+  carriesCiteLines,
+  withoutCiteLines,
   type SelectablePage,
   type SelectableBlock,
   type SelectionRequest,
@@ -48,6 +50,15 @@ function everyBlock(pages: readonly SelectablePage[]): SelectableBlock[] {
     pageBlocksOf(entry).map((block) => ({ ...block, id: `${entry.key}#${block.index}` })),
   );
 }
+
+/** The closing section of a ticket runbook: the paragraph a procedure contract is parsed from. */
+const TICKET_CLOSING = [
+  '## Closing the loop',
+  '',
+  'When work originated in the ticket-queue, use ticket.update on the originating ticket.',
+  'Set status: done for full completion and in-progress for partial completion.',
+  'Add a one-line comment summarising the work.',
+].join('\n');
 
 const ticketRunbook = page(
   'runbooks/update-ticket.md',
@@ -207,10 +218,44 @@ describe('selectDocumentation', (): void => {
         teamDocs: pages.filter((entry) => entry.category === 'team-doc'),
       }),
     );
+    // The contract's page spends the budget first, then the target surface's guide.
     expect(selection.howToGuides.map((guide) => guide.slug)).toEqual([
-      tileRunbook.slug,
       ticketRunbook.slug,
+      tileRunbook.slug,
     ]);
+  });
+
+  it('keeps every procedure contract when the pages always included outgrow the bound', (): void => {
+    const filler = (word: string): string =>
+      Array.from(
+        { length: 9 },
+        (_unused, section) =>
+          `## ${word} part ${section}\n\n${`${word} Looker pipeline tile refresh coverage note. `.repeat(30)}`,
+      ).join('\n\n');
+    // A guide that fills most of the budget first, then a runbook whose contract is its last section.
+    const bigGuide = page(
+      'runbooks/big.md',
+      'How to refresh the tile, in full',
+      filler('big'),
+      'how-to-guide',
+    );
+    const contractLast = page(
+      'runbooks/update-ticket-long.md',
+      'How to update a ticket, in full',
+      `${filler('ticket')}\n\n${TICKET_CLOSING}`,
+      'how-to-guide',
+    );
+    const pages = [bigGuide, contractLast];
+    const whole = parseProcedureContract({ howToGuides: pages, teamDocs: [] });
+    expect(whole.trails).toHaveLength(1);
+    const selection = selectDocumentation({ request, pages, scouted: everyBlock(pages) });
+    expect(selection.chars).toBeLessThanOrEqual(DOCUMENTATION_CHAR_LIMIT);
+    expect(bigGuide.body.length + contractLast.body.length).toBeGreaterThan(
+      DOCUMENTATION_CHAR_LIMIT,
+    );
+    expect(parseProcedureContract(selection).trails.map((trail) => trail.effect)).toEqual(
+      whole.trails.map((trail) => trail.effect),
+    );
   });
 
   it('assembles each page’s blocks in document order under a cite line, and maps each cite to its blocks', (): void => {
@@ -235,11 +280,11 @@ describe('selectDocumentation', (): void => {
     expect(selection.citations).toEqual([
       {
         label: 'Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Sign in',
-        blockIds: [`${tileRunbook.key}#0`],
+        blocks: [{ id: `${tileRunbook.key}#0` }],
       },
       {
         label: 'Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Refresh',
-        blockIds: [`${tileRunbook.key}#1`],
+        blocks: [{ id: `${tileRunbook.key}#1` }],
       },
     ]);
     expect(selection.blockIds).toEqual([`${tileRunbook.key}#0`, `${tileRunbook.key}#1`]);
@@ -511,5 +556,25 @@ describe('the four prompts that carry documentation', (): void => {
     for (const prompt of [planner, obligations, system]) {
       for (const entry of unselected) expect(prompt).not.toContain(`--- ${entry.title} ---`);
     }
+  });
+});
+
+describe('cite lines', (): void => {
+  const body = [
+    '[cite: Handbook/runbooks/refresh-tile.md#Sign in]',
+    'Open the tile.',
+    '',
+    '[cite: Handbook/runbooks/refresh-tile.md#Refresh]',
+    'Press Refresh.',
+  ].join('\n');
+
+  it('are found in assembled documentation and not in a page as written', (): void => {
+    expect(carriesCiteLines(body)).toBe(true);
+    expect(carriesCiteLines(tileRunbook.body)).toBe(false);
+    expect(carriesCiteLines('See [cite: inline] in a sentence.')).toBe(false);
+  });
+
+  it('leave the text a message may quote, from one block into the next', (): void => {
+    expect(withoutCiteLines(body)).toBe('Open the tile.\n\nPress Refresh.');
   });
 });

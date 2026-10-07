@@ -117,13 +117,13 @@ function hours(value: number): string {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} h`;
 }
 
-/** The documentation an item read, against its billed input tokens when a provider reported them. */
+/** The documentation an item read, and the input tokens billed an item where a provider reported them. */
 function retrievalRead(tokens: PilotFigures['retrieval']['tokens']): string {
-  if (tokens === null) return 'no selection read yet';
-  const chars = Math.round(tokens.charsPerItem).toLocaleString('en-GB');
+  if (tokens === null) return 'no documentation counted yet';
+  const chars = `${Math.round(tokens.charsPerItem).toLocaleString('en-GB')} characters of documentation an item`;
   return tokens.inputTokensPerItem === null
-    ? `${chars} characters an item`
-    : `${chars} characters an item against ${Math.round(tokens.inputTokensPerItem).toLocaleString('en-GB')} input tokens`;
+    ? chars
+    : `${chars}; ${Math.round(tokens.inputTokensPerItem).toLocaleString('en-GB')} input tokens billed an item`;
 }
 
 /** One of decision A9's pilot figures as the Supervision cards print it. */
@@ -186,14 +186,14 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   },
   {
     label: 'Retrieval',
-    unit: 'documentation an item, and its recall',
+    unit: 'documentation read per item, and recall',
     definition:
-      'The documentation characters the prompts carried for an item, beside the input tokens its model calls were billed, and how much of what a person would open the selection finds on the labelled set: the share of the pages and of the sections.',
+      'The characters of documentation the model was given for an item, beside the input tokens billed for the item where the provider reported them. Recall is a test result: on the labelled test items, where people marked the pages and sections they would open, the share Day0 chose too.',
     value: ({ retrieval }) =>
       `${retrievalRead(retrieval.tokens)}; ${
         retrieval.recall === null
-          ? 'recall not graded'
-          : `recall ${Math.round(retrieval.recall.pages * 100)}% of pages, ${Math.round(retrieval.recall.blocks * 100)}% of sections`
+          ? 'recall not tested yet'
+          : `recall ${Math.round(retrieval.recall.pages * 100)}% of pages and ${Math.round(retrieval.recall.blocks * 100)}% of sections on ${retrieval.recall.cases} test items`
       }`,
   },
 ];

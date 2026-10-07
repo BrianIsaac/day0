@@ -1,15 +1,15 @@
-import type { DocumentationSelectionRecord, PlanCite } from './types';
+import type { CitedBlock, DocumentationSelectionRecord, PlanCite } from './types';
 
 /*
  * A plan's cites (wave 14, 14-R): the documentation each step follows, named by the planner
  * from the cite lines its selection printed, and checked by the closing phase before it runs.
  */
 
-/** A cite as the planner may write it: the words alone, or the whole `[cite: ...]` line. */
+/** A cite as the planner may write it: the words alone, `cite: ` before them, or the whole line. */
 function citeWords(value: string): string {
   const trimmed = value.trim();
-  const bracketed = /^\[cite:\s*(.*?)\s*\]$/i.exec(trimmed);
-  return bracketed ? bracketed[1] : trimmed;
+  const written = /^\[?cite:\s*(.*?)\s*\]?$/i.exec(trimmed);
+  return written ? written[1] : trimmed;
 }
 
 /**
@@ -27,21 +27,29 @@ export function resolvedPlanCites(
   documentation: Pick<DocumentationSelectionRecord, 'citations'> | undefined,
 ): PlanCite[] {
   if (!stepCites || !documentation) return [];
-  const printed = new Map(documentation.citations.map((citation) => [citation.label, citation]));
+  // One label printed twice (a heading repeated on a page) stands for every block under it.
+  const printed = new Map<string, CitedBlock[]>();
+  for (const citation of documentation.citations) {
+    printed.set(citation.label, [...(printed.get(citation.label) ?? []), ...citation.blocks]);
+  }
   return stepCites.slice(0, steps).flatMap((labels, index) =>
     [...new Set(labels.map(citeWords))].flatMap((label): PlanCite[] => {
-      const citation = printed.get(label);
-      return citation ? [{ step: index + 1, label, blockIds: [...citation.blockIds] }] : [];
+      const blocks = printed.get(label);
+      return blocks ? [{ step: index + 1, label, blocks }] : [];
     }),
   );
 }
 
 /**
- * Why the closing phase did not run on a plan whose cited documentation is gone.
+ * Why a run did not go on with a plan whose cited documentation is gone or changed: kept under
+ * the failure line's 300 characters, so it names the first cite and counts the rest.
  *
- * @param labels - The cites whose blocks are gone, each once.
+ * @param labels - The cites whose blocks are gone or changed, each once.
  */
 export function goneCitesReason(labels: readonly string[]): string {
-  const named = labels.map((label) => `"${label}"`).join(', ');
-  return `The plan cited documentation that is no longer there (${named}): the page changed after the plan was approved, so the closing phase did not run on steps drawn from it. The item needs a plan drawn from the documentation as it is now.`;
+  const [first, ...rest] = labels;
+  const named = `"${first.length > 90 ? `${first.slice(0, 87)}...` : first}"${
+    rest.length > 0 ? ` and ${rest.length} more` : ''
+  }`;
+  return `Documentation the plan followed has since been changed or removed (${named}), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.`;
 }

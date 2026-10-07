@@ -86,7 +86,7 @@ export const DECLARED_OBLIGATIONS_PLANNER = [
  * byte-identical.
  */
 export const CITED_STEPS_PLANNER = [
-  '  - The documentation prints each block under a `[cite: ...]` line. Declare `stepCites`: one row per step in order, each the cite lines (the words inside the brackets, exactly as printed) of the blocks that step follows, or an empty row for a step no block prescribes.',
+  '  - The documentation prints its text under lines of the form `[cite: <source>/<page>#<heading path>]`. Declare `stepCites`: one list per step, in step order. In each list put the text between `[cite: ` and the closing `]` of every cite line whose text that step follows, copied character for character (hyphens, `#` and `>` included, whatever the punctuation rule says of dashes). Use an empty list for a step no printed text prescribes, and null when no cite line is printed. Never invent a cite, and never copy a cite line into a step or `riskNotes`.',
 ];
 
 /**
@@ -881,7 +881,9 @@ export function renderPlanSurfaces(surfaces: readonly SurfaceRecord[], now: numb
  * documentation travel when the caller loads them, so a plan is drawn from
  * what the agent can reach and what the team has written down rather than
  * from the charter alone; a caller that passes neither gets the prompt as it
- * was before those sections existed.
+ * was before those sections existed. The documentation sits before the
+ * candidate (wave 14, 14-R), the surfaces after it; only real mode passes
+ * documentation.
  *
  * Args:
  *   args: The candidate, the charter and the optional grounding.

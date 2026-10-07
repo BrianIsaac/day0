@@ -140,7 +140,9 @@ function procedureExcerpt(document: ProcedureDocument, pattern: RegExp): string 
     document.body
       .split('\n')
       .map((line) => line.trim())
-      .find((line) => pattern.test(line)) ?? document.body.trim().slice(0, 320)
+      // A cite line labels the text below it (wave 14, 14-R); it is never the procedure's words.
+      .find((line) => !line.startsWith('[cite: ') && pattern.test(line)) ??
+    document.body.trim().slice(0, 320)
   );
 }
 

@@ -9,6 +9,7 @@ import {
   type ShapeSurface,
 } from '../work/skill-shape';
 import type {
+  CitedBlock,
   DocumentationCitation,
   DocumentationSelectionRecord,
   MockSurfaceSnapshot,
@@ -147,6 +148,8 @@ export interface SelectableBlock {
   readonly index: number;
   readonly headingPath: readonly string[];
   readonly text: string;
+  /** The stored block's hash, when the reader had it (`docBlocks.hash`). */
+  readonly hash?: string;
 }
 
 /** One cite line and the stored blocks under it. */
@@ -182,6 +185,22 @@ export interface SelectionInput {
    * stored yet (its split is pending) is split here.
    */
   readonly pageBlocks?: ReadonlyMap<string, readonly SelectableBlock[]>;
+}
+
+/** A cite line as the selection prints it, alone on its line. */
+const CITE_LINE = /^\[cite: [^\n]*\]$/m;
+
+/** Whether text carries a cite line: documentation the selection assembled. */
+export function carriesCiteLines(text: string): boolean {
+  return CITE_LINE.test(text);
+}
+
+/**
+ * Documentation text without its cite lines: what a message may quote. A cite line labels where
+ * the text below it comes from; a quote that runs from one block into the next must not meet it.
+ */
+export function withoutCiteLines(text: string): string {
+  return text.replace(/^\[cite: [^\n]*\]\n?/gm, '');
 }
 
 /** A block's key: its row id, or its page and place for a block split here. */
@@ -453,19 +472,24 @@ function assemblePage(
   blocks: readonly SelectableBlock[],
 ): { body: string; citations: Citation[] } {
   const ordered = [...blocks].sort((left, right) => left.index - right.index);
-  const citations: Array<{ label: string; blockIds: string[] }> = [];
+  const citations: Array<{ label: string; blocks: CitedBlock[] }> = [];
   const parts: string[] = [];
   let previous: string | undefined;
   for (const block of ordered) {
     const label = citeLabel(page, block.headingPath);
     if (label !== previous) {
       parts.push(`${parts.length > 0 ? '\n' : ''}[cite: ${label}]\n${block.text}`);
-      citations.push({ label, blockIds: [] });
+      citations.push({ label, blocks: [] });
       previous = label;
     } else {
       parts.push(`\n${block.text}`);
     }
-    if (block.id !== undefined) citations[citations.length - 1].blockIds.push(block.id);
+    if (block.id !== undefined) {
+      citations[citations.length - 1].blocks.push({
+        id: block.id,
+        ...(block.hash !== undefined ? { hash: block.hash } : {}),
+      });
+    }
   }
   return { body: parts.join('\n'), citations };
 }
@@ -492,33 +516,34 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   const picked = pickBlocks(ranked, alwaysSet);
   const rankOf = new Map(ranked.map((entry, index) => [blockKey(entry.block), index]));
 
+  const contract = new Set(always.filter((key) => yieldsContract(byKey.get(key)!)));
+  const alwaysPages = always.map((key) => {
+    const page = byKey.get(key)!;
+    const stored = input.pageBlocks?.get(key) ?? [];
+    return { page, blocks: stored.length > 0 ? stored : pageBlocksOf(page) };
+  });
+  const pickedPages = pagesInPickOrder(picked).map((key) => ({
+    page: byKey.get(key)!,
+    blocks: picked.filter((block) => block.pageKey === key),
+  }));
+  // The order the budget is spent in: every page a procedure contract is parsed from, then the
+  // other pages always included, then the ranked pick; guides first within each (R4).
   const candidates: Assembled[] = [
-    // Guides first (R4): the always-included guides, then the always-included team pages.
-    ...always
-      .map((key) => byKey.get(key)!)
-      .sort(
-        (left, right) =>
-          Number(left.category !== 'how-to-guide') - Number(right.category !== 'how-to-guide'),
-      )
-      .map((page) => {
-        const stored = input.pageBlocks?.get(page.key) ?? [];
-        return { page, blocks: stored.length > 0 ? stored : pageBlocksOf(page) };
-      }),
-    ...pagesInPickOrder(picked).map((key) => ({
-      page: byKey.get(key)!,
-      blocks: picked.filter((block) => block.pageKey === key),
-    })),
+    ...guidesFirst(alwaysPages.filter((entry) => contract.has(entry.page.key))),
+    ...guidesFirst(alwaysPages.filter((entry) => !contract.has(entry.page.key))),
+    ...guidesFirst(pickedPages),
   ];
+  const priority = (candidate: Assembled): ((block: SelectableBlock) => number) => {
+    if (contract.has(candidate.page.key)) return contractPriority(candidate);
+    if (alwaysSet.has(candidate.page.key)) return (block) => block.index;
+    return (block) => rankOf.get(blockKey(block)) ?? Number.POSITIVE_INFINITY;
+  };
 
   const howToGuides: Array<MockSurfaceSnapshot['howToGuides'][number]> = [];
   const teamDocs: Array<MockSurfaceSnapshot['teamDocs'][number]> = [];
   const citations: Citation[] = [];
   for (const candidate of candidates) {
-    const fitted = fitPage(candidate, { howToGuides, teamDocs }, (block) =>
-      alwaysSet.has(candidate.page.key)
-        ? block.index
-        : (rankOf.get(blockKey(block)) ?? Number.POSITIVE_INFINITY),
-    );
+    const fitted = fitPage(candidate, { howToGuides, teamDocs }, priority(candidate));
     if (fitted === undefined) continue;
     const entry = { slug: candidate.page.slug, title: candidate.page.title, body: fitted.body };
     (candidate.page.category === 'how-to-guide' ? howToGuides : teamDocs).push(entry);
@@ -528,12 +553,60 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   return {
     ...documents,
     citations,
-    blockIds: citations.flatMap((citation) => citation.blockIds),
+    blockIds: citations.flatMap((citation) => citation.blocks.map((block) => block.id)),
     chars: documentationChars(documents),
     always,
     picked: picked.map(blockKey),
     ranked: ranked.map((entry) => blockKey(entry.block)),
   };
+}
+
+/** The most blocks of one contract page weighed one by one for the contract they carry. */
+const CONTRACT_BLOCK_SEARCH_LIMIT = 200;
+
+/** Pages with the how-to guides first, each kind in the order given. */
+function guidesFirst(entries: readonly Assembled[]): Assembled[] {
+  return [
+    ...entries.filter((entry) => entry.page.category === 'how-to-guide'),
+    ...entries.filter((entry) => entry.page.category !== 'how-to-guide'),
+  ];
+}
+
+/** Whether a page yields a procedure trail on its own. */
+function yieldsContract(page: Pick<SelectablePage, 'slug' | 'title' | 'body'>): boolean {
+  return (
+    parseProcedureContract({
+      howToGuides: [{ slug: page.slug, title: page.title, body: page.body }],
+      teamDocs: [],
+    }).trails.length > 0
+  );
+}
+
+/**
+ * The order a contract page's blocks are kept in when the budget cannot hold it whole: first
+ * every block without which the page's own contract would parse differently, then the rest in
+ * document order. So a contract is never what the bound cuts while its page can be cut instead.
+ */
+function contractPriority(candidate: Assembled): (block: SelectableBlock) => number {
+  const { page } = candidate;
+  // Each block is weighed by one parse of the page without it; past this many, document order.
+  if (candidate.blocks.length > CONTRACT_BLOCK_SEARCH_LIMIT) return (block) => block.index;
+  const parse = (blocks: readonly SelectableBlock[]): string =>
+    JSON.stringify(
+      parseProcedureContract({
+        howToGuides: [
+          { slug: page.slug, title: page.title, body: assemblePage(page, blocks).body },
+        ],
+        teamDocs: [],
+      }).trails,
+    );
+  const whole = parse(candidate.blocks);
+  const needed = new Set(
+    candidate.blocks
+      .filter((block) => parse(candidate.blocks.filter((other) => other !== block)) !== whole)
+      .map(blockKey),
+  );
+  return (block) => (needed.has(blockKey(block)) ? 0 : 1) * candidate.blocks.length + block.index;
 }
 
 /** The picked pages, by key, in the order their best block was picked. */

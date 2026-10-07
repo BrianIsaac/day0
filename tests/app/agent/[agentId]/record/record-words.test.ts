@@ -497,7 +497,7 @@ describe('recordWords', (): void => {
     );
   });
 
-  it('says how much documentation a prompt read for the item, and from how many blocks (14-R)', (): void => {
+  it('says how much documentation a prompt read for the item, and from how many sections (14-R)', (): void => {
     expect(
       recordWords(
         {
@@ -507,7 +507,7 @@ describe('recordWords', (): void => {
         subject,
       ),
     ).toBe(
-      'The run for \u201cDraft response for new tier-two RevOps ask\u201d read 12,400 characters of documentation from 3 blocks.',
+      'The run for \u201cDraft response for new tier-two RevOps ask\u201d read 12,400 characters of documentation from 3 sections.',
     );
   });
 

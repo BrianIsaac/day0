@@ -10439,14 +10439,18 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
   async function cite(
     harness: Harness,
     workItemId: Id<'workItems'>,
-    cites: Array<{ label: string; blockId: Id<'docBlocks'> }>,
+    cites: Array<{ label: string; blockId: Id<'docBlocks'>; index: number }>,
   ): Promise<void> {
     await harness.run(async (ctx) => {
       const row = await ctx.db.get(workItemId);
       await ctx.db.patch(workItemId, {
         plan: {
           ...(row!.plan as ExecutionPlan),
-          cites: cites.map((entry) => ({ step: 1, label: entry.label, blockIds: [entry.blockId] })),
+          cites: cites.map((entry) => ({
+            step: 1,
+            label: entry.label,
+            blocks: [{ id: entry.blockId, hash: `hash-${entry.index}` }],
+          })),
         },
       });
     });
@@ -10457,15 +10461,15 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId, runId, blockIds } = await closingItem(harness);
     await cite(harness, workItemId, [
-      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing },
-      { label: 'Handbook/runbook.md#Runbook > Closing', blockId: blockIds.gone },
+      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing, index: 0 },
+      { label: 'Handbook/runbook.md#Runbook > Closing', blockId: blockIds.gone, index: 1 },
     ]);
     await harness.run(async (ctx) => await ctx.db.delete(blockIds.gone));
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toContain(
-      'The plan cited documentation that is no longer there ("Handbook/runbook.md#Runbook > Closing")',
+      'Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook > Closing")',
     );
     expect(recorded.dependentRuns).toBe(0);
   });
@@ -10475,7 +10479,7 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId, runId, blockIds } = await closingItem(harness);
     await cite(harness, workItemId, [
-      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing },
+      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing, index: 0 },
     ]);
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
     expect(recorded.dependentRuns).toBe(1);
@@ -10486,6 +10490,87 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
       'execute',
       'closing',
     ]);
+  });
+
+  it('refuses the first phase before any write when a cited block was rewritten after approval', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [],
+    };
+    const { agentId, workItemId } = await seed(harness, 'real', ['linear:read'], {
+      autonomousActions: true,
+    });
+    const blockId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId);
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: agent!.userId!,
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook\n\nRead the ticket twice.',
+        updatedAt: 3,
+      });
+      const id = await ctx.db.insert('docBlocks', {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 0,
+        headingPath: ['Runbook'],
+        text: 'Read the ticket twice.',
+        searchText: 'Runbook\nRead the ticket twice.',
+        kind: 'text',
+        hash: 'hash-after-the-edit',
+        chars: 22,
+      });
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Read the ticket.',
+          steps: ['Read the ticket in Linear'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Nothing is written.',
+          estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
+          cites: [
+            {
+              step: 1,
+              label: 'Handbook/runbook.md#Runbook',
+              blocks: [{ id, hash: 'hash-when-cited' }],
+            },
+          ],
+        },
+      });
+      return id;
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain('Documentation the plan followed has since been changed');
+    expect(recorded.skillRuns).toBe(0);
+    expect(recorded.mcp).toEqual([]);
+    expect(blockId).toBeDefined();
   });
 
   it('records no selection in mock mode, where the run reads the whole mirror (R3)', async (): Promise<void> => {

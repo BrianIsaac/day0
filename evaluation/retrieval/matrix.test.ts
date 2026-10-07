@@ -33,12 +33,15 @@ describe('the retrieval labelled set', (): void => {
     expect(new Set(RETRIEVAL_CASES.map((entry) => entry.id)).size).toBe(30);
   });
 
-  it('recalls at or above R2’s bar: 0.9 at 6 pages and 0.8 at 12 blocks, without a model', (): void => {
+  it('recalls at or above R2’s bar, the prompt and the ranked pick alone: 0.9 at 6 pages and 0.8 at 12 blocks, without a model', (): void => {
     const evidence = buildRetrievalGrade(COMMIT, new Date('2026-10-08T00:00:00.000Z'));
     expect(evidence.noModelCalls).toBe(true);
     expect(evidence.cases).toBe(30);
     expect(evidence.recall.pages).toBeGreaterThanOrEqual(RECALL_BAR.pages);
     expect(evidence.recall.blocks).toBeGreaterThanOrEqual(RECALL_BAR.blocks);
+    // The ranked pick alone, on what the pages always included leave to find.
+    expect(evidence.rankedRecall.pages).toBeGreaterThanOrEqual(RECALL_BAR.pages);
+    expect(evidence.rankedRecall.blocks).toBeGreaterThanOrEqual(RECALL_BAR.blocks);
     expect(evidence.meetsBar).toBe(true);
     for (const row of evidence.observations) expect(row.chars).toBeLessThanOrEqual(24_000);
     expect(renderRetrievalGrade(evidence)).toContain('n=30');

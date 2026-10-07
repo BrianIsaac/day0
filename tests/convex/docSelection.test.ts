@@ -287,6 +287,112 @@ describe('docSelection', (): void => {
     ]);
   });
 
+  it('cites each block it found with the hash it was read under', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'team/tile.md',
+      title: 'Tile notes',
+      markdown: '# Tile notes\n\nThe pipeline tile coverage figure is refreshed weekly.',
+    });
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'team/holidays.md',
+      title: 'Office holidays',
+      markdown: HOLIDAYS,
+    });
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    const hashOf = new Map(rows.map((row) => [row._id as string, row.hash]));
+    const cited = snapshot.documentation!.citations.flatMap((citation) => citation.blocks);
+    expect(cited.length).toBeGreaterThan(0);
+    for (const block of cited) expect(block.hash).toBe(hashOf.get(block.id));
+  });
+
+  it('never searches another owner’s source, however well it matches', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'team/holidays.md',
+      title: 'Office holidays',
+      markdown: HOLIDAYS,
+    });
+    // Another owner's blocks, stored under their own key, for their own employee.
+    await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'someone-else',
+        label: 'Their handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'tile.md',
+        title: 'Their tile',
+        markdown: TILE_RUNBOOK,
+        updatedAt: 3,
+      });
+      await replacePageBlocks(ctx, {
+        userId: 'someone-else',
+        sourceId,
+        pageRef: 'tile.md',
+        generation,
+        markdown: TILE_RUNBOOK,
+      });
+    });
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    expect([...snapshot.howToGuides, ...snapshot.teamDocs]).toEqual([]);
+    expect(snapshot.documentation?.blockIds).toEqual([]);
+  });
+
+  it('searches more than 32 sources in runs, so a page of the thirty-third is found', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    for (let index = 0; index < 33; index += 1) {
+      const entry = await source(harness, `Source ${index}`);
+      await storePage(harness, {
+        agentId,
+        ...entry,
+        ref: `page-${index}.md`,
+        title: `Page ${index}`,
+        markdown:
+          index === 32
+            ? '# Tile runbook\n\nRefresh the pipeline tile coverage figure from the standup.'
+            : `# Notes ${index}\n\nThe canteen opens at nine on weekday ${index}.`,
+      });
+    }
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    expect(snapshot.teamDocs.map((doc) => doc.title)).toEqual(['Page 32']);
+  });
+
   it('drops a block whose page a finished sync removed', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await employee(harness);
@@ -335,8 +441,8 @@ describe('docSelection', (): void => {
   });
 });
 
-describe('docSelection.missingCitedBlocks', (): void => {
-  it('answers a cited block whose row or page is gone, and keeps one that stands', async (): Promise<void> => {
+describe('docSelection.changedCitedBlocks', (): void => {
+  it('answers a cited block whose row is gone, whose text was rewritten or whose page is gone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await employee(harness);
     const handbook = await source(harness, 'Handbook');
@@ -354,13 +460,19 @@ describe('docSelection.missingCitedBlocks', (): void => {
           .withIndex('by_source_page', (q) => q.eq('sourceId', handbook.sourceId))
           .collect(),
     );
-    const [standing, deleted] = blocks.map((block) => block._id);
-    await harness.run(async (ctx) => await ctx.db.delete(deleted));
+    const [standing, deleted] = blocks.map((block) => ({ id: block._id, hash: block.hash }));
+    await harness.run(async (ctx) => await ctx.db.delete(deleted.id));
     await expect(
-      harness.query(internal.docSelection.missingCitedBlocks, {
-        blockIds: [standing, deleted, 'not-a-block'],
+      harness.query(internal.docSelection.changedCitedBlocks, {
+        blocks: [standing, deleted, { id: 'not-a-block' }],
       }),
-    ).resolves.toEqual([deleted, 'not-a-block']);
+    ).resolves.toEqual([deleted.id, 'not-a-block']);
+    // A sync that rewrites a block in place keeps its id; the cite was of the old text.
+    await expect(
+      harness.query(internal.docSelection.changedCitedBlocks, {
+        blocks: [{ id: standing.id, hash: 'the-hash-it-was-cited-under' }],
+      }),
+    ).resolves.toEqual([standing.id]);
     await harness.run(async (ctx) => {
       const page = await ctx.db
         .query('docPages')
@@ -369,7 +481,7 @@ describe('docSelection.missingCitedBlocks', (): void => {
       await ctx.db.delete(page!._id);
     });
     await expect(
-      harness.query(internal.docSelection.missingCitedBlocks, { blockIds: [standing] }),
-    ).resolves.toEqual([standing]);
+      harness.query(internal.docSelection.changedCitedBlocks, { blocks: [standing] }),
+    ).resolves.toEqual([standing.id]);
   });
 });

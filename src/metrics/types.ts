@@ -92,16 +92,17 @@ export interface PilotFigures {
   retrieval: { tokens: RetrievalTokens | null; recall: RetrievalRecall | null };
 }
 
-/** The documentation an item's real-mode prompts carried, against what its model calls were billed. */
+/**
+ * The documentation an item's real-mode prompts carried, against what its model calls were
+ * billed: over the items a provider reported usage for when any did, so both describe the same
+ * items; else over every item with a selection, the characters alone.
+ */
 export interface RetrievalTokens {
-  /** The items whose prompts carried a documentation selection (`work.documentation-selected`). */
+  /** The items counted (`work.documentation-selected`, with `work.model-call` usage when any). */
   items: number;
   /** Their documentation characters summed over every prompt site, per item: the mean. */
   charsPerItem: number;
-  /**
-   * The input tokens their model calls were billed (`work.model-call`), per item, over the items
-   * a provider reported usage for; null when none did.
-   */
+  /** The input tokens their model calls were billed, per item; null when no provider reported. */
   inputTokensPerItem: number | null;
 }
 

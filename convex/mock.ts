@@ -113,10 +113,14 @@ export const snapshotInternal = internalQuery({
     ]);
     const agent = await ctx.db.get(args.agentId);
     const docs = await readableDocs(ctx.db, agent, stored);
+    const { selection } = args;
     const selected =
-      args.selection === undefined
+      selection === undefined
         ? undefined
-        : await selectedDocumentation(ctx, agent, docs, args.selection);
+        : {
+            site: selection.site,
+            ...(await selectedDocumentation(ctx, { agent, docs, request: selection })),
+          };
     return {
       ...(selected === undefined
         ? {
@@ -131,7 +135,7 @@ export const snapshotInternal = internalQuery({
             howToGuides: selected.howToGuides,
             teamDocs: selected.teamDocs,
             documentation: {
-              site: args.selection!.site,
+              site: selected.site,
               blockIds: selected.blockIds,
               chars: selected.chars,
               citations: selected.citations,

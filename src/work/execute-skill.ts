@@ -41,6 +41,7 @@ import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { parseProcedureContract, type ProcedureContract } from './procedure-contract';
+import { carriesCiteLines, withoutCiteLines } from '../docs/select';
 import { closingPhaseOwed } from './obligations';
 import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
@@ -2700,6 +2701,21 @@ export function removePrewrittenClosingActions(
   };
 }
 
+/**
+ * What a real run is told of the cite lines the documentation selection prints (wave 14, 14-R),
+ * only when the documentation carries them: they label where text comes from, and a write that
+ * copies one would put Day0's bookkeeping in front of a colleague.
+ */
+export const CITE_LINES_EXECUTOR =
+  'Lines of the form `[cite: ...]` in the documentation label where the text below them comes from. Name a page in your own words when you quote it, and never copy a cite line into an action, a draft or a note.';
+
+/** Whether the loaded documentation was assembled by the selection, so carries cite lines. */
+function citedDocumentation(
+  mockEnv: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
+): boolean {
+  return [...mockEnv.howToGuides, ...mockEnv.teamDocs].some((page) => carriesCiteLines(page.body));
+}
+
 /** Build the complete system prompt, including the final live-mode override. */
 export function executorInstructions(args: {
   mode: SurfaceMode;
@@ -2718,6 +2734,7 @@ export function executorInstructions(args: {
     '',
     '--- How-to guides (action format reference) ---',
     renderHowTos(args.mockEnv.howToGuides),
+    ...(args.mode === 'real' && citedDocumentation(args.mockEnv) ? [CITE_LINES_EXECUTOR] : []),
     '',
     '--- Skill body (apply as your behavioural prior) ---',
     args.skillBody,
@@ -2794,9 +2811,11 @@ async function withoutOwnThreadReferencesRecorded<
 }
 
 /**
- * The team documents' section of an executor user prompt. A real run reads it before the
- * candidate (wave 14, 14-R: a provider's prefix cache holds the charter and the pages across the
- * items that read them); the mock run keeps it after, so the hosted demo's prompt is unchanged.
+ * The team documents' section of an executor user prompt. A real run reads it straight after the
+ * charter, before the approved plan and the candidate (wave 14, 14-R), so the item's own lines
+ * come last and a provider's prefix cache can hold the charter and the pages when two items read
+ * the same ones; the mock run keeps it after the candidate, so the hosted demo's prompt is
+ * unchanged.
  */
 function teamDocsLines(mockEnv: Pick<MockSurfaceSnapshot, 'teamDocs'>): string[] {
   return ['--- Team docs (read-only context) ---', renderTeamDocs(mockEnv.teamDocs)];
@@ -2836,6 +2855,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       currentManager: args.currentManager,
       ...(mode === 'real' && args.people ? { people: args.people } : {}),
     }),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -2846,7 +2866,6 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
-    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2920,7 +2939,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
         ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
       ].join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
-        (page) => `${page.title}\n${page.body}`,
+        (page) => `${page.title}\n${withoutCiteLines(page.body)}`,
       ),
       managerFeedback: [
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
@@ -3648,6 +3667,7 @@ async function authorDependentSkillRun(
       currentManager: args.currentManager,
       ...(mode === 'real' && args.people ? { people: args.people } : {}),
     }),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
@@ -3658,7 +3678,6 @@ async function authorDependentSkillRun(
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
-    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -3727,7 +3746,7 @@ async function authorDependentSkillRun(
       ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
     ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
-      (page) => `${page.title}\n${page.body}`,
+      (page) => `${page.title}\n${withoutCiteLines(page.body)}`,
     ),
     managerFeedback: [
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),

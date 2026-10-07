@@ -1235,10 +1235,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   },
   'work.documentation-selected': (p, subject) => {
     const site = text(p.site);
-    const chars = typeof p.chars === 'number' ? p.chars.toLocaleString('en-GB') : 'some';
-    const blocks = counted(Array.isArray(p.blockIds) ? p.blockIds.length : undefined, 'block');
-    return `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(subject)} read ${chars} characters of documentation${
-      blocks ? ` from ${blocks}` : ''
+    const what = `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(subject)} read`;
+    if (typeof p.chars !== 'number') return `${what} documentation`;
+    const sections = counted(Array.isArray(p.blockIds) ? p.blockIds.length : undefined, 'section');
+    return `${what} ${p.chars.toLocaleString('en-GB')} characters of documentation${
+      sections ? ` from ${sections}` : ''
     }`;
   },
   'work.manager-note-sending': (p, subject) =>

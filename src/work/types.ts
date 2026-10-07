@@ -204,7 +204,7 @@ export interface PlanCite {
   readonly step: number;
   /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
   readonly label: string;
-  readonly blockIds: readonly string[];
+  readonly blocks: readonly CitedBlock[];
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -596,11 +596,19 @@ export interface MockSurfaceSnapshot {
   documentation?: DocumentationSelectionRecord;
 }
 
+/** A stored block a cite line stands for, as it read when it was cited. */
+export interface CitedBlock {
+  /** The `docBlocks` row id. */
+  readonly id: string;
+  /** The block's hash then (`docBlocks.hash`): a block rewritten in place keeps its id, not this. */
+  readonly hash?: string;
+}
+
 /** One cite line of a selection: its words and the stored blocks under it. */
 export interface DocumentationCitation {
   /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
   readonly label: string;
-  readonly blockIds: readonly string[];
+  readonly blocks: readonly CitedBlock[];
 }
 
 /** What one documentation selection put in a prompt, for the record and the plan's cites. */

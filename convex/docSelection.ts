@@ -89,9 +89,11 @@ async function pageStored(
   return page !== null;
 }
 
-/** A found or stored block as the selection reads it. */
+/** A found or stored block as the selection reads it; a stored row carries its hash. */
 function selectableBlock(
-  block: Pick<FoundBlock, '_id' | 'sourceId' | 'pageRef' | 'index' | 'headingPath' | 'text'>,
+  block: Pick<FoundBlock, '_id' | 'sourceId' | 'pageRef' | 'index' | 'headingPath' | 'text'> & {
+    readonly hash?: string;
+  },
 ): SelectableBlock {
   return {
     id: block._id,
@@ -99,37 +101,46 @@ function selectableBlock(
     index: block.index,
     headingPath: block.headingPath,
     text: block.text,
+    ...(block.hash !== undefined ? { hash: block.hash } : {}),
   };
 }
 
 /**
  * The blocks the scout finds: one search a query string, each over the employee's sources in
  * runs of at most `SEARCH_SOURCES_LIMIT` (each source its own query inside `searchBlocks`),
- * dropping a block whose page is no longer stored.
+ * dropping a block whose page is no longer stored. Every search of one selection together reads
+ * at most `SEARCH_BLOCKS_LIMIT` blocks, the bound one call keeps, since they share one query's
+ * read limit.
  */
 async function scoutedBlocks(
   ctx: QueryCtx,
-  userId: string,
-  sourceIds: readonly Id<'docSources'>[],
-  queries: readonly string[],
+  scout: {
+    readonly userId: string;
+    readonly sourceIds: readonly Id<'docSources'>[];
+    readonly queries: readonly string[];
+  },
 ): Promise<SelectableBlock[]> {
   const runs: Id<'docSources'>[][] = [];
-  for (let start = 0; start < sourceIds.length; start += SEARCH_SOURCES_LIMIT) {
-    runs.push(sourceIds.slice(start, start + SEARCH_SOURCES_LIMIT));
+  for (let start = 0; start < scout.sourceIds.length; start += SEARCH_SOURCES_LIMIT) {
+    runs.push(scout.sourceIds.slice(start, start + SEARCH_SOURCES_LIMIT));
   }
+  const limit = Math.max(
+    1,
+    Math.min(
+      SCOUT_LIMIT_PER_SOURCE,
+      Math.floor(SEARCH_BLOCKS_LIMIT / (scout.sourceIds.length * scout.queries.length)),
+    ),
+  );
   const found = (
     await Promise.all(
-      queries.flatMap((query) =>
+      scout.queries.flatMap((query) =>
         runs.map(
           async (run) =>
             await ctx.runQuery(internal.docBlocks.searchBlocks, {
-              userId,
+              userId: scout.userId,
               sourceIds: run,
               query,
-              limit: Math.max(
-                1,
-                Math.min(SCOUT_LIMIT_PER_SOURCE, Math.floor(SEARCH_BLOCKS_LIMIT / run.length)),
-              ),
+              limit,
             }),
         ),
       ),
@@ -176,57 +187,101 @@ async function storedPageBlocks(
 }
 
 /**
+ * The selection with each cited block's hash: the search answers no hash, so the rows of the
+ * cited blocks it found are read for it (at most the ranked pick's twelve); the stored blocks of
+ * the pages always included carry theirs.
+ */
+async function withBlockHashes(
+  ctx: QueryCtx,
+  selection: SelectedDocumentation,
+): Promise<SelectedDocumentation> {
+  const unhashed = [
+    ...new Set(
+      selection.citations.flatMap((citation) =>
+        citation.blocks.flatMap((block) => (block.hash === undefined ? [block.id] : [])),
+      ),
+    ),
+  ];
+  if (unhashed.length === 0) return selection;
+  const hashes = new Map(
+    await Promise.all(
+      unhashed.map(async (id): Promise<[string, string | undefined]> => {
+        const blockId = ctx.db.normalizeId('docBlocks', id);
+        return [id, blockId === null ? undefined : (await ctx.db.get(blockId))?.hash];
+      }),
+    ),
+  );
+  return {
+    ...selection,
+    citations: selection.citations.map((citation) => ({
+      ...citation,
+      blocks: citation.blocks.map((block) => {
+        const hash = block.hash ?? hashes.get(block.id);
+        return hash === undefined ? block : { ...block, hash };
+      }),
+    })),
+  };
+}
+
+/**
  * Select the documentation one real-mode prompt carries, inside the caller's query: the
  * employee's readable pages, the blocks the search scouts from their sources under the owner's
- * key, and the stored blocks of the pages always included (`selectDocumentation`).
+ * key, and the stored blocks of the pages always included (`selectDocumentation`), each cited
+ * block with its hash.
  *
  * @param ctx - The snapshot's query context.
- * @param agent - The employee; with no owner key nothing is searched.
- * @param docs - The pages the employee reads (`readableDocs`), in the mirror's order.
- * @param request - What the selection is for.
+ * @param input - The employee (with no owner key nothing is searched), the pages it reads
+ *   (`readableDocs`, in the mirror's order) and what the selection is for.
  */
 export async function selectedDocumentation(
   ctx: QueryCtx,
-  agent: Pick<Doc<'agents'>, 'userId'> | null,
-  docs: readonly Doc<'mockDocs'>[],
-  request: SelectionRequest,
+  input: {
+    readonly agent: Pick<Doc<'agents'>, 'userId'> | null;
+    readonly docs: readonly Doc<'mockDocs'>[];
+    readonly request: SelectionRequest;
+  },
 ): Promise<SelectedDocumentation> {
+  const { docs, request } = input;
   const pages = await selectablePages(ctx, docs);
   const sourceIds = [...new Set(docs.flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))];
-  const userId = agent?.userId;
+  const userId = input.agent?.userId;
   const scouted =
     userId === undefined || sourceIds.length === 0
       ? []
-      : await scoutedBlocks(ctx, userId, sourceIds, scoutQueries(request, pages));
+      : await scoutedBlocks(ctx, { userId, sourceIds, queries: scoutQueries(request, pages) });
   const pageBlocks = await storedPageBlocks(
     ctx,
     docs,
     new Set(alwaysIncludedPages(pages, request)),
   );
-  return selectDocumentation({ request, pages, scouted, pageBlocks });
+  return await withBlockHashes(ctx, selectDocumentation({ request, pages, scouted, pageBlocks }));
 }
 
 /**
- * The cited blocks of a plan that no longer stand: a block row deleted, or its page gone.
- * Internal; the closing phase reads it before it authors (wave 14, 14-R).
+ * The cited blocks of a plan that no longer stand as they were cited: the row deleted, its page
+ * gone, or its hash changed (a block rewritten in place keeps its id). Internal; the work loop
+ * reads it before the first phase writes and before the closing phase authors (wave 14, 14-R).
  *
- * @returns The ids, of those given, that are gone; an id that names no block row is gone.
- * @throws Error past `SEARCH_BLOCKS_LIMIT` ids.
+ * @returns The ids, of those given, that are gone or changed; an id that names no row is gone.
+ * @throws Error past `SEARCH_BLOCKS_LIMIT` blocks; a caller checks a long list in parts.
  */
-export const missingCitedBlocks = internalQuery({
-  args: { blockIds: v.array(v.string()) },
+export const changedCitedBlocks = internalQuery({
+  args: { blocks: v.array(v.object({ id: v.string(), hash: v.optional(v.string()) })) },
   handler: async (ctx, args): Promise<string[]> => {
-    const ids = [...new Set(args.blockIds)];
-    if (ids.length > SEARCH_BLOCKS_LIMIT) {
-      throw new Error(`A plan's cites are checked ${SEARCH_BLOCKS_LIMIT} blocks at most.`);
+    if (args.blocks.length > SEARCH_BLOCKS_LIMIT) {
+      throw new Error(`A plan's cites are checked ${SEARCH_BLOCKS_LIMIT} blocks at a time.`);
     }
     const standing = await Promise.all(
-      ids.map(async (id) => {
-        const blockId = ctx.db.normalizeId('docBlocks', id);
+      args.blocks.map(async (cited) => {
+        const blockId = ctx.db.normalizeId('docBlocks', cited.id);
         const block = blockId === null ? null : await ctx.db.get(blockId);
-        return block !== null && (await pageStored(ctx, block.sourceId, block.pageRef));
+        return (
+          block !== null &&
+          (cited.hash === undefined || block.hash === cited.hash) &&
+          (await pageStored(ctx, block.sourceId, block.pageRef))
+        );
       }),
     );
-    return ids.filter((_id, index) => !standing[index]);
+    return [...new Set(args.blocks.filter((_block, index) => !standing[index]).map((b) => b.id))];
   },
 });
