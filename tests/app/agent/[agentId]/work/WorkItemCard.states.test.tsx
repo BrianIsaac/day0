@@ -22,6 +22,7 @@ import {
 } from '../../../../fixtures/work/drawn-states';
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
+import { type StopRunAnswer } from '../../../../../src/work/stop';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -46,7 +47,13 @@ afterEach((): void => {
  */
 function card(
   item: Doc<'workItems'>,
-  options: { questions?: Doc<'managerQuestions'>[]; autonomous?: boolean; loop?: boolean } = {},
+  options: {
+    questions?: Doc<'managerQuestions'>[];
+    autonomous?: boolean;
+    loop?: boolean;
+    /** What the server answers a Stop with; it stops the run unless told otherwise. */
+    stop?: StopRunAnswer;
+  } = {},
 ) {
   const calls: Array<[string, unknown]> = [];
   const record =
@@ -54,6 +61,10 @@ function card(
     async (arg?: unknown): Promise<void> => {
       calls.push([name, arg]);
     };
+  const stop = async (reason: string): Promise<StopRunAnswer> => {
+    calls.push(['stop', reason]);
+    return options.stop ?? { ok: true };
+  };
   const view = mount(
     <AgentZoneContext value={ZONE}>
       <WorkItemCard
@@ -70,7 +81,7 @@ function card(
         onRejectActions={record('rejectActions')}
         onResendDecision={record('resend')}
         onDismiss={record('dismiss')}
-        onStop={record('stop')}
+        onStop={stop}
         onCloseWithoutRetry={record('closeWithoutRetry')}
         servedByLoop={options.loop ?? true}
       />
@@ -235,6 +246,17 @@ describe('Stop on a working card (wave 12)', (): void => {
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
     expect(said(view.container)).toEqual([
       'Stopped: Draft response for new tier-two RevOps ask. It waits for you with Retry.',
+    ]);
+  });
+
+  it('closes and says so, in the card, when the item moved on before the Stop arrived (13-FD)', async (): Promise<void> => {
+    const view = card(DRAWN.working, { stop: { ok: false, refused: 'moved-on' } });
+    await press(view.container, 'Stop');
+    await press(document.body, 'Stop the run');
+    expect(view.calls).toEqual([['stop', '']]);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([
+      'Not stopped: the item had moved on before your Stop arrived. Its card shows where it is now.',
     ]);
   });
 
@@ -442,6 +464,54 @@ describe('landed (work-landed.html)', (): void => {
     expect(said(reconciled.container)).toEqual([
       'Sent back: Draft response for new tier-two RevOps ask.',
     ]);
+  });
+});
+
+describe('a documented-API write that landed (12-J item 5c, wave 13 item 5)', (): void => {
+  it('names the landed reply by what its action does, not by the provider’s raw answer', (): void => {
+    const output = DRAWN.landed.output as { applied: Array<Record<string, unknown>> };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...output,
+        applied: [
+          {
+            ...output.applied[0],
+            effect: 'HTTP 200 · {"ok":true,"channel":"C0ASKS","ts":"1790000000.000300"}',
+          },
+          ...output.applied.slice(1),
+        ],
+      },
+    });
+    expect(view.text()).not.toContain('{"ok":true');
+    expect(view.text()).toContain('Landed: Reply in');
+    expect(view.text()).toContain('id 1790000000.000300');
+    view.unmount();
+  });
+});
+
+describe('an MCP write that landed (the bed, beside wave 13 item 5)', (): void => {
+  it('names the landed comment by what its action does, not by the provider’s raw answer', (): void => {
+    const output = DRAWN.landed.output as { applied: Array<Record<string, unknown>> };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...output,
+        applied: output.applied.map((row, index) =>
+          index === 2
+            ? {
+                ...row,
+                effect:
+                  'save_comment on linear · {"id":"comment-41","body":"The Looker pipeline coverage tile is stale."}',
+              }
+            : row,
+        ),
+      },
+    });
+    expect(view.text()).not.toContain('save_comment on linear');
+    expect(view.text()).toContain('Landed: Comment on REVOPS-202: "The Looker pipeline');
+    expect(view.text()).toContain('id comment-41');
+    view.unmount();
   });
 });
 
@@ -692,6 +762,45 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     ).text();
     expect(nell).toContain('Not done, in Mira’s own words');
     expect(nell).toContain('The October deal list is not in the tracker.');
+  });
+
+  it("says a ticket this run closed beside a run that answered partial, so a Done ticket never stands under Partly done unsaid (12-D's Minor 5)", (): void => {
+    const drawn = DRAWN.landed.output as { actions: unknown[]; applied: unknown[] };
+    const view = card({
+      ...DRAWN.landed,
+      output: {
+        ...drawn,
+        actions: [
+          ...drawn.actions,
+          {
+            tool: 'mcp.call',
+            args: {
+              surface: 'linear',
+              tool: 'save_issue',
+              toolArgsJson: JSON.stringify({ id: 'REVOPS-202', state: 'Done' }),
+            },
+          },
+        ],
+        applied: [
+          ...drawn.applied,
+          {
+            tool: 'mcp.call',
+            ok: true,
+            idempotencyKey: 'close-202',
+            providerId: 'REVOPS-202',
+            effect: 'save_issue on linear · REVOPS-202 · Done',
+          },
+        ],
+        draft: ROOK_COMMENT,
+        workDone: 'partial',
+        workDoneWhy: 'The reply to Sara is still owed.',
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Partly done, in Mira’s own words');
+    expect(view.text()).toContain(
+      'Mira moved REVOPS-202 to Done in this run, though the work is not all done: reopen it if it should stay open.',
+    );
+    view.unmount();
   });
 
   it('says a run was only partly done before what landed, since that is the first thing the manager asks', (): void => {

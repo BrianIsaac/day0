@@ -12,6 +12,7 @@ import { endAccessAtSource } from '../../convex/sourceRevocation';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { KEPT_APP_CONNECTION_REVOKED } from '../../src/surfaces/identity-issuers/slack';
+import { FORGET_NOT_ENDED } from '../../convex/slackProvision';
 import { LEASE_POLL_MS } from '../../src/surfaces/refresh-lease';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -1037,9 +1038,19 @@ describe('the renewal and the re-join (A26, RM4)', (): void => {
     expect(callsOf(slack, 'conversations.join')).toEqual([]);
   });
 
-  it("names every channel as needing a person when the documentation's template did not ask for channels:join, and keeps the install", async (): Promise<void> => {
+  // Re-pinned for W13V-2: an app built from a template now holds the kit's scopes, so the
+  // documentation's template no longer gives an app without channels:join. The path stays for an
+  // app a template made before v0.17.0, which held only the template's scopes.
+  it('names every channel as needing a person when the app does not hold channels:join (one a template made before v0.17.0), and keeps the install', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const leo = await expiredLeo(harness, POLICY);
+    const index = slack.apps.findIndex((candidate) => candidate.appId === leo.appId);
+    const older = slack.apps[index];
+    if (older === undefined) throw new Error('no app');
+    slack.apps[index] = {
+      ...older,
+      scopes: older.scopes.filter((scope) => scope !== 'channels:join'),
+    };
     await harness
       .withIdentity(managerIdentity())
       .mutation(api.surfaces.setAccessDays, { surfaceId: leo.surfaceId, days: 30 });
@@ -1060,6 +1071,141 @@ describe('the renewal and the re-join (A26, RM4)', (): void => {
         reason: 'missing_scope',
       },
     ]);
+  });
+});
+
+describe("forgetting an app IT's revoke ended (W12X-4; 13-FS's design 2, option (b))", (): void => {
+  /** IT lands Slack again with a fresh configuration token and its refresh token. */
+  async function landSlackAgain(harness: Harness): Promise<Id<'organisationConnections'>> {
+    slack.configuration.token = 'xoxe.xoxp-1-cfg9';
+    slack.configuration.refreshToken = 'xoxe-1-ref9';
+    slack.configuration.issuedAt = Date.now();
+    return await harness.action(internal.organisationConnections.landFromSetup, {
+      system: 'slack',
+      displayName: 'Slack',
+      kind: 'slack-configuration',
+      mode: 'per-employee',
+      scopes: [...SLACK_KIT_BOT_SCOPES],
+      redirectUrl: `${PUBLIC_URL}/api/oauth/slack`,
+      secret: 'xoxe.xoxp-1-cfg9',
+      refreshToken: 'xoxe-1-ref9',
+    });
+  }
+
+  /** Leo's own app installed through IT's connection, and IT's revoke of that connection. */
+  async function endedLeo(
+    harness: Harness,
+  ): Promise<Employee & { readonly appId: string; readonly secretId: Id<'credentials'> }> {
+    const connectionId = await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    const made = await provision(harness, leo.surfaceId);
+    await install(harness, made);
+    const secretId = (await card(harness, leo.surfaceId)).provisioning?.clientSecretCredentialId;
+    if (secretId === undefined) throw new Error('no client secret');
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'IT is moving workspaces',
+    });
+    await settle(harness);
+    return { ...leo, appId: made.appId, secretId };
+  }
+
+  it('forgets the app, purges its client secret and names it on the record for IT to delete', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await endedLeo(harness);
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId });
+
+    const row = await card(harness, leo.surfaceId);
+    expect(row.provisioning).toBeUndefined();
+    const secret = await credential(harness, leo.secretId);
+    expect(secret.revokedAt).toBeDefined();
+    expect(secret.ciphertext).toBeUndefined();
+    const forgotten = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'surface.app-forgotten',
+      ),
+    );
+    const [connection] = await harness.run(
+      async (ctx) => await ctx.db.query('organisationConnections').collect(),
+    );
+    expect(forgotten.map((event) => event.payload)).toEqual([
+      {
+        surfaceId: leo.surfaceId,
+        appId: leo.appId,
+        appName: 'Leo (Day0)',
+        organisationConnectionId: connection?._id,
+      },
+    ]);
+  });
+
+  it("leaves the forgotten app out of the retire's plan, which Day0 could not delete, and plans the new app's deletion", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await endedLeo(harness);
+    const manager = harness.withIdentity(managerIdentity());
+    // Before the forget, the retire tells IT to delete the old app: no token of IT's can.
+    expect(
+      (await manager.query(api.reset.retirePreview, { agentId: leo.agentId }))?.outcomes,
+    ).toEqual([expect.objectContaining({ slug: 'slack', outcome: 'not-supported' })]);
+
+    await manager.mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId });
+    expect(
+      (await manager.query(api.reset.retirePreview, { agentId: leo.agentId }))?.outcomes,
+    ).toEqual([]);
+
+    await landSlackAgain(harness);
+    await install(harness, await provision(harness, leo.surfaceId));
+    expect(
+      (await manager.query(api.reset.retirePreview, { agentId: leo.agentId }))?.outcomes,
+    ).toEqual([expect.objectContaining({ slug: 'slack', outcome: 'app-deleted' })]);
+  });
+
+  it("creates a new app through IT's new connection once the old one is forgotten, and installs it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await endedLeo(harness);
+    const relanded = await landSlackAgain(harness);
+    await expect(provision(harness, leo.surfaceId)).rejects.toThrow(KEPT_APP_CONNECTION_REVOKED);
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId });
+    const made = await provision(harness, leo.surfaceId);
+    await install(harness, made);
+
+    expect(made.appId).not.toBe(leo.appId);
+    expect(callsOf(slack, 'apps.manifest.create')).toHaveLength(2);
+    const row = await card(harness, leo.surfaceId);
+    expect(row.provisioning).toMatchObject({
+      appId: made.appId,
+      organisationConnectionId: relanded,
+    });
+    expect(row.credentialId).toBeDefined();
+    expect(row.organisationConnectionId).toBe(relanded);
+  });
+
+  it('refuses a card whose app is not one IT’s revoke ended, a signed-out caller and another manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await landSlack(harness);
+    const leo = await employee(harness, 'Leo');
+    const made = await provision(harness, leo.surfaceId);
+    await install(harness, made);
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId }),
+    ).rejects.toThrow(FORGET_NOT_ENDED);
+    await expect(
+      harness.mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId }),
+    ).rejects.toThrow();
+    await expect(
+      harness
+        .withIdentity(managerIdentity('someone-else'))
+        .mutation(api.slackProvision.forgetEndedApp, { surfaceId: leo.surfaceId }),
+    ).rejects.toThrow();
+    expect((await card(harness, leo.surfaceId)).provisioning?.appId).toBe(made.appId);
   });
 });
 

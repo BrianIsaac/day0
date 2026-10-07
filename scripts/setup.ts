@@ -1459,6 +1459,9 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
       ? ['convex dev --once', 'migrations', 'release:stamp', 'sync:env']
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
+    // A running bridge keeps the code it started with, and `up -d` leaves an unchanged container
+    // alone: over an existing install it is restarted so it runs this checkout's (13-FS).
+    ...(real && input.existing ? ['slack-socket:restart'] : []),
     'check:setup',
     ...(input.upgrade ? ['crons:unpause'] : []),
     ...(real && input.company ? ['company bed docs', 'company bed check'] : []),
@@ -1884,6 +1887,21 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       ];
     case 'convex:restart':
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
+    case 'slack-socket:restart':
+      return [
+        {
+          command: 'pnpm',
+          args: [
+            'exec',
+            'tsx',
+            'scripts/compose.ts',
+            '--profile',
+            'slack-socket',
+            'restart',
+            'slack-socket',
+          ],
+        },
+      ];
     case 'crons:pause':
       return [{ command: 'npx', args: pauseArguments(context.pauseReason ?? '<reason>') }];
     case 'crons:unpause':
@@ -3674,6 +3692,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     if (!runStep('convex:restart', 'pnpm convex:restart')) return 1;
     await io.waitForBackend(ports.backend, 180_000);
+    if (
+      steps.includes('slack-socket:restart') &&
+      !runStep('slack-socket:restart', 'the Slack socket bridge, restarted on this checkout')
+    ) {
+      return 1;
+    }
 
     if (real && redactor) {
       const health =

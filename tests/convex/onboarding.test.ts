@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { CHARTER_SEEDING_ATTEMPTS, parseTranscript } from '../../convex/onboarding';
+import { parseTranscript } from '../../convex/onboarding';
+import { CHARTER_SEEDING_ATTEMPTS } from '../../src/agent/charter-seeding';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -284,6 +285,31 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     });
   });
 
+  it('in real mode ends "finding" once Find work again seeds the charter, so the tab never sticks on it (the second pass)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    const original = await harness.run(async (ctx) => (await ctx.db.get(charterId))!.body);
+    await breakNamedSystems(harness, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const owner = harness.withIdentity(managerIdentity());
+    expect(await owner.query(api.charterSeeding.standing, { agentId })).toMatchObject({
+      state: 'stopped',
+    });
+
+    await harness.run(async (ctx) => await ctx.db.patch(charterId, { body: original }));
+    await owner.mutation(api.charterSeeding.findWorkAgain, { agentId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await owner.query(api.charterSeeding.standing, { agentId })).toBeNull();
+    const events = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).map(
+      (event) => event.type,
+    );
+    expect(events).toContain('charter.seeded');
+  });
+
   it("seeds all of the generator's items or none, so a retry never adds a second batch beside a partial first (U9 D4)", async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
@@ -325,20 +351,45 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     expect(result.events).not.toContain('work.charter-derived');
   });
 
-  it.fails(
-    // until wave 13 designs the cure (12-J item 6): a seeding Convex ends at its 600 s limit runs no catch, so nothing records it or tries again
-    'records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent',
-    async (): Promise<void> => {
-      useSurfaceMode('mock');
-      const { harness, agentId } = await seedingHeldAtItsModelCall();
-      const result = await outcome(harness, agentId);
-      const scheduled = await harness.run(
-        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
-      );
-      const retried = scheduled.some((job) => job.name === 'onboarding:postCharterApproval');
-      expect(retried || result.events.includes('charter.seeding-failed')).toBe(true);
-    },
-  );
+  // Wave 13 (12-J item 6, option B): each attempt schedules a check of itself past the limit.
+  it('records a seeding that died at the action limit and tries again, so the Work tab is not left empty and silent', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { harness, agentId } = await seedingHeldAtItsModelCall();
+    // The check the attempt scheduled past the limit is due: let it finish.
+    await harness.finishInProgressScheduledFunctions();
+    const result = await outcome(harness, agentId);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    const retried = scheduled.some((job) => job.name === 'onboarding:postCharterApproval');
+    expect(retried || result.events.includes('charter.seeding-failed')).toBe(true);
+  });
+
+  it('leaves an attempt that finished, or failed in its own words, as it ended', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.mutation(internal.charterSeeding.checkAttempt, {
+      agentId,
+      charterId,
+      attempt: 1,
+      startedAt: 1,
+    });
+    expect(await seedingFailures(harness)).toEqual([]);
+    generator.extra = [{ sourceCategory: 'ticket-queue', sourceSystem: 'tickets', title: 7 }];
+    const second = convexTest(schema, allConvexModules());
+    const failing = await seedApprovedCharter(second);
+    await second.action(internal.onboarding.postCharterApproval, failing);
+    await second.mutation(internal.charterSeeding.checkAttempt, {
+      ...failing,
+      attempt: 1,
+      startedAt: 1,
+    });
+    expect(
+      (await seedingFailures(second)).map((payload) => (payload as { attempt: number }).attempt),
+    ).toEqual([1]);
+  });
 
   it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
     useSurfaceMode('mock');
@@ -438,5 +489,110 @@ describe('the mock office in the drafted charter (round 0141 R-D item 5)', (): v
     useSurfaceMode('real');
     expect(await draftedSystems()).toEqual(['Slack']);
     expect(drafter.prompts.at(-1)).not.toContain('[office]');
+  });
+});
+
+/** Name two people in the seeded charter and keep the one-to-one it was drafted from. */
+async function namePeople(
+  harness: TestConvex<typeof schema>,
+  agentId: Id<'agents'>,
+  charterId: Id<'charters'>,
+): Promise<void> {
+  await harness.run(async (ctx) => {
+    const charter = await ctx.db.get(charterId);
+    await ctx.db.patch(charterId, {
+      body: {
+        ...(charter?.body as Record<string, unknown>),
+        namedCollaborators: [
+          { name: 'Priya Shah', topic: 'segment and pipeline', introPath: 'self' },
+        ],
+        adjacentRoles: [
+          { who: 'Dana Okafor', staysOutOfTheirLaneBy: 'leaving ledger access to her' },
+        ],
+      },
+    });
+    await ctx.db.insert('voiceSessions', {
+      agentId,
+      mode: 'chat',
+      state: 'done',
+      answers: {},
+      charterId,
+      turns: [
+        { id: 't1', speaker: 'employee', text: 'Who do you work with?', at: 2 },
+        {
+          id: 't2',
+          speaker: 'manager',
+          text: 'Mostly the close. Priya Shah for segment and pipeline. That is it.',
+          at: 3,
+        },
+      ],
+      startedAt: 1,
+      conversationEndedAt: 4,
+    });
+  });
+}
+
+describe('charter approval proposes people', (): void => {
+  it("in real mode proposes each person the charter names, unverified, with the manager's quote or the charter's line", async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await namePeople(harness, agentId, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    // Its own scheduled step: the seeding is done before a person is written, so a fault in the
+    // people step never holds the charter's surfaces back.
+    expect(await harness.run(async (ctx) => await ctx.db.query('people').collect())).toEqual([]);
+    expect((await outcome(harness, agentId)).surfaces).toEqual([
+      'linear:declared',
+      'slack:declared',
+    ]);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const people = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('people')
+          .withIndex('by_user_status', (q) => q.eq('userId', 'owner'))
+          .collect(),
+    );
+    expect(people.map((person) => [person.displayName, person.status, person.source])).toEqual([
+      ['Priya Shah', 'unverified', 'one-to-one'],
+      ['Dana Okafor', 'unverified', 'charter'],
+    ]);
+    expect(people[0]?.evidence).toEqual([
+      { quote: 'Priya Shah for segment and pipeline.', where: 'the one-to-one', at: 4 },
+    ]);
+    expect(people[1]?.evidence).toEqual([
+      { quote: 'Dana Okafor: leaving ledger access to her', where: 'charter version v1', at: 1 },
+    ]);
+    const edges = await harness.run(async (ctx) => await ctx.db.query('relationships').collect());
+    expect(edges.map((edge) => [edge.type, edge.status, edge.fromAgentId])).toEqual([
+      ['collaborator', 'proposed', agentId],
+      ['adjacent-role', 'proposed', agentId],
+    ]);
+
+    const proposedEvents = async (): Promise<unknown[]> =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event) => event.type === 'person.proposed')
+        .map((event) => event.payload);
+    expect(await proposedEvents()).toEqual([
+      { personId: people[0]?._id, person: 'Priya Shah', via: 'charter' },
+      { personId: people[1]?._id, person: 'Dana Okafor', via: 'charter' },
+    ]);
+
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const again = await harness.run(async (ctx) => await ctx.db.query('people').collect());
+    expect(again).toHaveLength(2);
+    expect(await proposedEvents()).toHaveLength(2);
+  });
+
+  it('in mock mode proposes nobody: the graph is real mode only', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await namePeople(harness, agentId, charterId);
+    await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    expect(await harness.run(async (ctx) => await ctx.db.query('people').collect())).toEqual([]);
   });
 });

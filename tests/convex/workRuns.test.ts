@@ -19,7 +19,12 @@ import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { HELD_CLOSE_AGAINST_WORDS, HELD_NOT_APPROVED, HELD_WRITE } from '../../src/surfaces/policy';
+import {
+  HELD_CLOSE_AGAINST_WORDS,
+  HELD_NOT_APPROVED,
+  HELD_WITH_REPORTED_WRITES,
+  HELD_WRITE,
+} from '../../src/surfaces/policy';
 import { eventTypesIn } from '../../src/events/record-filters';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -387,12 +392,21 @@ describe('Stop on a working item', (): void => {
     ).resolves.toMatchObject({ claimed: false });
   });
 
-  it('refuses an item that is not under way, and another manager’s item', async (): Promise<void> => {
+  // Re-pinned by 13-FD (the v0.16.0 redeploy's finding 4): a Stop confirmed after the item moved
+  // on was thrown as a `ConvexError`, which the browser's Convex client logs as a server error and
+  // the dialog held open; it is an expected outcome, so it is answered as one and changes nothing.
+  it('answers a Stop on an item no longer under way as an outcome, and changes nothing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'plan-pending');
+    const before = await readItem(harness, workItemId);
     await expect(
       harness.withIdentity(OWNER).mutation(api.workRuns.stopRun, { workItemId }),
-    ).rejects.toThrow('Only work under way can be stopped');
+    ).resolves.toEqual({ ok: false, refused: 'moved-on' });
+    expect(await readItem(harness, workItemId)).toEqual(before);
+  });
+
+  it('refuses another manager’s item', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
     const working = await seed(harness, 'executing');
     await expect(
       harness
@@ -799,9 +813,21 @@ describe('a Retry that re-drafts a declined plan (12-M’s replaced request, car
     const notices = await harness.run(
       async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
     );
+    // Re-pinned for 13-FS (W12V-16): the replaced request keeps the decision it had, so the answer
+    // says it was rejected as well as replaced.
     expect(notices.map((notice) => notice.text)).toEqual([
-      'That request (5z73m6) was replaced and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.',
+      'That request (5z73m6) was rejected, then replaced, and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.',
     ]);
+    const remembered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', '5z73m6'),
+          )
+          .unique(),
+    );
+    expect(remembered).toMatchObject({ outcome: 'rejected', decidedAt: 2, decidedVia: 'channel' });
     // Its message already says how it was decided, so it is not edited again.
     const scheduled = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
@@ -1165,5 +1191,184 @@ describe('a close the tripwire sent to the manager (12-D, decision D-1 (b))', ()
       { disposition: 'held', reason: HELD_WRITE },
       { disposition: 'held', reason: HELD_CLOSE_AGAINST_WORDS },
     ]);
+  });
+});
+
+describe('a manager DM that reports a held write of its set (W12X-2, W12V-8)', (): void => {
+  /** Slack beside Linear, with the manager DM channel and the grants a DM applies on its own under. */
+  async function withSlack(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      for (const scope of ['slack:read', 'slack:write']) {
+        await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        managerDmChannelId: 'D0MANAGER',
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+  }
+
+  const dm = (text: string) => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: 'chat.postMessage',
+      body: JSON.stringify({ channel: 'D0MANAGER', text }),
+    },
+  });
+
+  it('holds the DM with the comment it reports, so neither goes before the manager decides', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output: {
+        draft: 'Commented on REVOPS-1.',
+        notes: '',
+        actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+      },
+    });
+    const row = await readItem(harness, ids.workItemId);
+    expect(row.state).toBe('actions-pending');
+    expect(row.actionVerdicts?.[1]).toEqual({
+      disposition: 'held',
+      reason: HELD_WITH_REPORTED_WRITES,
+    });
+  });
+
+  it('counts the held DM in the finished note once the manager approved it with the comment it reports (W13V-6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    // A note goes through a channel that holds its credential and knows the manager.
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', ids.agentId))
+        .filter((q) => q.eq(q.field('slug'), 'slack'))
+        .first();
+      if (slack === null) throw new Error('no Slack card');
+      await ctx.db.patch(slack._id, { credentialId, managerUserId: 'UMANAGER' });
+    });
+    const output = {
+      draft: 'Commented on REVOPS-1.',
+      notes: '',
+      actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+    };
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output,
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: ids.workItemId,
+      pendingRunId: ids.runId,
+      approvedIndexes: [0, 1],
+    });
+    const claim = await harness.mutation(internal.workRuns.claimApprovedActions, {
+      workItemId: ids.workItemId,
+    });
+    if (!claim.claimed) throw new Error(`apply not claimed: ${claim.reason}`);
+
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId: ids.workItemId,
+      output: {
+        ...output,
+        applied: [
+          { tool: 'mcp.call', ok: true, effect: 'comment on REVOPS-1' },
+          { tool: 'http.request', ok: true, effect: 'message in D0MANAGER' },
+        ],
+      },
+    });
+
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    const landed = notes.find((note) => note.kind === 'landed');
+    expect(landed?.text).toContain(': 2 changes landed.');
+    expect(landed?.text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
+  });
+
+  it('leaves out a manager DM the gate applied on its own, on a row with no verdicts, as before (W13V-6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    // A note goes through a channel that holds its credential and knows the manager.
+    await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', ids.agentId))
+        .filter((q) => q.eq(q.field('slug'), 'slack'))
+        .first();
+      if (slack === null) throw new Error('no Slack card');
+      await ctx.db.patch(slack._id, { credentialId, managerUserId: 'UMANAGER' });
+    });
+    const actions = [comment, dm('Commented the audit note on REVOPS-1.')];
+    // The run's own output on the row, as a run that applied its set with no hold leaves it.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(ids.workItemId, { output: { draft: '', notes: '', actions } });
+    });
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId: ids.workItemId,
+      output: {
+        draft: 'Commented on REVOPS-1.',
+        notes: '',
+        actions: [comment, dm('Commented the audit note on REVOPS-1.')],
+        applied: [
+          { tool: 'mcp.call', ok: true, effect: 'comment on REVOPS-1' },
+          { tool: 'http.request', ok: true, effect: 'message in D0MANAGER' },
+        ],
+      },
+    });
+
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(notes.find((note) => note.kind === 'landed')?.text).toContain(': 1 change landed.');
+  });
+
+  it('lets a DM that reports nothing of the set go on its own, as before', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await seed(harness);
+    await withSlack(harness, ids.agentId);
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId: ids.workItemId,
+      runId: ids.runId,
+      output: {
+        draft: 'Asked the manager.',
+        notes: '',
+        actions: [comment, dm('Which project should the audit note name?')],
+      },
+    });
+    const row = await readItem(harness, ids.workItemId);
+    expect(row.actionVerdicts?.[1]).toEqual({ disposition: 'auto' });
   });
 });

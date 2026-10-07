@@ -8,8 +8,9 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
+import type { PlanAgreement } from './PlanSection';
 import type { AutonomyChange } from '@/work/autonomy';
-import type { RunHold } from '@/work/item-display';
+import type { ListedWorkItem, RunHold } from '@/work/item-display';
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
 import { Button } from '../../../components/Button';
@@ -24,6 +25,7 @@ import {
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
 import type { RefusedSkill } from './VerdictSection';
+import { EmptyQueue } from './EmptyQueue';
 import { WorkItemCard } from './WorkItemCard';
 
 /**
@@ -236,6 +238,7 @@ export function WorkQueue({
   autonomousActions,
   surfaceMode,
   corrections = [],
+  agreements = [],
   autonomyChanges = [],
   loading = false,
   employeeName = 'the employee',
@@ -255,7 +258,7 @@ export function WorkQueue({
   managerKey?: string;
   /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
   needsYou?: ReadonlySet<string>;
-  workItems: Doc<'workItems'>[];
+  workItems: ListedWorkItem[];
   /** The queue's query has not answered yet, which is not the same as an empty queue. */
   loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */
@@ -269,13 +272,15 @@ export function WorkQueue({
   surfaceMode: 'mock' | 'real' | undefined;
   /** The employee's kept corrections, for the plan cards that applied one. */
   corrections?: KeptCorrection[];
+  /** The employee's working agreements, for the plan cards that applied one (W13-R29). */
+  agreements?: readonly PlanAgreement[];
   /** The employee's flips of the autonomous-actions switch, oldest first. */
   autonomyChanges?: readonly AutonomyChange[];
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
   const executePlan = useAction(api.workActions.executeApprovedPlan);
-  const approvePlan = useMutation(api.work.approvePlan);
+  const approvePlan = useMutation(api.planApproval.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
   const retryFailed = useMutation(api.workRuns.retryFailed);
   const reconcileFailed = useMutation(api.workRuns.reconcileFailed);
@@ -381,11 +386,7 @@ export function WorkQueue({
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the work queue…</p>
         ) : items.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">
-            {charterApproved
-              ? 'Nothing has come in yet. New work appears here as it is found.'
-              : 'Work arrives once you approve the charter.'}
-          </p>
+          <EmptyQueue agentId={agentId} charterApproved={charterApproved} />
         ) : (
           <>
             <QueueFilters counts={counts} selected={filter} onSelect={setFilter} />
@@ -413,6 +414,7 @@ export function WorkQueue({
                   autonomousActions={autonomousActions}
                   questions={openQuestions.filter((question) => question.workItemId === item._id)}
                   corrections={corrections}
+                  agreements={agreements}
                   autonomyChanges={autonomyChanges}
                   onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
                   onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}

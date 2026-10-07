@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../agent/drafted-text-rules';
+import { CLOSING_STATES_WORDS } from './not-done';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -16,6 +17,14 @@ import {
   plannerCorrectionLines,
   type PlannerCorrection,
 } from './corrections';
+import { appliedAgreementIds, plannerAgreementLines, type PromptAgreement } from './agreements';
+import {
+  PEOPLE_HEADING,
+  peopleBlockLines,
+  fromLine,
+  type PromptNamed,
+  type PromptPeople,
+} from '../people/prompt-block';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 import {
@@ -90,6 +99,16 @@ export const OWN_ITEM_READS_PLANNER = [
   "  - Plan the reads the work itself needs and no others. A ticket's own item is done on its ticket: it needs no chat channel read unless a step of this plan uses what the channel says, and a question somebody asked in a channel is its own work item, answered there. Declare a read of a surface only on a step that uses what it reads; a declared read is one the run is held to.",
 ];
 
+/**
+ * How a plan reads a list of open items, real mode only (W12V-12): on 4 and 5 October GLM's
+ * first read scoped `list_issues` to `state: "unstarted"` and found nothing for tickets in
+ * Backlog (4 runs), or asked for a field list the tool refused (6 runs), and either stopped the
+ * run before any write. The mock planner text stays byte-identical.
+ */
+export const LIST_READ_PLANNER = [
+  `  - A step that reads a list of open items reads every state that is not ${CLOSING_STATES_WORDS} (such as Backlog, Todo and In Progress), never one state, unless the work names the state; it names the filters the work needs and no fields to select, since a list answers with every field.`,
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -118,6 +137,7 @@ export function planSystemPrompt(
           ...DECLARED_OBLIGATIONS_PLANNER,
           ...SIGNED_TICKET_PLANNER,
           ...OWN_ITEM_READS_PLANNER,
+          ...LIST_READ_PLANNER,
         ]
       : []),
     '',
@@ -477,9 +497,9 @@ export const planSchema = z.object({
 
 /**
  * The real planner's reply: the mock schema plus the declared obligations
- * and the corrections it applied, each nullable on the wire so a reply that
- * omits them still parses and the judgement fills the obligations. The mock
- * schema is untouched.
+ * and the corrections and working agreements it applied, each nullable on the
+ * wire so a reply that omits them still parses and the judgement fills the
+ * obligations. The mock schema is untouched.
  */
 export const realPlanSchema = planSchema.extend({
   stepObligations: z
@@ -494,6 +514,7 @@ export const realPlanSchema = planSchema.extend({
   transition: z.enum(PLAN_TRANSITIONS).nullable(),
   transitionStep: z.number().int().nullable(),
   appliedCorrections: z.array(z.string()).nullable(),
+  appliedAgreements: z.array(z.string()).nullable(),
 });
 
 type RealPlanReply = z.infer<typeof realPlanSchema>;
@@ -795,6 +816,24 @@ export interface DraftPlanArgs {
   corrections?: readonly PlannerCorrection[];
   /** Set when the corrections were scrubbed without the span model; the plan records it. */
   correctionsRedaction?: 'structural-only';
+  /**
+   * The working agreements selected for this candidate, already scrubbed; real mode only, the mock
+   * prompt never carries them, and the scope judgement never reads them (13-W).
+   */
+  agreements?: readonly PromptAgreement[];
+  /** Set when the agreements were scrubbed without the span model; the plan records it. */
+  agreementsRedaction?: 'structural-only';
+  /**
+   * The people the employee works with, from the owner's graph (13-J, the People block); real mode
+   * only, the mock prompt never carries them, and the scope judgement never reads them.
+   */
+  people?: PromptPeople;
+  /**
+   * The confirmed person the candidate's requester resolves to (13-P's `requesterPerson`), named
+   * on the From line in place of the label; real mode only. Absent for an ambiguous or unknown
+   * requester, whose label stays.
+   */
+  requester?: PromptNamed;
 }
 
 /**
@@ -847,7 +886,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
-    `From: ${candidate.requesterLabel ?? '(unknown)'}`,
+    fromLine(candidate.requesterLabel, args.surfaceMode === 'real' ? args.requester : undefined),
     ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
@@ -866,6 +905,8 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
       renderPlanSurfaces(args.surfaces, args.now ?? Date.now()),
     );
   }
+  const people = args.surfaceMode === 'real' ? peopleBlockLines(args.people) : [];
+  if (people.length > 0) lines.push('', PEOPLE_HEADING, ...people);
   if (args.documents) {
     lines.push(
       '',
@@ -876,7 +917,12 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
       renderTeamDocs(args.documents.teamDocs),
     );
   }
-  if (args.surfaceMode === 'real') lines.push(...plannerCorrectionLines(args.corrections ?? []));
+  if (args.surfaceMode === 'real') {
+    lines.push(
+      ...plannerCorrectionLines(args.corrections ?? []),
+      ...plannerAgreementLines(args.agreements ?? []),
+    );
+  }
   lines.push('', 'Draft the execution plan now.');
   return lines.join('\n');
 }
@@ -962,8 +1008,8 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
 }
 
 /**
- * The plan with the corrections it applied: only ids the prompt offered,
- * and the scrub's degradation when the planner saw any.
+ * The plan with the corrections and working agreements it applied: only ids
+ * the prompt offered, and each scrub's degradation when the planner saw any.
  */
 function withCorrections(
   plan: ExecutionPlan,
@@ -972,11 +1018,17 @@ function withCorrections(
 ): ExecutionPlan {
   const offered = args.corrections ?? [];
   const applied = appliedCorrectionIds(reply.appliedCorrections, offered);
+  const offeredAgreements = args.agreements ?? [];
+  const appliedAgreements = appliedAgreementIds(reply.appliedAgreements, offeredAgreements);
   return {
     ...plan,
     ...(applied.length > 0 ? { appliedCorrections: applied } : {}),
     ...(offered.length > 0 && args.correctionsRedaction
       ? { correctionsRedaction: args.correctionsRedaction }
+      : {}),
+    ...(appliedAgreements.length > 0 ? { appliedAgreements } : {}),
+    ...(offeredAgreements.length > 0 && args.agreementsRedaction
+      ? { agreementsRedaction: args.agreementsRedaction }
       : {}),
   };
 }

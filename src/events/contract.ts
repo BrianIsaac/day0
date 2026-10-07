@@ -29,9 +29,15 @@ import type { MessagesTabOpenHow } from '../surfaces/slack-messages-tab';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
+import type {
+  AgreementApprovedVia,
+  AgreementRefusalReason,
+  AgreementSourceType,
+} from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
 import type { ManagerNotificationMode } from '../work/manager-notes';
 import type { PlannerObligations } from '../work/plan-obligations';
+import type { RelationshipType } from '../people/vocabulary';
 import type { ReconciliationEntry } from '../work/reconciliation';
 import type { TicketSnapshot } from '../work/ticket-ownership';
 import type { ExecutionPlan, PlanObligations } from '../work/types';
@@ -427,6 +433,64 @@ export interface CharterSeedingFailedPayload {
   readonly retrying: boolean;
 }
 
+/** The payload of `charter.seeding-requested` (wave 13): the manager asked Day0 to find work again. */
+export interface CharterSeedingRequestedPayload {
+  readonly charterId: CharterId;
+}
+
+/**
+ * The payload of `charter.seeded` (wave 13): real mode's seeding of an approved charter finished,
+ * its named systems declared and their orientation started (mock mode records `work.charter-derived`).
+ */
+export interface CharterSeededPayload {
+  readonly charterId: CharterId;
+}
+
+/** How a person came to be proposed: the employee's approved charter, or the one a handover brought. */
+export type PersonProposedVia = 'charter' | 'handover';
+
+/** The payload of `person.proposed` (wave 13, 13-P): a person the charter names, for the manager to confirm. */
+export interface PersonProposedPayload {
+  readonly personId: Id<'people'>;
+  /** The person's name, as the charter gives it. */
+  readonly person: string;
+  readonly via: PersonProposedVia;
+  /** Offered as possibly someone already in the people, by name alone (C5). */
+  readonly possiblySame?: boolean;
+}
+
+/** How the manager confirmed a person: Confirm, or Same person on a name-only match. */
+export type PersonConfirmedHow = 'confirm' | 'same-person';
+
+/** The payload of `person.confirmed` (wave 13, 13-P). */
+export interface PersonConfirmedPayload {
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  readonly how: PersonConfirmedHow;
+  /** How many proposed edges Confirm made facts. */
+  readonly edgesConfirmed?: number;
+}
+
+/** The payload of `person.dismissed` (wave 13, 13-P). */
+export interface PersonDismissedPayload {
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  /** How many proposed edges the dismissal retired. */
+  readonly edgesRetired?: number;
+}
+
+/** What the manager did to an edge on the People tab. */
+export type RelationshipChange = 'added' | 'edited' | 'retired';
+
+/** The payload of `relationship.changed` (wave 13, 13-P). */
+export interface RelationshipChangedPayload {
+  readonly relationshipId: Id<'relationships'>;
+  readonly personId: Id<'people'>;
+  readonly person: string;
+  readonly change: RelationshipChange;
+  readonly type: RelationshipType;
+}
+
 /** The payload of `work.charter-derived`. */
 export interface WorkCharterDerivedPayload {
   readonly count: number;
@@ -609,6 +673,15 @@ export interface SkillAuthoringSupersededPayload extends SkillNamed {
   readonly heldForMs: number;
 }
 
+/**
+ * The payload of `skill.authoring-held` (wave 13, D-8 (b)): a pause held the skill's authoring at
+ * its claim; the reason is the step's (`stepHoldReason`).
+ */
+export type SkillAuthoringHeldPayload = SkillReason;
+
+/** The payload of `skill.authoring-resumed` (wave 13, D-8 (b)): the authoring a pause held goes on. */
+export type SkillAuthoringResumedPayload = SkillNamed;
+
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
@@ -732,10 +805,34 @@ export interface SurfaceProposalRequestedPayload extends SurfaceNamed {
 /** The payload of `surface.orientation-failed`. */
 export type SurfaceOrientationFailedPayload = SurfaceReason;
 
+/**
+ * The payload of `surface.orientation-held` (wave 13, D-8 (b)): a pause held the system's
+ * orientation before it read anything; the reason is the step's (`stepHoldReason`).
+ */
+export interface SurfaceOrientationHeldPayload extends SurfaceReason {
+  /** The manager asked for this system's card by hand, so the resume asks for it the same way. */
+  readonly requested: boolean;
+}
+
+/** The payload of `surface.orientation-resumed` (wave 13, D-8 (b)): the orientation a pause held goes on. */
+export type SurfaceOrientationResumedPayload = SurfaceNamed;
+
 /** The payload of `surface.app-provisioned`. */
 export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
   readonly appId: string;
   readonly appName: string;
+}
+
+/**
+ * The payload of `surface.app-forgotten` (W12X-4; 13-FS's design 2 (b)): the manager forgot the
+ * employee's own Slack app that IT's revoke ended, so a new one can be created; IT deletes the old
+ * one in Slack's app settings, which Day0 cannot. Its id and name are the one pointer left to it,
+ * and the connection that created it keeps that app's creation on the employee's export.
+ */
+export interface SurfaceAppForgottenPayload extends SurfaceNamed {
+  readonly appId: string;
+  readonly appName: string;
+  readonly organisationConnectionId?: string;
 }
 
 /**
@@ -1234,6 +1331,41 @@ export interface WorkCorrectionRetiredPayload extends WorkItemNamed {
   readonly correctionId: Id<'corrections'>;
 }
 
+/** The fields every working agreement's event names (wave 13, 13-W). */
+interface AgreementNamed {
+  readonly agreementId: Id<'workingAgreements'>;
+  /** Whether it binds every employee of the owner rather than this one alone (A10). */
+  readonly everyEmployee: boolean;
+}
+
+/** The payload of `agreement.proposed`: a proposal shown on the Work tab, checked first (F11). */
+export interface AgreementProposedPayload extends AgreementNamed {
+  readonly source: AgreementSourceType;
+  /** The corrections a promotion came from, oldest first. */
+  readonly correctionIds?: Id<'corrections'>[];
+}
+
+/** The payload of `agreement.activated`: the manager kept it on a card and it passed the check. */
+export interface AgreementActivatedPayload extends AgreementNamed {
+  readonly approvedVia: AgreementApprovedVia;
+  /** The agreement it replaced: the one an edit changed, or the one kept for every employee. */
+  readonly supersedes?: Id<'workingAgreements'>;
+  /** The plan approval whose note the manager kept. */
+  readonly workItemId?: WorkItemId;
+}
+
+/** The payload of `agreement.refused`: it would go beyond the charter (F11), with the clause. */
+export interface AgreementRefusedPayload extends AgreementNamed {
+  readonly reason: AgreementRefusalReason;
+  /** The `willNotDo` clause it contradicts, word for word. */
+  readonly clause?: string;
+}
+
+/** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
+export interface AgreementRetiredPayload extends AgreementNamed {
+  readonly how: 'retired' | 'dismissed';
+}
+
 /** The payload of `work.draft-resumed`. */
 export interface WorkDraftResumedPayload extends WorkItemNamed {
   readonly attempt: number;
@@ -1633,7 +1765,13 @@ export interface EventPayloads {
   'charter.question-answered': CharterQuestionAnsweredPayload;
   'charter.evidence-rejected': CharterEvidenceRejectedPayload;
   'charter.seeding-failed': CharterSeedingFailedPayload;
+  'charter.seeding-requested': CharterSeedingRequestedPayload;
+  'charter.seeded': CharterSeededPayload;
   'work.charter-derived': WorkCharterDerivedPayload;
+  'person.proposed': PersonProposedPayload;
+  'person.confirmed': PersonConfirmedPayload;
+  'person.dismissed': PersonDismissedPayload;
+  'relationship.changed': RelationshipChangedPayload;
   'coworker.replied': CoworkerRepliedPayload;
   'documentation.systems-discovered': DocumentationSystemsDiscoveredPayload;
   'evaluation.transport-ready': EvaluationTransportReadyPayload;
@@ -1656,6 +1794,8 @@ export interface EventPayloads {
   'skill.rechecked': SkillRecheckedPayload;
   'skill.superseded': SkillSupersededPayload;
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
+  'skill.authoring-held': SkillAuthoringHeldPayload;
+  'skill.authoring-resumed': SkillAuthoringResumedPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
@@ -1673,7 +1813,10 @@ export interface EventPayloads {
   'surface.oriented': SurfaceOrientedPayload;
   'surface.proposal-requested': SurfaceProposalRequestedPayload;
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
+  'surface.orientation-held': SurfaceOrientationHeldPayload;
+  'surface.orientation-resumed': SurfaceOrientationResumedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
+  'surface.app-forgotten': SurfaceAppForgottenPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
   'surface.app-messages-open': SurfaceAppMessagesOpenPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
@@ -1732,6 +1875,10 @@ export interface EventPayloads {
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
+  'agreement.proposed': AgreementProposedPayload;
+  'agreement.activated': AgreementActivatedPayload;
+  'agreement.refused': AgreementRefusedPayload;
+  'agreement.retired': AgreementRetiredPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
   'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
@@ -1818,7 +1965,13 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'charter.question-answered',
   'charter.evidence-rejected',
   'charter.seeding-failed',
+  'charter.seeding-requested',
+  'charter.seeded',
   'work.charter-derived',
+  'person.proposed',
+  'person.confirmed',
+  'person.dismissed',
+  'relationship.changed',
   'coworker.replied',
   'documentation.systems-discovered',
   'evaluation.transport-ready',
@@ -1841,6 +1994,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.rechecked',
   'skill.superseded',
   'skill.authoring-superseded',
+  'skill.authoring-held',
+  'skill.authoring-resumed',
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
@@ -1858,7 +2013,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.oriented',
   'surface.proposal-requested',
   'surface.orientation-failed',
+  'surface.orientation-held',
+  'surface.orientation-resumed',
   'surface.app-provisioned',
+  'surface.app-forgotten',
   'surface.socket-token-landed',
   'surface.app-messages-open',
   'surface.install-failed',
@@ -1917,6 +2075,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',
+  'agreement.proposed',
+  'agreement.activated',
+  'agreement.refused',
+  'agreement.retired',
   'work.draft-resumed',
   'work.execution-resumed',
   'work.plan-held',

@@ -46,7 +46,6 @@ async function companyBackend(): Promise<ReturnType<typeof convexTest>> {
     });
     await ctx.db.insert('docSyncRuns', {
       sourceId,
-      refs: [],
       credentialRefs: [],
       pageCount: 4,
       redactionCount: 0,

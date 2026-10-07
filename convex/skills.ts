@@ -30,6 +30,7 @@ import {
 } from './skillAuthoringClaim';
 import { completeRegistrationArgs, completeRegistrationInTransaction } from './skillRegistration';
 import { proposeArgs, proposeInTransaction } from './skillProposal';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -299,7 +300,10 @@ export const approve = mutation({
       );
       if (refusal) throw new Error(`cannot approve "${row.name}": ${refusal}`);
     }
-    await ctx.db.patch(args.skillId, { state: 'approved' });
+    await ctx.db.patch(args.skillId, {
+      state: 'approved',
+      ...skillWaitingStamp('approved', Date.now()),
+    });
     for (const scope of row.requiredScopes ?? []) {
       await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
     }
@@ -484,7 +488,8 @@ export const retireUnshaped = internalMutation({
  * verification (`purpose: 'verify-stored'`, `storedVerification.verifyStoredSkill`)
  * writes no body and counts nothing; it may also take a registered row, for a
  * re-check, which stays registered and keeps running its verified body while
- * the check runs.
+ * the check runs. While a pause holds the employee's steps, an authoring claim is refused as held
+ * and recorded, and the resume starts it (`heldStarts.ts`, D-8 (b)).
  */
 export const claimAuthoringRun = internalMutation({
   args: {
@@ -606,6 +611,7 @@ export const failAuthoringRun = internalMutation({
     const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'failed',
+      ...skillWaitingStamp('failed', Date.now()),
       ...(args.dropsStoredCopy === true ? { body: '' } : {}),
       verificationLog: redactTokenShapes(args.rowReason),
       refusedBody: args.refusedBody === undefined ? undefined : redactTokenShapes(args.refusedBody),
@@ -651,6 +657,7 @@ export const deferAuthoringRun = internalMutation({
       const failed = `the model provider could not be reached through ${MAX_AUTHORING_DEFERRALS + 1} tries: ${reason}`;
       await ctx.db.patch(args.skillId, {
         state: 'failed',
+        ...skillWaitingStamp('failed', Date.now()),
         verificationLog: failed,
         pendingSmokeTest: undefined,
         authoringDeferrals: undefined,
@@ -671,6 +678,7 @@ export const deferAuthoringRun = internalMutation({
     const deferred = `${reason}. The model provider could not be reached, so authoring is tried again in ${minutes} minutes (${attempt} of ${MAX_AUTHORING_DEFERRALS}).`;
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
+      ...skillWaitingStamp('authoring', Date.now()),
       verificationLog: deferred,
       authoringDeferrals: attempt,
       ...RELEASED,
@@ -720,6 +728,7 @@ export const parkUnverified = internalMutation({
     const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
+      ...skillWaitingStamp('authoring', Date.now()),
       body: redactTokenShapes(args.body),
       pendingSmokeTest: redactTokenShapes(args.smokeTest),
       sandboxId: args.sandboxId,

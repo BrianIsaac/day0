@@ -15,11 +15,13 @@ import {
   CORRECTIONS_MAX_CHARS,
   correctionSurfaces,
   type CorrectionKind,
+  type CorrectionOrigin,
 } from '../src/work/corrections';
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 import { appendEvent } from './eventLog';
 import { firstRetiredRejection } from './retirements';
+import { scheduleProposals } from './workingAgreements';
 
 /**
  * The manager's corrections, kept per employee and fed back into its later
@@ -203,6 +205,21 @@ async function sharedTicketCorrectionId(
   return (await firstTicketRejection(ctx, row))?.correction?._id;
 }
 
+/** What the transition that took the manager's words keeps of them. */
+export interface KeptWords {
+  /** Which of the manager's words these are. */
+  readonly kind: CorrectionKind;
+  /** The words, already normalised and capped. */
+  readonly text: string;
+  /**
+   * Where the manager gave them (A14): on the dashboard, or in the manager channel. A channel
+   * correction may propose a working agreement and never activates one without the card.
+   */
+  readonly origin: CorrectionOrigin;
+  /** The run the reason was given on, when there was one. */
+  readonly runId?: Id<'events'>;
+}
+
 /**
  * Keep the manager's words on a work item as a correction, in real mode.
  *
@@ -213,9 +230,7 @@ async function sharedTicketCorrectionId(
  * Args:
  *   ctx: Mutation context.
  *   row: The work item as it was when the manager wrote.
- *   kind: Which of the manager's words these are.
- *   text: The words, already normalised and capped.
- *   runId: The run the reason was given on, when there was one.
+ *   words: What was written, where, and on which run.
  *
  * Returns:
  *   The kept correction, or undefined when nothing was kept.
@@ -223,24 +238,26 @@ async function sharedTicketCorrectionId(
 export async function keepCorrectionInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
-  kind: CorrectionKind,
-  text: string,
-  runId?: Id<'events'>,
+  words: KeptWords,
 ): Promise<Id<'corrections'> | undefined> {
-  if (SURFACE_MODE !== 'real' || text.trim() === '') return undefined;
-  return await ctx.db.insert('corrections', {
+  if (SURFACE_MODE !== 'real' || words.text.trim() === '') return undefined;
+  const correctionId = await ctx.db.insert('corrections', {
     agentId: row.agentId,
     workItemId: row._id,
-    ...(runId ? { runId } : {}),
-    kind,
-    text,
+    ...(words.runId ? { runId: words.runId } : {}),
+    kind: words.kind,
+    text: words.text,
     itemTitle: row.title,
     sourceCategory: row.sourceCategory,
     sourceSystem: row.sourceSystem,
     surfaces: correctionSurfaces(row.sourceSystem, row.plan as ExecutionPlan | undefined),
     createdAt: Date.now(),
     appliedTo: [],
+    origin: words.origin,
   });
+  // A new correction may say what an earlier one said: the employee's proposal run asks (F10).
+  await scheduleProposals(ctx, row.agentId);
+  return correctionId;
 }
 
 /**

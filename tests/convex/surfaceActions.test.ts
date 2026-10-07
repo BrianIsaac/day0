@@ -495,6 +495,39 @@ describe('Slack documented API probing', (): void => {
     // A policy that does not name it leaves it out, and nothing requires it.
     expect(slackMethodsFromPolicy('`chat.postMessage`')).toEqual(['chat.postMessage']);
   });
+
+  it('derives the manager DM on an app Day0 created whatever its page names, and keeps only the work’s methods (design 1 (b))', async (): Promise<void> => {
+    const called: string[] = [];
+    const fetcher = vi.fn(async (input: string | URL): Promise<Response> => {
+      const url = String(input);
+      called.push(url.replace(/^.*\/api\//, '').replace(/\?.*$/, ''));
+      if (url.endsWith('/auth.test')) return slackResponse({ ok: true, user_id: 'UBOT' });
+      if (url.includes('/users.lookupByEmail')) {
+        return slackResponse({ ok: true, user: { id: 'UMANAGER', real_name: 'Sam Ortiz' } });
+      }
+      return slackResponse({ ok: true, channel: { id: 'DMANAGER' } });
+    });
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      'The team reads `conversations.history` in #revops.',
+      fetcher,
+      [],
+      { ownApp: true },
+    );
+    expect(called).toEqual(['auth.test', 'users.lookupByEmail', 'conversations.open']);
+    expect(result.managerDmChannelId).toBe('DMANAGER');
+    expect(result.toolAllowlist).toEqual(['conversations.history']);
+    // A shared token's card still needs its page to name them.
+    await expect(
+      probeSlackSurface(
+        'xoxb-shared-token',
+        'boss@day0.local',
+        'The team reads `conversations.history` in #revops.',
+        fetcher,
+      ),
+    ).rejects.toThrow('Slack policy does not allow required methods');
+  });
 });
 
 describe('probe error hygiene', (): void => {
@@ -3820,5 +3853,72 @@ describe('the anonymous-caller guard before the first read (12-G)', (): void => 
         plaintext: 'fake-key',
       }),
     ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe("the probe's identity region (wave 13, 13-P)", (): void => {
+  it("hands the looked-up manager to the owner's person as a Slack identity once the connection is recorded", async (): Promise<void> => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const endpoint = 'https://slack.com/api/';
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'approved',
+      path: 'documented-api',
+      endpoint,
+      pathCandidates: [{ path: 'documented-api', endpoint }],
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      whereFound: [],
+      createdAt: 1,
+    };
+    const probeSlack = vi.fn(async () => ({
+      toolAllowlist: ['auth.test'],
+      channelsNotJoined: [],
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      managerName: 'Rowan',
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'T0KESTREL',
+      providerBotId: 'BBOT',
+    }));
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: async (
+          reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          writes.push({ name: getFunctionName(reference as never), args });
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
+          if ('verifiedAt' in args || 'providerBotId' in args) return true;
+          return null;
+        },
+        runQuery: async (reference: unknown): Promise<unknown> =>
+          !readsCardPages(reference)
+            ? { surface, agent: { _id: agentId, bossEmail: MANAGER_ADDRESS } }
+            : [],
+        runAction: fakeRunAction('slack-contract-value'),
+      } as unknown as ActionCtx,
+      { surfaceId },
+      { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
+    );
+    expect(outcome).toMatchObject({ verdict: 'connected' });
+    const names = writes.map((write) => write.name);
+    const recorded = names.indexOf('surfaces:recordConnected');
+    const identity = names.indexOf('people:recordOwnerChatIdentity');
+    expect(identity).toBeGreaterThan(recorded);
+    expect(writes[identity]?.args).toEqual({
+      agentId,
+      workspaceId: 'T0KESTREL',
+      userId: 'UMANAGER',
+      name: 'Rowan',
+      lookedUpAt: 1_000,
+    });
   });
 });

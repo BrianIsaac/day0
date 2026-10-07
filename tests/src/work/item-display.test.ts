@@ -10,6 +10,7 @@ import {
   ticketNowSentence,
   workingFrom,
   waitsAtClaim,
+  withoutSlackMentions,
   writesWhenRunFinishes,
   type RunHold,
 } from '../../../src/work/item-display';
@@ -56,6 +57,18 @@ describe('sourceLine', (): void => {
     expect(
       sourceLine(row({ ...ticket, sourceCategory: 'docs', requesterLabel: ' ' })),
     ).toBeUndefined();
+  });
+
+  it('names the confirmed person an ask resolved to in place of its label (W13V-7)', (): void => {
+    expect(
+      sourceLine({
+        ...row({
+          requesterLabel: 'U0C78V6LAPP',
+          replyTarget: { channel: 'C0ASKS', channelName: 'revops-asks' },
+        }),
+        requesterName: 'Rowan Hale',
+      }),
+    ).toBe('Rowan Hale, in #revops-asks');
   });
 
   it('reads the channel of a mention stored before the reply target was', (): void => {
@@ -367,6 +380,20 @@ describe('ticketNowSentence', (): void => {
     );
     expect(ticketNowSentence({ assigned: true, doNotAutomate: false })).toContain(
       'assigned to someone the tracker did not identify',
+    );
+  });
+});
+
+describe('withoutSlackMentions', (): void => {
+  it('drops a raw Slack mention from the text a card shows, which says nothing to a manager (W13V-7)', (): void => {
+    expect(withoutSlackMentions('<@U0C78V6LAPP> can you refresh the board?')).toBe(
+      'can you refresh the board?',
+    );
+    expect(withoutSlackMentions('Ask <@W0ABCDEF12|rowan> and <@U0BTFK6FLNL> first.')).toBe(
+      'Ask and first.',
+    );
+    expect(withoutSlackMentions('No mention <#C0ASKS|revops-asks> here.')).toBe(
+      'No mention <#C0ASKS|revops-asks> here.',
     );
   });
 });

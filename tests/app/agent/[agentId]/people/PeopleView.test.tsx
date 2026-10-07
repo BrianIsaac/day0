@@ -47,9 +47,11 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { APPROVED_CHARTER, asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import {
+  choose,
   focusedName,
   mount,
   press,
+  settle,
   said,
   typeInto,
   unmountAll,
@@ -207,13 +209,29 @@ describe('PeopleView', () => {
     expect(carried).not.toContain('approved by you');
     // An amendment can add a person, so the line never claims the one-to-one named them.
     expect(html).not.toContain('From your one-to-one');
-    expect(html).toContain('does not propose people for you to confirm yet');
+    // 13-P: in mock mode the graph is not kept, and the Proposed card says what a deployment of
+    // the manager's own does, where it said the tab proposed nobody yet. Re-pinned by 13-FD: said
+    // as every other mock-mode sentence says it, of "the hosted office", where it said "this demo".
+    expect(html).toContain(
+      'In a deployment of your own, Mira proposes people from the one-to-one and your documentation for you to confirm. The hosted office keeps the names the one-to-one gave the charter, below.',
+    );
     expect(html).not.toMatch(/<button[^>]*>(Confirm|Dismiss|A different person)/);
     expect(html).toMatch(/<button[^>]*>Hand over<\/button>/);
     // The free edit is gone (the transfer plan, section 9).
     expect(html).not.toContain('Change manager');
     // Every manager-facing word says employee (N29); a link's address is not a word.
     expect(html.replace(/<[^>]*>/g, ' ')).not.toMatch(/\bagent\b/i);
+  });
+
+  it("says in the hosted office that the employee reads the charter's names, as no graph is kept there (13-FD)", () => {
+    const mock = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'mock' }));
+    expect(mock).toContain(
+      'The hosted office keeps no graph, so Mira reads the people only as its charter names them.',
+    );
+    expect(mock).not.toContain('regenerated when the graph changes');
+    const real = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(real).toContain('regenerated when the graph changes');
+    expect(real).not.toContain('The hosted office keeps no graph');
   });
 
   it('says the one-to-one asks who the employee works with when the charter names nobody', () => {
@@ -802,6 +820,252 @@ describe('the Manager card’s state and reads', () => {
     });
     const view = mount(asEmployee(<PeopleView />));
     expect(managerCard(view.container).textContent).toContain('Mira is finishing 1 run;');
+  });
+});
+
+/** The graph a real-mode tab reads: one of each proposal and one confirmed person. */
+const GRAPH = {
+  proposals: [
+    {
+      personId: 'person-dana',
+      name: 'Dana Okafor',
+      role: 'Finance systems owner',
+      status: 'unverified',
+      evidence: [
+        {
+          quote:
+            '| NetLedger | the books | Finance systems owner: Dana Okafor approves `NetLedger` access |',
+          where: 'Kestrel Supply onboarding',
+          at: Date.UTC(2026, 9, 5, 6, 0),
+        },
+        { quote: 'Dana Okafor for NetLedger.', where: 'the one-to-one', at: 1 },
+      ],
+      waiting: [{ type: 'approval-authority', scope: 'NetLedger access' }],
+    },
+    {
+      personId: 'person-sara',
+      name: 'Sara Lim',
+      status: 'unverified',
+      evidence: [{ quote: 'Sara Lim for ad-hoc asks.', where: 'the one-to-one', at: 1 }],
+      match: { identityId: 'identity-sara', handle: 'sara' },
+      waiting: [{ type: 'collaborator' }],
+    },
+    {
+      personId: 'person-priya-2',
+      name: 'Priya Shah',
+      status: 'unverified',
+      evidence: [{ quote: 'Priya Shah owns pipeline.', where: 'Team overview', at: 1 }],
+      possiblySameAs: {
+        personId: 'person-priya',
+        name: 'Priya Shah',
+        role: 'Revenue operations',
+        standing: 'confirmed',
+      },
+      waiting: [],
+    },
+  ],
+  confirmed: [
+    {
+      personId: 'person-priya',
+      name: 'Priya Shah',
+      role: 'Revenue operations',
+      confirmedAt: Date.UTC(2026, 9, 5, 7, 0),
+      evidence: {
+        quote: 'Priya Shah for segment and pipeline.',
+        where: 'the one-to-one',
+        at: Date.UTC(2026, 9, 5, 5, 0),
+      },
+      identities: [
+        {
+          identityId: 'identity-priya',
+          provider: 'slack',
+          externalId: 'U0PRIYA',
+          displayName: 'priya',
+          verified: true,
+        },
+      ],
+      edges: [
+        {
+          relationshipId: 'edge-priya',
+          type: 'collaborator',
+          scope: 'segment and pipeline',
+          since: Date.UTC(2026, 9, 5, 7, 0),
+          fromEmployee: true,
+        },
+      ],
+    },
+  ],
+};
+
+/** The Proposed card, the section whose heading is Proposed. */
+function section(scope: ParentNode, title: string): HTMLElement {
+  const card = [...scope.querySelectorAll<HTMLElement>('section')].find(
+    (candidate) => candidate.querySelector('h2')?.textContent === title,
+  );
+  if (!card) throw new Error(`no ${title} card`);
+  return card;
+}
+
+describe('PeopleView: the people graph (wave 13, 13-P)', () => {
+  beforeEach(() => settled({ 'people:forEmployee': GRAPH }));
+
+  afterEach(() => {
+    unmountAll();
+    backend.queries = {};
+    backend.refusals = {};
+    backend.results = {};
+    backend.calls = [];
+  });
+
+  it('shows each proposal with its evidence and the buttons its state takes, in the drafted words', () => {
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    const proposed = section(view.container, 'Proposed');
+    expect(proposed.textContent).toContain(
+      'Mira found these people. Confirm the ones that are right.',
+    );
+    expect(proposed.textContent).toContain('3 waiting on you');
+    expect(proposed.textContent).toContain('Dana Okafor, Finance systems owner');
+    // A table row's bars and code marks are left out, and further evidence waits behind a disclosure.
+    expect(proposed.textContent).toContain(
+      'Evidence: “NetLedger · the books · Finance systems owner: Dana Okafor approves NetLedger access” (Kestrel Supply onboarding, 5 Oct 2026, 06:00).',
+    );
+    expect(proposed.querySelector('summary')?.textContent).toBe('1 more source');
+    expect(proposed.textContent).toContain('Approver: NetLedger access.');
+    expect(proposed.textContent).toContain('Collaborator.');
+    expect(proposed.textContent).toContain('Matches Slack user @sara.');
+    expect(proposed.textContent).toContain(
+      'Possibly the same as Priya Shah, Revenue operations (already confirmed).',
+    );
+    expect(proposed.textContent).toContain(
+      'Same person adds these words to Priya Shah; Different keeps them apart.',
+    );
+    expect([...proposed.querySelectorAll('h3')].map((heading) => heading.textContent)).toEqual([
+      'Dana Okafor, Finance systems owner',
+      'Sara Lim',
+      'Priya Shah',
+    ]);
+    expect(buttonNames(proposed)).toEqual([
+      'Confirm',
+      'Dismiss',
+      'Confirm as @sara',
+      'A different person',
+      'Dismiss',
+      'Same person',
+      'Different',
+    ]);
+  });
+
+  it('confirms, dismisses and merges through the card, says so in its one status region and keeps focus on it', async () => {
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    await press(view.container, 'Confirm Dana Okafor');
+    expect(backend.calls).toContainEqual({
+      name: 'people:confirm',
+      args: { personId: 'person-dana', agentId: 'agent-1' },
+    });
+    expect(said(section(view.container, 'Proposed'))).toEqual([
+      'Confirmed Dana Okafor: now under Confirmed.',
+    ]);
+    // The row that followed the decided one takes focus, the pressed control having gone with it.
+    expect(document.activeElement?.textContent).toBe('Sara Lim');
+    await press(view.container, 'A different person: Sara Lim is not @sara');
+    expect(backend.calls.at(-1)).toEqual({
+      name: 'people:notThisMatch',
+      args: { personId: 'person-sara', agentId: 'agent-1', identityId: 'identity-sara' },
+    });
+    await press(view.container, 'Same person: Priya Shah is the Priya Shah already confirmed');
+    expect(backend.calls.at(-1)?.name).toBe('people:samePerson');
+    backend.refusals['people:dismiss'] = 'Nothing about this person is waiting on you.';
+    await press(view.container, 'Dismiss Sara Lim');
+    expect(said(section(view.container, 'Proposed'))).toEqual([
+      'Nothing about this person is waiting on you.',
+    ]);
+  });
+
+  it('lists a confirmed person with their identities and edges, and changes, ends and adds an edge', async () => {
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    const confirmed = section(view.container, 'Confirmed');
+    expect(confirmed.textContent).toContain('Priya Shah, Revenue operations');
+    expect(confirmed.textContent).toContain('Confirmed by you 5 Oct 2026, 07:00.');
+    expect(confirmed.textContent).toContain('Identities: Slack @priya.');
+    expect(confirmed.textContent).toContain(
+      'Collaborator: segment and pipeline · since 5 Oct 2026, 07:00',
+    );
+    await press(confirmed, 'End collaborator Priya Shah');
+    expect(backend.calls.at(-1)).toEqual({
+      name: 'people:retireRelationship',
+      args: { relationshipId: 'edge-priya', agentId: 'agent-1' },
+    });
+    await press(confirmed, 'Change collaborator Priya Shah');
+    const select = confirmed.querySelector('select') as HTMLSelectElement;
+    await choose(select, 'escalation-contact');
+    typeInto(confirmed.querySelector('input') as HTMLInputElement, 'pipeline questions');
+    await press(confirmed, 'Save');
+    expect(backend.calls.at(-1)).toEqual({
+      name: 'people:editRelationship',
+      args: {
+        relationshipId: 'edge-priya',
+        agentId: 'agent-1',
+        type: 'escalation-contact',
+        scope: 'pipeline questions',
+      },
+    });
+    expect(said(confirmed)).toEqual(['Changed Priya Shah to escalation contact.']);
+    await press(confirmed, 'Add a relationship with Priya Shah');
+    await settle();
+    // The form takes focus as it opens; Cancel hands it back to the person's row.
+    expect(document.activeElement?.tagName).toBe('SELECT');
+    await press(confirmed, 'Cancel');
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.activeElement?.textContent).toBe('Priya Shah, Revenue operations');
+    await press(confirmed, 'Add a relationship with Priya Shah');
+    await press(confirmed, 'Add');
+    expect(backend.calls.at(-1)).toEqual({
+      name: 'people:addRelationship',
+      args: { personId: 'person-priya', agentId: 'agent-1', type: 'collaborator' },
+    });
+  });
+
+  it('says so while the graph is read, when nobody waits, and in mock mode, with no button to press', () => {
+    settled({ 'people:forEmployee': undefined });
+    const reading = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(section(reading.container, 'Proposed').textContent).toContain('Reading your people.');
+    unmountAll();
+    settled({ 'people:forEmployee': { proposals: [], confirmed: [] } });
+    const empty = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(section(empty.container, 'Proposed').textContent).toContain(
+      'No one to confirm. Mira proposes people after its charter is approved and when your documentation changes.',
+    );
+    expect(section(empty.container, 'Confirmed').textContent).toContain(
+      'No one confirmed works with Mira yet.',
+    );
+    expect(buttonNames(section(empty.container, 'Proposed'))).toEqual([]);
+    unmountAll();
+    const mock = mount(asEmployee(<PeopleView />));
+    expect(mock.container.textContent).not.toContain('Confirmed');
+    expect(backend.calls).toEqual([]);
+  });
+
+  it('reads the aside in the drafted words, never identities', () => {
+    const html = renderToStaticMarkup(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    expect(html).toContain(
+      'Names and roles, at most eight lines, regenerated when the graph changes. Never identities or credentials.',
+    );
+  });
+
+  it('passes axe with every target 44 px tall in every state of the graph, the edge form open', async () => {
+    const states: Array<unknown> = [undefined, { proposals: [], confirmed: [] }, GRAPH];
+    for (const graph of states) {
+      settled({ 'people:forEmployee': graph });
+      const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+      expect(await axeViolations(view.container)).toEqual([]);
+      expect(underTarget(view.container)).toEqual([]);
+      unmountAll();
+    }
+    settled({ 'people:forEmployee': GRAPH });
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    await press(view.container, 'Add a relationship with Priya Shah');
+    expect(await axeViolations(view.container)).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
   });
 });
 

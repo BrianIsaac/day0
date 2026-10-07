@@ -1,13 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import type { ListClauseField } from '@/agent/charter-amendment';
 import {
   listedRules,
   type CharterConstraint,
+  type KeptClause,
+  type RulePlacement,
   type StrikePreview,
 } from '@/agent/charter-constraints';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
+import { defaultRuleClause } from './AmendCharterPanel';
 import { READER_ACTED, type CharterActors } from './charter-actors';
 
 const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
@@ -17,21 +21,45 @@ const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
 };
 
 /** Where a rule stands, as its chip says it. */
-export type RuleStanding = 'confirmed' | 'struck' | 'kept' | 'unverified';
+export type RuleStanding =
+  | 'confirmed'
+  | 'struck'
+  | 'kept'
+  | 'unverified'
+  | 'check'
+  | 'in-no-clause';
+
+/** Where a rule drafted before binds is: by its words alone. */
+const BY_WORDING: RulePlacement = { kind: 'by-wording' };
 
 /**
  * A rule's standing: struck by the manager, kept because the charter cannot do without it (a
- * strike the effective charter refuses), not in the clauses because no clause carries its words
- * (none were verified, or none are left, so a strike would change nothing), or confirmed.
+ * strike the effective charter refuses), or else by where it is placed. A rule bound to its clauses
+ * is confirmed when one of them carries its words, and to be checked when none does; a rule in no
+ * clause says so. A rule drafted before binds is confirmed, or not in the clauses because no clause
+ * carries its words (none were verified, or none are left, so a strike would change nothing).
  */
 export function ruleStanding(
   constraint: Pick<CharterConstraint, 'struck' | 'wording'>,
   preview: StrikePreview | undefined,
+  placement: RulePlacement = BY_WORDING,
 ): RuleStanding {
   if (constraint.struck) return 'struck';
   if (preview?.refusal !== undefined) return 'kept';
-  const inClauses = constraint.wording.length > 0 && preview?.changes !== false;
-  return inClauses ? 'confirmed' : 'unverified';
+  switch (placement.kind) {
+    case 'in-no-clause':
+      return 'in-no-clause';
+    case 'bound':
+      return placement.carriesWords ? 'confirmed' : 'check';
+    case 'by-wording':
+      return constraint.wording.length > 0 && preview?.changes !== false
+        ? 'confirmed'
+        : 'unverified';
+    default: {
+      const unknown: never = placement;
+      throw new Error(`unknown rule placement ${JSON.stringify(unknown)}`);
+    }
+  }
 }
 
 /**
@@ -48,12 +76,21 @@ export function offersStrike(preview: StrikePreview | undefined): boolean {
  * is never drawn on its own fill, which reads under AA (wave 6 A decision 4 (b)).
  */
 const STANDING_CHIP: Readonly<
-  Record<RuleStanding, { label: string; tone: 'ok' | 'muted' | 'you' }>
+  Record<RuleStanding, { label: string; tone: 'ok' | 'muted' | 'warn' | 'you' }>
 > = {
   confirmed: { label: 'Confirmed', tone: 'ok' },
   struck: { label: 'Struck', tone: 'muted' },
   kept: { label: 'Kept', tone: 'you' },
   unverified: { label: 'Not in the clauses', tone: 'muted' },
+  check: { label: 'Check the clause', tone: 'warn' },
+  'in-no-clause': { label: 'In no clause', tone: 'warn' },
+};
+
+/** The clause lists by the words the row says them in. */
+const CLAUSE_LIST_WORDS: Readonly<Record<ListClauseField, string>> = {
+  willDo: 'will do',
+  willNotDo: 'will not do',
+  escalationTriggers: 'escalation triggers',
 };
 
 /** The clauses a strike removes, quoted for the row. */
@@ -98,6 +135,183 @@ export function listedWording(wording: readonly string[]): string[] {
   });
 }
 
+/** The bold clause words a rule drafted before binds lists, joined as one list. */
+function ClauseWords({ clauses }: { clauses: readonly string[] }) {
+  return (
+    <>
+      {listedWording(clauses).map((phrase, i) => (
+        <span key={i}>
+          {i > 0 ? '; ' : ''}
+          <b className="font-semibold text-[var(--color-fg)]">{phrase}</b>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The clauses a bound rule produced, joined as one list in the page's text colour at the row's own
+ * weight: whole sentences, so the rule's quote above them stays the row's headline.
+ */
+function BoundClauses({ clauses }: { clauses: readonly string[] }) {
+  return (
+    <>
+      {listedWording(clauses).map((clause, i) => (
+        <span key={i}>
+          {i > 0 ? '; ' : ''}
+          <span data-clause="" className="text-[var(--color-fg)]">
+            {clause}
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * What the rule became in the charter, after its kind: the clauses it binds, or for a rule drafted
+ * before binds the words the clauses carry ("not verified" when none do); a rule in no clause says
+ * so. A struck rule whose clauses have left the charter says nothing more here.
+ */
+function PlacementWords({
+  constraint,
+  placement,
+}: {
+  constraint: CharterConstraint;
+  placement: RulePlacement;
+}) {
+  switch (placement.kind) {
+    case 'by-wording':
+      return constraint.wording.length > 0 ? (
+        <>
+          {' · in the charter as '}
+          <ClauseWords clauses={constraint.wording} />
+        </>
+      ) : (
+        <>{' · not verified: no clause carries these words'}</>
+      );
+    case 'bound':
+      // A confirmed rule is shown as the clauses that carry it; the others are said beneath it
+      // (W13-R6). A rule none carries shows every clause it binds, for the manager to check.
+      return (
+        <>
+          {' · in the charter as '}
+          <BoundClauses
+            clauses={
+              placement.carriesWords
+                ? placement.clauses.filter((clause) => !placement.notCarrying.includes(clause))
+                : placement.clauses
+            }
+          />
+        </>
+      );
+    case 'in-no-clause':
+      return constraint.struck ? null : <>{' · in no clause'}</>;
+    default: {
+      const unknown: never = placement;
+      throw new Error(`unknown rule placement ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
+/** Why a strike keeps a clause its rule binds (W13-R6, W13-R7), in the row's muted line. */
+function keptClauseWords(kept: KeptClause): string {
+  const clause = quotedClauses([kept.clause]);
+  switch (kept.because) {
+    case 'another-rule':
+      return `keeps the clause ${clause} because another rule still needs it: ${quotedClauses([kept.rule ?? 'another rule'])}`;
+    case 'not-this-rule':
+      return `keeps the clause ${clause}: it does not carry your words`;
+    case 'no-words':
+      return `keeps the clause ${clause}: your words are not in it to take out`;
+    default: {
+      const unknown: never = kept.because;
+      throw new Error(`unknown kept clause ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * The muted lines under a row that say what its strike would do, or why it does nothing: the
+ * clauses it takes, then each bound clause it keeps and why. On a row to be checked it says the
+ * clauses a strike takes may not be this rule.
+ */
+function StrikeLine({
+  constraint,
+  placement,
+  preview,
+  check,
+}: {
+  constraint: CharterConstraint;
+  placement: RulePlacement;
+  preview: StrikePreview | undefined;
+  check: boolean;
+}) {
+  if (preview?.refusal) return <RowNote>cannot be struck: {preview.refusal}</RowNote>;
+  const kept = (preview?.keptClauses ?? []).map((clause, i) => (
+    <RowNote key={i}>{keptClauseWords(clause)}</RowNote>
+  ));
+  return (
+    <>
+      <TakenLine constraint={constraint} placement={placement} preview={preview} check={check} />
+      {kept}
+    </>
+  );
+}
+
+/** The line that says which clauses a strike takes, or why it takes none. */
+function TakenLine({
+  constraint,
+  placement,
+  preview,
+  check,
+}: {
+  constraint: CharterConstraint;
+  placement: RulePlacement;
+  preview: StrikePreview | undefined;
+  check: boolean;
+}) {
+  if (preview && preview.removedClauses.length > 0) {
+    const one = preview.removedClauses.length === 1;
+    const lead = check
+      ? one
+        ? 'strikes the clause, though it may not be this rule: '
+        : 'strikes the clauses, though they may not be this rule: '
+      : one
+        ? 'strikes the clause: '
+        : 'strikes the clauses: ';
+    return (
+      <RowNote>
+        {lead}
+        {quotedClauses(preview.removedClauses)}
+      </RowNote>
+    );
+  }
+  if (!preview || preview.changes) return null;
+  if (placement.kind === 'bound') {
+    return <RowNote>nothing to strike: striking it would change no clause</RowNote>;
+  }
+  if (placement.kind === 'by-wording' && constraint.wording.length > 0) {
+    return <RowNote>nothing to strike: no clause carries these words any more</RowNote>;
+  }
+  return null;
+}
+
+/** A line under a row: muted, or in the text colour for what the manager reads before approving. */
+function RowNote({ children, emphasis = false }: { children: ReactNode; emphasis?: boolean }) {
+  return (
+    <p
+      className={
+        emphasis
+          ? 'mt-1.5 text-sm text-[var(--color-fg)]'
+          : 'mt-1 text-[13px] text-[var(--color-muted)]'
+      }
+    >
+      {children}
+    </p>
+  );
+}
+
 /**
  * One rule the charter enforces (round two section 3.5): the manager's sentence, what it became
  * in the charter, what striking it would do, its standing, and Strike or Restore.
@@ -105,32 +319,54 @@ export function listedWording(wording: readonly string[]): string[] {
  * `justStruck` marks a rule struck since the list first rendered, whose line draws (v3 section
  * 5.2); a rule struck before the page opened is drawn struck at once. A rule the manager added
  * names who added it: "you", or the earlier manager a handover took the employee from.
+ *
+ * A rule bound to clauses that do not carry its words asks the manager to check them; a rule in
+ * no clause says the charter does not enforce it and, with `onKeep`, offers the way to: on a
+ * draft, a request for changes; on the approved record, the rule added to its list by amendment
+ * (13-R, a product call).
  */
 export function RuleRow({
   constraint,
   index,
   preview,
+  placement = BY_WORDING,
   justStruck,
   busy,
   record = false,
+  name = 'Your employee',
   actors = READER_ACTED,
   onStrike,
   onRestore,
+  onKeep,
 }: {
   constraint: CharterConstraint;
   index: number;
   preview: StrikePreview | undefined;
+  /** Where the rule is in the charter (`rulePlacement`); by its words alone when not given. */
+  placement?: RulePlacement;
   justStruck: boolean;
   busy: boolean;
   /** The row is the approved charter's record, drawn without the review's warn line. */
   record?: boolean;
+  /** The employee's name, for the way to keep a rule in no clause. */
+  name?: string;
   /** Who added a rule the manager added; the reader, by default. */
   actors?: CharterActors;
   onStrike?: (index: number) => void;
   onRestore?: (index: number) => void;
+  /** Keep a rule in no clause: ask for changes on a draft, add it as a clause once approved. */
+  onKeep?: (index: number) => void;
 }) {
-  const standing = ruleStanding(constraint, preview);
+  const standing = ruleStanding(constraint, preview, placement);
+  // The bound clauses a confirmed rule does not carry, said once: a kept line already names its own.
+  const unnamed =
+    standing === 'confirmed' && placement.kind === 'bound'
+      ? placement.notCarrying.filter(
+          (clause) => !(preview?.keptClauses ?? []).some((kept) => kept.clause === clause),
+        )
+      : [];
   const chip = STANDING_CHIP[standing];
+  const keepUnder = CLAUSE_LIST_WORDS[defaultRuleClause(constraint.quote)];
   return (
     <li
       data-just={justStruck ? '' : undefined}
@@ -162,19 +398,7 @@ export function RuleRow({
         </p>
         <p className="mt-1.5 text-sm text-[var(--color-fg-2)]">
           {CONSTRAINT_KIND_LABEL[constraint.kind]}
-          {constraint.wording.length > 0 ? (
-            <>
-              {' · in the charter as '}
-              {listedWording(constraint.wording).map((phrase, i) => (
-                <span key={i}>
-                  {i > 0 ? '; ' : ''}
-                  <b className="font-semibold text-[var(--color-fg)]">{phrase}</b>
-                </span>
-              ))}
-            </>
-          ) : (
-            ' · not verified: no clause carries these words'
-          )}
+          <PlacementWords constraint={constraint} placement={placement} />
           {constraint.origin === 'derived'
             ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
             : ''}
@@ -186,34 +410,47 @@ export function RuleRow({
             </>
           ) : null}
         </p>
-        {preview?.refusal ? (
-          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            cannot be struck: {preview.refusal}
-          </p>
-        ) : preview && preview.removedClauses.length > 0 ? (
-          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
-            {quotedClauses(preview.removedClauses)}
-          </p>
-        ) : preview && !preview.changes && constraint.wording.length > 0 ? (
-          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            nothing to strike: no clause carries these words any more
-          </p>
+        {standing === 'check' && placement.kind === 'bound' ? (
+          <RowNote emphasis>
+            {placement.clauses.length === 1
+              ? 'This clause does not carry your words.'
+              : 'These clauses do not carry your words.'}
+          </RowNote>
         ) : null}
+        {standing === 'in-no-clause' ? (
+          <RowNote emphasis>
+            {record
+              ? `The charter does not enforce it. Add it to ${keepUnder} to enforce it.`
+              : `The charter does not enforce it. Ask ${name} for changes to add it, or approve without it.`}
+          </RowNote>
+        ) : null}
+        <StrikeLine
+          constraint={constraint}
+          placement={placement}
+          preview={preview}
+          check={standing === 'check'}
+        />
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
-              <p key={i} className="mt-1 text-[13px] text-[var(--color-muted)]">
+              <RowNote key={i}>
                 {'rewrites the clause: '}
                 {quotedClauses([pair.from])}
                 {' to '}
                 {quotedClauses([pair.to])}
-              </p>
+              </RowNote>
             ))
           : null}
+        {/* After what Strike does, and only for a clause no kept line already names (the design pass). */}
+        {unnamed.length > 0 ? (
+          <RowNote>
+            {unnamed.length === 1
+              ? 'Also linked to this rule, but it does not carry your words: '
+              : 'Also linked to this rule, but they do not carry your words: '}
+            {quotedClauses(unnamed)}
+          </RowNote>
+        ) : null}
         {constraint.struck && onRestore ? (
-          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            Its clauses leave the charter on approval; Restore puts them back.
-          </p>
+          <RowNote>Its clauses leave the charter on approval; Restore puts them back.</RowNote>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:grid sm:content-start sm:justify-items-end">
@@ -237,6 +474,19 @@ export function RuleRow({
           >
             Restore
           </Button>
+        ) : standing === 'in-no-clause' && onKeep ? (
+          <Button
+            size="small"
+            onClick={() => onKeep(index)}
+            disabled={busy}
+            aria-label={
+              record
+                ? `Add to ${keepUnder}: ${constraint.quote}`
+                : `Ask for changes to add: ${constraint.quote}`
+            }
+          >
+            {record ? `Add to ${keepUnder}` : 'Ask for changes'}
+          </Button>
         ) : null}
       </div>
     </li>
@@ -257,14 +507,19 @@ export function RuleRow({
 export function ConstraintList({
   constraints,
   approved,
+  name,
   actors,
   onStrike,
   onRestore,
+  onKeep,
   previewStrike,
+  placementOf,
   busy = false,
 }: {
   constraints: CharterConstraint[];
   approved: boolean;
+  /** The employee's name, for the way to keep a rule in no clause. */
+  name?: string;
   /** Who added the rules the manager added; the reader, by default. */
   actors?: CharterActors;
   /** A change to the charter is in flight; the controls wait for it. */
@@ -273,8 +528,12 @@ export function ConstraintList({
   onStrike?: (index: number) => void;
   /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
   onRestore?: (index: number) => void;
+  /** Keep a rule in no clause: ask for changes on a draft, add it as a clause once approved. */
+  onKeep?: (index: number) => void;
   /** What striking a rule would do, computed as approval computes it. */
   previewStrike?: (index: number) => StrikePreview;
+  /** Where each rule is in the charter (`rulePlacement`); by its words alone when not given. */
+  placementOf?: (constraint: CharterConstraint) => RulePlacement;
 }) {
   // A rule struck since the list first rendered is this visit's decision, and its line draws.
   const [struckOnArrival] = useState(
@@ -292,8 +551,8 @@ export function ConstraintList({
         </h3>
         {approved ? null : (
           <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            Each rule is a sentence you said, and what it became. Strike removes the clauses it
-            produced; nothing else changes.
+            Each rule is a sentence you said, and what it became. Strike removes the clauses that
+            carry it; each row says what it takes and what it keeps.
           </p>
         )}
       </div>
@@ -306,12 +565,15 @@ export function ConstraintList({
             preview={
               !constraint.struck && onStrike && previewStrike ? previewStrike(index) : undefined
             }
+            placement={placementOf?.(constraint)}
             justStruck={constraint.struck === true && !struckOnArrival.has(index)}
             busy={busy}
             record={approved}
+            name={name}
             actors={actors}
             onStrike={onStrike}
             onRestore={onRestore}
+            onKeep={onKeep}
           />
         ))}
       </ul>

@@ -117,6 +117,21 @@ describe('waiting for the folder documentation sync', (): void => {
     ).rejects.toThrow('credential missing');
     expect(time.at()).toBe(0);
   });
+
+  it("stops at once, with the held reason, when the deployment's pause held the sync (W12V-2)", async (): Promise<void> => {
+    const time = clock();
+    await expect(
+      waitForDocumentationSync(
+        async () => ({
+          status: 'held',
+          pageCount: 25,
+          lastError: "Held: this deployment's scheduled work is paused.",
+        }),
+        time,
+      ),
+    ).rejects.toThrow("Held: this deployment's scheduled work is paused.");
+    expect(time.at()).toBe(0);
+  });
 });
 
 /**

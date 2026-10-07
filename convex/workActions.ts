@@ -37,6 +37,7 @@ import {
   repairToolArguments,
   withArgumentRepairs,
   withholdActions,
+  withReportsOfWithheld,
   runDependentSkill,
   runSkill,
 } from '../src/work/execute-skill';
@@ -134,6 +135,8 @@ import {
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { scrubbedCorrectionEntries, type PlannerCorrection } from '../src/work/corrections';
+import { scrubbedAgreementEntries, type PromptAgreement } from '../src/work/agreements';
+import type { PromptNamed, PromptPeople } from '../src/people/prompt-block';
 import {
   droppedReadRefusal,
   gateRefusalStop,
@@ -147,6 +150,7 @@ import {
   lastLandedState,
   isReusedRow,
   reusedFrom,
+  reusedFromThisRun,
   reusedLedger,
   unsentWritesOf,
   withReusedRunNumbers,
@@ -767,8 +771,14 @@ async function draftPlanHandler(
         })
       : undefined;
   const record = grounded?.record;
+  const agreements =
+    SURFACE_MODE === 'real' ? await plannerAgreements(ctx, item, knownValues) : undefined;
   const corrections =
-    SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
+    SURFACE_MODE === 'real'
+      ? await plannerCorrections(ctx, item, knownValues, agreements?.covered ?? [])
+      : undefined;
+  // The People block and the From line's confirmed requester (13-J); the scope judgement reads neither.
+  const people = await promptPeople(ctx, args.workItemId);
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
   const plan = await draftOrFail(ctx, args.workItemId, draftClaimedAt, () =>
     recordingModelCalls(ctx, step, () =>
@@ -785,13 +795,20 @@ async function draftPlanHandler(
               ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
             }
           : {}),
+        ...(agreements && agreements.entries.length > 0
+          ? {
+              agreements: agreements.entries,
+              ...(agreements.redaction ? { agreementsRedaction: agreements.redaction } : {}),
+            }
+          : {}),
+        ...people,
         onObligationEvent: async (event) =>
           await logObligationEvent(ctx, { agentId, workItemId: args.workItemId }, event),
       }),
     ),
   );
   if (plan === undefined) return { ok: false, reason: 'the plan draft failed on this item' };
-  const stored = await ctx.runMutation(internal.work.setPlan, {
+  const stored = await ctx.runMutation(internal.planApproval.setPlan, {
     workItemId: args.workItemId,
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
@@ -1252,6 +1269,12 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
+    const appliedAgreements = await executorAgreements(ctx, {
+      agent,
+      item: args.item,
+      plan: args.plan,
+    });
+    const people = await promptPeople(ctx, args.workItemId);
     await claimPlannedWriteTargets(ctx, {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1280,6 +1303,8 @@ async function holdDay0Actions(
       unsentWrites: args.unsentWrites,
       heldElsewhere,
       appliedCorrections,
+      appliedAgreements,
+      ...people,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
@@ -1765,12 +1790,13 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
     question: asked.question,
   });
   if (!open) return read;
-  const removed = new Set(open.withheld.map((row) => row.index));
-  const withheld = withholdActions(
-    read,
+  // A message that reports a write withheld for the answer goes with it (W12X-2).
+  const refusals = withReportsOfWithheld(
+    read.actions,
     open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
-    "for the manager's answer",
   );
+  const removed = new Set(refusals.map((row) => row.index));
+  const withheld = withholdActions(read, refusals, "for the manager's answer");
   const reindex = (index: number): number =>
     index - [...removed].filter((removedIndex) => removedIndex < index).length;
   return {
@@ -2645,6 +2671,13 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         knownValues,
       });
+      const appliedAgreements = await executorAgreements(ctx, {
+        agent,
+        item,
+        plan,
+        knownValues,
+      });
+      const { people } = await promptPeople(ctx, args.workItemId);
       let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
@@ -2731,6 +2764,8 @@ export const authorDependentActions = internalAction({
             managerFeedback: feedback,
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
+            appliedAgreements,
+            ...(people ? { people } : {}),
             groundingReads,
             initialOutput: prerequisites,
             initialLedger: prerequisites.applied,
@@ -3072,8 +3107,10 @@ function priorPhasesLedger(
  * The rows this phase reuses instead of sending: on a resumed closing set,
  * the previous attempt's landed rows by payload or target; in any phase,
  * the writes earlier runs of this item landed, by target. This run's own
- * phase one is not a source: the closing phase authors from that ledger
- * and a second comment it puts on the same ticket is the plan's, as when
+ * phase one is a source only for a comment or message of identical payload
+ * to one it landed (W12V-13, `reusedFromThisRun`): the closing phase authors
+ * from that ledger and a second comment with other words on the same ticket
+ * is the plan's, as when
  * phase one landed a fixed-payload comment and the audit comment follows
  * the reads, though a status change it landed ends any reuse of an earlier
  * run's state on that ticket. The manager's note on the retry decides
@@ -3092,7 +3129,34 @@ async function reusedRows(
   const earlier: LandedWrite[] =
     (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
-  if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
+  // A closing set's message identical to one its own first phase landed is that message (W12V-13).
+  const fromThisRun = dependent
+    ? reusedFromThisRun(output.actions, thisRunWrites(output.initial, run), run)
+    : output.actions.map(() => undefined);
+  const rows =
+    earlier.length === 0 && !resumed
+      ? fromThisRun
+      : await reusedFromEarlier(ctx, output, surfaces, run, fromThisRun);
+  if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
+  const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
+  return withReusedRunNumbers(rows, runIds);
+}
+
+/**
+ * The rows {@link reusedRows} takes from earlier runs and from a resumed set's previous attempt,
+ * beside what it takes from this run's first phase.
+ */
+async function reusedFromEarlier(
+  ctx: ActionCtx,
+  output: LedgerOutput | DependentPendingOutput,
+  surfaces: readonly SurfaceRecord[],
+  run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
+  fromThisRun: ReadonlyArray<AppliedAction | undefined>,
+): Promise<Array<AppliedAction | undefined>> {
+  const dependent = isDependentPendingOutput(output);
+  const earlier: LandedWrite[] =
+    (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  const resumed = dependent && output.initial.resumedClosing;
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
   const options = {
     surfaces,
@@ -3114,12 +3178,9 @@ async function reusedRows(
     ...options,
     thisRun: dependent ? thisRunWrites(output.initial, run) : [],
   });
-  const rows = output.actions.map((action, index) =>
-    isRead(action) ? undefined : (fromResume[index] ?? fromEarlier[index]),
+  return output.actions.map((action, index) =>
+    isRead(action) ? undefined : (fromResume[index] ?? fromThisRun[index] ?? fromEarlier[index]),
   );
-  if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
-  const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
-  return withReusedRunNumbers(rows, runIds);
 }
 
 /**
@@ -4125,12 +4186,14 @@ async function readCandidateRecord(
 /**
  * The manager's corrections a later item is planned with: this employee's
  * active ones of the item's kind, selected in code and scrubbed for the
- * prompt. The scope judgement never reads them; scope is the charter's.
+ * prompt, but for those kept as a working agreement the planner reads
+ * already. The scope judgement never reads them; scope is the charter's.
  *
  * Args:
  *   ctx: Convex action context.
  *   item: The work item about to be planned.
  *   knownValues: The owner's stored values, resolved once by the calling action.
+ *   covered: The corrections the selected working agreements were kept from.
  *
  * Returns:
  *   The prompt entries, and whether the scrub ran without the span model.
@@ -4139,8 +4202,9 @@ async function plannerCorrections(
   ctx: ActionCtx,
   item: Doc<'workItems'>,
   knownValues: readonly string[],
+  covered: readonly string[],
 ): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
-  const selected: Doc<'corrections'>[] = await ctx.runQuery(
+  const found: Doc<'corrections'>[] = await ctx.runQuery(
     internal.corrections.selectedForCandidate,
     {
       agentId: item.agentId,
@@ -4149,11 +4213,96 @@ async function plannerCorrections(
       workItemId: item._id,
     },
   );
+  // A correction kept as a working agreement the planner reads already is not said twice.
+  const selected = found.filter((correction) => !covered.includes(correction._id));
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, {
     model: spanModelFromEnv(),
     known: knownValues,
   });
+}
+
+/**
+ * The working agreements a later item is planned with: the active ones of its employee and of
+ * every employee of its owner that apply to it, selected in code (13-W) and scrubbed for the
+ * prompt. The scope judgement never reads them; scope is the charter's.
+ *
+ * @param ctx - Convex action context.
+ * @param item - The work item about to be planned.
+ * @param knownValues - The owner's stored values, resolved once by the calling action.
+ * @returns The prompt entries, whether the scrub ran without the span model, and the corrections
+ *   the selected agreements were kept from.
+ */
+async function plannerAgreements(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  knownValues: readonly string[],
+): Promise<{
+  entries: PromptAgreement[];
+  redaction?: 'structural-only';
+  covered: string[];
+}> {
+  const selected: Doc<'workingAgreements'>[] = await ctx.runQuery(
+    internal.workingAgreements.selectedForCandidate,
+    { workItemId: item._id },
+  );
+  if (selected.length === 0) return { entries: [], covered: [] };
+  const scrubbed = await scrubbedAgreementEntries(selected, {
+    model: spanModelFromEnv(),
+    known: knownValues,
+  });
+  return { ...scrubbed, covered: selected.flatMap((row) => row.correctionIds ?? []) };
+}
+
+/**
+ * The working agreements an approved plan applied, as its executor reads them (13-W): the plan's
+ * own list, each still of the employee's owner and binding this employee, scrubbed at prompt
+ * assembly. The statements were stored redacted; the scrub removes a credential stored since.
+ *
+ * @param ctx - Convex action context.
+ * @param args - The agent, the work item, its approved plan, and the owner's stored values when
+ *   the caller already resolved them.
+ * @returns The prompt entries; empty in mock mode or when the plan applied none.
+ */
+async function executorAgreements(
+  ctx: ActionCtx,
+  args: {
+    agent: Doc<'agents'>;
+    item: Doc<'workItems'>;
+    plan: ExecutionPlan;
+    knownValues?: readonly string[];
+  },
+): Promise<PromptAgreement[]> {
+  const ids = SURFACE_MODE === 'real' ? (args.plan.appliedAgreements ?? []) : [];
+  if (ids.length === 0) return [];
+  const rows: Doc<'workingAgreements'>[] = await ctx.runQuery(internal.workingAgreements.forPlan, {
+    agentId: args.item.agentId,
+    ids,
+  });
+  if (rows.length === 0) return [];
+  const scrubbed = await scrubbedAgreementEntries(rows, {
+    model: spanModelFromEnv(),
+    known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
+  });
+  return scrubbed.entries;
+}
+
+/**
+ * The people the employee works with, and the confirmed person the item's requester resolves to,
+ * as the planner and both executor phases read them (13-J, the People block and the From line):
+ * names, roles and what each edge covers, from the owner's graph now. The scope judgement never
+ * reads them; scope is the charter's.
+ *
+ * @param ctx - Convex action context.
+ * @param workItemId - The work item.
+ * @returns What the prompts take; empty in mock mode, where no graph is kept.
+ */
+async function promptPeople(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+): Promise<{ people?: PromptPeople; requester?: PromptNamed }> {
+  if (SURFACE_MODE !== 'real') return {};
+  return await ctx.runQuery(internal.peoplePrompt.forItem, { workItemId });
 }
 
 /**

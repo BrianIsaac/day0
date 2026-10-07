@@ -18,6 +18,22 @@ import {
   SOURCE_REVOCATION_STATES,
   TOKEN_STORES,
 } from '../src/surfaces/access-identity';
+import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
+import {
+  IDENTITY_PROVIDERS,
+  PEOPLE_SOURCES,
+  PERSON_STATUSES,
+  RELATIONSHIP_STATUSES,
+  RELATIONSHIP_TYPES,
+} from '../src/people/vocabulary';
+import {
+  AGREEMENT_APPROVED_VIA,
+  AGREEMENT_KINDS,
+  AGREEMENT_REFUSAL_REASONS,
+  AGREEMENT_SCOPES,
+  AGREEMENT_SOURCE_TYPES,
+  AGREEMENT_STATUSES,
+} from '../src/work/agreement-vocabulary';
 
 /**
  * A tracker ticket as one intake listing showed it: who is assigned, its
@@ -173,6 +189,34 @@ export const pendingAuthorisationValidator = v.object({
     }),
   ),
 });
+
+/** Where a person, an identity or an edge of the owner's graph came from (13-K for 13-P). */
+const peopleSourceValidator = v.union(...PEOPLE_SOURCES.map((source) => v.literal(source)));
+
+/**
+ * The words a person or an edge was proposed on (13-K for 13-P; A1: quote-grounded): the quote,
+ * where it was said in words a card can show (a page's title, "the one-to-one"), when, and for a
+ * documentation page its source and ref, so evidence from a page that went can be told apart.
+ */
+export const peopleEvidenceValidator = v.object({
+  quote: v.string(),
+  where: v.string(),
+  at: v.number(),
+  sourceId: v.optional(v.id('docSources')),
+  ref: v.optional(v.string()),
+});
+
+/**
+ * Whom a work item's requester or owner string resolved to in the owner's graph when intake read
+ * it (13-K for 13-P; `personFor`, a lookup and never an insert): a person, several people the
+ * string could be (never a guess, Q11), or nobody the graph knows (RM6: a Slack id no lookup
+ * recorded).
+ */
+export const personResolutionValidator = v.union(
+  v.object({ kind: v.literal('person'), personId: v.id('people') }),
+  v.object({ kind: v.literal('ambiguous'), candidates: v.number() }),
+  v.object({ kind: v.literal('unknown') }),
+);
 
 export default defineSchema({
   agents: defineTable({
@@ -362,11 +406,27 @@ export default defineSchema({
       v.literal('synced'),
       v.literal('error'),
       v.literal('credential-not-landed'),
+      /**
+       * A sync the deployment's pause held before it read anything (wave 13, 13-K for the
+       * documentation fix; W12V-2, W12-R28): it tried nothing, so it did not fail. Written by
+       * `failSync` (13-FS); a source held before that writer landed reads `error` with
+       * `SYNC_HELD_REASON`.
+       */
+      v.literal('held'),
     ),
     lastSyncAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
     /** How many listings of the source a sync has started from page one; the newest's number. */
     listings: v.optional(v.number()),
+    /**
+     * The people extraction of the source's documentation (wave 13, 13-K for 13-P), kept as
+     * discovery keeps its own: the completed generation it read, the fingerprint of the pages it
+     * read (an unchanged fingerprint is skipped), when it last ran, and why it last failed.
+     */
+    peopleExtractionSyncId: v.optional(v.id('docSyncRuns')),
+    peopleExtractionFingerprint: v.optional(v.string()),
+    lastPeopleExtractionAt: v.optional(v.number()),
+    lastPeopleExtractionError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
@@ -376,17 +436,10 @@ export default defineSchema({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),
     /**
-     * The page refs a run of a release before 0.6.0 listed, which bounded a
-     * generation at Convex's 8,192-entry array. Nothing writes or reads it from
-     * 0.16.0: a listed page is stamped on its `docPageListings` row instead, and
-     * the `sync-runs-refs` migration clears it, carrying its count into
-     * `pagesListed`. The release after that removes this declaration (N10).
-     */
-    refs: v.optional(v.array(v.string())),
-    /**
      * The source's listing this run reads (`docSources.listings`): a sync that
-     * reads from page one starts the next, a resumed one carries it on. Given
-     * lazily to a run begun before 0.6.0.
+     * reads from page one starts the next, a resumed one carries it on. Absent
+     * only on a run begun before 0.6.0, which the `sync-runs-refs` pass (0.16.0)
+     * left with no cursor, so it takes no batch and no finish.
      */
     listing: v.optional(v.number()),
     /** How many page refs the run's listing has named so far, a resumed run's carried. */
@@ -399,6 +452,13 @@ export default defineSchema({
       v.literal('completed'),
       v.literal('superseded'),
       v.literal('error'),
+      /**
+       * Ended at its cursor by the deployment's pause rather than a failure (wave 13, 13-K for the
+       * documentation fix; W12-R27): a resume carries it on like an `error` run, and a second run
+       * held at the same cursor is not one that got nowhere. Written by `failSync` (13-FS); a run
+       * held before that writer landed reads `error`.
+       */
+      v.literal('held'),
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
@@ -636,6 +696,29 @@ export default defineSchema({
          * its own; absent until someone lands it, and the requests then carry the typed code only.
          */
         appLevelTokenCredentialId: v.optional(v.id('credentials')),
+        /**
+         * Whether the app's App Home messages tab takes the manager's typed code (wave 13, 13-K
+         * for the Slack fix; W12V-7): `open`, with how Day0 knows it (`MESSAGES_TAB_OPEN_HOWS`)
+         * and when, or `refused`, with Slack's words for the last refused opening, when, and how
+         * many openings were refused, so the card stops trying at every probe. The
+         * `surfaces-messages-tab` pass copies the open state from the employee's record, where
+         * `surface.app-messages-open` kept it before this field.
+         */
+        messagesTab: v.optional(
+          v.union(
+            v.object({
+              state: v.literal('open'),
+              how: v.union(...MESSAGES_TAB_OPEN_HOWS.map((how) => v.literal(how))),
+              at: v.number(),
+            }),
+            v.object({
+              state: v.literal('refused'),
+              reason: v.string(),
+              at: v.number(),
+              attempts: v.number(),
+            }),
+          ),
+        ),
       }),
     ),
     /** Channels the documentation names that the dedicated app has not been
@@ -743,10 +826,11 @@ export default defineSchema({
     pendingAuthorisation: v.optional(pendingAuthorisationValidator),
     /**
      * When a handover kept the employee's own identity on this card for the new manager's
-     * re-approval (A25): the marker the kept-identity sweep is to read in place of the card's
-     * reason words, and the start of its `KEPT_IDENTITY_WAIT_MS` wait (the round's review m16).
-     * Declared ahead of its writer (the handover's keep) and its backfill: nothing writes or
-     * reads it yet, and until something does the sweep reads the reason, as before.
+     * re-approval (A25): the marker the kept-identity sweep reads in place of the card's reason
+     * words, and the start of its `KEPT_IDENTITY_WAIT_MS` wait (the round's review m16). Written by
+     * the handover's keep (`reapprovePatch`) from v0.16.0 and cleared by an approval, a cut, a
+     * rejection and the identity's end; the `surfaces-kept-identity-since` pass marks the cards
+     * kept before it, after which the sweep's reason-word fallback goes (the release after).
      */
     keptIdentitySince: v.optional(v.number()),
     createdAt: v.number(),
@@ -872,6 +956,13 @@ export default defineSchema({
     requesterLabel: v.optional(v.string()),
     owner: v.optional(v.string()),
     requester: v.optional(v.string()),
+    /**
+     * Whom `requester` and `owner` resolved to in the owner's people graph when intake read them
+     * (wave 13, 13-K for 13-P): written beside each string, never in place of it. Absent on rows
+     * read before the graph, and where intake had no string to resolve.
+     */
+    requesterPerson: v.optional(personResolutionValidator),
+    ownerPerson: v.optional(personResolutionValidator),
     state: v.union(
       v.literal('discovered'),
       v.literal('claimed'),
@@ -1375,6 +1466,20 @@ export default defineSchema({
     retiredAt: v.optional(v.number()),
     /** The later items whose stored plan applied it. */
     appliedTo: v.array(v.id('workItems')),
+    /**
+     * Where the manager gave it (wave 13, 13-K for 13-W; A14): on the dashboard, or in the manager
+     * channel (a Slack reject). Absent reads as `dashboard`, which every row before it was apart
+     * from a Slack reject, and nothing can tell those apart, so no pass writes it. A channel
+     * correction may propose an agreement and never activates one without the card.
+     */
+    origin: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
+    /** The agreement it was proposed into (13-W), so the same correction is not proposed twice. */
+    agreementId: v.optional(v.id('workingAgreements')),
+    /**
+     * When the "do two of these say the same thing" judgement (F10) last read it as a new
+     * correction (13-W), so the judgement runs at most once per correction.
+     */
+    agreementJudgedAt: v.optional(v.number()),
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_active', ['agentId', 'retiredAt'])
@@ -1432,6 +1537,19 @@ export default defineSchema({
     editClaimedAt: v.optional(v.number()),
     editedAt: v.optional(v.number()),
     editFailure: v.optional(v.string()),
+    /**
+     * The decision the replaced request had before it was replaced, when it had one (wave 13,
+     * 13-K for the Slack fix; W12V-16): a decided request a Retry re-drafted is answered as
+     * replaced and, from these, as approved or rejected too. Copied from the item's `decision`.
+     */
+    outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+    decidedAt: v.optional(v.number()),
+    decidedVia: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
+    /**
+     * When a reply or a press naming the replaced code was first answered (wave 13, 13-K for the
+     * Slack fix; W12-R19): one "was replaced" notice per replaced request, never one per press.
+     */
+    answeredAt: v.optional(v.number()),
   })
     /** A reply's or a press's code, looked up when no live request carries it. */
     .index('by_agent_decision', ['agentId', 'decisionId'])
@@ -1439,6 +1557,34 @@ export default defineSchema({
     .index('by_work_item', ['workItemId'])
     /** One agent's edits claimed and not finished, by claim: the N-3 sweep's read (12-W, 12-M). */
     .index('by_agent_edit_open', ['agentId', 'editedAt', 'editFailure', 'editClaimedAt']),
+
+  /**
+   * What the Socket Mode bridge (`slack-socket/`, RM7) last reported of one card's app (wave 13,
+   * 13-K for the Slack fix; D-6 (b), W12-R16): whether its connection is live, since when, and
+   * when the bridge said so, so the card and a new decision request offer buttons only while a
+   * bridge carries the app's presses. A table of its own rather than a field on the card: the
+   * bridge reports every half minute, and a write to the card would wake every reader of it and
+   * conflict with the work loop's transactions that read the card. One row per card; real mode
+   * only, so a mock deployment holds none.
+   */
+  socketHeartbeats: defineTable({
+    agentId: v.id('agents'),
+    surfaceId: v.id('surfaces'),
+    /** The app the report is about; a report for another app than the card's is stale. */
+    appId: v.string(),
+    /** Whether the bridge holds a greeted connection for the app. */
+    live: v.boolean(),
+    /** When the live connection was greeted, while `live`. */
+    liveSince: v.optional(v.number()),
+    /** When the bridge last reported on the app. */
+    reportedAt: v.number(),
+    /** Why the bridge could not open the app's connection, when it could not. */
+    failure: v.optional(v.string()),
+  })
+    /** One employee's reports: the reset's reader. */
+    .index('by_agent', ['agentId'])
+    /** One card's report, which the card and the decision request read. */
+    .index('by_surface', ['surfaceId']),
 
   skills: defineTable({
     agentId: v.id('agents'),
@@ -1582,6 +1728,18 @@ export default defineSchema({
     authorAgentId: v.optional(v.id('agents')),
     /** The author's name, kept for the adoption card after the author leaves. */
     authorName: v.string(),
+    /**
+     * How the author stopped naming this version, and when (wave 13, 13-K for the skills fix;
+     * 12-FX's "No longer works for you"): retired, or handed over to another manager. Written with
+     * the clearing of `authorAgentId`; absent on a version whose author stays, and on one cleared
+     * before the field, which the adoption card words as true of both.
+     */
+    authorLeft: v.optional(
+      v.object({
+        how: v.union(v.literal('retired'), v.literal('transferred')),
+        at: v.number(),
+      }),
+    ),
     /** The pages the authoring run read, for the page-change triggers of waves 13 and 14. */
     readRefs: v.array(readRefValidator),
     verifiedAt: v.number(),
@@ -1597,6 +1755,177 @@ export default defineSchema({
     .index('by_owner_name_version', ['userId', 'name', 'version'])
     /** The versions one employee wrote: its retire and its handover clear the author. */
     .index('by_author', ['authorAgentId']),
+
+  /**
+   * The people the owner's employees work with (wave 13, 13-K for 13-P; the wave file's section
+   * 5.1; A1, A10): one graph per owner, keyed by the owner scope (`ownerScope`,
+   * `convex/ownership.ts`), proposed from the charter, the one-to-one, the documentation and
+   * provider lookups and confirmed on a card (A14), never written as a confirmed fact behind the
+   * manager's back. The owner's own row (`isOwner`) is written at the owner's sign-in by
+   * `people.ensureOwner`, keyed by the verified address. An owner table: an employee's retire keeps
+   * it, the owner's deletion deletes it.
+   */
+  people: defineTable({
+    /** The owner scope (`ownerScope`); every index leads with it. */
+    userId: v.string(),
+    displayName: v.string(),
+    /** `personNameKey(displayName)`: the name-only match ("possibly the same as", C5). */
+    nameKey: v.string(),
+    /** The person's address, normalised (`normaliseManagerAddress`), when a source gave one. */
+    primaryEmail: v.optional(v.string()),
+    title: v.optional(v.string()),
+    team: v.optional(v.string()),
+    /** The owner's own row: at most one per owner scope. */
+    isOwner: v.optional(v.boolean()),
+    status: v.union(...PERSON_STATUSES.map((status) => v.literal(status))),
+    source: peopleSourceValidator,
+    /** The source's own reference: a page ref, a charter version, a session. */
+    sourceRef: v.optional(v.string()),
+    evidence: v.array(peopleEvidenceValidator),
+    /** A proposal whose name alone matches this person (C5): offered, merged only by the manager. */
+    possiblySameAs: v.optional(v.id('people')),
+    confirmedAt: v.optional(v.number()),
+    dismissedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    /** The owner's people in one standing: the Proposed card and the confirmed list. */
+    .index('by_user_status', ['userId', 'status'])
+    /** The owner's person with an address: an identity or address match merges as evidence. */
+    .index('by_user_email', ['userId', 'primaryEmail'])
+    /** The owner's people under one name key: the name-only match. */
+    .index('by_user_name', ['userId', 'nameKey'])
+    /** The owner's own row (`isOwner`). */
+    .index('by_user_owner', ['userId', 'isOwner']),
+
+  /**
+   * A person's identity in a system (wave 13, 13-K for 13-P): an address, a sign-in subject, a
+   * Slack user or a Linear user, so intake's requester and assignee strings resolve to a person by
+   * id, then address, never by name alone (Q11). A Slack identity is recorded only through a lookup
+   * (`users.lookupByEmail` on the employee's own connection; RM6: no `users.info`). People's
+   * identities only: whom a card acts as is `surfaces.actsAs`, and the two never share a row.
+   */
+  personIdentities: defineTable({
+    /** The owner scope; every index but `by_person` leads with it. */
+    userId: v.string(),
+    personId: v.id('people'),
+    provider: v.union(...IDENTITY_PROVIDERS.map((provider) => v.literal(provider))),
+    /** The vendor's workspace the id is unique in: a Slack team, a Linear organisation. */
+    providerWorkspaceId: v.optional(v.string()),
+    /** The id in the system: a Slack user id, a Linear user id, a normalised address, a subject. */
+    externalId: v.string(),
+    displayName: v.optional(v.string()),
+    /** `personNameKey(displayName)`: a display name intake read, which may match several people. */
+    displayNameKey: v.optional(v.string()),
+    /** When a provider or the sign-in proved the identity; absent for one a page only named. */
+    verifiedAt: v.optional(v.number()),
+    source: peopleSourceValidator,
+    createdAt: v.number(),
+  })
+    /** One person's identities: the person row and the merge. */
+    .index('by_person', ['personId'])
+    /** `personFor(provider, externalId)`: a lookup, never an insert. */
+    .index('by_user_provider_external', ['userId', 'provider', 'externalId'])
+    /** A display name intake read: one match is the person, more are ambiguous. */
+    .index('by_user_provider_display', ['userId', 'provider', 'displayNameKey']),
+
+  /**
+   * An edge of the owner's graph (wave 13, 13-K for 13-P): from an employee (`fromAgentId`) or a
+   * person (`fromPersonId`) to a person, with when it holds, so a past date is answerable
+   * ("approver on a past date"). An edit supersedes (`supersedes` on the new row, the old one
+   * `superseded` with `effectiveUntil`); an employee's retire and handover retire its edges.
+   * `fromAgentId` is not `agentId` on purpose: an edge is the owner's record and outlives the
+   * employee as `retired`, so the reset's agent-keyed rule does not take it.
+   */
+  relationships: defineTable({
+    /** The owner scope; the owner's indexes lead with it. */
+    userId: v.string(),
+    fromAgentId: v.optional(v.id('agents')),
+    fromPersonId: v.optional(v.id('people')),
+    toPersonId: v.id('people'),
+    type: v.union(...RELATIONSHIP_TYPES.map((type) => v.literal(type))),
+    /** What the edge covers, in the source's words: the approvals an `approval-authority` gives. */
+    scope: v.optional(v.string()),
+    effectiveFrom: v.number(),
+    effectiveUntil: v.optional(v.number()),
+    status: v.union(...RELATIONSHIP_STATUSES.map((status) => v.literal(status))),
+    /** The edge this one replaced. */
+    supersedes: v.optional(v.id('relationships')),
+    source: peopleSourceValidator,
+    sourceRef: v.optional(v.string()),
+    evidence: v.optional(v.array(peopleEvidenceValidator)),
+    confirmedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    /** The edges pointing at one person: the person row, the owner's deletion. */
+    .index('by_user_to', ['userId', 'toPersonId'])
+    /** One employee's edges of a type: `escalationContactFor`, `collaboratorsOf`, the retire. */
+    .index('by_from_agent_type', ['fromAgentId', 'type'])
+    /** The owner's edges of a type by when they began: `approverFor`, on a date. */
+    .index('by_user_type', ['userId', 'type', 'effectiveFrom'])
+    /** The edges leaving one person. */
+    .index('by_from_person', ['fromPersonId']),
+
+  /**
+   * The owner's working agreements (wave 13, 13-K for 13-W; the wave file's sections 5.1 and
+   * 5.3; A10, A14, A18): standing preferences proposed from corrections given twice or a note kept
+   * at a plan approval, activated on a card, read by the planner and both executor phases and never
+   * by the scope judgement. One employee's (`agentId`) or every employee's (no `agentId`, A10's
+   * promotion). Agent-keyed by the reset's rule (RM5 (a)): an employee's retire deletes its own
+   * rows, and the owner's deletion deletes the owner-wide ones by `by_user_status`.
+   */
+  workingAgreements: defineTable({
+    /** The owner scope; `by_user_status` leads with it. */
+    userId: v.string(),
+    /** The one employee it binds; absent for every employee of the owner. */
+    agentId: v.optional(v.id('agents')),
+    kind: v.union(...AGREEMENT_KINDS.map((kind) => v.literal(kind))),
+    /** The agreement in the manager's words, redacted, at most `AGREEMENT_STATEMENT_LIMIT` long. */
+    statement: v.string(),
+    scope: v.union(...AGREEMENT_SCOPES.map((scope) => v.literal(scope))),
+    /** The surface slug of a `surface` scope, the operation of an `operation` one. */
+    scopeRef: v.optional(v.string()),
+    /** The person of a `person` scope. */
+    personId: v.optional(v.id('people')),
+    sourceType: v.union(...AGREEMENT_SOURCE_TYPES.map((source) => v.literal(source))),
+    sourceRef: v.optional(v.string()),
+    /** The corrections a `correction-promotion` came from. */
+    correctionIds: v.optional(v.array(v.id('corrections'))),
+    /** The item whose plan approval a `plan-approval` agreement was kept at. */
+    workItemId: v.optional(v.id('workItems')),
+    status: v.union(...AGREEMENT_STATUSES.map((status) => v.literal(status))),
+    /** Why a `refused` statement was refused before it was shown (F11), quoting the clause. */
+    refusal: v.optional(
+      v.object({
+        reason: v.union(...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason))),
+        clause: v.optional(v.string()),
+        judgedAt: v.number(),
+      }),
+    ),
+    /** The agreement this one replaced (an edit is a supersede). */
+    supersedes: v.optional(v.id('workingAgreements')),
+    approvedAt: v.optional(v.number()),
+    approvedVia: v.optional(v.union(...AGREEMENT_APPROVED_VIA.map((via) => v.literal(via)))),
+    /** When it took effect: absent while it is a proposal. */
+    effectiveFrom: v.optional(v.number()),
+    effectiveUntil: v.optional(v.number()),
+    createdAt: v.number(),
+    /** The items whose stored plan applied it (`appliedAgreements`). */
+    appliedTo: v.array(v.id('workItems')),
+  })
+    /** The owner's agreements in one standing: selection, the Agreements card, the deletion. */
+    .index('by_user_status', ['userId', 'status'])
+    /**
+     * One employee's agreements in one standing: the reset's read of an employee's own rows.
+     * Never read with an absent `agentId`, which would answer every owner's every-employee rows;
+     * those are read by `by_user_agent_status`.
+     */
+    .index('by_agent_status', ['agentId', 'status'])
+    /**
+     * One owner's agreements for one employee, or for every employee (absent `agentId`), in one
+     * standing: selection reads the candidate's and the every-employee rows, owner first.
+     */
+    .index('by_user_agent_status', ['userId', 'agentId', 'status']),
 
   /**
    * The lease on the verification sandbox: at most one row, the skill whose

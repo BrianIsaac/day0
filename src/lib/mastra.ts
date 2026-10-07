@@ -70,14 +70,19 @@ export const MODEL_CALL_TIMEOUT_MS = 300_000;
 /** How many times the provider SDK retries one call on its own before the wrapper's retry sees it. */
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
-/** When one model call must be done by, armed once at its entry. */
+/** When one model call must be done by, armed once at its entry, and the budget it was given. */
 interface ModelCallDeadline {
   readonly at: number;
+  readonly budgetMs: number;
 }
 
-/** A deadline for a call starting now. */
-function armDeadline(): ModelCallDeadline {
-  return { at: Date.now() + MODEL_CALL_TIMEOUT_MS };
+/**
+ * A deadline for a call starting now: the call's own limit where its caller gives one, never more
+ * than `MODEL_CALL_TIMEOUT_MS`.
+ */
+function armDeadline(limitMs: number = MODEL_CALL_TIMEOUT_MS): ModelCallDeadline {
+  const budgetMs = Math.max(0, Math.min(limitMs, MODEL_CALL_TIMEOUT_MS));
+  return { at: Date.now() + budgetMs, budgetMs };
 }
 
 /** What is left of a call's budget, in milliseconds. */
@@ -86,9 +91,9 @@ function remainingMs(deadline: ModelCallDeadline): number {
 }
 
 /** The error a call that spent its budget ends with, named as the telemetry reads a timeout. */
-function budgetSpent(label: string, cause?: unknown): Error {
+function budgetSpent(label: string, budgetMs: number, cause?: unknown): Error {
   const error = new Error(
-    `${label}: the model call reached its ${MODEL_CALL_TIMEOUT_MS}ms budget`,
+    `${label}: the model call reached its ${budgetMs}ms budget`,
     cause === undefined ? undefined : { cause },
   );
   error.name = 'TimeoutError';
@@ -108,13 +113,13 @@ async function withinDeadline<T>(
   attempt: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const left = remainingMs(deadline);
-  if (left <= 0) throw budgetSpent(label);
+  if (left <= 0) throw budgetSpent(label, deadline.budgetMs);
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const spent = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(budgetSpent(label));
+      reject(budgetSpent(label, deadline.budgetMs));
     }, left);
   });
   try {
@@ -368,6 +373,8 @@ export interface AgentJsonArgs extends ModelCallSettings {
   schema: unknown;
   /** Pin the strategy for this call, overriding `OPENAI_JSON_MODE`. */
   mode?: StructuredMode;
+  /** The most this call may take, when its caller has less left than `MODEL_CALL_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
 
 /** A JSON model call's value with which strategy produced it. */
@@ -418,7 +425,7 @@ export function providerWarningTexts(warnings: unknown): string[] {
  */
 export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJsonResult<T>> {
   // One budget for the whole call: both rungs of the ladder and every repair.
-  const deadline = armDeadline();
+  const deadline = armDeadline(args.timeoutMs);
   const pinned = pinnedStructuredMode(args.mode);
   if (pinned) {
     const generated = await generateObject<T>(args, pinned, deadline);
@@ -562,7 +569,7 @@ async function generateObject<T>(
             agent: args.agent.name,
             structured: { mode, ...fallback },
           },
-          (signal) => generateObjectOnce<T>({ ...args, user }, mode, signal),
+          (signal) => generateObjectOnce<T>({ ...args, user }, mode, signal, deadline.budgetMs),
           deadline,
         );
         if (diagnostics.firstReplyValid === null) diagnostics.firstReplyValid = true;
@@ -595,10 +602,11 @@ async function generateObjectOnce<T>(
   args: AgentJsonArgs,
   mode: StructuredMode,
   signal: AbortSignal,
+  budgetMs: number,
 ): Promise<GeneratedObject<T>> {
   const timedOut = (): boolean => signal.aborted;
   const timeoutError = (cause?: unknown): Error =>
-    budgetSpent(`agentJson(${args.agent.name}): ${mode}`, cause);
+    budgetSpent(`agentJson(${args.agent.name}): ${mode}`, budgetMs, cause);
   let response;
   try {
     response = await args.agent.generate(args.user, {

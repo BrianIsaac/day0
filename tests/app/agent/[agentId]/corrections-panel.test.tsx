@@ -93,6 +93,10 @@ describe('the kept corrections panel', (): void => {
     expect(markup).toContain('never applied');
     expect(markup).not.toContain('it reaches the next plan');
     expect(markup).not.toContain('>Retire<');
+    // Seen on the pre-tag bed (axe color-contrast, 3.3:1): a retired row is told apart by its
+    // dashed border and its words, never by fading the muted text below the page's contrast.
+    expect(markup).not.toContain('opacity-');
+    expect(markup).toContain('border-dashed');
   });
 
   it('explains what it will hold before anything is kept', (): void => {

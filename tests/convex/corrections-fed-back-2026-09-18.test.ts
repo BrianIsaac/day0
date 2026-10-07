@@ -83,6 +83,7 @@ vi.mock('../../src/lib/mastra', () => ({
         transition: 'none',
         transitionStep: null,
         appliedCorrections: [...offeredIds(args.user), 'forged-correction-id'],
+        appliedAgreements: null,
       }) as T;
     }
     if (name === 'day0-plan-obligations') {
@@ -363,6 +364,7 @@ describe('a note on item one changes the plan of item two', (): void => {
       sourceSystem: 'linear',
       surfaces: ['linear', 'slack'],
       appliedTo: [],
+      origin: 'dashboard',
     });
     expect(correction.retiredAt).toBeUndefined();
   });
@@ -404,7 +406,9 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect(scopePrompts.length).toBeGreaterThan(0);
     for (const prompt of scopePrompts) expect(prompt).not.toContain(NOTE);
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: ticketTwo });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: ticketTwo });
     await drain(harness);
     const [executorPrompt] = promptsOf(
       (name) => name.includes('-log-2-') && name.endsWith('-initial'),
@@ -472,7 +476,7 @@ describe('a note on item one changes the plan of item two', (): void => {
         }),
     );
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { ...ticketOnePlan, appliedCorrections: [correction._id] },
     });
@@ -503,7 +507,7 @@ describe('a note on item one changes the plan of item two', (): void => {
         }),
     );
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: ticketOnePlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: ticketOnePlan });
 
     expect((await readItem(harness, workItemId)).plan).toEqual(ticketOnePlan);
     expect(await eventsOf(harness, 'work.corrections-applied')).toEqual([]);
@@ -789,6 +793,7 @@ describe("the manager's other written reasons are kept too", (): void => {
       kind: 'rejection',
       text: 'Damage claims go to the carrier portal, never to the customer.',
       itemTitle: 'Exception: SH-4520 damaged in transit',
+      origin: 'dashboard',
     });
   });
 
@@ -840,7 +845,12 @@ describe('retrying a cancelled plan', (): void => {
     expect(row.state).toBe('cancelled');
     expect(row.managerFeedback).toMatchObject({ reason: CANCEL_REASON, kind: 'plan-rejection' });
     const [kept] = await correctionsOf(harness, agentId);
-    expect(kept).toMatchObject({ workItemId, kind: 'plan-rejection', text: CANCEL_REASON });
+    expect(kept).toMatchObject({
+      workItemId,
+      kind: 'plan-rejection',
+      text: CANCEL_REASON,
+      origin: 'dashboard',
+    });
   });
 
   it('returns the row to claimed with the plan cleared, and the turned-down plan never runs', async (): Promise<void> => {
@@ -912,7 +922,7 @@ describe('retrying a cancelled plan', (): void => {
 
     // The new plan goes back to the manager; once approved, its run reads the
     // reason once, as the item's own feedback, not again as a correction.
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await drain(harness);
     const [executorPrompt] = promptsOf(
       (name) => name.includes('-log-5-') && name.endsWith('-initial'),

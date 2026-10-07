@@ -36,6 +36,7 @@ const actions: SurfaceCardActions = {
   provision: (): void => undefined,
   landSocketToken: (): void => undefined,
   confirmMessagesTab: (): void => undefined,
+  forgetApp: (): void => undefined,
   setDays: async () => ({ expiresAt: NOW + 90 * DAY }),
   approveTools: async () => undefined,
   disconnect: async () => undefined,
@@ -415,9 +416,11 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
   });
 
-  it('says what a covered Slack card is missing when its documentation describes no install of the app (W12V-1)', (): void => {
+  it("offers a covered Slack card the employee's own app though its documentation records a bot token (W12V-1, design 1 (b))", (): void => {
     // The walk's Vela: the company bed's page says "The shared bot token is landed on your Slack
-    // card by the messaging administrator", so the card had no way on and said nothing of why.
+    // card by the messaging administrator", so the card had no way on. Re-pinned for 13-S: the
+    // words-only fix said which page was missing; design 1 (b) offers the app wherever IT's Slack
+    // configuration connection is active, since its manifest is Day0's kit.
     const markup = render(
       listed({
         ...SLACK_CARD,
@@ -434,13 +437,9 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       } as Partial<ListedSurface>),
       { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
     );
-    expect(markup).not.toMatch(/<button[^>]*>Connect<\/button>/);
-    expect(markup).toContain(
-      'Day0 cannot create Maya’s own Slack app from this card: the linked documentation describes no install procedure for it.',
-    );
-    expect(markup).toContain(
-      'A Slack page saying Maya’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
-    );
+    expect(markup).toMatch(/<button[^>]*>Connect<\/button>/);
+    expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain('describes no install procedure');
   });
 
   it('shows the access request with its three ways to send it while IT has not acted', (): void => {
@@ -568,6 +567,27 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     });
     expect(proposed).not.toContain('Provision a dedicated app');
     expect(proposed).not.toMatch(/<button[^>]*>Connect<\/button>/);
+  });
+
+  it("names what IT does, never a control that is not drawn, on an escalate-path Slack card that draws no provisioning row (W13V-1's card sentence)", (): void => {
+    const markup = render(
+      listed({
+        _id: 'surface-slack-policy' as ListedSurface['_id'],
+        slug: 'slack-automation-policy',
+        displayName: 'Slack automation policy',
+        class: 'chat',
+        path: 'escalate',
+        endpoint: undefined,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 89 * DAY,
+        request: { credential: { found: 'none', method: 'oauth', label: 'Slack OAuth access' } },
+      }),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toContain('Provision a dedicated app');
+    expect(markup).not.toContain('the control above');
+    expect(markup).toContain('Ask IT how to connect Slack automation policy');
   });
 
   it('says on its chip that a card waits on IT or is ready to connect, never that it needs a credential nobody pastes (bed, 2 Oct)', (): void => {
@@ -836,6 +856,8 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         expiresAt: NOW + 80 * DAY,
         reason: 'The docs server is moving to a new host.',
         connectionRevoked: true,
+        // Re-pinned for 13-S's second pass: the listing says whose reason it is.
+        reasonFromIt: true,
       }),
     );
     expect(markup).toContain("IT's reason: The docs server is moving to a new host.");
@@ -860,6 +882,10 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expiresAt: NOW + 80 * DAY,
       reason: 'The re-walk ends the bed connection.',
       keptAppNotReinstalled: true,
+      // Re-pinned for 13-S's second pass: the listing says whose reason it is.
+      reasonFromIt: true,
+      // The last probe's channels, which the revoke leaves on the row (the 13-FS bed).
+      channelsNotJoined: ['#revops'],
       // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
       // install), as the bed showed once IT connected Slack again.
       decisionButtons: { available: true },
@@ -897,9 +923,12 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain("through IT's connection");
       expect(fact(markup, 'Acts as')).toBe('nobody');
       expect(markup).toContain("Maya's own app is not installed again");
+      // Re-pinned for 13-S: forgetting the app is the way on (13-FS's design 2 (b)), and the old
+      // app is named by its Slack app id too (the design pass).
       expect(markup).toContain(
-        "Maya's own app, Maya (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Maya a new app.",
+        "Maya's own app, Maya (Day0) (Slack app A1), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings.",
       );
+      expect(markup).toMatch(/<button[^>]*>Forget this app<\/button>/);
       expect(markup).toContain('Nothing is read or sent through this card.');
       expect(markup).not.toMatch(/Renew for/);
       expect(chip(markup)).toBe('Ended');
@@ -912,7 +941,63 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expect(markup).not.toContain('Typed code');
       expect(markup).not.toContain('app-level token');
     }
-    expect(revoked).toContain("IT's reason: The re-walk ends the bed connection.");
+    expect(revoked).toContain('Forget this app so Day0 can create Maya a new one.');
+    expect(reconnected).toContain(
+      "Forget this app, and Connect then creates Maya a new one through IT's Slack connection.",
+    );
+    // Re-pinned for 13-FS: the reason is IT's whether or not Slack is connected again, and the
+    // card offers no check that could only overwrite it.
+    for (const markup of [revoked, reconnected]) {
+      expect(markup).toContain("IT's reason: The re-walk ends the bed connection.");
+      expect(markup).not.toContain('Check the connection');
+      // Nothing is read through the card, so it asks no one to invite its app or probe again.
+      expect(markup).not.toContain('Not in #revops');
+    }
+  });
+
+  it("never calls the manager's own reason IT's on a card IT's revoke left ended (13-S's second pass)", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'Disconnected by the manager.',
+        keptAppNotReinstalled: true,
+        connectionRevoked: true,
+      } as Partial<ListedSurface>),
+      { installRedirectConfigured: true },
+    );
+    expect(markup).toContain('Disconnected by the manager.');
+    expect(markup).not.toContain("IT's reason: Disconnected by the manager.");
+  });
+
+  it("says IT's revoke reason as IT's on a card IT connected again, never as a bare sentence (13-S)", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'The 13-S bed ends the bed connection.',
+        reasonFromIt: true,
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).toContain("IT's reason: The 13-S bed ends the bed connection.");
+    // Intake skips such a card for the same words (the 13-S bed): still IT's, said once.
+    const skipped = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'The 13-S bed ends the bed connection.',
+        intakeSkipReason: 'The 13-S bed ends the bed connection.',
+        reasonFromIt: true,
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(skipped).toContain("IT's reason: The 13-S bed ends the bed connection.");
+    expect(skipped).not.toContain('Skipped: The 13-S bed ends the bed connection.');
+    expect(skipped.split('The 13-S bed ends the bed connection.')).toHaveLength(2);
   });
 
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {

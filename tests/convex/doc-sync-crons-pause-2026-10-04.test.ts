@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { temporaryDirectories } from '../setup/temporary-directories';
@@ -72,6 +73,22 @@ async function pending(harness: TestConvex<typeof schema>): Promise<string[]> {
     .map((job) => job.name);
 }
 
+/** The source's runs' states, oldest first. */
+async function runStates(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+): Promise<string[]> {
+  return (
+    await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docSyncRuns')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    )
+  ).map((run) => run.state);
+}
+
 describe("the documentation sync under the deployment's pause", (): void => {
   it("holds a sync's next batch while scheduled work is paused, and the cron's first run after goes on from its cursor", async (): Promise<void> => {
     // The reader class the modules load once the mode is set.
@@ -97,11 +114,45 @@ describe("the documentation sync under the deployment's pause", (): void => {
     expect(await pending(harness)).toEqual([]);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
-    ).resolves.toMatchObject({ status: 'error', running: false, pageCount: 25 });
+    ).resolves.toMatchObject({ status: 'held', running: false, pageCount: 25 });
     const held = await harness.run(async (ctx) => await ctx.db.get(sourceId));
     expect(held?.lastError).toBe(SYNC_HELD_REASON);
+    expect(await runStates(harness, sourceId)).toEqual(['held']);
 
     // The jobs run again, and the cron's next run lists the source and takes the run over at 25.
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    reads.mockClear();
+    await harness.action(internal.docSyncActions.syncAll, {});
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    expect(reads.mock.calls.map((call) => call[2]?.split('@')[0])).toEqual(['25', '50']);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'synced', running: false, pageCount: 60 });
+  }, 30_000);
+
+  it("carries a Re-sync the pause held as well on from the first hold's cursor, not from page one (W12-R27)", async (): Promise<void> => {
+    const { FolderReader } = await import('../../src/docs/readers/folder');
+    vi.stubEnv('DAY0_DOCS_ROOT', await sixtyPages());
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    const reads = vi.spyOn(FolderReader.prototype, 'listPageBatch');
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.17.0');
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    // A person's Re-sync during the same pause takes the held run over and is held at once.
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    expect(await runStates(harness, sourceId)).toEqual(['held', 'held']);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'held', running: false, pageCount: 25 });
+
     vi.stubEnv('DAY0_CRONS_PAUSED', '');
     reads.mockClear();
     await harness.action(internal.docSyncActions.syncAll, {});

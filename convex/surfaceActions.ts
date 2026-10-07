@@ -60,6 +60,7 @@ import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { holdsOwnSlackApp, SLACK_CHANNEL_METHODS } from '../src/surfaces/slack-own-channel';
 import {
   organisationConnectedRefusal,
   organisationSystemOf,
@@ -73,6 +74,11 @@ import {
   transientFromResponse,
 } from '../src/lib/transport-error';
 
+/**
+ * The Slack methods a card may be allowed, in least-privilege order; the probe keeps those the
+ * linked page names. On an app Day0 created, Day0's own channel methods are allowed besides
+ * (`SLACK_CHANNEL_METHODS`, 13-FS's design 1 (b)) and never stored, so this is the work's half.
+ */
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
   'users.lookupByEmail',
@@ -81,14 +87,15 @@ const SLACK_METHOD_DEFAULTS = [
   'conversations.history',
   'conversations.replies',
   'chat.postMessage',
-  // Marks Day0's own decision request decided in the manager DM; optional,
-  // so a policy that does not name it leaves the request as sent.
+  // Day0's own edit of its decision request is a channel method on an app Day0 created; on a
+  // shared token a policy that does not name it leaves the request as sent.
   'chat.update',
   // Names the asker of an ask intake takes; optional, so a policy that does
   // not name it leaves the ask under the asker's id.
   'users.info',
 ] as const;
 
+/** What the probe calls to derive the manager DM: on a shared token the page must name each. */
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
 
 export interface ToolDefinition {
@@ -146,7 +153,11 @@ interface ProbeDependencies {
    * Opens the messages tab of a Slack card's own app Day0 created before this release (W12V-7);
    * the network one unless a test replaces it.
    */
-  openMessagesTab?: (ctx: ActionCtx, surfaceId: Id<'surfaces'>) => Promise<unknown>;
+  openMessagesTab?: (
+    ctx: ActionCtx,
+    surfaceId: Id<'surfaces'>,
+    options: { readonly asked: boolean },
+  ) => Promise<unknown>;
 }
 
 export interface ProbeOutcome {
@@ -1080,18 +1091,7 @@ export function managerDisplayName(user: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Verify Slack identity and derive the manager's dedicated DM channel.
- *
- * Args:
- *   credential: Decrypted bot token.
- *   bossEmail: Manager email stored on the agent.
- *   policyMarkdown: Owner-visible policy pages naming allowed methods.
- *   fetcher: HTTP implementation, replaceable by behavioural tests.
- *
- * Returns:
- *   Constrained methods and safe provider identifiers.
- */
+/** The documented channels the app is not a member of yet, by `conversations.list`. */
 export async function probeChannelMembership(
   fetcher: Fetcher,
   credential: string,
@@ -1123,16 +1123,33 @@ export async function probeChannelMembership(
   return channelsAwaitingInvite(documented, visible);
 }
 
+/**
+ * Verify Slack identity and derive the manager's dedicated DM channel.
+ *
+ * @param credential - Decrypted bot token.
+ * @param bossEmail - Manager email stored on the agent.
+ * @param policyMarkdown - Owner-visible policy pages naming the work's allowed methods.
+ * @param fetcher - HTTP implementation, replaceable by behavioural tests.
+ * @param documentedChannels - The channels whose invite the card asks for.
+ * @param card - Whether the card acts as an app Day0 created (`holdsOwnSlackApp`): then the
+ *   manager DM's methods are Day0's own and the page need not name them (13-FS's design 1 (b)).
+ * @returns The work's methods the page names, and safe provider identifiers.
+ */
 export async function probeSlackSurface(
   credential: string,
   bossEmail: string,
   policyMarkdown: string,
   fetcher: Fetcher = fetch,
   documentedChannels: readonly string[] = [],
+  card: { readonly ownApp?: boolean } = {},
 ): Promise<SlackProbeResult> {
   const toolAllowlist = slackMethodsFromPolicy(policyMarkdown);
+  // The manager DM is Day0's own channel: on an app Day0 created its methods are allowed whatever
+  // the page names, and the stored allowlist stays the work's half (13-FS's design 1 (b)).
+  const callable =
+    card.ownApp === true ? [...toolAllowlist, ...SLACK_CHANNEL_METHODS] : toolAllowlist;
   const missing = REQUIRED_SLACK_METHODS.filter(
-    (method: string): boolean => !toolAllowlist.includes(method),
+    (method: string): boolean => !callable.includes(method),
   );
   if (missing.length > 0) {
     throw new Error(`Slack policy does not allow required methods: ${missing.join(', ')}.`);
@@ -1191,6 +1208,11 @@ export interface ProbeRequest {
    * for by a person's action and supersedes one in flight.
    */
   readonly routine?: boolean;
+  /**
+   * The manager's own Check the connection (the public `probe`): the one probe that asks Slack
+   * again to open a messages tab whose opening it refused (13-FS).
+   */
+  readonly asked?: boolean;
 }
 
 /** What a probe `beginProbe` refused says, by the refusal. */
@@ -1198,6 +1220,10 @@ const PROBE_REFUSED: Readonly<Record<ProbeRefusal, string>> = {
   'not-probeable': 'Surface is not ready to probe.',
   'access-ended': "The card's access has ended; only the manager's renewal probes it again.",
   'in-flight': 'A probe of this card is already running; this routine re-probe was not made.',
+  'kept-app-ended':
+    "IT revoked the organisation's connection that created this card's own app, and Day0 does not install that app again, so there is nothing to check. IT's reason stays on the card.",
+  'connection-revoked':
+    "IT revoked the organisation's connection this card uses, so there is nothing to check until IT connects it again. IT's reason stays on the card.",
 };
 
 /**
@@ -1584,6 +1610,7 @@ export async function runSurfaceProbe(
             surface.intakeScope
               ? approvedChannelNames(surface.intakeScope)
               : documentedChannelNames(pages),
+            { ownApp: holdsOwnSlackApp(surface) },
           ),
         );
         toolAllowlist = slack.toolAllowlist;
@@ -1634,8 +1661,17 @@ export async function runSurfaceProbe(
       if (!recorded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (managerUserId !== undefined) {
+        await recordManagerAsOwnerIdentity(ctx, {
+          agentId: surface.agentId,
+          ...(providerWorkspaceId === undefined ? {} : { workspaceId: providerWorkspaceId }),
+          userId: managerUserId,
+          ...(managerName === undefined ? {} : { name: managerName }),
+          lookedUpAt: verifiedAt,
+        });
+      }
       if (surface.path === 'documented-api' && surface.provisioning !== undefined) {
-        await openMessagesTabOf(ctx, surfaceId, dependencies);
+        await openMessagesTabOf(ctx, surfaceId, dependencies, request.asked === true);
       }
       return {
         verdict: 'connected',
@@ -1661,17 +1697,44 @@ export async function runSurfaceProbe(
 }
 
 /**
+ * The people graph's half of the probe's identity region (wave 13, 13-P): the manager the probe
+ * looked up becomes the owner's own person's Slack identity (`people.recordOwnerChatIdentity`). A
+ * failure is logged and leaves the probe's verdict alone: the connection stands, and the owner's
+ * next sign-in (`people.ensureOwner`) reads the same user from the card.
+ */
+async function recordManagerAsOwnerIdentity(
+  ctx: Pick<ActionCtx, 'runMutation'>,
+  identity: {
+    readonly agentId: Id<'agents'>;
+    readonly workspaceId?: string;
+    readonly userId: string;
+    readonly name?: string;
+    readonly lookedUpAt: number;
+  },
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.people.recordOwnerChatIdentity, identity);
+  } catch (error: unknown) {
+    log.warn("the probe's manager was not recorded as the owner's Slack identity", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Bring a connected Slack card's own app over to taking messages, when Day0 created it before this
- * release with a connection still active (W12V-7). A refusal is logged and leaves the probe's
- * verdict alone: the card's typed-code row then still says what a person can turn on.
+ * release with a connection still active (W12V-7). A refusal is recorded on the card and logged,
+ * and leaves the probe's verdict alone: the card's typed-code row then says Slack refused and what
+ * a person can do, and only the manager's own Check the connection (`asked`) tries again (13-FS).
  */
 async function openMessagesTabOf(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
   dependencies: ProbeDependencies,
+  asked: boolean,
 ): Promise<void> {
   try {
-    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId);
+    await (dependencies.openMessagesTab ?? runOpenMessagesTab)(ctx, surfaceId, { asked });
   } catch (error: unknown) {
     log.warn('slack app messages tab not opened', {
       surfaceId,
@@ -1691,6 +1754,7 @@ export const probe = action({
     assertRealMode('Surface probing');
     return await ctx.runAction(internal.surfaceActions.probeInternal, {
       surfaceId: args.surfaceId,
+      asked: true,
     });
   },
 });
@@ -1708,10 +1772,15 @@ export const probeInternal = internalAction({
   args: {
     surfaceId: v.id('surfaces'),
     routine: v.optional(v.boolean()),
+    asked: v.optional(v.boolean()),
     renewExpiry: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<ProbeOutcome> =>
-    await runSurfaceProbe(ctx, { surfaceId: args.surfaceId, routine: args.routine }),
+    await runSurfaceProbe(ctx, {
+      surfaceId: args.surfaceId,
+      routine: args.routine,
+      asked: args.asked,
+    }),
 });
 
 /**

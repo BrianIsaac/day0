@@ -10,7 +10,13 @@ import {
   autonomyTurnedOnAfterDraft,
   autonomyTurnedOnAfterDraftNote,
 } from '@/work/autonomy';
-import { heldStepWords, rejectionOf, workingFrom, type RunHold } from '@/work/item-display';
+import {
+  heldStepWords,
+  rejectionOf,
+  workingFrom,
+  type ListedWorkItem,
+  type RunHold,
+} from '@/work/item-display';
 import { EVALUATION_ATTEMPTS_SPENT } from '@/work/queue-order';
 import {
   type GivenAnswer,
@@ -24,7 +30,7 @@ import {
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
-import { approvedNotStarted, isStoppableItem, isStopped } from '@/work/stop';
+import { approvedNotStarted, isStoppableItem, isStopped, type StopRunAnswer } from '@/work/stop';
 import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
@@ -39,7 +45,7 @@ import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
-import { type ItemPlan, PlanSection } from './PlanSection';
+import { type ItemPlan, type PlanAgreement, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
@@ -63,6 +69,7 @@ import {
   type PhasedLedgerRow,
   type RunOutput,
   notDoneOnCard,
+  isProviderAnswer,
   waitingLine,
 } from './work-item';
 import { closeAgainstWordsOf } from '@/work/work-done';
@@ -162,6 +169,7 @@ export function WorkItemCard({
   managerKey,
   questions = [],
   corrections = [],
+  agreements = [],
   autonomyChanges = [],
   onApprovePlan,
   onCancelPlan,
@@ -177,7 +185,7 @@ export function WorkItemCard({
   hold,
   refusedSkill,
 }: {
-  item: Doc<'workItems'>;
+  item: ListedWorkItem;
   surfaces: SurfaceRecord[];
   autonomousActions: boolean;
   /** The employee's name, for the sentences that say who does what next. */
@@ -188,6 +196,8 @@ export function WorkItemCard({
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
+  /** The employee's working agreements, for the line saying this plan applied one (W13-R29). */
+  agreements?: readonly PlanAgreement[];
   /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
   autonomyChanges?: readonly AutonomyChange[];
   onApprovePlan: (decision: PlanApproval) => Promise<unknown> | void;
@@ -201,7 +211,7 @@ export function WorkItemCard({
   /** Dismiss a failed item (N7); a card offers no Dismiss without it. */
   onDismiss?: () => Promise<unknown>;
   /** Stop a run under way with the manager's reason (wave 12); a working card offers no Stop without it. */
-  onStop?: (reason: string) => Promise<unknown>;
+  onStop?: (reason: string) => Promise<StopRunAnswer>;
   /** Close a failed item with nothing to reconcile without a retry (E-8); none offered without it. */
   onCloseWithoutRetry?: () => Promise<unknown>;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
@@ -235,7 +245,6 @@ export function WorkItemCard({
   );
   const ledger = phasedLedger(output);
   const places = landedPlaces(ledger);
-  const landed = places.map((place) => ({ ...ledger[place]!, place }));
   // Rows that land while the page is open are a landing the manager is
   // watching (v3 section 5.2), whether or not the run landed a row before (M7).
   const landedBefore = usePreviousValue(places.join(','), LANDING_MS);
@@ -256,6 +265,13 @@ export function WorkItemCard({
           }
         : row;
     });
+  // A documented API's or an MCP tool's write keeps the provider's raw answer as its effect, which
+  // the evidence check reads; the card names it by what its action does instead (12-J item 5c).
+  const landed = places.map((place) => {
+    const row = ledger[place]!;
+    const shown = isProviderAnswer(row.effect) ? named([row])[0]! : row;
+    return { ...shown, place };
+  });
   const held = named(ledger.filter((row) => row.held && !row.awaitingApproval));
   // A row Day0's own gate refused was never sent: it is listed apart from a
   // row the provider failed, whose outcome someone may have to check.
@@ -386,6 +402,13 @@ export function WorkItemCard({
               ))}
             </ul>
           )}
+          {notDone.closed.map((close) => (
+            <p key={`${close.ticket}:${close.state}`} className="mt-1.5 text-[15px]">
+              {employeeName} moved {close.ticket} to {close.state} in this run, though the work is
+              {notDone.answer === 'partial' ? ' not all done' : ' not done'}: reopen it if it should
+              stay open.
+            </p>
+          ))}
         </Note>
       </ItemSection>
     ) : null;
@@ -493,7 +516,13 @@ export function WorkItemCard({
         />
       ) : null}
       {plan ? (
-        <PlanSection item={item} plan={plan} surfaces={surfaces} corrections={corrections} />
+        <PlanSection
+          item={item}
+          plan={plan}
+          surfaces={surfaces}
+          corrections={corrections}
+          agreements={agreements}
+        />
       ) : null}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm

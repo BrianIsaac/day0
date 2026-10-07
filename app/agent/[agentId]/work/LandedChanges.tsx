@@ -6,7 +6,7 @@ import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
 import { NOT_SENT_AFTER_STOP_REASON } from '@/work/reconciliation';
 import { Lead, Note } from './ItemParts';
 import { PhaseLabel, RepairNote, SessionRestoreNote } from './RunDetails';
-import { clipLedgerRow, landedHeadline, type PhasedLedgerRow } from './work-item';
+import { clipLedgerRow, landedHeadline, reusedInThisRun, type PhasedLedgerRow } from './work-item';
 
 /** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
 const LANDING_STAGGER_CAP = 3;
@@ -91,7 +91,11 @@ function rowMeta(row: PhasedLedgerRow): ReactNode {
   if (row.reusedFrom) {
     parts.push(
       <span key="reused">
-        {row.reusedFromRun ? `reused from run ${row.reusedFromRun}` : 'reused from an earlier run'}
+        {reusedInThisRun(row)
+          ? 'already sent earlier in this run'
+          : row.reusedFromRun
+            ? `reused from run ${row.reusedFromRun}`
+            : 'reused from an earlier run'}
       </span>,
     );
   }
@@ -130,7 +134,7 @@ export function LandedChanges({
   const arriving = rows.filter((row) => fresh.has(row.place));
   const line = (row: LandedRow, rise?: number) => (
     <LedgerLine key={row.place} kind="landed" rise={rise} meta={rowMeta(row)}>
-      {clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
+      {row.summary ?? clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
       <RepairNote repair={row.repair} />
       <SessionRestoreNote restore={row.sessionRestore} />
     </LedgerLine>

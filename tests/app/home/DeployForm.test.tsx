@@ -58,6 +58,11 @@ describe('DeployForm', (): void => {
     expect(field).not.toMatch(/outline-(none|hidden)/);
   });
 
+  it('opens with the name field empty, its example a placeholder only (13-FD)', (): void => {
+    const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(field).toContain('value=""');
+  });
+
   it('takes a name of at most 80 characters, the bound the deploy holds it to', (): void => {
     const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
     expect(field).toContain('maxLength="80"');
@@ -87,7 +92,12 @@ describe('DeployForm', (): void => {
 
   it('says beside the button what happens next, and credits the faces without naming anyone', (): void => {
     expect(html).toMatch(/<button type="submit"[^>]*>Deploy<\/button>/);
-    expect(text).toContain('Takes a few seconds, then worker 1 asks you for a Day-1 one-to-one.');
+    // Re-pinned by 13-FD (the v0.16.0 redeploy's finding 5): the field opens empty, as the page
+    // asks ("Give your first employee a name."), so the line names no default a visitor never typed.
+    expect(text).toContain(
+      'Takes a few seconds, then your new employee asks you for a Day-1 one-to-one.',
+    );
+    expect(text).not.toContain('worker 1 asks you');
     expect(text).toContain(
       'Avatar art from the product’s own set, the Singapore Codex Pets gallery. No person is named here.',
     );
@@ -156,6 +166,31 @@ describe('DeployForm, deploying', (): void => {
     );
   });
 
+  it('deploys no one until a name is typed (13-FD: the field opens empty)', async (): Promise<void> => {
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
+    await act(async () => {
+      host.querySelector('form')!.requestSubmit();
+    });
+    expect(deploy).not.toHaveBeenCalled();
+  });
+
+  it('says a name made only of spaces is no name, and deploys no one (the second pass)', async (): Promise<void> => {
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
+    const field = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+    act(() => type(field, '   '));
+    // The field's own check passes spaces, so the form is submitted and must answer itself.
+    await act(async () => {
+      host.querySelector('form')!.requestSubmit();
+    });
+    expect(deploy).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      'Give your employee a name before you deploy it.',
+    );
+    expect(document.activeElement).toBe(field);
+    act(() => type(field, 'Mira'));
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('deploys the named employee with the chosen face and the unticked sources, then opens its page', async (): Promise<void> => {
     deploy.mockResolvedValue('agent-mira');
     act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
@@ -193,6 +228,7 @@ describe('DeployForm, deploying', (): void => {
     );
     const lines = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
     act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, 'Mira'));
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });
@@ -250,6 +286,7 @@ describe('DeployForm, deploying', (): void => {
     });
     deploy.mockRejectedValue(refusal);
     act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, 'Mira'));
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });
@@ -259,6 +296,7 @@ describe('DeployForm, deploying', (): void => {
   it('keeps the form and says what failed when the deploy is refused', async (): Promise<void> => {
     deploy.mockRejectedValue(new Error('Deploy limit reached'));
     act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, 'Mira'));
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });

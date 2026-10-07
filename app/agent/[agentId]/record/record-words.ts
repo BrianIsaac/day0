@@ -12,7 +12,9 @@ import { HANDOVER_SETTINGS_REASON } from '@/agent/manager-transfer';
 import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
+import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
+import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 
 /**
@@ -692,6 +694,30 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Seeding work from the approved charter failed${because(p.reason)}; ${
       p.retrying === true ? 'trying again' : 'given up'
     }`,
+  'charter.seeded': (_p, subject) =>
+    `Day0 set up ${subject.name}'s approved charter and began finding how to reach the systems it names`,
+  'charter.seeding-requested': (_p, subject) =>
+    `${decider(subject)} asked Day0 to find work for ${subject.name} again from the approved charter`,
+  'person.proposed': (p, subject) =>
+    `${subject.name} proposed ${text(p.person) ?? 'a person'} from ${
+      p.via === 'handover' ? 'the charter it brought' : 'its approved charter'
+    }, for ${addressee(subject)} to confirm${
+      p.possiblySame === true ? ', as possibly someone already in the people' : ''
+    }`,
+  'person.confirmed': (p, subject) =>
+    p.how === 'same-person'
+      ? `${decider(subject)} said ${text(p.person) ?? 'a proposed person'} is someone already in the people`
+      : `${decider(subject)} confirmed ${text(p.person) ?? 'a proposed person'}${
+          typeof p.edgesConfirmed === 'number' && p.edgesConfirmed > 0
+            ? ` and ${counted(p.edgesConfirmed, 'relationship')} to them`
+            : ''
+        }`,
+  'person.dismissed': (p, subject) =>
+    `${decider(subject)} dismissed ${text(p.person) ?? 'a proposed person'}`,
+  'relationship.changed': (p, subject) =>
+    `${decider(subject)} ${
+      p.change === 'retired' ? 'ended' : p.change === 'edited' ? 'changed' : 'added'
+    } ${subject.name}'s ${relationshipNoun(p.type)} ${text(p.person) ?? 'in the people'}`,
   'work.charter-derived': (p) =>
     `${counted(p.count, 'work item') ?? 'Work items'} seeded from the charter`,
   'coworker.replied': (p) =>
@@ -776,6 +802,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Writing the skill ${text(p.name) ?? 'unnamed'} was taken over${
       duration(p.heldForMs) ? `; the last run held it ${duration(p.heldForMs)}` : ''
     }`,
+  'skill.authoring-held': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} was held${because(p.reason)}`,
+  'skill.authoring-resumed': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} went on after the pause`,
   'skill.authoring-claimed': (p, { name }) =>
     p.purpose === 'verify-stored'
       ? `${name} started checking the skill ${text(p.name) ?? 'unnamed'} in the sandbox`
@@ -827,8 +857,21 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${decider(subject)} asked for a connection card${text(p.slug) ? ` for ${p.slug}` : ''}`,
   'surface.orientation-failed': (p, subject) =>
     `Finding a way to reach ${subject.connection ?? 'a system'} failed${because(p.reason)}`,
+  'surface.orientation-held': (p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} was held${because(p.reason)}`,
+  'surface.orientation-resumed': (_p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} went on after the pause`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
+  'surface.app-forgotten': (p, subject) => {
+    const ownApp = `${subject.name}'s own app on ${connectionOf(subject)}`;
+    const name = text(p.appName);
+    const id = text(p.appId);
+    // The new app takes the same name, so the old one is named by its Slack app id too.
+    const app =
+      name === undefined ? undefined : id === undefined ? name : `${name} (Slack app ${id})`;
+    return `${decider(subject)} forgot ${app === undefined ? ownApp : `${app}, ${ownApp}`}, which IT's revoke had ended. Day0 can now create a new one; only IT can delete the old app, in Slack's app settings`;
+  },
   'surface.socket-token-landed': (p, subject) =>
     `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,
   'surface.app-messages-open': (p, subject) => messagesOpenWords(p, subject),
@@ -1018,6 +1061,22 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.corrections-redaction-limited': (_, subject) =>
     `Kept corrections were read with limited redaction${forItem(subject)}`,
   'work.correction-retired': () => 'A kept correction was retired',
+  'agreement.proposed': (p, subject) =>
+    `${subject.name} proposed a working agreement from ${whose(subject)} ${
+      p.source === 'correction-promotion' ? 'corrections' : 'words'
+    }`,
+  'agreement.activated': (p, subject) =>
+    `${decider(subject)} kept a working agreement${
+      p.everyEmployee === true ? ' for every employee' : ''
+    }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
+  'agreement.refused': (p) =>
+    text(p.clause)
+      ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+      : `A working agreement was refused: it would go beyond the charter`,
+  'agreement.retired': (p, subject) =>
+    p.how === 'dismissed'
+      ? `${decider(subject)} set a proposed working agreement aside`
+      : `${decider(subject)} retired a working agreement`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
@@ -1100,7 +1159,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
   'work.dependent-authoring-claimed': (_, subject) =>
     `The closing phase${forItem(subject)} started`,
-  'work.completed': (_, subject) => `${subject.name} finished ${itemOf(subject)}`,
+  'work.completed': (p, subject) => {
+    const end = finishedAs(p.output);
+    return end === 'done'
+      ? `${subject.name} finished ${itemOf(subject)}`
+      : `${subject.name} ended ${itemOf(subject)} ${end}; its card says why`;
+  },
   'work.failed': (p, subject) =>
     p.stopped === true
       ? `The run${forItem(subject)} stopped`

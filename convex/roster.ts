@@ -1,5 +1,6 @@
 import { v, type Infer } from 'convex/values';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx } from './_generated/server';
 import schema from './schema';
@@ -19,7 +20,6 @@ import {
   type OneToOnePhase,
 } from '../src/agent/one-to-one-phase';
 import { agentZone, dayKey, dayStart } from '../src/lib/zone';
-import { socketBridgeConfigured } from '../src/surfaces/slack-socket';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { isPaused } from '../src/work/pause';
 import { decisionChannelOf, decisionsReachOf } from '../src/work/decision-channel';
@@ -376,7 +376,6 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
     .withIndex('by_user', (q) => q.eq('userId', ownerKey))
     .take(DOC_SOURCE_READ_LIMIT);
   const now = Date.now();
-  const bridgeConfigured = socketBridgeConfigured();
   return await Promise.all(
     agents.map(async (agent): Promise<RosterRow> => {
       const [charter, counts, landed, session, surfaces] = await Promise.all([
@@ -409,7 +408,7 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         landedThisMonth: landed,
         decisionsReach: decisionsReachOf(
           channel,
-          bridgeConfigured,
+          channel === undefined ? 'unconfigured' : await socketBridgeStateOf(ctx, channel, now),
           channel === undefined || typedCodeReaches(await typedCodeReachOf(ctx, channel)),
         ),
       };

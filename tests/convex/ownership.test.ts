@@ -18,9 +18,13 @@ import {
   UNVERIFIED_FOR_TRANSFER,
 } from '../../src/agent/manager-transfer';
 import {
+  CHARTER_NOT_YOURS,
   EMPLOYEE_GONE,
   EMPLOYEE_NOT_YOURS,
   isEmployeeNotYours,
+  ONE_TO_ONE_NOT_YOURS,
+  SKILL_NOT_YOURS,
+  WORK_ITEM_NOT_YOURS,
 } from '../../src/agent/employee-access';
 import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
 import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -206,6 +210,64 @@ describe('the row guards (the anonymous-caller guard, 12-G)', (): void => {
           await guard(ctx as unknown as MutationCtx);
         }),
       ).rejects.toMatchObject({ data: notAuthenticatedMessage() });
+    }
+  });
+});
+
+describe('the row guards: one refusal for a missing row and another owner’s (W12-R25)', (): void => {
+  it('answer a signed-in caller alike for an id that is gone and a live row of an employee it does not own', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const ownership = await import('../../convex/ownership');
+    const rows = await harness.run(async (ctx) => {
+      const fixtureCtx = ctx as unknown as Parameters<typeof insertMinimalRow>[0];
+      const insert = async () => ({
+        workItem: await insertMinimalRow(fixtureCtx, 'workItems', agentId),
+        charter: await insertMinimalRow(fixtureCtx, 'charters', agentId),
+        skill: await insertMinimalRow(fixtureCtx, 'skills', agentId),
+        voiceSession: await insertMinimalRow(fixtureCtx, 'voiceSessions', agentId),
+      });
+      const live = await insert();
+      const gone = await insert();
+      for (const id of Object.values(gone)) await ctx.db.delete(id as Id<'workItems'>);
+      return { live, gone };
+    });
+    const guards = (ids: typeof rows.live) =>
+      [
+        [
+          WORK_ITEM_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsWorkItem(ctx, ids.workItem as Id<'workItems'>),
+        ],
+        [
+          CHARTER_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsCharter(ctx, ids.charter as Id<'charters'>),
+        ],
+        [
+          SKILL_NOT_YOURS,
+          (ctx: MutationCtx) => ownership.assertOwnsSkill(ctx, ids.skill as Id<'skills'>),
+        ],
+        [
+          ONE_TO_ONE_NOT_YOURS,
+          (ctx: MutationCtx) =>
+            ownership.assertOwnsVoiceSession(ctx, ids.voiceSession as Id<'voiceSessions'>),
+        ],
+      ] as const;
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    for (const ids of [rows.live, rows.gone]) {
+      for (const [words, guard] of guards(ids)) {
+        await expect(
+          stranger.run(async (ctx) => {
+            await guard(ctx as unknown as MutationCtx);
+          }),
+        ).rejects.toMatchObject({ data: words });
+      }
+    }
+    // The owner reads its own live rows as before.
+    for (const [, guard] of guards(rows.live)) {
+      await expect(
+        owner.run(async (ctx) => await guard(ctx as unknown as MutationCtx)),
+      ).resolves.toBeDefined();
     }
   });
 });
@@ -868,5 +930,161 @@ describe('the one local manager on the named side of a handover (the wave 9 revi
       return `${transfer._id} for ${caller.ownerKey}`;
     });
     expect(seen).toBe(`${transferId} for ${DEV_NO_AUTH_SUBJECT}`);
+  });
+});
+
+describe('the owner scope and the owner-level guards (13-K)', (): void => {
+  /** A person of one owner's graph. */
+  const person = (userId: string, displayName: string) => ({
+    userId,
+    displayName,
+    nameKey: displayName.toLowerCase(),
+    status: 'active' as const,
+    source: 'manager' as const,
+    evidence: [],
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  /** One owner's person, edge and agreement, as each guard reads them. */
+  async function graphOf(
+    ctx: MutationCtx,
+    userId: string,
+  ): Promise<{
+    personId: Id<'people'>;
+    relationshipId: Id<'relationships'>;
+    agreementId: Id<'workingAgreements'>;
+  }> {
+    const personId = await ctx.db.insert('people', person(userId, `Aiko of ${userId}`));
+    const relationshipId = await ctx.db.insert('relationships', {
+      userId,
+      fromPersonId: personId,
+      toPersonId: personId,
+      type: 'collaborator',
+      effectiveFrom: 1,
+      status: 'active',
+      source: 'manager',
+      createdAt: 1,
+    });
+    const agreementId = await ctx.db.insert('workingAgreements', {
+      userId,
+      kind: 'preference',
+      statement: 'Post in the morning.',
+      scope: 'global',
+      sourceType: 'manager-card',
+      status: 'active',
+      createdAt: 1,
+      appliedTo: [],
+    });
+    return { personId, relationshipId, agreementId };
+  }
+
+  it("ownerScope never reads another owner's rows: two callers each read only their own people through it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ownership = await import('../../convex/ownership');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('people', person('owner', 'Aiko'));
+      await ctx.db.insert('people', person('stranger', 'Ben'));
+    });
+    const readAs = async (subject: string): Promise<string[]> =>
+      await harness.withIdentity(managerIdentity(subject)).run(async (ctx) => {
+        const scope = ownership.ownerScope(await ownership.getCallerOrThrow(ctx));
+        const rows = await ctx.db
+          .query('people')
+          .withIndex('by_user_status', (q) => q.eq('userId', scope).eq('status', 'active'))
+          .collect();
+        return rows.map((row) => row.displayName);
+      });
+    expect(await readAs('owner')).toEqual(['Aiko']);
+    expect(await readAs('stranger')).toEqual(['Ben']);
+  });
+
+  it("gives an employee's rows the scope of its owner, and none to an employee no owner holds", async (): Promise<void> => {
+    const { employeeOwnerScope } = await import('../../convex/ownership');
+    expect(employeeOwnerScope({ userId: 'owner' })).toBe('owner');
+    expect(employeeOwnerScope({})).toBeUndefined();
+  });
+
+  it("admits the owner to their own person, edge and agreement, and refuses another owner's and a missing id with one refusal each", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ownership = await import('../../convex/ownership');
+    const { PERSON_NOT_YOURS, RELATIONSHIP_NOT_YOURS } =
+      await import('../../src/people/vocabulary');
+    const { AGREEMENT_NOT_YOURS } = await import('../../src/work/agreement-vocabulary');
+    const { own, gone } = await harness.run(async (ctx) => {
+      const graph = await graphOf(ctx as unknown as MutationCtx, 'owner');
+      const deleted = await graphOf(ctx as unknown as MutationCtx, 'owner');
+      await ctx.db.delete(deleted.personId);
+      await ctx.db.delete(deleted.relationshipId);
+      await ctx.db.delete(deleted.agreementId);
+      return { own: graph, gone: deleted };
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    const read = await owner.run(async (ctx) => ({
+      person: (await ownership.assertOwnsPerson(ctx as unknown as MutationCtx, own.personId))
+        .displayName,
+      edge: (
+        await ownership.assertOwnsRelationship(ctx as unknown as MutationCtx, own.relationshipId)
+      ).type,
+      agreement: (
+        await ownership.assertOwnsAgreement(ctx as unknown as MutationCtx, own.agreementId)
+      ).statement,
+    }));
+    expect(read).toEqual({
+      person: 'Aiko of owner',
+      edge: 'collaborator',
+      agreement: 'Post in the morning.',
+    });
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    const refusals: Array<[string, (ctx: MutationCtx, ids: typeof own) => Promise<unknown>]> = [
+      [PERSON_NOT_YOURS, (ctx, ids) => ownership.assertOwnsPerson(ctx, ids.personId)],
+      [
+        RELATIONSHIP_NOT_YOURS,
+        (ctx, ids) => ownership.assertOwnsRelationship(ctx, ids.relationshipId),
+      ],
+      [AGREEMENT_NOT_YOURS, (ctx, ids) => ownership.assertOwnsAgreement(ctx, ids.agreementId)],
+    ];
+    for (const [words, guard] of refusals) {
+      for (const [caller, ids] of [
+        [stranger, own],
+        [owner, gone],
+      ] as const) {
+        const refusal = await caller
+          .run(async (ctx) => await guard(ctx as unknown as MutationCtx, ids))
+          .then(
+            (): unknown => undefined,
+            (error: unknown): unknown => error,
+          );
+        expect(refusal).toBeInstanceOf(ConvexError);
+        expect((refusal as ConvexError<string>).data).toBe(words);
+      }
+    }
+  });
+
+  it('refuses an anonymous caller before any read, so a missing id answers as a live one does', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ownership = await import('../../convex/ownership');
+    const { notAuthenticatedMessage } = await import('../../convex/devAuth');
+    const { own, gone } = await harness.run(async (ctx) => {
+      const graph = await graphOf(ctx as unknown as MutationCtx, 'owner');
+      const deleted = await graphOf(ctx as unknown as MutationCtx, 'owner');
+      await ctx.db.delete(deleted.personId);
+      await ctx.db.delete(deleted.relationshipId);
+      await ctx.db.delete(deleted.agreementId);
+      return { own: graph, gone: deleted };
+    });
+    for (const ids of [own, gone]) {
+      for (const guard of [
+        (ctx: MutationCtx) => ownership.assertOwnsPerson(ctx, ids.personId),
+        (ctx: MutationCtx) => ownership.assertOwnsRelationship(ctx, ids.relationshipId),
+        (ctx: MutationCtx) => ownership.assertOwnsAgreement(ctx, ids.agreementId),
+      ]) {
+        await expect(
+          harness.run(async (ctx) => {
+            await guard(ctx as unknown as MutationCtx);
+          }),
+        ).rejects.toMatchObject({ data: notAuthenticatedMessage() });
+      }
+    }
   });
 });

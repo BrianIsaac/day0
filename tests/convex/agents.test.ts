@@ -1390,6 +1390,10 @@ describe('the employee roster', (): void => {
             createdAt: 1,
             installedAt: 2,
             ...(withToken ? { appLevelTokenCredentialId: secret } : {}),
+            // Re-pinned for 13-FS: the roster reads the card's own field, written beside the event.
+            ...(takesMessages
+              ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+              : {}),
           },
           createdAt: 1,
         });
@@ -1403,6 +1407,15 @@ describe('the employee roster', (): void => {
             createdAt: 2,
           });
         }
+        // Re-pinned for D-6 (b): the roster's buttons read the bridge's live report on the app.
+        await ctx.db.insert('socketHeartbeats', {
+          agentId,
+          surfaceId,
+          appId,
+          live: true,
+          liveSince: Date.now(),
+          reportedAt: Date.now(),
+        });
       };
       await slack(buttons, true);
       await slack(typed, false);

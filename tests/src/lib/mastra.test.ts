@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 vi.hoisted(() => {
@@ -34,7 +33,10 @@ import { planSchema } from '../../../src/work/plan';
  * reply.
  */
 
-const secretToken = ['sk', 'live', randomUUID().replaceAll('-', '')].join('-');
+// A fixed token: a random one can contain a run such as 503 that the retry
+// policy reads as a transient status, and the test then backs off past its
+// limit (about one gate run in 140).
+const secretToken = 'sk-live-fedcbafedcbafedcbafedcbafedcbafe';
 const SECRET_PROMPT = `labelled secret: ${secretToken}`;
 
 afterEach((): void => {
@@ -200,6 +202,22 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       outcome: 'timed-out',
     });
     expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends a call its caller gave less time at that limit, and says which (12-J item 6, option A)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const generate = vi.fn((): Promise<{ object: unknown }> => new Promise(() => undefined));
+    const agent = { name: 'day0-work-generator', generate } as unknown as Agent;
+    const pending = collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {}, timeoutMs: 80_000 }).catch(
+        (err: unknown) => err,
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(80_000);
+    const { reports, result } = await pending;
+    expect((result as Error).name).toBe('TimeoutError');
+    expect((result as Error).message).toContain('the model call reached its 80000ms budget');
+    expect(reports[0]).toMatchObject({ durationMs: 80_000, outcome: 'timed-out' });
   });
 
   it('never lets a call outlive its budget, however many slow attempts it makes (P7-18)', async (): Promise<void> => {

@@ -29,6 +29,7 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { seedEmployee, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
@@ -377,7 +378,7 @@ describe('batched decisions', (): void => {
           { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
         ],
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
   });
 
   it('refuses a caller with no identity before it reads the batch, an empty one included (12-G)', async (): Promise<void> => {
@@ -610,10 +611,10 @@ describe('batched decisions', (): void => {
     }
     // The reason is kept once per item for each item's employee's later work.
     const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
-    expect(kept.map((row) => [row.workItemId, row.kind, row.text]).sort()).toEqual(
+    expect(kept.map((row) => [row.workItemId, row.kind, row.text, row.origin]).sort()).toEqual(
       [
-        [first.workItemId, 'rejection', 'not this week'],
-        [second.workItemId, 'rejection', 'not this week'],
+        [first.workItemId, 'rejection', 'not this week', 'channel'],
+        [second.workItemId, 'rejection', 'not this week', 'channel'],
       ].sort(),
     );
   });
@@ -648,7 +649,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     const { agentId, workItemId } = await seed(harness, 'claimed');
     const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
     expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
       approved: false,
     });
@@ -667,7 +668,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     });
     const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
     expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
       approved: true,
     });
@@ -694,7 +695,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
       await harness.run(async (ctx) => await ctx.db.patch(workItemId, waiver));
       const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
 
-      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
       expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
         approved: false,
       });
@@ -743,7 +744,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
         ...failedOpen,
       };
 
-      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
       expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
         approved: false,
       });
@@ -768,7 +769,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'claimed', undefined, { autonomousActions: true });
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: {
         summary: 'Check the issue, then update it.',
@@ -794,7 +795,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'claimed');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Use the current mode.', steps: ['decide'] },
     });
@@ -853,7 +854,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     );
     const rejected = await rejectedElsewhere(harness, 'owner');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
     });
@@ -890,7 +891,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     );
     await rejectedElsewhere(harness, 'someone-else');
 
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
     });
@@ -1255,7 +1256,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
     ).rejects.toThrow('delivered');
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     expect(
       await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
         workItemId,
@@ -1288,7 +1289,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(managerIdentity('stranger')).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(
@@ -1356,7 +1357,7 @@ describe('manager channel request claims', (): void => {
       noticeOwed: false,
     });
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     // Re-pinned for M10 (12-M): the decided request's thread is read for the notice's hour too.
     expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
       requests: [],
@@ -1716,6 +1717,48 @@ describe('manager channel request claims', (): void => {
     );
   });
 
+  it('re-sends a request stranded on the same DM with its own failure, never saying the DM changed (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787770700.000100',
+          requestFailedAt: 2,
+          requestFailure: THREAD_NOT_FOUND_REASON,
+        },
+      });
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: THREAD_NOT_FOUND_REASON },
+    ]);
+  });
+
   it('closes a delivered request whose thread is gone and sends it again, once (M7)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1943,7 +1986,7 @@ describe('single-use manager decisions', (): void => {
       text: 'Approval gh6npq received. I’m starting the approved plan now.',
     });
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId }),
     ).rejects.toThrow('expected plan-pending');
   });
 
@@ -2020,7 +2063,13 @@ describe('single-use manager decisions', (): void => {
     });
     const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
     expect(kept).toMatchObject([
-      { agentId, workItemId, kind: 'plan-rejection', text: 'Use the revised runbook' },
+      {
+        agentId,
+        workItemId,
+        kind: 'plan-rejection',
+        text: 'Use the revised runbook',
+        origin: 'channel',
+      },
     ]);
   });
 
@@ -2454,7 +2503,7 @@ describe('approving a plan with answers', (): void => {
           createdAt: 2,
         }),
     );
-    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan: lookerPlan });
     const [question] = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -2473,7 +2522,7 @@ describe('approving a plan with answers', (): void => {
     expect(question.question).toBe('Who owns the Looker pipeline tile.');
 
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, {
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [
           {
@@ -2535,7 +2584,7 @@ describe('approving a plan with answers', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, question } = await askedAtPlan(harness);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+      harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId }),
     ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
@@ -2571,7 +2620,7 @@ describe('approving a plan with answers', (): void => {
           createdAt: 1,
         }),
     );
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId: other,
       plan: {
         summary: 'Merge the accounts.',
@@ -2581,19 +2630,19 @@ describe('approving a plan with answers', (): void => {
     });
     const owner = harness.withIdentity(OWNER);
     await expect(
-      owner.mutation(api.work.approvePlan, {
+      owner.mutation(api.planApproval.approvePlan, {
         workItemId: other,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
     ).rejects.toThrow('not asked on this work item');
     await expect(
-      owner.mutation(api.work.approvePlan, {
+      owner.mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [{ questionId: question._id, text: '   ' }],
       }),
     ).rejects.toThrow('cannot be empty');
     await expect(
-      harness.withIdentity(managerIdentity('stranger')).mutation(api.work.approvePlan, {
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.planApproval.approvePlan, {
         workItemId,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
@@ -3157,7 +3206,7 @@ describe('the exact-action gate', (): void => {
         pendingRunId: runId,
         approvedIndexes: [0],
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -3588,7 +3637,7 @@ describe('the exact-action gate', (): void => {
         workItemId,
         confirmed: true,
       }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
 
     // The write whose response was lost is answered entry by entry (U17 D1, wave 12).
     await expect(
@@ -5539,7 +5588,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     });
     // The plan the in-flight draft finishes is not stored, so nothing reaches an apply.
     await expect(
-      harness.mutation(internal.work.setPlan, {
+      harness.mutation(internal.planApproval.setPlan, {
         workItemId,
         plan: { summary: 'Reconcile it.', steps: ['reconcile'] },
       }),
@@ -6354,7 +6403,7 @@ describe('a plan drafted while its system was down, when the system is back firs
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'claimed');
     // Linear was down when the draft read it and connected before the plan was stored.
-    const stored = await harness.mutation(internal.work.setPlan, {
+    const stored = await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: { summary: 'Close the month.', steps: [] },
       draftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
@@ -6793,10 +6842,10 @@ describe('the manager’s estimate at plan approval (N11)', (): void => {
     const { workItemId } = await seed(harness, 'plan-pending');
     const owner = harness.withIdentity(OWNER);
     await expect(
-      owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
+      owner.mutation(api.planApproval.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
     ).rejects.toThrow('whole number of minutes');
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
-    await owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: 45 });
+    await owner.mutation(api.planApproval.approvePlan, { workItemId, manualEstimateMinutes: 45 });
     expect(await readItem(harness, workItemId)).toMatchObject({
       state: 'plan-approved',
       manualEstimateMinutes: 45,
@@ -6836,7 +6885,7 @@ describe('the resend refusals the card shows (wave 3 review m9)', (): void => {
       'The request was delivered; the manager holds its code.',
     );
 
-    await owner.mutation(api.work.approvePlan, { workItemId });
+    await owner.mutation(api.planApproval.approvePlan, { workItemId });
     const decided = await refusal();
     expect(decided).toBeInstanceOf(ConvexError);
     expect((decided as ConvexError<string>).data).toBe(
@@ -7519,7 +7568,7 @@ describe('workRuns.dismissFailed (N7)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.workRuns.dismissFailed, { workItemId }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
     const refusal = harness
       .withIdentity(OWNER)
@@ -7582,7 +7631,7 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
-    ).rejects.toThrow('This employee is not yours.');
+    ).rejects.toThrow('This work item is not yours.');
   });
 });
 
@@ -8512,5 +8561,55 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
       await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
     });
     expect(await judged(harness, waiting)).toEqual(['queue', 'claim']);
+  });
+});
+
+describe('work.listForAgent', (): void => {
+  it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const rowan = await seedPerson(harness, 'Rowan Hale');
+    const gone = await seedPerson(harness, 'Dee Dismissed', { status: 'dismissed' } as never);
+    const ask = async (
+      externalId: string,
+      requesterPerson?: Doc<'workItems'>['requesterPerson'],
+    ): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'event-stream',
+          sourceSystem: 'slack',
+          externalId,
+          title: 'Slack mention in #revops-asks',
+          contentSummary: '<@U0C78V6LAPP> can you refresh the board?',
+          contentRefs: [],
+          state: 'discovered',
+          observedAt: 1,
+          createdAt: 1,
+          requesterLabel: 'U0C78V6LAPP',
+          ...(requesterPerson === undefined ? {} : { requesterPerson }),
+        });
+      });
+    };
+    const elsewhere = await seedPerson(harness, 'Rowan Elsewhere', { userId: 'another-owner' });
+    await ask('C0ASKS:1', { kind: 'person', personId: rowan });
+    await ask('C0ASKS:2', { kind: 'person', personId: gone });
+    await ask('C0ASKS:3', { kind: 'ambiguous', candidates: 2 });
+    await ask('C0ASKS:4');
+    await ask('C0ASKS:5', { kind: 'person', personId: elsewhere });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+
+    expect(
+      Object.fromEntries(listed.map((item) => [item.externalId, item.requesterName ?? null])),
+    ).toEqual({
+      'C0ASKS:1': 'Rowan Hale',
+      'C0ASKS:2': null,
+      'C0ASKS:3': null,
+      'C0ASKS:4': null,
+      'C0ASKS:5': null,
+    });
   });
 });

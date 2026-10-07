@@ -139,7 +139,7 @@ describe('a dashboard change reported the same way everywhere', (): void => {
   it('says the refusal in the live region and gives focus back to the control that stayed', async (): Promise<void> => {
     const container = await press(async () => {
       throw new Error(
-        '[CONVEX M(work:approvePlan)] [Request ID: 1] Server Error\nUncaught Error: The plan changed while this page was open.\n    at handler (../convex/work.ts:1:1)',
+        '[CONVEX M(planApproval:approvePlan)] [Request ID: 1] Server Error\nUncaught Error: The plan changed while this page was open.\n    at handler (../convex/planApproval.ts:1:1)',
       );
     });
     expect(container.querySelector('[role="status"]')?.textContent).toBe(

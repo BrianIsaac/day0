@@ -355,6 +355,79 @@ describe("the configuration token's uses on an employee's export (the review's m
     ).toEqual([['organisation.configuration-used', 'A_OWN']]);
     expect(JSON.stringify(head)).not.toContain('A_OTHER');
   });
+
+  it('keeps the creation of an app the manager forgot after IT’s revoke, which no card names any more (13-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const connection = (status: 'active' | 'revoked') => ({
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration' as const,
+        mode: 'per-employee' as const,
+        scopes: ['chat:write'],
+        registeredBy: { via: 'setup-cli' as const, at: 1 },
+        status,
+        createdAt: 1,
+      });
+      const revoked = await ctx.db.insert('organisationConnections', connection('revoked'));
+      const relanded = await ctx.db.insert('organisationConnections', connection('active'));
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      // The card now links IT's new connection and holds no app: the old one was forgotten.
+      await ctx.db.patch(surface!._id, { organisationConnectionId: relanded });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'surface.app-forgotten',
+        payload: {
+          surfaceId: surface!._id,
+          appId: 'A_OLD',
+          appName: 'Old (Day0)',
+          organisationConnectionId: revoked,
+        },
+        createdAt: 5,
+      });
+      const named = { system: 'slack', displayName: 'Slack' };
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: revoked,
+        type: 'organisation.configuration-used',
+        payload: {
+          ...named,
+          organisationConnectionId: revoked,
+          method: 'apps.manifest.create',
+          outcome: 'done',
+          appId: 'A_OLD',
+        },
+        createdAt: 2,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: revoked,
+        type: 'organisation.configuration-used',
+        payload: {
+          ...named,
+          organisationConnectionId: revoked,
+          method: 'apps.manifest.create',
+          outcome: 'done',
+          appId: 'A_OTHER',
+        },
+        createdAt: 3,
+      });
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(
+      head.organisationLedger
+        .filter((one) => one.type === 'organisation.configuration-used')
+        .map((one) => (one.payload as { appId?: string }).appId),
+    ).toEqual(['A_OLD']);
+    expect(JSON.stringify(head)).not.toContain('A_OTHER');
+  });
 });
 
 describe('the paged trace export', (): void => {
@@ -380,8 +453,8 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      // Version 6 adds the replaced decision requests (12-M; F2 D14).
-      version: 6,
+      // Version 7 adds the owner's people graph (wave 13, 13-P).
+      version: 7,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -517,6 +590,10 @@ describe('the paged trace export', (): void => {
       managerNotes: 0,
       decisionNotices: 0,
       replacedRequests: 0,
+      // Version 7's people graph (13-P): this owner holds none.
+      people: 0,
+      personIdentities: 0,
+      relationships: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);
@@ -1216,5 +1293,39 @@ describe('the Record tab reader over a long record', (): void => {
       .withIdentity(managerIdentity())
       .query(api.events.record, { agentId, paginationOpts: { numItems: 5, cursor: null } });
     expect(page.page.map((entry) => entry.connection)).toEqual(['Linear']);
+  });
+});
+
+describe('the people graph in the audit export (wave 13, 13-P)', (): void => {
+  it("lists the owner's people, identities and edges, and nothing of another owner's graph", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { seedEdge, seedIdentity, seedPerson } = await import('./fakes/people-graph');
+    const agentId = await seedTracedAgent(harness);
+    const dana = await seedPerson(harness, 'Dana Okafor', {
+      evidence: [{ quote: 'Dana Okafor approves NetLedger access', where: 'Onboarding', at: 2 }],
+    });
+    await seedIdentity(harness, dana, { provider: 'linear', externalId: 'lin-dana' });
+    await seedEdge(harness, dana, { type: 'approval-authority', scope: 'NetLedger access' });
+    const theirs = await seedPerson(harness, 'Their Person', { userId: 'stranger' });
+    await seedIdentity(harness, theirs, { provider: 'slack', externalId: 'U0THEIRS' });
+    await seedEdge(harness, theirs, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      userId: 'stranger',
+    });
+
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
+    expect(trace.sections.people.map((person) => person.displayName)).toEqual(['Dana Okafor']);
+    expect(trace.sections.people[0]?.evidence).toEqual([
+      { quote: 'Dana Okafor approves NetLedger access', where: 'Onboarding', at: 2 },
+    ]);
+    expect(trace.sections.personIdentities.map((identity) => identity.externalId)).toEqual([
+      'lin-dana',
+    ]);
+    expect(trace.sections.relationships).toMatchObject([
+      { toPersonId: dana, type: 'approval-authority', scope: 'NetLedger access' },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('Their Person');
+    expect(JSON.stringify(trace)).not.toContain('U0THEIRS');
   });
 });

@@ -29,7 +29,7 @@ import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
-import { workDoneFactOf } from '@/work/work-done';
+import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -163,10 +163,33 @@ export interface PlanObligationsRow {
  *   `3 actions reached the work environment · 3 applied autonomously`, or without the tail.
  *   Reads and writes alike, so a read is never called a change (the re-walk, row 8).
  */
-export function landedHeadline(landed: ReadonlyArray<{ authority?: ActionAuthority }>): string {
-  const autonomous = landed.filter((row) => row.authority === 'autonomous').length;
-  const head = `${landed.length} ${landed.length === 1 ? 'action' : 'actions'} reached the work environment`;
+export function landedHeadline(
+  landed: ReadonlyArray<{
+    authority?: ActionAuthority;
+    idempotencyKey?: string;
+    reusedFrom?: string;
+  }>,
+): string {
+  // A row the closing set reused from its own run is a message that reached once (W12V-13).
+  const reached = landed.filter((row) => !reusedInThisRun(row));
+  const autonomous = reached.filter((row) => row.authority === 'autonomous').length;
+  const head = `${reached.length} ${reached.length === 1 ? 'action' : 'actions'} reached the work environment`;
   return autonomous > 0 ? `${head} · ${autonomous} applied autonomously` : head;
+}
+
+/**
+ * Whether a reused row reuses a write of its own run (W12V-13): keys are
+ * `workItemId:runId:actionIndex`, and neither id holds a colon.
+ *
+ * @param row - A ledger row.
+ */
+export function reusedInThisRun(row: { idempotencyKey?: string; reusedFrom?: string }): boolean {
+  const runOf = (key: string | undefined): string | undefined => key?.split(':')[1];
+  return (
+    row.reusedFrom !== undefined &&
+    runOf(row.reusedFrom) !== undefined &&
+    runOf(row.reusedFrom) === runOf(row.idempotencyKey)
+  );
 }
 
 /**
@@ -249,6 +272,23 @@ export function justLanded(before: string | undefined, now: readonly number[]): 
   if (before === undefined) return new Set();
   const seen = new Set(before === '' ? [] : before.split(',').map(Number));
   return new Set(now.filter((place) => !seen.has(place)));
+}
+
+/** A documented API's answer as the HTTP adapter keeps it: the status, then the provider's own words. */
+const PROVIDER_ANSWER = /^HTTP \d{3}\b/;
+
+/** An MCP tool's answer as the MCP adapter keeps it: the tool, its surface, then the provider's words. */
+const MCP_ANSWER = /^[\w.-]+ on [\w.-]+ · /;
+
+/**
+ * Whether a row's effect is a provider's raw answer, which the card names by what the action does
+ * instead: a documented API's ("HTTP 200 · {...}", 12-J item 5c) or an MCP tool's ("save_comment on
+ * linear · {...}"). The effect keeps the provider's words for the evidence check and the plan.
+ *
+ * @param effect - The row's effect as the ledger keeps it.
+ */
+export function isProviderAnswer(effect: string | undefined): boolean {
+  return effect !== undefined && (PROVIDER_ANSWER.test(effect) || MCP_ANSWER.test(effect));
 }
 
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
@@ -573,10 +613,33 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
   ).slice(0, UNFINISHED_SHOWN);
 }
 
+/** A finished run's end as the record says it: the word its card leads with (13-FD). */
+export type FinishedAs = 'done' | 'partly done' | 'not done';
+
+/**
+ * A finished run's end in the record's word, read from the output its `work.completed` event
+ * carries exactly as the card reads it ({@link notDoneOnCard}): "partly done" or "not done" when
+ * the run said so, "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
+ * cards said "Partly done", the word the release reserves for the run's answer.
+ *
+ * @param output - The run's output as the event stores it.
+ */
+export function finishedAs(output: unknown): FinishedAs {
+  const run = typeof output === 'object' && output !== null ? (output as RunOutput) : undefined;
+  const notDone = notDoneOnCard(run);
+  if (notDone === undefined) return 'done';
+  return notDone.answer === 'partial' ? 'partly done' : 'not done';
+}
+
 /** What a finished run's card says was not done: the run's answer, and the words it says it in. */
 export interface NotDoneOnCard {
   readonly answer: 'partial' | 'not-done';
   readonly statements: readonly string[];
+  /**
+   * The tickets the run closed all the same (a closing round's first set, 12-D's Minor 5), so a
+   * closed ticket never stands under the answer unsaid.
+   */
+  readonly closed: readonly LandedClosing[];
 }
 
 /**
@@ -591,11 +654,12 @@ export interface NotDoneOnCard {
 export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | undefined {
   if (!output) return undefined;
   const fact = workDoneFactOf(output);
+  const closed = landedClosings(output);
   if (fact !== undefined) {
     return fact.workDone === 'done'
       ? undefined
-      : { answer: fact.workDone, statements: [fact.workDoneWhy] };
+      : { answer: fact.workDone, statements: [fact.workDoneWhy], closed };
   }
   const statements = unfinishedInOwnWords(output);
-  return statements.length > 0 ? { answer: 'not-done', statements } : undefined;
+  return statements.length > 0 ? { answer: 'not-done', statements, closed } : undefined;
 }

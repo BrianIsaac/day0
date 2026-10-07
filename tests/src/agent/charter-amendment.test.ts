@@ -6,6 +6,7 @@ import {
   nextCharterVersion,
 } from '../../../src/agent/charter-amendment';
 import { STRIKE_CHANGES_NOTHING } from '../../../src/agent/charter-constraints';
+import { HOSTED_DRAFTS_2026_10_04 } from '../../fixtures/charter-paraphrase-2026-09-30';
 
 function approvedBody(): Charter {
   return {
@@ -150,6 +151,8 @@ describe('applying charter changes', (): void => {
       quote: 'Never edit the forecast sheet.',
       wording: ['Never edit the forecast sheet.'],
       origin: 'manager',
+      // 13-R: the manager's rule is bound to the clause it added, as a drafted rule is.
+      binds: [{ field: 'willNotDo', index: 1 }],
     });
   });
 
@@ -377,5 +380,128 @@ describe('editing a bounding clause (P8-9)', (): void => {
       { kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' },
     ]).charter;
     expect(removed.proposedBoundaries.willNotDo).toEqual(['Never edit the forecast sheet.']);
+  });
+});
+
+describe('amending a charter whose rules are bound to their clauses (13-R)', (): void => {
+  /** Lark's approved charter as the binding drafter leaves it: two rules, each bound. */
+  function boundBody(): Charter {
+    return {
+      ...approvedBody(),
+      proposedFunction: 'Keep the Q4 Revenue Tracker clean.',
+      proposedBoundaries: {
+        willDo: ['Keep the Q4 Revenue Tracker current from Slack.'],
+        willNotDo: [
+          'Own the forecast, which belongs to finance.',
+          'Change a deal amount in the tracker.',
+          'Post revenue figures in a public channel.',
+        ],
+        escalationTriggers: ['Anything unusual: talk to the manager first.'],
+      },
+      namedSystems: [],
+      constraints: [
+        {
+          kind: 'system-boundary',
+          quote: 'Never change a deal amount in the tracker.',
+          wording: ['change a deal amount in the tracker.'],
+          origin: 'synthesis',
+          binds: [{ field: 'willNotDo', index: 1 }],
+        },
+        {
+          kind: 'reporting-line',
+          quote: 'Go through me.',
+          wording: [],
+          origin: 'synthesis',
+          binds: [
+            { field: 'willNotDo', index: 2 },
+            { field: 'escalationTriggers', index: 0 },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("an amendment that removes a bound clause re-indexes the other rules' binds", (): void => {
+    const { charter } = applyCharterChanges(boundBody(), [
+      { kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' },
+    ]);
+    expect(charter.constraints?.map((rule) => rule.binds)).toEqual([
+      [{ field: 'willNotDo', index: 0 }],
+      [
+        { field: 'willNotDo', index: 1 },
+        { field: 'escalationTriggers', index: 0 },
+      ],
+    ]);
+  });
+
+  it('an amendment that rewrites a bound clause in place keeps the rule bound to it', (): void => {
+    const { charter } = applyCharterChanges(boundBody(), [
+      {
+        kind: 'edit-clause',
+        field: 'willNotDo',
+        index: 1,
+        text: 'Alter any deal amount in the Q4 Revenue Tracker.',
+      },
+    ]);
+    expect(charter.constraints?.[0]?.binds).toEqual([{ field: 'willNotDo', index: 1 }]);
+  });
+
+  it('refuses an edit that removes the last clause a standing bound boundary binds', (): void => {
+    expect(() =>
+      applyCharterChanges(boundBody(), [
+        { kind: 'edit-clause', field: 'willNotDo', index: 1, text: '' },
+      ]),
+    ).toThrow(
+      'edit refused: “Change a deal amount in the tracker.” is the only clause that enforces “Never change a deal amount in the tracker.”',
+    );
+  });
+
+  it('strikes a bound rule after approval by its clauses and re-indexes the rest', (): void => {
+    const { charter } = applyCharterChanges(boundBody(), [{ kind: 'strike-constraint', index: 0 }]);
+    expect(charter.proposedBoundaries.willNotDo).toEqual([
+      'Own the forecast, which belongs to finance.',
+      'Post revenue figures in a public channel.',
+    ]);
+    expect(charter.constraints?.[0]).toMatchObject({ struck: true, binds: [] });
+    expect(charter.constraints?.[1]?.binds).toEqual([
+      { field: 'willNotDo', index: 1 },
+      { field: 'escalationTriggers', index: 0 },
+    ]);
+    expect(charter.struckClauses).toEqual([
+      { field: 'willNotDo', text: 'Change a deal amount in the tracker.' },
+    ]);
+  });
+
+  it('binds a rule the manager adds to the clause it added', (): void => {
+    const { charter } = applyCharterChanges(boundBody(), [
+      {
+        kind: 'add-constraint',
+        constraint: {
+          kind: 'system-boundary',
+          quote: 'Never share a password in a ticket comment.',
+          clause: 'willNotDo',
+        },
+      },
+    ]);
+    expect(charter.constraints?.[2]?.binds).toEqual([{ field: 'willNotDo', index: 3 }]);
+  });
+
+  it('an old charter without binds strikes by wording as today', (): void => {
+    const moss = HOSTED_DRAFTS_2026_10_04.Moss!;
+    const owned = (moss.constraints ?? []).findIndex((rule) => rule.wording.includes('owned'));
+    const { charter } = applyCharterChanges(moss, [{ kind: 'strike-constraint', index: owned }]);
+    expect(charter.proposedBoundaries.willNotDo).toEqual([
+      'Sign off on month-end closures',
+      'Post revenue figures in public Slack channels',
+    ]);
+    expect(charter.constraints?.every((rule) => rule.binds === undefined)).toBe(true);
+    expect(() =>
+      applyCharterChanges(moss, [
+        {
+          kind: 'strike-constraint',
+          index: (moss.constraints ?? []).findIndex((rule) => rule.wording.length === 0),
+        },
+      ]),
+    ).toThrow(STRIKE_CHANGES_NOTHING);
   });
 });

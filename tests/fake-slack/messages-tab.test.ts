@@ -96,6 +96,57 @@ async function installedApp(appHome?: typeof WRITABLE): Promise<{ appId: string;
   return { appId: String(created.app_id), bot };
 }
 
+describe('fake Slack: the messages tab as the re-walk found it (13-FS)', (): void => {
+  // The re-walk's row 2 (wave12-x handover, 05:47:53Z): after an apps.manifest.update that left
+  // out app_home, Slack refused Day0's own plan request to the DM with this answer.
+  const MESSAGES_TAB_DISABLED = { ok: false, error: 'messages_tab_disabled' };
+
+  it('turns the tab off altogether on an update that leaves out app_home, so the bot’s own post to the DM is refused', async (): Promise<void> => {
+    const { appId, bot } = await installedApp(WRITABLE);
+    const exported = await api('apps.manifest.export', CONFIGURATION_TOKEN, { app_id: appId });
+    const manifest = exported.manifest as { features: Record<string, unknown> };
+    const { app_home: _home, ...features } = manifest.features;
+    expect(_home).toEqual(WRITABLE);
+    await api('apps.manifest.update', CONFIGURATION_TOKEN, {
+      app_id: appId,
+      manifest: JSON.stringify({ ...manifest, features }),
+    });
+    expect(
+      await api('chat.postMessage', bot, { channel: 'D_DAY0_MANAGER', text: 'Decide.' }, true),
+    ).toEqual(MESSAGES_TAB_DISABLED);
+    expect(await proof('/proof/manager-message', { appId, text: 'approve uacgcm' })).toMatchObject({
+      ok: false,
+      error: 'messages_tab_off',
+    });
+  });
+
+  it('refuses a method as a bed asks, until the bed lifts it, as Slack refused the walks', async (): Promise<void> => {
+    const { appId } = await installedApp();
+    expect(
+      await proof('/proof/refuse', { method: 'apps.manifest.update', error: 'invalid_manifest' }),
+    ).toEqual({ ok: true });
+    const exported = await api('apps.manifest.export', CONFIGURATION_TOKEN, { app_id: appId });
+    const update = { app_id: appId, manifest: JSON.stringify(exported.manifest) };
+    expect(await api('apps.manifest.update', CONFIGURATION_TOKEN, update)).toEqual({
+      ok: false,
+      error: 'invalid_manifest',
+    });
+    expect(await proof('/proof/refuse', { method: 'apps.manifest.update', error: null })).toEqual({
+      ok: true,
+    });
+    expect(await api('apps.manifest.update', CONFIGURATION_TOKEN, update)).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('keeps the bot’s own posts on an app created without app_home, whose tab Slack leaves read-only', async (): Promise<void> => {
+    const { bot } = await installedApp();
+    expect(
+      await api('chat.postMessage', bot, { channel: 'D_DAY0_MANAGER', text: 'Decide.' }, true),
+    ).toMatchObject({ ok: true });
+  });
+});
+
 describe('fake Slack: the messages tab', (): void => {
   it('refuses the manager’s message to an app whose manifest leaves the tab off, in Slack’s words', async (): Promise<void> => {
     const { appId } = await installedApp();

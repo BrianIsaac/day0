@@ -593,7 +593,7 @@ describe('the server drives the work loop in real mode', (): void => {
     await drain(harness);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await drain(harness);
 
     expect(recorded.skillRuns).toEqual(['Triage the Linear close summary REVOPS-22']);
@@ -620,7 +620,7 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(recorded.scopeCalls).toHaveLength(1);
     expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-23']);
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: first });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId: first });
     await drain(harness);
 
     expect((await readItem(harness, first)).state).toBe('completed');
@@ -771,7 +771,7 @@ describe('the server drives the work loop in real mode', (): void => {
       workItemId,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
     });
-    await harness.mutation(internal.work.setPlan, {
+    await harness.mutation(internal.planApproval.setPlan, {
       workItemId,
       plan: {
         summary: 'x',
@@ -782,7 +782,7 @@ describe('the server drives the work loop in real mode', (): void => {
         estimatedMinutes: 1,
       },
     });
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
@@ -1222,6 +1222,36 @@ describe('checking for new work on demand', (): void => {
     await expect(
       mock.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId: mockAgent }),
     ).rejects.toThrow(/real-mode/);
+  });
+
+  it('refuses a paused employee in words, polling nothing and spending no minute (W12-R29)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.withIdentity(OWNER).mutation(api.agents.pause, { agentId });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId }),
+    ).rejects.toMatchObject({
+      data: 'Priya is paused, so Day0 does not look for new work: resume Priya on the Manage tab first.',
+    });
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs.filter((job) => job.name === 'intakeActions:pollSurface')).toEqual([]);
+    const checks = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'work.check-requested',
+      ),
+    );
+    expect(checks).toEqual([]);
+
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    expect(
+      await harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId }),
+    ).toMatchObject({ scheduled: 2 });
+    await harness.finishInProgressScheduledFunctions();
   });
 });
 
@@ -1835,7 +1865,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     });
     const dmsBefore = postsTo('D0MANAGER').length;
 
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     const running = drain(harness);
     await vi.waitFor(() => expect(recorded.skillRuns).toHaveLength(1), { timeout: COLD_ACTION_MS });
     await pause(harness, agentId);
@@ -1923,7 +1953,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
             },
           });
         } else if (kind === 'plan') {
-          await owner.mutation(api.work.approvePlan, { workItemId });
+          await owner.mutation(api.planApproval.approvePlan, { workItemId });
         } else if (route === 'batch code') {
           await owner.mutation(api.work.approveActionsBatch, {
             members: [{ workItemId, pendingRunId: row.pendingRunId!, approvedIndexes: [0] }],
@@ -1972,7 +2002,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     const agentId = await seedEmployee(harness);
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-89');
     await drain(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await harness.run(async (ctx) => {
       for (const skill of await ctx.db.query('skills').collect()) {
         await ctx.db.patch(skill._id, { state: 'retired' });
@@ -2003,7 +2033,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     recorded.skillOutput = publicPost;
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-90');
     await drain(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await drain(harness);
     const row = await readItem(harness, workItemId);
     if (row.state !== 'actions-pending' || !row.pendingRunId) throw new Error('no held write');
@@ -2093,7 +2123,7 @@ describe('a paused employee (12-P; G1 / A15)', (): void => {
     const agentId = await seedEmployee(harness);
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-86');
     await drain(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
     await pause(harness, agentId);
     await drain(harness);
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
@@ -2131,7 +2161,7 @@ describe("the deployment's pause holds queued steps too (12-P; crons.ts)", (): v
     const workItemId = await seedTicket(harness, agentId, 'REVOPS-88');
     await drain(harness);
     const dmsBefore = postsTo('D0MANAGER').length;
-    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, { workItemId });
 
     // The execution was queued before the deployment's jobs were paused: it holds at its claim.
     vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.16.0');

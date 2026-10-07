@@ -12,6 +12,7 @@ import {
 } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
+import { reportBridgeOn } from './fakes/socket-heartbeat';
 
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -4100,11 +4101,26 @@ describe('listForAgent: whether a manager channel’s requests carry buttons (wa
     const owner = harness.withIdentity(managerIdentity());
     const withToken = await seedSlackCard(harness, true);
     const without = await seedSlackCard(harness, false);
+    const slackOf = async (agentId: Id<'agents'>): Promise<Id<'surfaces'>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('surfaces')
+            .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+            .unique())!._id,
+      );
     const buttonsOf = async (agentId: Id<'agents'>): Promise<unknown[]> =>
       (await owner.query(api.surfaces.listForAgent, { agentId })).map((card) => [
         card.slug,
         card.decisionButtons,
       ]);
+    // Re-pinned for D-6 (b): with the bridge's secret set and no report from it, the card says the
+    // bridge is down; with its live report on the card's app, the buttons are on.
+    expect(await buttonsOf(withToken)).toContainEqual([
+      'slack',
+      { available: false, why: 'bridge-down' },
+    ]);
+    await reportBridgeOn(harness, await slackOf(withToken));
     expect(await buttonsOf(withToken)).toEqual(
       expect.arrayContaining([
         ['slack', { available: true }],

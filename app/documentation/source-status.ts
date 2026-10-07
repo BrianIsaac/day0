@@ -38,5 +38,7 @@ export function sourceStatus(
         : { text: 'Could not read', tone: 'warn', ...lastRead };
     case 'credential-not-landed':
       return { text: 'Secret not stored', tone: 'warn', ...lastRead };
+    case 'held':
+      return { text: 'Held', tone: 'muted', ...lastRead };
   }
 }

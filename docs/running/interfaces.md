@@ -6,7 +6,7 @@ Contents: [the Convex function surface](#the-convex-function-surface) · [the sk
 
 ## The Convex function surface
 
-Every backend operation is a Convex query, mutation or action under `convex/`. The public ones take the caller's identity from the auth provider (Clerk, or the local no-auth token) and check ownership of the agent they touch through `convex/ownership.ts`; the internal ones are reachable only from other functions and from the scheduler.
+Every backend operation is a Convex query, mutation or action under `convex/`. The public ones take the caller's identity from the auth provider (Clerk, or the local no-auth token) and check ownership of the agent they touch through `convex/ownership.ts`, or of the owner-level row they touch (a person, an edge of the people graph, a working agreement) through its owner-level guard, under the caller's owner scope (`ownerScope`); the internal ones are reachable only from other functions and from the scheduler.
 
 The work loop is scheduled work rather than dashboard work: a mutation records the manager's decision and schedules the step that acts on it, so a run goes on with no page open. How many of those steps run at once is a property of the deployment, not of this interface - the compose file starts the backend with `SCHEDULED_JOB_EXECUTION_PARALLELISM=32` and the sandbox is serialised behind a lease (`convex/sandboxLease.ts`); [`components.md`](components.md) has both.
 
@@ -30,8 +30,10 @@ The entry points a reader is most likely to want:
 |---|---|---|
 | `agents:deploy` | mutation | Creates an agent and seeds its first grants |
 | `charters:approve`, `charters:amend` | mutation | Approves a drafted charter with the manager's strikes; amends an approved one as a new version |
-| `work:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
+| `planApproval:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
 | `workRuns:retryFailed`, `work:cancelPlan`, `workRuns:reconcileFailed`, `workRuns:dismissFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind, dismiss a failed run from the inbox |
+| `workingAgreements:listForAgent` | query | An employee's working agreements, its own and every employee's: proposals, those kept and waiting on their check against the charter, those in force and those refused with the clause |
+| `workingAgreements:keep`, `workingAgreements:edit`, `workingAgreements:retire`, `workingAgreements:dismiss` | mutation | Keep a proposal for one employee or every employee, change an agreement's words (a new version that replaces it once its check passes), retire one, or set a proposal or a refusal aside; `planApproval:approvePlan` with `keepNote` keeps the approval's note as one in the same click |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
 | `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
@@ -40,7 +42,8 @@ The entry points a reader is most likely to want:
 | `exportActions:exportForAgent`, `exportActions:exportPage` | action | The head of an agent's redacted trace and where its pages start, then one page at a time; `pnpm export:trace` calls both and writes the whole trace to one file |
 | `reset:retire` | mutation | Retires one employee, by `agentId`: real mode revokes what only it bound, deletes its rows in the enumerated tables and keeps a `retirements` row; the hosted office wipes it |
 | `reset:retirePreview` | query | What `reset:retire` would delete, revoke and keep for one employee, for the Manage tab's retire dialog; `null` once the employee is gone |
-| `reset:deleteMyData` | mutation | Retires every one of the caller's employees; `alsoUnlinkDocumentation` unlinks the owner's documentation and revokes every owned credential too |
+| `people:ensureOwner` | mutation | Keeps the caller's own person in their people graph, from their verified address, with that address and each Slack user their connected chat cards looked up by it as identities; the signed-in home calls it each time it opens, and it writes nothing in mock mode or what is already held |
+| `reset:deleteMyData` | mutation | Retires every one of the caller's employees and deletes their skill library, people graph and working agreements; `alsoUnlinkDocumentation` unlinks the owner's documentation and revokes every owned credential too |
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
 

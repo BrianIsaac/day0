@@ -9,9 +9,16 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
+import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import {
+  assertOwnsAgent,
+  assertOwnsWorkItem,
+  employeeOwnerScope,
+  getCallerOrThrow,
+} from './ownership';
+import { confirmedPersonOf } from './itemPeople';
+import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
@@ -22,12 +29,7 @@ import {
   stoppedRowNeedsManager,
   waitingStamp,
 } from '../src/work/needs-manager';
-import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
-import {
-  firstTicketRejection,
-  keepCorrectionInTransaction,
-  markCorrectionsAppliedInTransaction,
-} from './corrections';
+import { firstTicketRejection, keepCorrectionInTransaction } from './corrections';
 import {
   APPLY_RECOVERY_MS,
   AWAITING_CHARTER,
@@ -79,6 +81,7 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
+import { heldWithReportedWrites } from '../src/work/evidence-claims';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import {
   AUTONOMOUS_WIP_LIMIT,
@@ -141,15 +144,16 @@ import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
 import { typedCodeReachOf } from './slackMessagesTab';
+import { socketBridgeStateOf } from './socketHeartbeats';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import { decisionButtonsFor, socketBridgeConfigured } from '../src/surfaces/slack-socket';
+import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import type { TicketHolderView } from '../src/work/item-display';
+import type { ListedWorkItem, TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -343,15 +347,45 @@ export async function assertSameAgent(
 /** Public, owner-guarded: every work item of one employee. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'workItems'>[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+  handler: async (ctx, args): Promise<ListedWorkItem[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const items = await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .collect();
+    return await withRequesterNames(ctx, agent, items);
   },
 });
+
+/**
+ * Each item with the name of the confirmed person its requester resolved to, where it resolved to
+ * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member").
+ * Each person is read once.
+ */
+async function withRequesterNames(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  items: readonly Doc<'workItems'>[],
+): Promise<ListedWorkItem[]> {
+  const scope = employeeOwnerScope(agent);
+  if (scope === undefined) return [...items];
+  const names = new Map<string, Promise<string | undefined>>();
+  const nameOf = (resolution: Doc<'workItems'>['requesterPerson']): Promise<string | undefined> => {
+    if (resolution?.kind !== 'person') return Promise.resolve(undefined);
+    const known = names.get(resolution.personId);
+    if (known !== undefined) return known;
+    const read = confirmedPersonOf(ctx, scope, resolution).then((person) => person?.displayName);
+    names.set(resolution.personId, read);
+    return read;
+  };
+  return await Promise.all(
+    items.map(async (item): Promise<ListedWorkItem> => {
+      const requesterName = await nameOf(item.requesterPerson);
+      return requesterName === undefined ? item : { ...item, requesterName };
+    }),
+  );
+}
 
 /** Public, owner-guarded: one work item. */
 export const get = query({
@@ -3095,120 +3129,6 @@ export const planGroundingReads = internalQuery({
 });
 
 /**
- * The plan as stored: a plan may say it applied only this employee's own
- * active corrections, so any other id is dropped, and each one kept lists
- * the work item it was applied to. A plan that names none is stored as
- * drafted.
- *
- * Args:
- *   ctx: Mutation context.
- *   row: The work item whose plan is being stored.
- *   drafted: The plan the planner returned.
- *
- * Returns:
- *   The plan to store and the corrections it applied.
- */
-async function withAppliedCorrections(
-  ctx: MutationCtx,
-  row: Doc<'workItems'>,
-  drafted: unknown,
-): Promise<{ plan: ExecutionPlan; applied: Id<'corrections'>[] }> {
-  const plan = drafted as ExecutionPlan;
-  if (!plan || typeof plan !== 'object' || plan.appliedCorrections === undefined) {
-    return { plan, applied: [] };
-  }
-  const { appliedCorrections, ...rest } = plan;
-  const applied = await markCorrectionsAppliedInTransaction(ctx, row, appliedCorrections);
-  return { plan: applied.length > 0 ? { ...rest, appliedCorrections: applied } : rest, applied };
-}
-
-/**
- * Store a drafted plan and park the row for its decision. Internal; the
- * drafting action's. `draftedWithout` says the plan was drafted without its
- * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
- * plan drafted while its system was down, which is connected by now, is not
- * stored: the row goes straight back to drafting (`redrafting`).
- *
- * `draftClaimedAt` is the claim a real-mode draft took before its model call
- * (`claimLoopStep`). Only the draft that still holds that claim stores its
- * plan: a draft the manager stopped, whose row Retry sent back to `claimed`
- * with the claim cleared, finds the row ready again and would otherwise land
- * the plan drafted before the Retry over its successor's (`superseded`; wave
- * 12, 12-W and 12-P Findings 3). A caller that took no claim (the page's
- * mock-mode draft) is fenced by the state alone.
- */
-export const setPlan = internalMutation({
-  args: {
-    workItemId: v.id('workItems'),
-    plan: v.any(),
-    draftedWithout: v.optional(planDraftedWithoutValidator),
-    draftClaimedAt: v.optional(v.number()),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    stored: boolean;
-    redrafting?: true;
-    superseded?: true;
-    movedOn?: Doc<'workItems'>['state'];
-  }> => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-    if (row.state !== 'claimed') return { stored: false, movedOn: row.state };
-    if (args.draftClaimedAt !== undefined && row.draftClaimedAt !== args.draftClaimedAt) {
-      return { stored: false, superseded: true };
-    }
-    // The system the draft could not read connected while the model drafted:
-    // a connection that landed first found no plan to send back, so this does.
-    if (args.draftedWithout?.cause === 'not-connected') {
-      const source = await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent_slug', (q) =>
-          q.eq('agentId', row.agentId).eq('slug', args.draftedWithout!.surfaceSlug),
-        )
-        .unique();
-      const now = Date.now();
-      if (source && verdictFor(toSurfaceRecord(source), now) === 'connected') {
-        await sendBackToDrafting(ctx, row, source, now);
-        return { stored: false, redrafting: true };
-      }
-    }
-    const { plan, applied } = await withAppliedCorrections(ctx, row, args.plan);
-    await ctx.db.patch(args.workItemId, {
-      plan,
-      state: 'plan-pending',
-      planDraftedWithout: args.draftedWithout,
-      ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
-      waitingSince: Date.now(),
-      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
-    });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'work.plan-drafted',
-      payload: { workItemId: args.workItemId, plan },
-      createdAt: Date.now(),
-    });
-    if (applied.length > 0) {
-      await appendEvent(ctx, {
-        agentId: row.agentId,
-        type: 'work.corrections-applied',
-        payload: {
-          workItemId: args.workItemId,
-          correctionIds: applied,
-          ...(plan.correctionsRedaction ? { redaction: plan.correctionsRedaction } : {}),
-        },
-        createdAt: Date.now(),
-      });
-    }
-    // The charter's open questions this plan touches are asked here, before
-    // execution, and once per question for the agent.
-    await askOpenQuestionsAtPlan(ctx, row, plan);
-    return { stored: true };
-  },
-});
-
-/**
  * Plan-pending rows one connection reads for plans to draft again; an
  * employee's parked plans are bounded by its work cap, far below this.
  */
@@ -3248,7 +3168,7 @@ export async function redraftPlansDraftedWithout(
  * is connected now, as a Retry's re-draft resets it: no plan, no request, no
  * answers, and the draft scheduled in the same transaction.
  */
-async function sendBackToDrafting(
+export async function sendBackToDrafting(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   surface: Doc<'surfaces'>,
@@ -3603,10 +3523,11 @@ export const prepareDecisionRequest = internalMutation({
       pendingRunId: row.pendingRunId,
       openActionDecisions,
       // Read where the request is claimed, so the words and the blocks agree (RM3 (a)). A request
-      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons.
+      // of a close Day0 held alone asks nothing a press could decide, so it carries no buttons;
+      // nor does one sent while the bridge reports no live connection for the app (D-6 (b)).
       withButtons:
         (args.kind === 'plan' || heldIndexes.length > 0) &&
-        decisionButtonsFor(chat, socketBridgeConfigured()).available,
+        decisionButtonsFor(chat, await socketBridgeStateOf(ctx, chat, Date.now())).available,
       // Read where the request is claimed too: a typed code is offered only to an app that takes
       // messages (W12V-7).
       typedCode: typedCodeReaches(await typedCodeReachOf(ctx, chat)),
@@ -3745,7 +3666,8 @@ export async function rememberRetriedRequest(
     )
     .first();
   if (kept !== null) return;
-  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here.
+  // No `ts` or text: nothing edits a decided message again, nor reads its thread from here. The
+  // decision it had rides along, so its code is answered as decided as well as replaced (W12V-16).
   await ctx.db.insert('replacedDecisionRequests', {
     agentId: row.agentId,
     workItemId: row._id,
@@ -3754,6 +3676,9 @@ export async function rememberRetriedRequest(
     surfaceSlug: decision.surfaceSlug,
     channel: decision.channel,
     replacedAt: now,
+    ...(decision.outcome === undefined ? {} : { outcome: decision.outcome }),
+    decidedAt: decision.decidedAt,
+    ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
   });
 }
 
@@ -3761,21 +3686,24 @@ export async function rememberRetriedRequest(
 const REPLACED_NAMED_SCAN = 50;
 
 /**
- * Name a new request on the item's earlier requests of its kind that nothing replaced yet, so a
- * reply to one of those codes is answered with this one.
+ * Name a new request on every earlier request of its kind for the item, so a reply to any of those
+ * codes is answered with the newest in one step, however often the request was replaced (W12-R20).
  */
 async function nameReplacement(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   decision: { readonly id: string; readonly kind: DecisionKind },
 ): Promise<void> {
+  // The newest first: an older one was named when it was among them, and its answer follows that
+  // chain, or the item's own request past the walk.
   const replaced = await ctx.db
     .query('replacedDecisionRequests')
     .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .order('desc')
     .take(REPLACED_NAMED_SCAN);
   for (const earlier of replaced) {
     if (
-      earlier.replacedBy !== undefined ||
+      earlier.replacedBy === decision.id ||
       earlier.kind !== decision.kind ||
       earlier.decisionId === decision.id
     ) {
@@ -3785,23 +3713,49 @@ async function nameReplacement(
   }
 }
 
-/** How many replacements the answer to a replaced code follows to the request that stands. */
+/**
+ * How many replacements the answer to a replaced code follows to the request that stands: every
+ * request named from 0.17.0 points at the newest, so a longer walk is a chain an earlier release
+ * left, answered with the item's standing request instead.
+ */
 const REPLACEMENT_HOPS = 5;
 
 /**
- * What Day0 answers a reply or a press naming a replaced request: the request that replaced it
- * and where that one stands (open, or already decided), following a chain of replacements to the
- * request that stands; or that nothing replaced it yet.
+ * What Day0 answers a reply or a press naming a replaced request: the decision it had, when it had
+ * one (W12V-16), then the request that replaced it and where that one stands (open, or already
+ * decided), following replacements to the request that stands; or that nothing replaced it yet.
  *
  * @param ctx - The decision's transaction.
  * @param replaced - The replaced request the code names.
- * @returns The answer's words, and the code that stands, when there is one.
+ * @returns The answer's words, and the code that stands and the DM it went to, when there is one.
  */
 async function replacedRequestAnswer(
   ctx: MutationCtx,
   replaced: Doc<'replacedDecisionRequests'>,
-): Promise<{ readonly text: string; readonly replacedBy?: string }> {
-  const opening = `That request (${replaced.decisionId}) was replaced`;
+): Promise<{
+  readonly text: string;
+  readonly replacedBy?: string;
+  readonly standingChannel?: string;
+}> {
+  const opening =
+    replaced.outcome === undefined
+      ? `That request (${replaced.decisionId}) was replaced`
+      : `That request (${replaced.decisionId}) was ${replaced.outcome}, then replaced`;
+  const answerWith = (
+    code: string,
+    decision: NonNullable<Doc<'workItems'>['decision']>,
+  ): { readonly text: string; readonly replacedBy: string; readonly standingChannel: string } =>
+    decision.decidedAt === undefined
+      ? {
+          text: `${opening} by ${code}. Decide on ${code} instead.`,
+          replacedBy: code,
+          standingChannel: decision.channel,
+        }
+      : {
+          text: `${opening} by ${code}, which was already ${decision.outcome ?? 'decided'}.`,
+          replacedBy: code,
+          standingChannel: decision.channel,
+        };
   let code = replaced.replacedBy;
   for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
     const current = code;
@@ -3811,26 +3765,24 @@ async function replacedRequestAnswer(
         q.eq('agentId', replaced.agentId).eq('decision.id', current),
       )
       .first();
-    const decision = standing?.decision;
-    if (decision !== undefined) {
-      return decision.decidedAt === undefined
-        ? { text: `${opening} by ${current}. Decide on ${current} instead.`, replacedBy: current }
-        : {
-            text: `${opening} by ${current}, which was already ${decision.outcome ?? 'decided'}.`,
-            replacedBy: current,
-          };
-    }
+    if (standing?.decision !== undefined) return answerWith(current, standing.decision);
     const next = await ctx.db
       .query('replacedDecisionRequests')
       .withIndex('by_agent_decision', (q) =>
         q.eq('agentId', replaced.agentId).eq('decisionId', current),
       )
       .first();
-    if (next?.replacedBy === undefined) break;
-    code = next.replacedBy;
+    code = next?.replacedBy;
+  }
+  if (code !== undefined) {
+    // A chain longer than the walk: the item's own request of the kind is the one that stands.
+    const item = await ctx.db.get(replaced.workItemId);
+    if (item?.decision !== undefined && item.decision.kind === replaced.kind) {
+      return answerWith(item.decision.id, item.decision);
+    }
   }
   return {
-    text: `${opening} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
+    text: `${opening}${replaced.outcome === undefined ? '' : ','} and no longer decides anything. Day0 asks again in a new message when the work is ready for your decision.`,
   };
 }
 
@@ -3838,9 +3790,12 @@ async function replacedRequestAnswer(
 const INTERRUPTED_NOTE_REASON =
   'the apply was interrupted, so what it sent is not known; check each change marked below';
 
-/** Why a request delivered to the previous manager is sent again. */
+/**
+ * Why a request delivered to the manager's previous DM is sent again: a new manager, or the
+ * employee's new Slack app after a forget (W13V-4).
+ */
 export const MANAGER_CHANGED_RESEND_REASON =
-  'the manager changed; the request went to the previous one';
+  "the manager's DM changed (a new manager, or the employee's new Slack app after a forget), and the request had gone to the earlier DM";
 
 /**
  * Why a request asked of the manager who handed the employee over is closed at the move: their
@@ -4009,7 +3964,12 @@ export async function resendDecisionsAfterManagerChange(
     return open && decision ? [{ row, decision }] : [];
   });
   for (const { row, decision } of stale) {
-    await supersedeDecisionRequest(ctx, row, decision, MANAGER_CHANGED_RESEND_REASON);
+    // A request stranded on the DM that still stands keeps its own failure: the DM did not change.
+    const reason =
+      decision.channel === currentChannel
+        ? (decision.requestFailure ?? MANAGER_CHANGED_RESEND_REASON)
+        : MANAGER_CHANGED_RESEND_REASON;
+    await supersedeDecisionRequest(ctx, row, decision, reason);
   }
   return stale.length;
 }
@@ -5066,63 +5026,15 @@ function decidedPatch(
 }
 
 /** One answer the manager gave with plan approval, as the row carries it. */
-type ManagerAnswerRow = NonNullable<Doc<'workItems'>['managerAnswers']>[number];
+export type ManagerAnswerRow = NonNullable<Doc<'workItems'>['managerAnswers']>[number];
 
 /**
- * Record the manager's answers given with the approval, in the same
- * transaction as the approval.
- *
- * An answer to one of the charter's open questions goes through the
- * question's own record, which amends the charter when the question is
- * still open there; the note answers the planner's own risk notes and goes
- * nowhere but this run. Every answer reaches the executor as approved
- * evidence. A question asked on another work item is refused: the manager
- * answers what this plan raised.
- *
- * Args:
- *   ctx: Mutation context.
- *   row: The plan-pending work item.
- *   answers: The answers to the charter's questions asked on this item.
- *   note: The manager's answer to the planner's note, if any.
- *
- * Returns:
- *   The rows to keep on the work item, empty when nothing was answered.
+ * Approve a pending plan in the caller's transaction, by the card or in the manager channel, with
+ * the answers the approval gave, and schedule its run. Internal to the backend: `approvePlan`
+ * (`convex/planApproval.ts`) and the channel's decisions call it. Writes the row's state, its
+ * answers and decision, the request's close and `work.plan-approved`.
  */
-async function answerPlanQuestions(
-  ctx: MutationCtx,
-  row: Doc<'workItems'>,
-  answers: ReadonlyArray<{ questionId: Id<'managerQuestions'>; text: string }>,
-  note: string | undefined,
-): Promise<ManagerAnswerRow[]> {
-  const now = Date.now();
-  const kept: ManagerAnswerRow[] = [];
-  for (const entry of answers) {
-    const record = await ctx.db.get(entry.questionId);
-    if (!record || record.workItemId !== row._id) {
-      throw new Error('that question was not asked on this work item');
-    }
-    await answerQuestionInTransaction(ctx, record, entry.text, 'plan-approval');
-    kept.push({
-      question: record.question,
-      answer: entry.text.replace(/\s+/g, ' ').trim(),
-      answeredAt: now,
-      questionId: record._id,
-    });
-  }
-  const trimmedNote = note?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
-  if (trimmedNote) {
-    const plan = row.plan as { riskNotes?: string } | undefined;
-    const riskNotes = plan?.riskNotes?.trim();
-    kept.push({
-      question: riskNotes ? riskNotes : "the planner's note",
-      answer: trimmedNote,
-      answeredAt: now,
-    });
-  }
-  return kept;
-}
-
-async function approvePlanInTransaction(
+export async function approvePlanInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   via: DecisionVia,
@@ -5132,8 +5044,11 @@ async function approvePlanInTransaction(
   if (row.state !== 'plan-pending') {
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
   }
+  // An agreement retired since the plan was drafted no longer binds the run (W13-R29).
+  const settledPlan = await planAgreementsAtApproval(ctx, row);
   await ctx.db.patch(row._id, {
     state: 'plan-approved',
+    ...(settledPlan === undefined ? {} : { plan: settledPlan }),
     ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });
@@ -5159,46 +5074,6 @@ async function approvePlanInTransaction(
   // longer has to be open for it.
   await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
-
-/** The longest manual estimate the plan card takes: a working month. */
-const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
-
-/** Public, owner-guarded: approves an item's plan, answering any charter question the card asked, and schedules the run. */
-export const approvePlan = mutation({
-  args: {
-    workItemId: v.id('workItems'),
-    /** Answers to the charter's open questions asked on this plan; each amends the charter. */
-    answers: v.optional(
-      v.array(v.object({ questionId: v.id('managerQuestions'), text: v.string() })),
-    ),
-    /** The manager's answer to the planner's own note, for this run. */
-    note: v.optional(v.string()),
-    /** N11: "this would have taken me about N minutes", optional; hours saved sums it. */
-    manualEstimateMinutes: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'plan-pending') {
-      throw new Error(`workItem state is ${row.state}; expected plan-pending`);
-    }
-    const estimate = args.manualEstimateMinutes;
-    if (
-      estimate !== undefined &&
-      (!Number.isInteger(estimate) || estimate < 1 || estimate > MANUAL_ESTIMATE_MAX_MINUTES)
-    ) {
-      throw new ConvexError(
-        `The estimate is a whole number of minutes from 1 to ${MANUAL_ESTIMATE_MAX_MINUTES}.`,
-      );
-    }
-    if (estimate !== undefined) await ctx.db.patch(row._id, { manualEstimateMinutes: estimate });
-    // Approve-with-answer is one decision: the answers land, the charter is
-    // amended where a question is still open there, and the plan is approved
-    // in the same transaction, or none of it happens.
-    const answers = await answerPlanQuestions(ctx, row, args.answers ?? [], args.note);
-    await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
-    return { ok: true };
-  },
-});
 
 /**
  * Resend, from the card, the decision request it shows as not delivered.
@@ -5282,7 +5157,13 @@ async function cancelPlanInTransaction(
   }
   const skipReason = planCancelledReason(reason);
   const feedback = managerText(reason);
-  if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
+  if (feedback) {
+    await keepCorrectionInTransaction(ctx, row, {
+      kind: 'plan-rejection',
+      text: feedback,
+      origin: via,
+    });
+  }
   const now = Date.now();
   await ctx.db.patch(row._id, {
     state: 'cancelled',
@@ -5710,7 +5591,7 @@ export async function failInTransaction(
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row), row.actionVerdicts ?? []),
         outcome: 'failed',
         reason: stopDetail(reason),
       }),
@@ -6138,19 +6019,23 @@ export async function reviewHeldActions(
     ? transitionDirectedByNote({ plan, planStepOutcomes, feedback: row.managerFeedback, actions })
     : false;
   return {
-    verdicts: reviewActions(
+    // A message that reports a held write of its own set waits with it (W12X-2).
+    verdicts: heldWithReportedWrites(
       actions,
-      surfaceRows.map((surface) =>
-        toSurfaceRecord(withBrowserComponentState(surface, browserRefusal)),
+      reviewActions(
+        actions,
+        surfaceRows.map((surface) =>
+          toSurfaceRecord(withBrowserComponentState(surface, browserRefusal)),
+        ),
+        grants,
+        Date.now(),
+        {
+          autonomousActions,
+          replyTarget: replyTargetFor(row),
+          transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
+          closeAgainstWords,
+        },
       ),
-      grants,
-      Date.now(),
-      {
-        autonomousActions,
-        replyTarget: replyTargetFor(row),
-        transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
-        closeAgainstWords,
-      },
     ),
     autonomousActions,
     transitionDirectedByNote: directed,
@@ -6637,8 +6522,14 @@ async function rejectActionsInTransaction(
   const rejected = await ctx.db.get(args.workItemId);
   if (rejected) await settleBatchesHolding(ctx, rejected);
   await scheduleRequestClose(ctx, args.workItemId);
-  if (feedback)
-    await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
+  if (feedback) {
+    await keepCorrectionInTransaction(ctx, row, {
+      kind: 'rejection',
+      text: feedback,
+      origin: via,
+      runId: args.pendingRunId,
+    });
+  }
   await releaseItemClaim(ctx, args.workItemId, now);
   await appendEvent(ctx, {
     agentId: row.agentId,
@@ -6764,18 +6655,32 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       )
       .first();
     if (!replaced) return await unknown('unknown decision id');
-    if (replaced.surfaceSlug !== surface.slug || replaced.channel !== surface.managerDmChannelId) {
+    if (replaced.surfaceSlug !== surface.slug) {
       return await unknown('decision belongs to another manager channel');
     }
     const answer = await replacedRequestAnswer(ctx, replaced);
-    const notified = await queueManagerReplyNotice(ctx, {
-      surfaceId: surface._id,
-      workItemId: replaced.workItemId,
-      decisionId: replaced.decisionId,
-      messageTs: args.messageTs,
-      kind: 'replaced',
-      text: answer.text,
-    });
+    // Answered in the DM it was asked in, or in the DM its replacement went to once the manager's
+    // DM changed (the employee's new app after a forget, or a new manager): there the old code is
+    // the one the manager still has (W13V-4).
+    if (
+      replaced.channel !== surface.managerDmChannelId &&
+      answer.standingChannel !== surface.managerDmChannelId
+    ) {
+      return await unknown('decision belongs to another manager channel');
+    }
+    // One "was replaced" notice per replaced request (W12-R19): a further reply or press, or a
+    // button left on its message, is recorded and not answered again.
+    const notified =
+      replaced.answeredAt === undefined &&
+      (await queueManagerReplyNotice(ctx, {
+        surfaceId: surface._id,
+        workItemId: replaced.workItemId,
+        decisionId: replaced.decisionId,
+        messageTs: args.messageTs,
+        kind: 'replaced',
+        text: answer.text,
+      }));
+    if (notified) await ctx.db.patch(replaced._id, { answeredAt: Date.now() });
     await ignored(REPLACED_DECISION_REASON);
     return {
       status: 'replaced' as const,
@@ -7244,7 +7149,12 @@ export const recoverInterruptedApply = internalMutation({
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows({ ...output, applied }, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(
+          { ...output, applied },
+          surfaces,
+          replyTargetFor(row),
+          row.actionVerdicts ?? [],
+        ),
         outcome: 'failed',
         reason: INTERRUPTED_NOTE_REASON,
       }),
@@ -7867,7 +7777,8 @@ export async function needsYouOfEmployee(
     })),
     ...waiting.skills.map(({ skill, waitingItems }) => ({
       kind: 'skill' as const,
-      ...base(`skill:${skill._id}`, skill.name, exact(skill.createdAt)),
+      // Stamped as the skill entered its wait (13-K's field); one stamped before none, by its proposal.
+      ...base(`skill:${skill._id}`, skill.name, exact(skill.waitingSince ?? skill.createdAt)),
       skillId: skill._id,
       waitingItems,
     })),

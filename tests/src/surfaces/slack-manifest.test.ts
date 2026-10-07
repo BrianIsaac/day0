@@ -83,11 +83,35 @@ describe("building one employee's manifest", (): void => {
     expect(built.manifest.display_information.description).toBe(
       'RevOps digital employee. Drafts first, sends to the manager, holds public posts.',
     );
+    // Re-pinned for W13V-2: Socket Mode and interactivity are Day0's, on whatever the page wrote;
+    // the page's other switches are kept.
     expect(built.manifest.settings).toEqual({
       org_deploy_enabled: false,
-      socket_mode_enabled: false,
+      socket_mode_enabled: true,
       token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
     });
+  });
+
+  it('adds each required scope the template lacks after its own, once (W13V-2)', (): void => {
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: template(),
+      requiredScopes: ['chat:write', 'channels:join'],
+    });
+    expect(built.scopes).toEqual([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'channels:join',
+    ]);
+    expect(built.manifest.oauth_config.scopes.bot).toEqual(built.scopes);
   });
 
   it('drops a trailing slash so the declared redirect matches the route', (): void => {
@@ -253,10 +277,12 @@ describe('the manifest Day0 sends', (): void => {
         redirect_urls: ['https://day0.example.com/api/oauth/slack'],
         scopes: { bot: built.scopes },
       },
+      // Re-pinned for W13V-2: Socket Mode and interactivity's switch forced on, its address dropped.
       settings: {
         org_deploy_enabled: true,
-        socket_mode_enabled: false,
+        socket_mode_enabled: true,
         token_rotation_enabled: false,
+        interactivity: { is_enabled: true },
       },
     });
   });
@@ -278,13 +304,33 @@ describe('the manifest Day0 sends', (): void => {
     });
   });
 
-  it('drops interactivity without Socket Mode, which Slack refuses with no request URL', (): void => {
+  // Re-pinned for W13V-2 (ruled 7 October: force, not refuse): a template that leaves Socket Mode
+  // or interactivity off no longer drops interactivity; both are turned on, since Slack refuses
+  // interactivity with neither a request URL nor Socket Mode and Day0 declares no request URL.
+  it('turns Socket Mode and interactivity on whatever a page says, so Day0’s buttons reach it over the socket (W13V-2)', (): void => {
+    const off = JSON.parse(widened()) as Record<string, Record<string, unknown>>;
+    off.settings.socket_mode_enabled = false;
+    off.settings.interactivity = { is_enabled: false };
     const built = buildSlackManifest({
       agentName: 'Priya',
       publicUrl: PUBLIC_URL,
-      template: widened(),
+      template: JSON.stringify(off),
     });
-    expect(built.manifest.settings).not.toHaveProperty('interactivity');
+    expect(built.manifest.settings).toMatchObject({
+      socket_mode_enabled: true,
+      interactivity: { is_enabled: true },
+    });
+    const bare = JSON.parse(template()) as Record<string, unknown>;
+    delete bare.settings;
+    const unset = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: JSON.stringify(bare),
+    });
+    expect(unset.manifest.settings).toEqual({
+      socket_mode_enabled: true,
+      interactivity: { is_enabled: true },
+    });
   });
 
   it('always opens the app’s messages tab for writing, whatever a page says, so the typed code can reach it (W12V-7)', (): void => {

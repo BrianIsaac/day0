@@ -64,7 +64,6 @@ async function seedGeneration(harness: TestConvex<typeof schema>, pages: number)
     });
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId,
-      refs: [],
       credentialRefs: [],
       pageCount: pages,
       redactionCount: 0,
@@ -425,7 +424,6 @@ describe('the documentation discovery action', (): void => {
     const unchangedRun = await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
       const id = await ctx.db.insert('docSyncRuns', {
         sourceId,
-        refs: [],
         credentialRefs: [],
         pageCount: 1,
         redactionCount: 0,
@@ -456,7 +454,6 @@ describe('the documentation discovery action', (): void => {
       });
       const id = await ctx.db.insert('docSyncRuns', {
         sourceId,
-        refs: [],
         credentialRefs: [],
         pageCount: 2,
         redactionCount: 0,

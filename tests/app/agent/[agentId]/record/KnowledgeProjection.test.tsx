@@ -14,6 +14,7 @@ const projection = projectKnowledge({
     body: { proposedFunction: 'Own triage for tier-2 asks in #revops-asks.' },
   },
   agreements: [],
+  lessons: [],
   skills: [{ name: 'see-internal-docs', sourceType: 'builtin' }],
   surfaces: [{ displayName: 'Slack', verdict: 'connected', expiresAt: Date.UTC(2026, 11, 25) }],
   documentation: [],

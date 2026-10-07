@@ -62,6 +62,26 @@ describe('WorkView', () => {
     expect(real).toMatch(/correction/i);
   });
 
+  it("opens the Charter tab's amend disclosure from a refused agreement's Amend the charter (13-J)", () => {
+    backend.queries = {
+      'work:listForAgent': [],
+      'corrections:listForAgent': [],
+      'workingAgreements:listForAgent': [
+        {
+          _id: 'wa3',
+          agentId: EMPLOYEE_ROW._id,
+          statement: 'Email the customer the new sailing yourself.',
+          status: 'refused',
+          sourceType: 'correction-promotion',
+          refusal: { reason: 'contradicts-will-not-do', clause: 'email customers directly' },
+          createdAt: 1,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
+    expect(html).toContain(`href="/agent/${EMPLOYEE_ROW._id}/charter#amend-charter"`);
+  });
+
   it('says each held step is held while the employee is paused, never that it is under way', () => {
     backend.queries = { 'work:listForAgent': HELD_RUNS, 'corrections:listForAgent': [] };
     const paused = renderToStaticMarkup(

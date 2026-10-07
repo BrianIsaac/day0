@@ -31,6 +31,9 @@ describe('the trace sections', (): void => {
       'managerNotes',
       'decisionNotices',
       'replacedRequests',
+      'people',
+      'personIdentities',
+      'relationships',
       'events',
       undefined,
     ]);
@@ -120,7 +123,27 @@ describe('assembling a trace from its pages', (): void => {
         sections: withoutReplaced,
       }),
     ).toBeUndefined();
-    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 7 } })).toBe(
+    // A version 6 trace, without the people graph version 7 adds (13-P), is read with none.
+    const withoutGraph = { ...trace.sections } as Record<string, unknown>;
+    delete withoutGraph.people;
+    delete withoutGraph.personIdentities;
+    delete withoutGraph.relationships;
+    expect(
+      readAgentTrace({
+        ...trace,
+        manifest: { ...trace.manifest, version: 6 },
+        sections: withoutGraph,
+      })?.sections,
+    ).toMatchObject({ people: [], personIdentities: [], relationships: [] });
+    // A version 7 trace must carry it.
+    expect(
+      readAgentTrace({
+        ...trace,
+        manifest: { ...trace.manifest, version: 7 },
+        sections: withoutGraph,
+      }),
+    ).toBeUndefined();
+    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 8 } })).toBe(
       undefined,
     );
   });

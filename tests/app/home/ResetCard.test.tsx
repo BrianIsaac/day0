@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 interface Holdings {
   employees: boolean;
   skillLibrary: boolean;
+  people: boolean;
   handoverWords: boolean;
   retiredBoundaries: boolean;
   documentation: boolean;
   credentials: boolean;
+  ownEntry?: true;
 }
 
 const reset = vi.hoisted(() => vi.fn());
@@ -23,9 +25,11 @@ vi.mock('convex/react', () => ({
 import { ResetCard, deletionWarning, heldNow, unlinkLabel } from '../../../app/home/ResetCard';
 import { focusedName, mount, press, said, unmountAll } from '../../fixtures/dom/press';
 
+// Re-pinned at 13-K: `reset.holdings` answers `people` too, the graph and agreements a deletion takes.
 const NOTHING: Holdings = {
   employees: false,
   skillLibrary: false,
+  people: false,
   handoverWords: false,
   retiredBoundaries: false,
   documentation: false,
@@ -58,7 +62,9 @@ describe('ResetCard', (): void => {
   it('says what it deletes in the manager’s word for the employees (N29)', (): void => {
     // Re-pinned (11-FD): the deletion names the library and the handover notes it takes too.
     const html = renderToStaticMarkup(<ResetCard />);
-    expect(html).toContain('Deletes your employees and everything they made');
+    expect(html).toContain(
+      'Deletes your employees and everything they made, your skill library, the people and working agreements you keep (including your own entry among your people) and the notes on your handover requests.',
+    );
     expect(html).toContain('your skill library');
     expect(html).toContain('Your sign-in stays');
     expect(html).not.toMatch(/\bagents?\b/i);
@@ -98,6 +104,17 @@ describe('ResetCard', (): void => {
     }
   });
 
+  it('is live for a manager who keeps people or working agreements, and says they go (13-K)', (): void => {
+    read.holdings = holding({ people: true });
+    expect(buttonOf(renderToStaticMarkup(<ResetCard />))).not.toContain('disabled=""');
+    expect(heldNow(holding({ skillLibrary: true, people: true }), false)).toBe(
+      'Stored for you now: your skill library and the people and working agreements you keep.',
+    );
+    expect(deletionWarning(holding({ employees: true, people: true }), false)).toBe(
+      'This deletes every employee and its data and the people and working agreements you keep. Your sign-in stays. It cannot be undone.',
+    );
+  });
+
   it('is disabled while there is nothing to delete, or before the page knows', (): void => {
     for (const holdings of [holding({}), holding({ documentation: true }), null, undefined]) {
       read.holdings = holdings;
@@ -120,6 +137,10 @@ describe('ResetCard', (): void => {
 
   it('says what is stored for the manager now, and that nothing is when the button is disabled', (): void => {
     expect(heldNow(holding({}), false)).toBe('Nothing of yours is stored now.');
+    // W13-R51: the owner's own entry is said, not left out of "nothing".
+    expect(heldNow(holding({ ownEntry: true }), false)).toBe(
+      'Nothing of yours is stored now except your own entry among your people, which Day0 writes again each time you open this page.',
+    );
     expect(heldNow(holding({ skillLibrary: true, handoverWords: true }), false)).toBe(
       'Stored for you now: your skill library and the notes on your handover requests.',
     );

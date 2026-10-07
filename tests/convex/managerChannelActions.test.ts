@@ -23,6 +23,7 @@ import {
 import { sendTransferNotice as sendTransferNoticeFunction } from '../../convex/managerChannelActions';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { reportBridgeOn } from './fakes/socket-heartbeat';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
@@ -577,8 +578,9 @@ describe('the outbound manager-channel action', (): void => {
 });
 
 /**
- * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), and the
- * deployment its Socket Mode bridge's secret, so its requests can carry buttons.
+ * Give the seeded Slack card its own app with an app-level token landed (RM3 (a)), the deployment
+ * its Socket Mode bridge's secret, and the bridge's live report on the app, so its requests can
+ * carry buttons (re-pinned for D-6 (b): a request reads the bridge's heartbeat, not the secret).
  */
 async function landAppLevelToken(
   harness: TestConvex<typeof schema>,
@@ -624,6 +626,10 @@ async function landAppLevelToken(
         createdAt: 1,
         installedAt: 2,
         appLevelTokenCredentialId: appLevel,
+        // Re-pinned for 13-FS: the reach reads the card's own field, written beside the event.
+        ...(options.takesMessages !== false
+          ? { messagesTab: { state: 'open' as const, how: 'created' as const, at: 2 } }
+          : {}),
       },
     });
     // An app this release creates takes messages from the start (W12V-7); one an earlier release
@@ -637,6 +643,14 @@ async function landAppLevelToken(
       });
     }
   });
+  const surfaceId = await harness.run(
+    async (ctx) =>
+      (await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique())!._id,
+  );
+  await reportBridgeOn(harness, surfaceId);
 }
 
 describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)', (): void => {
@@ -890,6 +904,91 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     });
   });
 
+  it('answers a replaced code typed in the new DM its replacement went to with that replacement, and says the DM changed (W13V-4)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await landAppLevelToken(harness, agentId);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const oldCode = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const surfaceId = await harness.run(
+      async (ctx) => (await ctx.db.query('surfaces').first())!._id,
+    );
+    // The employee's new app after a forget: the probe resolves the manager's DM with it, a new one.
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0NEWAPP',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const replacement = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!;
+    expect(replacement.channel).toBe('D0NEWAPP');
+    const newCode = replacement.id;
+    expect(newCode).not.toBe(oldCode);
+    const resent = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .filter((q) => q.eq(q.field('type'), 'work.decision-request-resent'))
+          .first(),
+    );
+    expect(resent?.payload).toMatchObject({
+      decisionId: oldCode,
+      reason:
+        "the manager's DM changed (a new manager, or the employee's new Slack app after a forget), and the request had gone to the earlier DM",
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: newCode });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row?.decision?.decidedAt).toBeUndefined();
+    const notice = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .filter((q) => q.eq(q.field('kind'), 'replaced'))
+          .first(),
+    );
+    expect(notice?.text).toBe(
+      `That request (${oldCode}) was replaced by ${newCode}. Decide on ${newCode} instead.`,
+    );
+  });
+
+  it('still refuses a replaced code typed in a DM its replacement did not go to', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { managerDmChannelId: 'D0ELSEWHERE' });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768409.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'decision belongs to another manager channel',
+    });
+  });
+
   it('answers with the replacement’s own decision once it was decided', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
@@ -916,6 +1015,143 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     expect(notice?.text).toBe(
       `That request (${oldCode}) was replaced by ${newCode}, which was already approved.`,
     );
+  });
+
+  it('answers a replaced request once, whatever further replies or presses name it (W12-R19)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, oldCode, newCode } = await replaceDeliveredRequest(harness);
+    const reply = async (messageTs: string): Promise<unknown> =>
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'approve', id: oldCode },
+      });
+    await expect(reply('1787768409.000100')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: true,
+    });
+    await expect(reply('1787768409.000200')).resolves.toMatchObject({
+      status: 'replaced',
+      replacedBy: newCode,
+      notified: false,
+    });
+    const notices = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notices.filter((notice) => notice.kind === 'replaced')).toHaveLength(1);
+    const replaced = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId).eq('decisionId', oldCode))
+          .unique(),
+    );
+    expect(replaced?.answeredAt).toEqual(expect.any(Number));
+  });
+
+  it('answers the oldest code of a request replaced six times with the newest (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, surfaceId, oldCode } = await replaceDeliveredRequest(harness);
+    let current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    for (let replacement = 2; replacement <= 6; replacement += 1) {
+      await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: current });
+      await harness.action(internal.managerChannelActions.requestDecision, {
+        workItemId,
+        kind: 'plan',
+        supersedes: current,
+      });
+      current = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    }
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(6);
+    // Every earlier request points at the newest, so its answer takes one step.
+    expect(new Set(rows.map((row) => row.replacedBy))).toEqual(new Set([current]));
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768420.000100',
+        reply: { verb: 'approve', id: oldCode },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: current });
+  });
+
+  it('names a new request on the newest of an item’s replaced requests when it holds more than it reads (13-FS second pass)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: `seed${String(index).padStart(2, '0')}`,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: standing });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+      supersedes: standing,
+    });
+    const newest = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    const last = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_agent_decision', (q) =>
+            q.eq('agentId', agentId).eq('decisionId', 'seed54'),
+          )
+          .unique(),
+    );
+    expect(last?.replacedBy).toBe(newest);
+  });
+
+  it('answers the oldest code of a chain an earlier release left longer than its walk with the item’s standing request (W12-R20)', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, surfaceId } = await replaceDeliveredRequest(harness);
+    const standing = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.decision!.id;
+    // Seven links, each pointing at the next, as nameReplacement wrote them before 0.17.0.
+    const codes = ['old0aa', 'old1bb', 'old2cc', 'old3dd', 'old4ee', 'old5ff', 'old6gg'];
+    await harness.run(async (ctx): Promise<void> => {
+      for (const [index, code] of codes.entries()) {
+        await ctx.db.insert('replacedDecisionRequests', {
+          agentId,
+          workItemId,
+          decisionId: code,
+          replacedBy: codes[index + 1] ?? standing,
+          kind: 'plan',
+          surfaceSlug: 'team-chat',
+          channel: 'D0MANAGER',
+          replacedAt: index + 1,
+        });
+      }
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1787768421.000100',
+        reply: { verb: 'approve', id: 'old0aa' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: standing });
   });
 
   it('answers another Slack user’s reply to a replaced code with nothing', async (): Promise<void> => {
@@ -1134,6 +1370,7 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
   async function decideInDm(
     harness: TestConvex<typeof schema>,
     allowlist: string[],
+    options: { readonly ownApp?: boolean } = {},
   ): Promise<{ workItemId: Id<'workItems'>; decisionId: string }> {
     const { agentId, workItemId } = await seedParkedPlan(harness);
     const surfaceId = await harness.run(async (ctx) => {
@@ -1142,6 +1379,32 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
         .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
         .unique();
       await ctx.db.patch(surface!._id, { toolAllowlist: allowlist });
+      if (options.ownApp === true) {
+        // The employee's own app, installed: Day0 created it, and the card holds its bot token.
+        const secret = await ctx.db.insert('credentials', {
+          userId: 'organisation',
+          kind: 'oauth',
+          label: 'Ops (Day0) client secret',
+          ciphertext: 'ciphertext',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+        });
+        await ctx.db.patch(surface!._id, {
+          credentialKind: 'oauth',
+          provisioning: {
+            appId: 'A0OPS',
+            appName: 'Ops (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: secret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+        });
+      }
       return surface!._id;
     });
     await harness.action(internal.managerChannelActions.requestDecision, {
@@ -1286,6 +1549,31 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
     const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
     expect(decision?.closedAt).toBeUndefined();
     expect(decision?.closeFailure).toBe("the edit's claim lapsed with no result");
+  });
+
+  it('sends and closes the request on an app Day0 created though its page names neither method (W12V-3, design 1 (b))', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, ['conversations.history'], {
+      ownApp: true,
+    });
+    expect(sent.filter((call) => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: true });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+    // The stored allowlist stays the page's: the work never gains the channel's methods.
+    const surface = await harness.run(async (ctx) => {
+      const agentId = (await ctx.db.get(workItemId))!.agentId;
+      return await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+    });
+    expect(surface?.toolAllowlist).toEqual(['conversations.history']);
   });
 
   it('leaves the request as sent when the card does not allow chat.update', async (): Promise<void> => {
@@ -2418,6 +2706,35 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     expect(noticesIn(calls)).toHaveLength(1);
   });
 
+  it('sends through an app Day0 created though its page names none of the notice’s methods (design 1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const surface of await ctx.db.query('surfaces').collect()) {
+        await ctx.db.patch(surface._id, {
+          toolAllowlist: ['conversations.history'],
+          credentialKind: 'oauth',
+          provisioning: {
+            appId: 'A0MAYA',
+            appName: 'Maya (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: surface.credentialId!,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+        });
+      }
+    });
+    await askPriya(harness, agentId);
+    expect(noticesIn(calls)).toHaveLength(1);
+  });
+
   it('sends nothing through a card whose access has ended', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -2544,6 +2861,7 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
   async function seedMaya(
     harness: TestConvex<typeof schema>,
     grants: readonly string[] = ['boss:message'],
+    chat: { readonly ownApp?: boolean; readonly toolAllowlist?: string[] } = {},
   ): Promise<{ agentId: Id<'agents'>; linearId: Id<'surfaces'> }> {
     return await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
@@ -2574,14 +2892,29 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
         whereFound: [],
         path: 'documented-api',
         endpoint: 'https://slack.com/api/',
-        toolAllowlist: ['auth.test', 'chat.postMessage'],
+        toolAllowlist: chat.toolAllowlist ?? ['auth.test', 'chat.postMessage'],
         managerDmChannelId: 'D0MANAGER',
         managerUserId: 'UMANAGER',
         credentialId,
-        credentialKind: 'value',
+        credentialKind: chat.ownApp === true ? 'oauth' : 'value',
         credentialLanded: true,
         lastVerifiedAt: Date.now(),
         createdAt: 1,
+        ...(chat.ownApp === true
+          ? {
+              provisioning: {
+                appId: 'A0MAYA',
+                appName: 'Maya (Day0)',
+                clientId: '1.2',
+                clientSecretCredentialId: credentialId,
+                installUrl: 'https://slack.com/oauth/v2/authorize',
+                redirectUrl: 'https://day0.example/api/oauth/slack',
+                scopes: ['chat:write'],
+                createdAt: 1,
+                installedAt: 2,
+              },
+            }
+          : {}),
       });
       const linearId = await ctx.db.insert('surfaces', {
         agentId,
@@ -2646,6 +2979,25 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
       }),
     ).resolves.toEqual({ sent: false, reason: 'the request was already sent to the manager' });
     expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
+  it('posts it through an app Day0 created though the card’s page never names chat.postMessage (design 1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness, ['boss:message'], {
+      ownApp: true,
+      toolAllowlist: ['conversations.history'],
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'messaged',
+    });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts.map((post) => asRead(post.text))).toEqual([drafted.text]);
   });
 
   it("sends no DM when the manager copied or emailed the request, and one when they ask for it after (11-AC's item 2)", async (): Promise<void> => {

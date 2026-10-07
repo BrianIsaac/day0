@@ -5,8 +5,11 @@ import {
   type CharterConstraint,
   type StruckClause,
   listedRules,
+  rulePlacement,
+  strikeOutcome,
   strikePreview,
 } from '@/agent/charter-constraints';
+import type { GoalsStated } from '@/agent/charter';
 import { synthesisNotes } from '@/agent/manager-questions';
 import { useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -18,7 +21,7 @@ import { type CharterChange, nextCharterVersion } from '@/agent/charter-amendmen
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { clockTime, useAgentZone } from '../../../components/time';
-import { AmendCharterPanel } from './AmendCharterPanel';
+import { AmendCharterPanel, defaultRuleClause } from './AmendCharterPanel';
 import { CharterDocument, INLINE_LINK } from './CharterDocument';
 import { CHANGES_REQUEST_ID } from './ChangesRequest';
 import { ConstraintList } from './RuleRow';
@@ -30,7 +33,7 @@ import { employeeTabHref } from '../employee-tabs';
 export interface CharterCardBody {
   whyThisHire: string;
   proposedFunction: string;
-  shortTermGoals: { day30: string; day60: string; day90: string };
+  shortTermGoals: { day30: string; day60: string; day90: string; stated?: GoalsStated };
   proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
   namedCollaborators: Array<{ name: string; topic: string }>;
   /** Whose lane the employee stays out of; the scope check reads these. */
@@ -90,6 +93,14 @@ export function CharterCard({
   const struckCount = listedRules(constraints).filter(({ constraint }) => constraint.struck).length;
   const struck =
     struckCount === 0 ? '' : `${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`;
+  // Counted on the charter approval would leave: a rule whose clauses a pending strike takes with
+  // another rule is in no clause once approved.
+  const effective = strikeOutcome(body);
+  const approvedAs = effective.ok ? effective.charter : body;
+  const unplacedCount = listedRules(approvedAs.constraints ?? []).filter(
+    ({ constraint }) =>
+      !constraint.struck && rulePlacement(approvedAs, constraint).kind === 'in-no-clause',
+  ).length;
 
   function toggleStrike(index: number, strike: boolean): void {
     const quote = constraints[index]?.quote ?? 'the rule';
@@ -117,6 +128,16 @@ export function CharterCard({
       refused: 'The amendment was refused.',
       after,
       focus,
+    });
+  }
+
+  /** Keep a rule no clause carries by adding it as a clause, under the list a new rule defaults to. */
+  function keepAsClause(index: number): void {
+    const rule = constraints[index];
+    if (rule === undefined) return;
+    sendAmendment({
+      kind: 'add-constraint',
+      constraint: { kind: rule.kind, quote: rule.quote, clause: defaultRuleClause(rule.quote) },
     });
   }
 
@@ -167,11 +188,14 @@ export function CharterCard({
           <ConstraintList
             constraints={constraints}
             approved={charter.approved}
+            name={name}
             actors={actors}
             busy={change.busy}
             onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
             onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
+            onKeep={charter.approved ? keepAsClause : askForChanges}
             previewStrike={(index) => strikePreview(body, index)}
+            placementOf={(constraint) => rulePlacement(body, constraint)}
           />
           <SynthesisNotes notes={synthesisNotes(body)} />
         </div>
@@ -194,6 +218,11 @@ export function CharterCard({
           </div>
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-5">
+            {unplacedCount > 0 ? (
+              <p className="text-sm font-medium text-[var(--color-fg)]">
+                {unplacedRulesLine(unplacedCount)}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button variant="approve" size="large" onClick={onApprove} disabled={change.busy}>
                 {struck ? `Approve charter, ${struck}` : 'Approve charter'}
@@ -236,6 +265,18 @@ export function approvalConsequence({
     ? 'Autonomous actions are on, so its writes go ahead without asking.'
     : 'Every write still waits for you.';
   return `${strikes}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
+}
+
+/**
+ * The line above Approve when rules the manager gave are in no clause of the charter approval
+ * would leave (13-R, a product call): the charter does not enforce them, said before the click.
+ *
+ * @param count - Those rules, counted on the charter approval would leave.
+ */
+export function unplacedRulesLine(count: number): string {
+  return count === 1
+    ? '1 rule is in no clause, so the charter will not enforce it.'
+    : `${count} rules are in no clause, so the charter will not enforce them.`;
 }
 
 /**

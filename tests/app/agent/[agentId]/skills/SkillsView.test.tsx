@@ -15,7 +15,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import { SkillsView } from '../../../../../app/agent/[agentId]/skills/SkillsView';
-import { asEmployee } from '../../../../fixtures/dom/employee';
+import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import { mount } from '../../../../fixtures/dom/press';
 
 afterEach((): void => {
@@ -28,7 +28,7 @@ describe('SkillsView', () => {
       'skills:proposed': [],
       'skills:registered': [],
       'skills:awaitingVerification': [],
-      'skillControls:pendingRevisions': [],
+      'skillControls:notYetWritten': [],
       'skills:verificationFailed': [
         {
           _id: 'skill-9',
@@ -63,7 +63,7 @@ describe('SkillsView', () => {
       'skills:proposed': [],
       'skills:registered': [],
       'skills:awaitingVerification': [],
-      'skillControls:pendingRevisions': [],
+      'skillControls:notYetWritten': [],
       'skills:verificationFailed': [],
     };
     window.location.hash = '#skill-%E0%A4%A';
@@ -109,6 +109,28 @@ describe('SkillsView', () => {
     );
   });
 
+  it('says an authoring a pause held is held, not that it did not finish (D-8 (b), wave 13 item 6)', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:get': { _id: 'skill-1', name: 'refresh-the-tile', state: 'approved' },
+    };
+    const html = renderToStaticMarkup(
+      asEmployee(<SkillsView />, {
+        lastAttempt: {
+          skillId: 'skill-1' as Id<'skills'>,
+          name: 'refresh-the-tile',
+          reason: 'held while Priya is paused: writing it starts when you resume Priya',
+          held: true,
+        },
+      }),
+    );
+    expect(html).toContain(
+      'refresh-the-tile is held while Priya is paused: writing it starts when you resume Priya.',
+    );
+    expect(html).not.toContain('Authoring did not finish');
+  });
+
   it('hides the last verdict once its skill was retired or replaced by its revision (10-C)', () => {
     for (const state of ['retired', 'superseded'] as const) {
       backend.queries = {
@@ -142,7 +164,7 @@ describe('SkillsView', () => {
           description: 'Close.',
         },
       ],
-      'skillControls:pendingRevisions': [
+      'skillControls:notYetWritten': [
         {
           _id: 's2',
           name: 'kanban-comment-and-close',
@@ -158,6 +180,36 @@ describe('SkillsView', () => {
     expect(html).toContain('>Not callable</h2>');
     expect(html).toContain('keeps running this version until the new one registers.');
   });
+  it('lists a skill whose authoring a pause holds as held, saying when it starts, after the page is opened again (D-8 (b))', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skillControls:notYetWritten': [
+        {
+          _id: 's3',
+          name: 'chat-thread-reply',
+          state: 'approved',
+          sourceType: 'agent-authored',
+          body: '',
+          description: 'Threaded reply.',
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      asEmployee(<SkillsView />, {
+        surfaceMode: 'real',
+        agent: { ...EMPLOYEE_ROW, pausedAt: 5 },
+      }),
+    ).replace(/<!-- -->/g, '');
+    expect(html).toContain('>Not callable</h2>');
+    expect(html).toContain('>Held<');
+    expect(html).toContain('Held while Mira is paused: writing it starts when you resume Mira.');
+    // Nothing stopped and a press would only be held again: the row offers no Retry and no hint.
+    expect(html).not.toContain('Retry chat-thread-reply');
+    expect(html).not.toContain('with the reason it stopped');
+    expect(html).not.toContain('What Retry does');
+  });
+
   it('leaves an adoption in flight, stopped short or failed to the adoption card, so Not callable offers no Retry on it (the wave 10 review, M3 and B1)', () => {
     const adoption = (id: string, state: string): Record<string, unknown> => ({
       _id: id,

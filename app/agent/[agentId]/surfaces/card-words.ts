@@ -526,6 +526,32 @@ export const NOT_REINSTALLED_ACTS_AS = 'nobody';
 export const NOT_REINSTALLED_ACCESS = 'Nothing is read or sent through this card.';
 
 /**
+ * How the forget's message names the app it forgot: its name and its Slack app id, since the new
+ * app takes the same name and IT deletes the old one by it (13-S). A draft.
+ *
+ * @param app - The card's app as it stood before the forget.
+ */
+export function forgottenAppWords(
+  app: { readonly appId: string; readonly appName: string } | undefined,
+): string {
+  return app === undefined ? 'The app' : `${app.appName} (Slack app ${app.appId})`;
+}
+
+/**
+ * The forget's message (13-S): the app by its name and Slack app id, who deletes it, that its
+ * app-level token stays live at Slack until then (W13V-11: Forget purges Day0's copy only), and
+ * that a request it already sent is no longer decided in its own messages, so the manager decides
+ * it in day0 (W13-R16: a press there is another app's and is ignored). A draft.
+ *
+ * @param app - The card's app as it stood before the forget.
+ */
+export function forgetDoneWords(
+  app: { readonly appId: string; readonly appName: string } | undefined,
+): string {
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
+}
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *
@@ -558,16 +584,21 @@ export function noWayOnWords(system: string, employee: string): string {
   return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
 }
 
+/** The poll's refusal of a Slack history read the card's page never named (`chat-reader.ts`). */
+const HISTORY_REFUSAL =
+  /Connected Slack surface does not allow conversations\.(?:history|replies)\.$/;
+
 /**
- * What a Slack card covered by IT's connection says when it has no way on because its
- * documentation describes no install of the employee's own app (W12V-1, words only): what is
- * missing and which page would supply it. What a card may offer is still read from the
- * documentation (wave 13's design).
+ * A failing manager decision poll in the manager's words (W13-R1): a history read the page never
+ * named is a typed code Day0 cannot read, so the manager decides in day0; any other failure is
+ * said as the poll recorded it.
  *
- * @param employee - The employee's name.
+ * @param error - The card's `lastDecisionError`.
  */
-export function slackNoInstallWords(employee: string): string {
-  return `Day0 cannot create ${employee}’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying ${employee}’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.`;
+export function decisionErrorWords(error: string): string {
+  return HISTORY_REFUSAL.test(error)
+    ? "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in day0 until it does."
+    : error;
 }
 
 /** What a Slack card says about where the manager's decisions reach them, and what it asks for. */
@@ -597,13 +628,14 @@ export function decisionButtonsWords(
 ): DecisionButtonsWords {
   const app = appName ?? "the employee's app";
   if (buttons.available) {
+    // The card reads the bridge's heartbeat, so it says what it knows (D-6 (b)); a request asked
+    // before the token landed keeps its typed code alone (W12-R10).
+    const live = `The Slack socket service last reported a live connection for ${app}, so each new request to you arrives with Approve and Reject buttons`;
     return {
-      // A press reaches Day0 only while the bridge runs (W12-R16, D-6 (b)); a request asked
-      // before the token landed keeps its typed code alone (W12-R10).
-      title: 'Decisions in Slack: buttons are on while the Slack socket service runs',
+      title: 'Decisions in Slack: buttons are on',
       note: typedCode
-        ? 'Each new request to you arrives with Approve and Reject buttons and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.'
-        : `Each new request to you arrives with Approve and Reject buttons. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
+        ? `${live} and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.`
+        : `${live}. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
       asksForToken: false,
       offersReplacement: true,
     };
@@ -627,7 +659,7 @@ export function decisionButtonsWords(
           typedCode
             ? 'Requests reach you with a typed code only.'
             : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
-        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.`,
+        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (every app Day0 creates from v0.17.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (an app created earlier may have it off), turning on Enable Socket Mode makes the token in the same dialog.`,
         asksForToken: true,
         offersReplacement: false,
       };
@@ -638,6 +670,14 @@ export function decisionButtonsWords(
           ? `The app-level token of ${app} is stored, but this deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service.`
           : `This deployment does not run the Slack socket service that carries a press, so ${withoutButtons}. Ask whoever runs this deployment to run ./setup.sh again; that starts the service, and this card then asks for the app-level token of ${app}.`,
       );
+    case 'bridge-down':
+      return {
+        title: 'Buttons: off until the Slack socket service connects',
+        note: `The app-level token of ${app} is stored, but the Slack socket service that carries a press has not reported a live connection for it lately, so ${withoutButtons}. Buttons come back on new requests once the service reports one again. If they stay off, ask whoever runs this deployment to check the service: pnpm check:access says what is wrong in its socket row.`,
+        asksForToken: false,
+        // A token Slack refuses, or one of another app, keeps the connection from opening.
+        offersReplacement: true,
+      };
     case 'no-own-app':
       return typedOnly(
         'Decisions in Slack: typed codes only',
@@ -666,8 +706,8 @@ export interface TypedCodeWords {
 /**
  * Whether the manager's typed code reaches the employee's own Slack app (W12V-7): nothing while it
  * takes messages; otherwise that it does not, who opens its messages tab (Day0 at the card's next
- * check, or only a person in Slack), the one toggle by Slack's own words, and the control with
- * which the manager says it is on.
+ * check, Day0 again only when asked after Slack refused it, or only a person in Slack), the one
+ * toggle by Slack's own words, and the control with which the manager says it is on.
  *
  * @param reach - Whether the typed code reaches the app, as `listForAgent` read it.
  */
@@ -680,6 +720,12 @@ export function typedCodeWords(reach: TypedCodeReach): TypedCodeWords | undefine
       return {
         title: 'Typed code: off until this app takes messages',
         note: `Slack does not let you message ${reach.appName} yet, so no typed code reaches it. Day0 tries to open its messages tab at this card’s next check, or now if you press Check the connection. If it stays off, someone who manages ${reach.appName} in Slack ${toggle}, and you say so here.`,
+        confirm: 'It is on in Slack',
+      };
+    case 'refused':
+      return {
+        title: 'Typed code: off until this app takes messages',
+        note: `Slack would not let Day0 open the messages tab of ${reach.appName}, so no typed code reaches it. Slack’s answer: ${reach.reason.replace(/\.$/, '')}. Press Check the connection for Day0 to try again, or have someone who manages ${reach.appName} in Slack turn on App Home, “${MESSAGES_TAB_TOGGLE}”, and say so here.`,
         confirm: 'It is on in Slack',
       };
     case 'needs-toggle':

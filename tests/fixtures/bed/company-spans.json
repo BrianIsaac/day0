@@ -18,45 +18,69 @@
   "ip address"
  ],
  "threshold": 0.3,
- "recordedAt": "2026-09-18T12:18:34.496Z",
+ "recordedAt": "2026-10-05T16:43:46.746Z",
  "spans": {
   "e4151c9c7ed445bf89f30b4a4c54cb63e27ebb6a7afd9019a55cccc4fd1efcfb": [],
-  "e95922a64dc5b9135eb82fac2aa5deff68745f6a2f5f6d12ac1aa1fc8a560bee": [
+  "50c0ba84bac68c7d1e5c4e90d2049a31742fb5e09ee19a57c432136bf051dc5d": [
    {
-    "start": 634,
-    "end": 641,
+    "start": 1132,
+    "end": 1143,
     "label": "person",
-    "score": 0.6588
+    "score": 0.9991
    },
    {
-    "start": 979,
-    "end": 989,
-    "label": "person",
-    "score": 0.7636
+    "start": 1145,
+    "end": 1157,
+    "label": "email",
+    "score": 0.5725
    },
    {
-    "start": 1367,
-    "end": 1374,
+    "start": 1132,
+    "end": 1143,
     "label": "person",
-    "score": 0.9816
+    "score": 0.9985
    },
    {
-    "start": 1604,
-    "end": 1611,
-    "label": "person",
-    "score": 0.9874
+    "start": 1145,
+    "end": 1169,
+    "label": "email",
+    "score": 0.991
    },
    {
-    "start": 1677,
-    "end": 1684,
+    "start": 1771,
+    "end": 1778,
     "label": "person",
-    "score": 0.9872
+    "score": 0.4005
    },
    {
-    "start": 1955,
-    "end": 1962,
+    "start": 1844,
+    "end": 1851,
     "label": "person",
-    "score": 0.9929
+    "score": 0.5041
+   },
+   {
+    "start": 2122,
+    "end": 2129,
+    "label": "person",
+    "score": 0.6294
+   },
+   {
+    "start": 2089,
+    "end": 2108,
+    "label": "person",
+    "score": 0.3058
+   },
+   {
+    "start": 2122,
+    "end": 2129,
+    "label": "person",
+    "score": 0.9354
+   },
+   {
+    "start": 2148,
+    "end": 2168,
+    "label": "access token",
+    "score": 0.5802
    }
   ],
   "1b36d81a5e6cd14b7748f14c0aec3b5a250aa6c85920bf6317dd755d123b22a7": [],
@@ -220,90 +244,114 @@
     "score": 0.3729
    }
   ],
-  "8d65984fc1a97a0023115abd17fbbb6162611e90a5611b97db0d142dbe99b594": [
+  "9943c5565132753f512d37596531f6899ea3abf3902c5f9df7fe1838dd953098": [
    {
-    "start": 752,
-    "end": 764,
+    "start": 991,
+    "end": 998,
     "label": "person",
-    "score": 0.4791
+    "score": 0.9821
    },
    {
-    "start": 960,
-    "end": 989,
-    "label": "person",
-    "score": 0.4043
+    "start": 1000,
+    "end": 1020,
+    "label": "email",
+    "score": 0.9887
    },
    {
-    "start": 1354,
-    "end": 1376,
-    "label": "person",
-    "score": 0.5637
+    "start": 1008,
+    "end": 1020,
+    "label": "username",
+    "score": 0.5151
    },
    {
-    "start": 1476,
-    "end": 1498,
+    "start": 1282,
+    "end": 1293,
     "label": "person",
-    "score": 0.3342
+    "score": 0.9908
    },
    {
-    "start": 1712,
-    "end": 1719,
-    "label": "person",
-    "score": 0.9706
+    "start": 1295,
+    "end": 1319,
+    "label": "email",
+    "score": 0.4034
    },
    {
-    "start": 1784,
-    "end": 1791,
+    "start": 1450,
+    "end": 1460,
     "label": "person",
-    "score": 0.9804
+    "score": 0.997
    },
    {
-    "start": 1845,
-    "end": 1856,
+    "start": 1462,
+    "end": 1485,
+    "label": "username",
+    "score": 0.3628
+   },
+   {
+    "start": 1610,
+    "end": 1622,
+    "label": "person",
+    "score": 0.9986
+   },
+   {
+    "start": 1624,
+    "end": 1649,
+    "label": "username",
+    "score": 0.4023
+   },
+   {
+    "start": 1792,
+    "end": 1803,
+    "label": "person",
+    "score": 0.9965
+   },
+   {
+    "start": 1805,
+    "end": 1829,
+    "label": "email",
+    "score": 0.366
+   },
+   {
+    "start": 2068,
+    "end": 2079,
     "label": "credential",
-    "score": 0.4193
+    "score": 0.3432
    },
    {
-    "start": 2324,
-    "end": 2331,
+    "start": 2547,
+    "end": 2554,
     "label": "person",
-    "score": 0.9703
+    "score": 0.9765
    },
    {
-    "start": 2339,
-    "end": 2346,
+    "start": 2562,
+    "end": 2569,
     "label": "person",
-    "score": 0.9672
+    "score": 0.9641
    },
    {
-    "start": 2324,
-    "end": 2331,
+    "start": 2607,
+    "end": 2614,
     "label": "person",
-    "score": 0.9961
+    "score": 0.9997
    },
    {
-    "start": 2339,
-    "end": 2346,
+    "start": 2643,
+    "end": 2654,
     "label": "person",
-    "score": 0.9902
+    "score": 0.9986
    },
    {
-    "start": 2403,
-    "end": 2416,
+    "start": 2696,
+    "end": 2703,
     "label": "person",
-    "score": 0.8552
+    "score": 0.9724
    },
    {
-    "start": 2429,
-    "end": 2436,
+    "start": 2816,
+    "end": 2823,
     "label": "person",
-    "score": 0.994
-   },
-   {
-    "start": 2549,
-    "end": 2556,
-    "label": "person",
-    "score": 0.9973
+    "score": 0.9847
    }
   ],
   "e72a725dea6a30302c6a2724e125b7cf7e5d5d0b33a761b98d810bf5425a928c": [],

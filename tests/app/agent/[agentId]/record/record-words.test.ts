@@ -89,6 +89,20 @@ describe('recordWords', (): void => {
     },
   );
 
+  it("names the app the manager forgot after IT's revoke, and that IT deletes it (13-S)", (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.app-forgotten',
+          payload: { surfaceId: 's1', appId: 'A0LEO', appName: 'Leo (Day0)' },
+        },
+        { name: 'Leo', connection: 'Slack' },
+      ),
+    ).toBe(
+      "You forgot Leo (Day0) (Slack app A0LEO), Leo's own app on the Slack connection, which IT's revoke had ended. Day0 can now create a new one; only IT can delete the old app, in Slack's app settings.",
+    );
+  });
+
   it('names the employee, addresses the manager and quotes the item', (): void => {
     expect(
       recordWords(
@@ -534,6 +548,22 @@ describe('recordWords', (): void => {
         { name: 'Mira', item: 'Why is ARR down?' },
       ),
     ).toBe('Mira finished \u201cWhy is ARR down?\u201d');
+  });
+
+  it('says a finished run partly done or not done when its own answer says so, as its card does (13-FD)', (): void => {
+    const subject = { name: 'Mira', item: 'Reconcile vendor charges' };
+    const finished = (workDone: string): string =>
+      recordWords(
+        { type: 'work.completed', payload: { output: { workDone, workDoneWhy: 'Why.' } } },
+        subject,
+      );
+    expect(finished('done')).toBe('Mira finished \u201cReconcile vendor charges\u201d.');
+    expect(finished('partial')).toBe(
+      'Mira ended \u201cReconcile vendor charges\u201d partly done; its card says why.',
+    );
+    expect(finished('not-done')).toBe(
+      'Mira ended \u201cReconcile vendor charges\u201d not done; its card says why.',
+    );
   });
 });
 
@@ -1253,5 +1283,45 @@ describe('the record of a close Day0 held and left for its card (12-H, R-12D-1)'
     ).toBe(
       'Mira holds the ticket close on “Draft response for new tier-two RevOps ask” for you: the earlier approval has been applied, and the close waits on its card.',
     );
+  });
+});
+
+describe('recordWords: the people graph (wave 13, 13-P)', (): void => {
+  it('says what was proposed and what the manager decided on the People tab, in the manager’s terms', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'person.proposed',
+          payload: { personId: 'p1', person: 'Priya Shah', via: 'charter', possiblySame: true },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira proposed Priya Shah from its approved charter, for you to confirm, as possibly someone already in the people.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'person.confirmed',
+          payload: { personId: 'p1', person: 'Priya Shah', how: 'confirm', edgesConfirmed: 1 },
+        },
+        subject,
+      ),
+    ).toBe('You confirmed Priya Shah and 1 relationship to them.');
+    expect(
+      recordWords(
+        { type: 'person.dismissed', payload: { personId: 'p2', person: 'Sara Lim' } },
+        subject,
+      ),
+    ).toBe('You dismissed Sara Lim.');
+    expect(
+      recordWords(
+        {
+          type: 'relationship.changed',
+          payload: { person: 'Dana Okafor', change: 'retired', type: 'escalation-contact' },
+        },
+        subject,
+      ),
+    ).toBe("You ended Mira's escalation contact Dana Okafor.");
   });
 });

@@ -9,7 +9,9 @@ import {
 import type { RecordKind } from '../../components/RecordLine';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
+import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
+import { finishedAs } from './work/work-item';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -394,6 +396,21 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `seeding the approved charter failed${text(payload.reason) ? `: ${payload.reason}` : ''}${
       payload.retrying === true ? ' · trying again' : ' · gave up'
     }`,
+  'charter.seeding-requested': () => 'finding work again from the approved charter',
+  'charter.seeded': () => 'approved charter set up: its systems are being oriented',
+  'person.proposed': (payload) =>
+    `person proposed: ${text(payload.person) ?? 'from the charter'}${
+      payload.via === 'handover' ? ' · from the charter the handover brought' : ''
+    }`,
+  'person.confirmed': (payload) =>
+    `person confirmed: ${text(payload.person) ?? 'a proposal'}${
+      payload.how === 'same-person' ? ' · the same as one already known' : ''
+    }`,
+  'person.dismissed': (payload) => `person dismissed: ${text(payload.person) ?? 'a proposal'}`,
+  'relationship.changed': (payload) =>
+    `${relationshipNoun(payload.type)} ${
+      payload.change === 'retired' ? 'ended' : payload.change === 'edited' ? 'changed' : 'added'
+    }: ${text(payload.person) ?? 'a person'}`,
   'work.charter-derived': (payload) =>
     `${counted(payload.count, 'work item') ?? 'work items'} seeded from the charter`,
   'coworker.replied': (payload) =>
@@ -458,6 +475,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill authoring taken over: ${text(payload.name) ?? 'unnamed'}${
       duration(payload.heldForMs) ? `, the last run held it ${duration(payload.heldForMs)}` : ''
     }`,
+  'skill.authoring-held': (payload) =>
+    `skill authoring held: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+  'skill.authoring-resumed': (payload) =>
+    `skill authoring resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring-claimed': (payload) =>
     payload.purpose === 'verify-stored'
       ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
@@ -501,8 +522,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.proposal-requested': (payload) =>
     `connection card requested${text(payload.slug) ? ` for ${payload.slug}` : ''}`,
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
+  'surface.orientation-held': (payload) => `orientation held${because(payload.reason)}`,
+  'surface.orientation-resumed': 'orientation resumed after the pause',
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
+  'surface.app-forgotten': (payload) =>
+    `app forgotten${text(payload.appName) ? `: ${payload.appName}` : ''}; IT deletes it in Slack's app settings`,
   'surface.socket-token-landed': (payload) =>
     `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
   'surface.app-messages-open': (payload) => `${messagesOpenLabel(payload.how)}: typed code on`,
@@ -636,6 +661,19 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',
   'work.correction-retired': 'kept correction retired',
+  'agreement.proposed': 'working agreement proposed',
+  'agreement.activated': (payload) =>
+    payload.everyEmployee === true
+      ? 'working agreement kept for every employee'
+      : 'working agreement kept',
+  'agreement.refused': (payload) =>
+    text(payload.clause)
+      ? `working agreement refused: it contradicts “${text(payload.clause)}”`
+      : 'working agreement refused: it would go beyond the charter',
+  'agreement.retired': (payload) =>
+    payload.how === 'dismissed'
+      ? 'proposed working agreement set aside'
+      : 'working agreement retired',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
@@ -680,7 +718,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',
-  'work.completed': 'done',
+  'work.completed': (payload) => finishedAs(payload.output),
   'work.failed': (payload) =>
     payload.stopped === true ? 'run stopped' : `run failed${because(payload.reason)}`,
   'work.actions-auto-applying': (payload) =>
@@ -791,6 +829,9 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'skill.failed': 'refused',
   'skill.author-failed': 'refused',
   'audit.corrected': 'refused',
+  'agreement.activated': 'landed',
+  'agreement.refused': 'refused',
+  'agreement.retired': 'withheld',
   'work.decision-ignored': 'refused',
   'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',

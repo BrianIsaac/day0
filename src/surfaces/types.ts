@@ -77,6 +77,12 @@ export interface SurfaceRecord {
    * absent for a card that names no identity, whose credential's kind decides.
    */
   attribution?: Attribution;
+  /**
+   * The card acts as an app Day0 created for its employee and holds that app's own token
+   * (`holdsOwnSlackApp`): Day0's own manager channel may then call `SLACK_CHANNEL_METHODS` through
+   * it whatever the page names (13-FS's design 1 (b)). The work's check never reads it.
+   */
+  ownSlackApp?: true;
   managerDmChannelId?: string;
   /** The probed DM counterpart; only this provider user may resolve a decision. */
   managerUserId?: string;

@@ -167,6 +167,69 @@ describe('the Slack chat reader', (): void => {
     expect(request!.init.redirect).toBe('error');
   });
 
+  it('asks who the bot is on an app Day0 created whatever the page names, and reads only what it names (design 1 (b))', async (): Promise<void> => {
+    const double = slackDouble({ 'auth.test': () => ok({ user_id: 'U1', bot_id: 'B1' }) });
+    const ownApp = slackChatReader(
+      { ...slack, toolAllowlist: ['conversations.history'], ownSlackApp: true },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(ownApp.identity()).resolves.toEqual({ userId: 'U1', botId: 'B1' });
+    await expect(ownApp.readThread('D1', '2.0')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.replies.',
+    );
+    // A shared token's page must still name it.
+    const shared = slackChatReader(
+      { ...slack, toolAllowlist: ['conversations.history'] },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(shared.identity()).rejects.toThrow(
+      'Connected Slack surface does not allow auth.test.',
+    );
+  });
+
+  it("reads the manager's DM on an app Day0 created whose page names no history method, and no other channel (W13-R1, R-S1 (a))", async (): Promise<void> => {
+    const double = slackDouble({
+      'conversations.history': () => ok({ messages: [{ ts: '1.0', text: 'approve ab3xyz' }] }),
+      'conversations.replies': () => ok({ messages: [{ ts: '2.0', text: 'approve ab3xyz' }] }),
+    });
+    const thinPage = {
+      ...slack,
+      toolAllowlist: ['conversations.list', 'chat.postMessage'],
+      managerDmChannelId: 'D0MANAGER',
+    };
+    const ownApp = slackChatReader(
+      { ...thinPage, ownSlackApp: true },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(ownApp.readSince('D0MANAGER')).resolves.toHaveLength(1);
+    await expect(ownApp.readThread('D0MANAGER', '2.0')).resolves.toHaveLength(1);
+    expect(double.requests.map(({ url }) => url.searchParams.get('channel'))).toEqual([
+      'D0MANAGER',
+      'D0MANAGER',
+    ]);
+    // Any channel but the manager's DM is the work's, which the page alone decides.
+    await expect(ownApp.readSince('C0REVOPS')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.history.',
+    );
+    await expect(ownApp.readThread('C0REVOPS', '2.0')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.replies.',
+    );
+    // A card with no DM derived yet reads no DM.
+    const noDm = slackChatReader(
+      { ...thinPage, managerDmChannelId: undefined, ownSlackApp: true },
+      { credential: TOKEN, fetch: double.fetch },
+    );
+    await expect(noDm.readSince('D0MANAGER')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.history.',
+    );
+    // A shared token's page still decides, the DM included.
+    const shared = slackChatReader(thinPage, { credential: TOKEN, fetch: double.fetch });
+    await expect(shared.readSince('D0MANAGER')).rejects.toThrow(
+      'Connected Slack surface does not allow conversations.history.',
+    );
+    expect(double.requests).toHaveLength(2);
+  });
+
   it('reads the local proof service when the deployment points Slack there', async (): Promise<void> => {
     const double = slackDouble({ 'auth.test': () => ok({ user_id: 'U1' }) });
     await slackChatReader(slack, {

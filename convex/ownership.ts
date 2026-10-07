@@ -3,7 +3,14 @@ import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import { EMPLOYEE_GONE, EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
+import {
+  CHARTER_NOT_YOURS,
+  EMPLOYEE_GONE,
+  EMPLOYEE_NOT_YOURS,
+  ONE_TO_ONE_NOT_YOURS,
+  SKILL_NOT_YOURS,
+  WORK_ITEM_NOT_YOURS,
+} from '../src/agent/employee-access';
 import {
   CUSTOMER_OIDC_ISSUER_VAR,
   customerAddressVerified,
@@ -30,6 +37,8 @@ import {
   NOT_AN_ADMINISTRATOR,
 } from '../src/lib/administrators';
 import { isOrganisationOwnerKey } from '../src/lib/organisation-key';
+import { PERSON_NOT_YOURS, RELATIONSHIP_NOT_YOURS } from '../src/people/vocabulary';
+import { AGREEMENT_NOT_YOURS } from '../src/work/agreement-vocabulary';
 import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
 
@@ -448,53 +457,149 @@ export async function assertNamedInTransfer(
 }
 
 /**
- * The charter, if the caller owns its employee; throws otherwise. This guard and the three below
- * admit the caller before they read the row, so a caller the guard does not admit is refused alike
- * for an id that is gone and one that is live (the anonymous-caller guard, 12-G).
+ * A row keyed by its employee, if the caller owns that employee; throws the row's one refusal
+ * otherwise, the same for a row that is gone, one whose employee is gone and one of an employee
+ * another owner holds, so an id confirms nothing (W12-R25). The caller is admitted before the
+ * row is read, so a caller the guard does not admit is refused alike for any id (12-G).
+ *
+ * @param read - Reads the row.
+ * @param refusal - The row's refusal, a `ConvexError`'s data.
+ * @throws ConvexError with `refusal`; the not-authenticated error for an anonymous caller.
+ */
+async function ownedEmployeeRow<Row extends { agentId: Id<'agents'> }>(
+  ctx: QueryCtx | MutationCtx,
+  read: () => Promise<Row | null>,
+  refusal: string,
+): Promise<Row> {
+  const caller = await getCallerOrThrow(ctx);
+  const row = await read();
+  const agent = row === null ? null : await ctx.db.get(row.agentId);
+  if (row === null || agent === null || !agent.userId || agent.userId !== caller.ownerKey) {
+    throw new ConvexError(refusal);
+  }
+  return row;
+}
+
+/**
+ * The charter, if the caller owns its employee; throws {@link CHARTER_NOT_YOURS} otherwise. This
+ * guard and the three below admit the caller before they read the row (12-G).
  */
 export async function assertOwnsCharter(
   ctx: QueryCtx | MutationCtx,
   charterId: Id<'charters'>,
 ): Promise<Doc<'charters'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const charter = await ctx.db.get(charterId);
-  if (!charter) throw new Error('charter not found');
-  await callersAgent(ctx, caller, charter.agentId);
-  return charter;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(charterId), CHARTER_NOT_YOURS);
 }
 
-/** The work item, if the caller owns its employee; throws otherwise. */
+/** The work item, if the caller owns its employee; throws {@link WORK_ITEM_NOT_YOURS} otherwise. */
 export async function assertOwnsWorkItem(
   ctx: QueryCtx | MutationCtx,
   workItemId: Id<'workItems'>,
 ): Promise<Doc<'workItems'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const item = await ctx.db.get(workItemId);
-  if (!item) throw new Error('work item not found');
-  await callersAgent(ctx, caller, item.agentId);
-  return item;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(workItemId), WORK_ITEM_NOT_YOURS);
 }
 
-/** The skill, if the caller owns its employee; throws otherwise. */
+/** The skill, if the caller owns its employee; throws {@link SKILL_NOT_YOURS} otherwise. */
 export async function assertOwnsSkill(
   ctx: QueryCtx | MutationCtx,
   skillId: Id<'skills'>,
 ): Promise<Doc<'skills'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const skill = await ctx.db.get(skillId);
-  if (!skill) throw new Error('skill not found');
-  await callersAgent(ctx, caller, skill.agentId);
-  return skill;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(skillId), SKILL_NOT_YOURS);
 }
 
-/** The voice session, if the caller owns its employee; throws otherwise. */
+/** The voice session, if the caller owns its employee; throws {@link ONE_TO_ONE_NOT_YOURS} otherwise. */
 export async function assertOwnsVoiceSession(
   ctx: QueryCtx | MutationCtx,
   sessionId: Id<'voiceSessions'>,
 ): Promise<Doc<'voiceSessions'>> {
-  const caller = await getCallerOrThrow(ctx);
-  const session = await ctx.db.get(sessionId);
-  if (!session) throw new Error('voice session not found');
-  await callersAgent(ctx, caller, session.agentId);
-  return session;
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(sessionId), ONE_TO_ONE_NOT_YOURS);
+}
+
+/**
+ * The owner scope a caller's owner-level rows are keyed and read under (wave 13, 13-K; the wave
+ * file's section 5.1): the people graph, its identities and edges, and the working agreements.
+ * Every owner-level lookup of the caller's goes through it, so keying them by a company rather
+ * than an owner later is a change here alone (the enhancements plan, section 12.2). Today it is
+ * the owner key ({@link ownerKeyOf}).
+ *
+ * @param caller - A caller a guard admitted.
+ * @returns The scope every owner-level index leads with.
+ */
+export function ownerScope(caller: Pick<Caller, 'ownerKey'>): string {
+  return caller.ownerKey;
+}
+
+/**
+ * The owner scope of an employee's owner, for a path that writes or reads the owner's rows with no
+ * caller (an internal function, a migration, the work loop): the same scope {@link ownerScope}
+ * gives the owner when they call, or undefined for an employee no owner holds, whose owner-level
+ * rows do not exist.
+ *
+ * @param agent - The employee, or any row carrying its owner key.
+ */
+export function employeeOwnerScope(agent: Pick<Doc<'agents'>, 'userId'>): string | undefined {
+  return agent.userId === undefined ? undefined : ownerScope({ ownerKey: agent.userId });
+}
+
+/**
+ * A row of an owner-level table if the caller's owner scope holds it; throws the one refusal for
+ * a row of another scope and a row that does not exist. The caller is admitted before the read.
+ */
+async function ownedInScope<Row extends { readonly userId: string }>(
+  ctx: QueryCtx | MutationCtx,
+  read: () => Promise<Row | null>,
+  refusal: string,
+): Promise<Row> {
+  const scope = ownerScope(await getCallerOrThrow(ctx));
+  const row = await read();
+  if (row === null || row.userId !== scope) throw new ConvexError(refusal);
+  return row;
+}
+
+/**
+ * The person, if the caller's owner scope holds it (13-K for 13-P): the guard of every public
+ * function that reads or changes one person of the graph. The caller is admitted before the row is
+ * read, and a person of another owner reads as one that does not exist.
+ *
+ * @throws ConvexError with {@link PERSON_NOT_YOURS}; the not-authenticated error for an anonymous
+ *   caller.
+ */
+export async function assertOwnsPerson(
+  ctx: QueryCtx | MutationCtx,
+  personId: Id<'people'>,
+): Promise<Doc<'people'>> {
+  return await ownedInScope(ctx, async () => await ctx.db.get(personId), PERSON_NOT_YOURS);
+}
+
+/**
+ * The edge, if the caller's owner scope holds it (13-K for 13-P): the guard of every public
+ * function that changes or retires one edge. Admits the caller before the read.
+ *
+ * @throws ConvexError with {@link RELATIONSHIP_NOT_YOURS}; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertOwnsRelationship(
+  ctx: QueryCtx | MutationCtx,
+  relationshipId: Id<'relationships'>,
+): Promise<Doc<'relationships'>> {
+  return await ownedInScope(
+    ctx,
+    async () => await ctx.db.get(relationshipId),
+    RELATIONSHIP_NOT_YOURS,
+  );
+}
+
+/**
+ * The working agreement, if the caller's owner scope holds it (13-K for 13-W): the guard of every
+ * public function that keeps, edits, promotes or retires one, whether it binds one employee or
+ * every employee. Admits the caller before the read.
+ *
+ * @throws ConvexError with {@link AGREEMENT_NOT_YOURS}; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertOwnsAgreement(
+  ctx: QueryCtx | MutationCtx,
+  agreementId: Id<'workingAgreements'>,
+): Promise<Doc<'workingAgreements'>> {
+  return await ownedInScope(ctx, async () => await ctx.db.get(agreementId), AGREEMENT_NOT_YOURS);
 }

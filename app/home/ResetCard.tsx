@@ -40,6 +40,11 @@ const heldKinds: readonly HeldKind[] = [
   { kind: 'employees', stored: 'your employees', goes: 'every employee and its data' },
   { kind: 'skillLibrary', stored: 'your skill library', goes: 'your skill library' },
   {
+    kind: 'people',
+    stored: 'the people and working agreements you keep',
+    goes: 'the people and working agreements you keep',
+  },
+  {
     kind: 'handoverWords',
     stored: 'the notes on your handover requests',
     goes: 'the notes on your handover requests',
@@ -78,7 +83,12 @@ export function heldNow(holdings: Holdings, alsoUnlinkDocumentation: boolean): s
   const held = heldKinds.filter(({ kind }) => holdings[kind]).map(({ stored }) => stored);
   const apart = takenByUnlink(holdings);
   if (held.length === 0) {
-    if (apart.length === 0) return 'Nothing of yours is stored now.';
+    if (apart.length === 0) {
+      // The owner's own entry alone never makes the control live: the next sign-in writes it again.
+      return holdings.ownEntry === true
+        ? 'Nothing of yours is stored now except your own entry among your people, which Day0 writes again each time you open this page.'
+        : 'Nothing of yours is stored now.';
+    }
     if (!holdings.credentials) {
       return alsoUnlinkDocumentation
         ? 'Only your linked documentation is stored now, and it goes with the box ticked.'
@@ -192,9 +202,10 @@ export function ResetCard() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm text-[var(--color-muted)]">
-            Deletes your employees and everything they made, your skill library and the notes on
-            your handover requests. Your sign-in stays, and the requests stay in the other manager’s
-            record.
+            Deletes your employees and everything they made, your skill library, the people and
+            working agreements you keep (including your own entry among your people) and the notes
+            on your handover requests. Your sign-in stays, and the requests stay in the other
+            manager’s record.
           </p>
           <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
             {holdings

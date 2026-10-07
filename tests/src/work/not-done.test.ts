@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isClosingState, notDoneStatements, runOwnWords } from '../../../src/work/not-done';
+import {
+  CLOSING_STATES_WORDS,
+  isClosingState,
+  notDoneStatements,
+  runOwnWords,
+} from '../../../src/work/not-done';
+import { LIST_READ_RULE } from '../../../src/work/execute-skill';
 
 describe('notDoneStatements', () => {
   it('finds the sentences of the 4 October demo runs that say the work was not done', () => {
@@ -89,5 +95,35 @@ describe('isClosingState', () => {
     for (const state of ['in-progress', 'In Progress', 'Todo', 'blocked', 'open', '']) {
       expect(isClosingState(state), state).toBe(false);
     }
+  });
+
+  it("counts the states that close a ticket without finishing it as closing: cancelled, a duplicate, released (12-D's Minor 5)", () => {
+    for (const state of [
+      'Canceled',
+      'cancelled',
+      'Cancelled',
+      'Duplicate',
+      'duplicate',
+      'Released',
+    ]) {
+      expect(isClosingState(state), state).toBe(true);
+    }
+    for (const state of ['Backlog', 'Triage', 'In Review', 'Unstarted']) {
+      expect(isClosingState(state), state).toBe(false);
+    }
+  });
+});
+
+describe('one closing-state vocabulary (W13-R42)', (): void => {
+  it("reads won't fix, archived, shipped and rejected as closing states, as the list rules say", (): void => {
+    for (const state of ["Won't Fix", 'Won’t fix', 'wontfix', 'Archived', 'Shipped', 'Rejected']) {
+      expect(isClosingState(state), state).toBe(true);
+    }
+    for (const rule of [LIST_READ_RULE]) {
+      expect(rule).toContain(CLOSING_STATES_WORDS);
+    }
+    expect(CLOSING_STATES_WORDS).toBe(
+      "done, cancelled, duplicate, released, shipped, archived, rejected or won't fix",
+    );
   });
 });

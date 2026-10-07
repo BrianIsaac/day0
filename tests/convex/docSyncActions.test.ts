@@ -843,10 +843,12 @@ describe('documentation sync batching', (): void => {
         createdAt: 1,
         updatedAt: 1,
       });
+      // Re-pinned at 13-K: the run carries the listing every run since 0.6.0 is given when it
+      // begins, which the retired lazy listing of a run before 0.6.0 used to make up.
       const runId = await ctx.db.insert('docSyncRuns', {
         sourceId,
         cursor: FINISHING_CURSOR,
-        refs: [],
+        listing: 1,
         credentialRefs: [],
         pageCount: 0,
         redactionCount: 0,

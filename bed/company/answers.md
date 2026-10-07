@@ -29,8 +29,9 @@ logistics desk.
    Linear, keep the audit notes on them, draft updates for me, and flag anything that smells like
    risk. First month, learn how we work and get your access sorted. Month two, you run the routine
    tickets yourself.
-3. There's the Linear admin for access and workflow, the Slack admin for channels, and business
-   systems for the CRM. Go through me for all of them for now, I'll intro you.
+3. There's Lee Tan, the Linear admin, for access and workflow, Noor Rahman, the Slack admin, for
+   channels, and Femi Adeyemi in business systems for the CRM. Go through me for all of them for
+   now, I'll intro you.
 4. The onboarding page, then the revenue operations handbook and its runbooks.
 5. Linear for the real work, team REVOPS, project Q3 close: the audit note, the Looker pipeline
    tile refresh and the Northstar reconcile are all tickets in Linear. Asks come in on Slack in
@@ -51,8 +52,8 @@ logistics desk.
    project September close, and answer questions in #finance-close about where the close stands.
    The step tickets are the accounting team's; you read them, you don't change them. First month,
    learn the calendar and get your access sorted; after that, the status note is yours.
-3. The Linear admin for access, the Slack admin for channels, and the finance systems owner for
-   NetLedger. Go through me for all of them for now.
+3. Lee Tan, the Linear admin, for access, Noor Rahman, the Slack admin, for channels, and Dana
+   Okafor, the finance systems owner, for NetLedger. Go through me for all of them for now.
 4. The onboarding page, then the finance close handbook and the close status note runbook.
 5. Linear, team FIN, project September close, for the close tickets. Slack: #finance-close is
    ours, and #ops-requests is the shared request channel. NetLedger is the books, but you've got
@@ -70,8 +71,8 @@ logistics desk.
    team LOG, project Shipment exceptions: record each one on its ticket with the customer notice
    from the handbook's templates. First month, learn the process and get your access sorted;
    after that, the routine exceptions are yours.
-3. The Linear admin for access and the Slack admin for channels. I'm the desk lead, so a question
-   about a notice comes to me in the DM.
+3. Lee Tan, the Linear admin, for access and Noor Rahman, the Slack admin, for channels. I'm the
+   desk lead, so a question about a notice comes to me in the DM.
 4. The onboarding page, then the logistics desk handbook and the exception runbook.
 5. Linear, team LOG, project Shipment exceptions. Slack: #logistics-desk is the desk's channel and
    #ops-requests is the shared request channel.

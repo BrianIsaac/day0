@@ -21,6 +21,7 @@ import {
   isManagerDm,
   isSurfaceTool,
   parseSurfaceAction,
+  type ActionVerdict,
 } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -38,6 +39,24 @@ export const STOPPED_PREFIX = 'stopped: ';
 
 /** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
 export const MANAGER_STOP = 'stopped by the manager';
+
+/** A Stop that stopped the run, or took back an approval whose writes had not started. */
+export interface StopRunStopped {
+  readonly ok: true;
+}
+
+/** A Stop that arrived after the item moved on: nothing was stopped and nothing changed. */
+export interface StopRunMovedOn {
+  readonly ok: false;
+  readonly refused: 'moved-on';
+}
+
+/**
+ * What `workRuns.stopRun` answers. A Stop that meets an item no longer under way is an expected
+ * outcome of a manager deciding while the run moves (the v0.16.0 redeploy's finding 4), so it is
+ * answered, never thrown: a thrown refusal reaches the browser's console as a server error.
+ */
+export type StopRunAnswer = StopRunStopped | StopRunMovedOn;
 
 /** The states of a work item the manager can stop: the employee is working it and nothing waits on them. */
 export const STOPPABLE_STATES = ['claimed', 'plan-approved', 'executing'] as const;
@@ -312,12 +331,17 @@ export function stopDetail(skipReason: string): string {
  * The run's landed rows as the completion note tells them: every landed or
  * outcome-unknown row in ledger order, reads included, each in a manager's
  * words. The manager DM is left out, as in `landedWork`: it reports on work
- * and is not work.
+ * and is not work. A DM the set held for the manager (one that reports a held
+ * write of its set waits with it) is counted in: the manager approved it as one
+ * of the set's writes, and the card counts it (W13V-6).
  *
  * Args:
  *   output: A run's persisted output, in either of its two shapes.
  *   surfaces: The agent's surfaces, for display names and the manager DM.
  *   replyTarget: The thread the work item answers, so a reply to it reads as one.
+ *   verdicts: The gate's verdicts as the row stores them, on the set the manager
+ *     decided (the output's own actions, never a prerequisite phase's); only a DM
+ *     whose stored verdict says held counts, never one with no verdict.
  *
  * Returns:
  *   One row per landed action, for `landedNoteText`.
@@ -326,8 +350,9 @@ export function landedNoteRows(
   output: unknown,
   surfaces: readonly SurfaceRecord[],
   replyTarget?: ReplyTarget,
+  verdicts: ReadonlyArray<{ readonly disposition?: ActionVerdict['disposition'] }> = [],
 ): LandedNoteRow[] {
-  return ledgerPhases(output).flatMap(({ actions, applied }) =>
+  return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {
       const outcomeUnknown = entry.outcomeUnknown === true || isOutcomeUnknownReason(entry.reason);
       if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
@@ -336,7 +361,10 @@ export function landedNoteRows(
       const surface = parsed?.ok
         ? surfaces.find((row) => row.slug === parsed.action.surface)
         : undefined;
-      if (parsed?.ok && surface && isManagerDm(parsed.action, surface)) return [];
+      const heldForTheManager = phase !== 'prerequisite' && verdicts[index]?.disposition === 'held';
+      if (parsed?.ok && surface && isManagerDm(parsed.action, surface) && !heldForTheManager) {
+        return [];
+      }
       const read =
         !outcomeUnknown && parsed?.ok === true && actionIntent(parsed.action) !== 'write';
       const line = action

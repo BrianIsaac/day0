@@ -284,8 +284,9 @@ describe('the Day-1 chat route', (): void => {
       max_tokens: 32768,
       reasoning_effort: 'low',
       // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles;
-      // from v2: it asks only the question each turn's note names (the v0.11.0 walk).
-      prompt_cache_key: 'day0-day1-system-v4',
+      // from v2: it asks only the question each turn's note names (the v0.11.0 walk); from v4:
+      // the closing line names nothing the charter will hold (13-FD).
+      prompt_cache_key: 'day0-day1-system-v6',
     });
   });
 

@@ -1,4 +1,8 @@
-import { decisionButtonsFor, type ButtonsCard } from '../surfaces/slack-socket';
+import {
+  decisionButtonsFor,
+  type ButtonsCard,
+  type SocketBridgeState,
+} from '../surfaces/slack-socket';
 
 /** A card as the choice of the manager's decision channel reads it. */
 export interface DecisionChannelCard extends ButtonsCard {
@@ -41,19 +45,19 @@ export type DecisionsReach =
  * channel carries them.
  *
  * @param channel - The employee's decision channel, if any ({@link decisionChannelOf}).
- * @param bridgeConfigured - Whether the deployment runs the Socket Mode bridge.
+ * @param bridge - What the channel's card knows of the Socket Mode bridge (D-6 (b)).
  * @param typedCode - Whether the manager's typed code reaches the channel's app (W12V-7).
  */
 export function decisionsReachOf(
   channel: DecisionChannelCard | undefined,
-  bridgeConfigured: boolean,
+  bridge: SocketBridgeState,
   typedCode: boolean,
 ): DecisionsReach {
   if (channel === undefined) return { kind: 'dashboard' };
   return {
     kind: 'dm',
     channel: channel.displayName,
-    buttons: decisionButtonsFor(channel, bridgeConfigured).available,
+    buttons: decisionButtonsFor(channel, bridge).available,
     typedCode,
   };
 }

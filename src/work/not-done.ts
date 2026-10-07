@@ -131,14 +131,47 @@ export function runOwnWords(output: RunWords): string[] {
   return [...draft, ...(output.actions ?? []).flatMap((action) => messageTexts(action))];
 }
 
-/** The states that say the work is finished. */
-const CLOSING_STATE = /^(?:done|complete|completed|closed|resolved|finished)$/i;
+/**
+ * The states that close a ticket: those that say the work is finished, and those that close it
+ * without finishing it (cancelled, a duplicate, rejected, won't fix, archived) or past finishing
+ * it (released, shipped), which a run that answers its work was not all done may not land either
+ * (12-D's Minor 5). One vocabulary with the list-read rules' words (W13-R42).
+ */
+const CLOSING_STATES: ReadonlySet<string> = new Set([
+  'done',
+  'complete',
+  'completed',
+  'closed',
+  'resolved',
+  'finished',
+  'cancelled',
+  'canceled',
+  'duplicate',
+  'released',
+  'shipped',
+  'archived',
+  'rejected',
+  "won't fix",
+  'wont fix',
+  'wontfix',
+]);
+
+/** The closing states as the planner's and the executor's list-read rules name them. */
+export const CLOSING_STATES_WORDS =
+  "done, cancelled, duplicate, released, shipped, archived, rejected or won't fix";
 
 /**
- * Whether a ticket state says the work is finished.
+ * Whether a ticket state closes the ticket: the work finished, cancelled, a duplicate, released,
+ * shipped, archived, rejected or won't fix.
  *
- * @param state - A status a change sets ("done", "Done", "In Progress").
+ * @param state - A status a change sets ("done", "Done", "In Progress", "Won't Fix").
  */
 export function isClosingState(state: string): boolean {
-  return CLOSING_STATE.test(state.trim());
+  return CLOSING_STATES.has(
+    state
+      .trim()
+      .toLowerCase()
+      .replace(/\u2019/g, "'")
+      .replace(/\s+/g, ' '),
+  );
 }

@@ -7,7 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, assertOwnsSkill } from './ownership';
+import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
@@ -26,6 +26,7 @@ import {
   versionBodyHash,
   type SurfaceTools,
 } from '../src/work/skill-library';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /*
  * The owner's skill library (the enhancements plan, section 4.1; K1 to K4).
@@ -33,7 +34,9 @@ import {
  * A version is what a verified skill is; an employee's `skills` row is what it holds. Every
  * lookup goes through `ownerVersions`, which leads every index read with the owner key, so a
  * lookup can only ever answer the owner it names: a lookup across owners is impossible by index,
- * not refused by a filter. 13-K re-points that one helper to `ownerScope`.
+ * not refused by a filter. The public `library` read passes it the caller's `ownerScope` (13-K);
+ * the internal paths pass the employee's owner key, the same scope today, which a company key
+ * would route through `employeeOwnerScope` too.
  *
  * Writers: registration (`skills.completeRegistration`, through `recordRegisteredVersion`), the
  * re-check stamp (`stampRecheckDue`, the helper every trigger calls), the handover's copy
@@ -466,7 +469,7 @@ async function replacedVersionOf(
 /**
  * The retire's rule for an author (the plan's "retire and transfer, with the library"): the
  * owner's versions stay, since other employees may hold them, and stop naming the departed
- * employee; `authorName` keeps the name for the card.
+ * employee; `authorName` keeps the name for the card, and `authorLeft` how and when it left.
  *
  * @param ctx - The retire's or the move's mutation context.
  * @param agentId - The departing employee.
@@ -484,7 +487,15 @@ export async function releaseAuthor(
     .withIndex('by_author', (q) => q.eq('authorAgentId', agentId))
     .collect();
   const released = authored.filter((version) => version.userId !== keptBy);
-  for (const version of released) await ctx.db.patch(version._id, { authorAgentId: undefined });
+  // How the author left, for the adoption card's words (13-K's field; wave 13 item 7): a retire
+  // keeps no owner's versions naming it, a handover keeps the new owner's.
+  const authorLeft = {
+    how: keptBy === undefined ? 'retired' : 'transferred',
+    at: Date.now(),
+  } as const;
+  for (const version of released) {
+    await ctx.db.patch(version._id, { authorAgentId: undefined, authorLeft });
+  }
   return released.length;
 }
 
@@ -548,7 +559,7 @@ export async function copyVersionsForMove(
     // An offer is the old owner's library speaking, not something the employee holds: it goes,
     // and an adoption under way goes with it (the wave 10 review, B1).
     if (row.offeredVersionId !== undefined) {
-      await endOfferAtMove(ctx, row);
+      await endOfferAtMove(ctx, row, now);
     } else if (row.state !== 'registered' && holdsParkedStoredCopy(row)) {
       // A copy whose offer is gone by any path still goes: nothing of the version crosses.
       await ctx.db.patch(row._id, STORED_COPY_CLEARED);
@@ -605,7 +616,7 @@ const ENDED_ROW_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
  * manager's approval. A check still running is fenced out of the row by the released claim. An
  * adoption that ended (declined, retired, superseded) stays as it ended, its copy gone.
  */
-async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<void> {
+async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>, now: number): Promise<void> {
   if (row.state === 'proposed') {
     await ctx.db.patch(row._id, { offeredVersionId: undefined });
     return;
@@ -617,6 +628,7 @@ async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<voi
   }
   await ctx.db.patch(row._id, {
     state: 'proposed',
+    ...skillWaitingStamp('proposed', now),
     offeredVersionId: undefined,
     ...STORED_COPY_CLEARED,
     authoringAttempts: undefined,
@@ -916,13 +928,15 @@ function libraryEntry(version: Doc<'skillVersions'>): LibraryEntry {
 
 /**
  * Public, guarded by `assertOwnsAgent`: the versions of one shape in the library of the
- * employee's owner, newest first. Reads only; the lookup is the owner's by index.
+ * employee's owner, newest first. Reads only; the lookup is the caller's owner scope by index
+ * (`ownerScope`, 13-K), which the guard has just held to be the employee's owner.
  */
 export const library = query({
   args: { agentId: v.id('agents'), surfaceClass: v.string(), operation: v.string() },
   handler: async (ctx, args): Promise<LibraryEntry[]> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const versions = await ownerVersions(ctx.db, agent.userId!, {
+    const caller = await getCallerOrThrow(ctx);
+    await assertOwnsAgent(ctx, args.agentId);
+    const versions = await ownerVersions(ctx.db, ownerScope(caller), {
       by: 'shape',
       surfaceClass: args.surfaceClass,
       operation: args.operation,

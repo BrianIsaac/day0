@@ -7,6 +7,7 @@ import {
   AGENT_KEYED_TABLES,
   DEPLOYMENT_ACCESS_TABLES,
   OWNER_LIBRARY_TABLES,
+  OWNER_PEOPLE_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
   retireDuringHandoverRefusal,
@@ -1471,9 +1472,12 @@ describe('deleteMyData and the handover requests it keeps (decision 7)', (): voi
 });
 
 describe('holdings: what a deletion would remove, read before its control is pressed (the v0.13.0 walk)', (): void => {
+  // Re-pinned at 13-K: the deletion now takes the owner's people graph and agreements too, so
+  // holdings answers whether any is held (`people`).
   const NOTHING = {
     employees: false,
     skillLibrary: false,
+    people: false,
     handoverWords: false,
     retiredBoundaries: false,
     documentation: false,
@@ -1829,5 +1833,305 @@ describe('holdings: what a deletion would remove, read before its control is pre
     });
     await owner.mutation(api.reset.deleteMyData, {});
     expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+  });
+});
+
+describe('the people graph and the working agreements at a retire and a deletion (13-K, RM5)', (): void => {
+  /** Two employees of one owner, a graph of theirs and agreements of each kind, and a rival's. */
+  async function seedGraph(harness: TestConvex<typeof schema>): Promise<{
+    priya: Id<'agents'>;
+    mateo: Id<'agents'>;
+    aiko: Id<'people'>;
+    ownerRow: Id<'people'>;
+    identity: Id<'personIdentities'>;
+    priyasEdge: Id<'relationships'>;
+    priyasEnded: Id<'relationships'>;
+    mateosEdge: Id<'relationships'>;
+    personsEdge: Id<'relationships'>;
+    priyasAgreement: Id<'workingAgreements'>;
+    mateosAgreement: Id<'workingAgreements'>;
+    everyEmployee: Id<'workingAgreements'>;
+    rivals: { person: Id<'people'>; agreement: Id<'workingAgreements'> };
+  }> {
+    return await harness.run(async (ctx) => {
+      const employee = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+      const person = async (userId: string, displayName: string, isOwner = false) =>
+        await ctx.db.insert('people', {
+          userId,
+          displayName,
+          nameKey: displayName.toLowerCase(),
+          ...(isOwner ? { isOwner: true, primaryEmail: MANAGER_ADDRESS } : {}),
+          status: 'active',
+          source: isOwner ? 'owner' : 'charter',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const edge = async (fields: {
+        fromAgentId?: Id<'agents'>;
+        fromPersonId?: Id<'people'>;
+        toPersonId: Id<'people'>;
+        effectiveUntil?: number;
+        status?: 'active' | 'superseded';
+      }): Promise<Id<'relationships'>> =>
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          type: 'escalation-contact',
+          effectiveFrom: 1,
+          status: 'active',
+          source: 'charter',
+          createdAt: 1,
+          ...fields,
+        });
+      const agreement = async (userId: string, agentId?: Id<'agents'>) =>
+        await ctx.db.insert('workingAgreements', {
+          userId,
+          ...(agentId === undefined ? {} : { agentId }),
+          kind: 'preference',
+          statement: 'Post in the morning.',
+          scope: 'global',
+          sourceType: 'manager-card',
+          status: 'active',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        });
+      const priya = await employee('Priya');
+      const mateo = await employee('Mateo');
+      const ownerRow = await person('owner', 'Rowan', true);
+      const aiko = await person('owner', 'Aiko');
+      const identity = await ctx.db.insert('personIdentities', {
+        userId: 'owner',
+        personId: aiko,
+        provider: 'slack',
+        externalId: 'U0AIKO',
+        source: 'provider-lookup',
+        createdAt: 1,
+      });
+      return {
+        priya,
+        mateo,
+        aiko,
+        ownerRow,
+        identity,
+        priyasEdge: await edge({ fromAgentId: priya, toPersonId: aiko }),
+        priyasEnded: await edge({
+          fromAgentId: priya,
+          toPersonId: aiko,
+          effectiveUntil: 5,
+          status: 'superseded',
+        }),
+        mateosEdge: await edge({ fromAgentId: mateo, toPersonId: aiko }),
+        personsEdge: await edge({ fromPersonId: ownerRow, toPersonId: aiko }),
+        priyasAgreement: await agreement('owner', priya),
+        mateosAgreement: await agreement('owner', mateo),
+        everyEmployee: await agreement('owner'),
+        rivals: { person: await person('rival', 'Tomas'), agreement: await agreement('rival') },
+      };
+    });
+  }
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  for (const mode of ['real', 'mock'] as const) {
+    it(`an employee's retire retires its edges and keeps the owner's people (${mode} mode)`, async (): Promise<void> => {
+      useSurfaceMode(mode);
+      const harness = convexTest(schema, allConvexModules());
+      const seeded = await seedGraph(harness);
+      const before = Date.now();
+
+      await harness
+        .withIdentity(managerIdentity())
+        .mutation(api.reset.retire, { agentId: seeded.priya });
+
+      const read = await harness.run(async (ctx) => ({
+        priyasEdge: await ctx.db.get(seeded.priyasEdge),
+        priyasEnded: await ctx.db.get(seeded.priyasEnded),
+        mateosEdge: await ctx.db.get(seeded.mateosEdge),
+        personsEdge: await ctx.db.get(seeded.personsEdge),
+        people: await ctx.db.query('people').collect(),
+        identity: await ctx.db.get(seeded.identity),
+        agreements: (await ctx.db.query('workingAgreements').collect()).map((row) => row._id),
+      }));
+      expect(read.priyasEdge).toMatchObject({ status: 'retired', fromAgentId: seeded.priya });
+      expect(read.priyasEdge?.effectiveUntil).toBeGreaterThanOrEqual(before);
+      // An edge that had already ended keeps how and when it ended.
+      expect(read.priyasEnded).toMatchObject({ status: 'superseded', effectiveUntil: 5 });
+      expect(read.mateosEdge).toMatchObject({ status: 'active' });
+      expect(read.mateosEdge).not.toHaveProperty('effectiveUntil');
+      expect(read.personsEdge).toMatchObject({ status: 'active' });
+      expect(read.people).toHaveLength(3);
+      expect(read.identity).not.toBeNull();
+      // The employee's own agreement goes with it; its colleague's and every employee's stay.
+      expect(read.agreements.sort()).toEqual(
+        [seeded.mateosAgreement, seeded.everyEmployee, seeded.rivals.agreement].sort(),
+      );
+    });
+  }
+
+  it('retires a proposed or disputed edge at a retire without giving it a time it held, which it never did (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedGraph(harness);
+    const { proposed, disputed } = await harness.run(async (ctx) => {
+      const edge = async (status: 'proposed' | 'disputed') =>
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromAgentId: seeded.priya,
+          toPersonId: seeded.aiko,
+          type: 'approval-authority',
+          effectiveFrom: 1,
+          status,
+          source: 'documentation',
+          createdAt: 1,
+        });
+      return { proposed: await edge('proposed'), disputed: await edge('disputed') };
+    });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.retire, { agentId: seeded.priya });
+
+    const read = await harness.run(async (ctx) => ({
+      proposed: await ctx.db.get(proposed),
+      disputed: await ctx.db.get(disputed),
+      active: await ctx.db.get(seeded.priyasEdge),
+    }));
+    for (const edge of [read.proposed, read.disputed]) {
+      expect(edge?.status).toBe('retired');
+      expect(edge).not.toHaveProperty('effectiveUntil');
+    }
+    expect(read.active?.effectiveUntil).toEqual(expect.any(Number));
+  });
+
+  it('deletes a graph of more than one page of each table in the one deletion (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 205; index += 1) {
+        const personId = await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: `Person ${index}`,
+          nameKey: `person ${index}`,
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('personIdentities', {
+          userId: 'owner',
+          personId,
+          provider: 'linear',
+          externalId: `lin-${index}`,
+          source: 'documentation',
+          createdAt: 1,
+        });
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromPersonId: personId,
+          toPersonId: personId,
+          type: 'collaborator',
+          effectiveFrom: 1,
+          status: 'proposed',
+          source: 'documentation',
+          createdAt: 1,
+        });
+      }
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    const left = await harness.run(async (ctx) => ({
+      people: (await ctx.db.query('people').collect()).length,
+      identities: (await ctx.db.query('personIdentities').collect()).length,
+      edges: (await ctx.db.query('relationships').collect()).length,
+    }));
+    expect(left).toEqual({ people: 0, identities: 0, edges: 0 });
+    expect([...OWNER_PEOPLE_TABLES]).toEqual(['people', 'personIdentities', 'relationships']);
+  });
+
+  it("deleteMyData deletes the owner's people, identities, edges and every agreement, and no other owner's", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedGraph(harness);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    const left = await harness.run(async (ctx) => ({
+      people: (await ctx.db.query('people').collect()).map((row) => row._id),
+      identities: await ctx.db.query('personIdentities').collect(),
+      edges: await ctx.db.query('relationships').collect(),
+      agreements: (await ctx.db.query('workingAgreements').collect()).map((row) => row._id),
+    }));
+    expect(left).toEqual({
+      people: [seeded.rivals.person],
+      identities: [],
+      edges: [],
+      agreements: [seeded.rivals.agreement],
+    });
+  });
+
+  it("holds the people and agreements a deletion takes, never counting the owner's own row, which a sign-in writes again", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const caller = harness.withIdentity(managerIdentity());
+    const ownRow = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: 'Rowan',
+          nameKey: 'rowan',
+          primaryEmail: MANAGER_ADDRESS,
+          isOwner: true,
+          status: 'active',
+          source: 'owner',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    expect((await caller.query(api.reset.holdings, {})).people).toBe(false);
+    // The empty state names the owner's own entry, which the deletion removes too (W13-R51).
+    expect((await caller.query(api.reset.holdings, {})).ownEntry).toBe(true);
+
+    const agreement = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: 'Post in the morning.',
+          scope: 'global',
+          sourceType: 'manager-card',
+          status: 'proposed',
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    expect((await caller.query(api.reset.holdings, {})).people).toBe(true);
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(agreement);
+      await ctx.db.insert('people', {
+        userId: 'owner',
+        displayName: 'Aiko',
+        nameKey: 'aiko',
+        status: 'unverified',
+        source: 'documentation',
+        evidence: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    expect((await caller.query(api.reset.holdings, {})).people).toBe(true);
+
+    await caller.mutation(api.reset.deleteMyData, {});
+    expect(await caller.query(api.reset.holdings, {})).toMatchObject({ people: false });
+    expect(await harness.run(async (ctx) => await ctx.db.get(ownRow))).toBeNull();
   });
 });

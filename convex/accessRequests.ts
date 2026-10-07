@@ -24,6 +24,7 @@ import {
 } from '../src/surfaces/access-request';
 import { BOSS_MESSAGE_SCOPE, surfaceRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { channelAllowlist } from '../src/surfaces/slack-own-channel';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { accessEnded } from '../src/work/surface-access';
 import { slackEscaped } from '../src/surfaces/slack-markup';
@@ -360,8 +361,8 @@ export const recordSent = mutation({
 
 /**
  * The Slack card the employee's manager DM goes through, if it has one: connected on Slack's
- * documented API, its credential landed, its access not ended, its allowlist naming
- * `chat.postMessage`, its manager DM known, and the DM granted as the gate grants it
+ * documented API, its credential landed, its access not ended, its channel allowlist naming
+ * `chat.postMessage` (always, on an app Day0 created: 13-FS's design 1 (b)), its manager DM known, and the DM granted as the gate grants it
  * (`boss:message` or the card's own write scope, `grantingScopes`).
  */
 async function managerDmCardOf(
@@ -389,7 +390,7 @@ async function managerDmCardOf(
       surface.managerDmChannelId !== undefined &&
       surface.path === 'documented-api' &&
       isSlackApiEndpoint(surface.endpoint) &&
-      surface.toolAllowlist?.includes('chat.postMessage') === true &&
+      channelAllowlist(toSurfaceRecord(surface)).includes('chat.postMessage') &&
       (active.has(BOSS_MESSAGE_SCOPE) || active.has(`${surface.slug}:write`)) &&
       !accessEnded(surface, now) &&
       surfaceRefusal(toSurfaceRecord(surface), now) === undefined,

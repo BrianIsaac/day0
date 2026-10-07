@@ -37,7 +37,6 @@ async function seedDiscovery(
     });
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId,
-      refs: [],
       credentialRefs: [],
       pageCount: 0,
       redactionCount: 0,
@@ -57,7 +56,6 @@ async function nextRun(
   return await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId,
-      refs: [],
       credentialRefs: [],
       pageCount: 0,
       redactionCount: 0,
@@ -394,7 +392,6 @@ describe('documentation discovery lifecycle', (): void => {
         });
         const otherRunId = await ctx.db.insert('docSyncRuns', {
           sourceId: otherSourceId,
-          refs: [],
           credentialRefs: [],
           pageCount: 0,
           redactionCount: 0,
@@ -593,7 +590,6 @@ describe('documentation discovery lifecycle', (): void => {
         });
         const otherRunId = await ctx.db.insert('docSyncRuns', {
           sourceId: otherSourceId,
-          refs: [],
           credentialRefs: [],
           pageCount: 0,
           redactionCount: 0,

@@ -36,6 +36,7 @@ import {
 import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
 import { returnApprovalsForHandover, voidDecisionRequestsForHandover } from './work';
 import { stopRunsForHandover } from './workRuns';
+import { moveGraphInTransaction } from './peopleProposals';
 import {
   HANDOVER_ENDED_CANCEL_REASON,
   HANDOVER_SETTINGS_REASON,
@@ -502,8 +503,10 @@ async function moveRefusal(
  * copied into the new owner's library, and its skills on a cut surface are due a re-check
  * (`copyVersionsForMove`, K2); the live claims are moved or released; the
  * work in flight is settled ({@link settleWorkInFlight}); the old owner's credential names leave
- * the record; the employee row is written for the new owner and the identity file rendered for
- * them; the old owner keeps a departure row in real mode, and their employees a released claim
+ * the record; the employee row is written for the new owner, its edges in the old owner's people
+ * graph retired with the old owner's agreements that bind it alone, the charter's people proposed
+ * afresh in the new owner's graph (`moveGraphInTransaction`, wave 13), and the identity file
+ * rendered for them; the old owner keeps a departure row in real mode, and their employees a released claim
  * refused are woken; the old mirrors are deleted in pages and the new owner's documentation
  * mirrored; and the request is marked accepted with what the move did, beside one
  * `manager.transferred` event.
@@ -537,6 +540,12 @@ async function moveEmployeeInTransaction(
   const work = await settleWorkInFlight(ctx, agent, now);
   await redactSupersededCredentials(ctx, agent._id);
   await settleEmployeeRow(ctx, agent, transfer, now);
+  await moveGraphInTransaction(ctx, {
+    agentId: agent._id,
+    fromOwnerKey: transfer.fromOwnerKey,
+    toOwnerKey: transfer.toOwnerKey,
+    now,
+  });
   await renderIdentityForManager(ctx, agent._id);
   await leaveDeparture(ctx, agent, transfer, boundaries, cut, now);
   await wakeReleasedClaims(ctx, transfer.fromOwnerKey, boundaries.released);

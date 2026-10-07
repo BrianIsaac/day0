@@ -53,6 +53,7 @@ import {
   runDecisionSweep,
   runIntakeSweep,
   safeIntakeError,
+  slackCandidate,
   slackChannelsFromPages,
   type IntakeDependencies,
   type IntakeDocumentation,
@@ -2109,6 +2110,8 @@ describe('intake provider contracts', (): void => {
       priority: 'Urgent',
       requesterLabel: 'Sam',
       requester: 'Sam',
+      // Whom intake asks the people graph about (13-P): the name Linear printed, no id given.
+      people: { requester: [{ provider: 'linear', displayName: 'Sam' }] },
     });
     const assigneeOnly = linearCandidate(
       {
@@ -3598,6 +3601,34 @@ describe("the app's own posts are never intake", (): void => {
     expect(authCalls).toBe(3);
     const again = await sweepWithAuth({ ok: false, error: 'not_called' }, surfaces);
     expect(again.authCalls).toBe(0);
+  });
+
+  it('reads the bot id on an app Day0 created though its page never names auth.test (design 1 (b))', async (): Promise<void> => {
+    const surfaces = sharedKeySurfaces({
+      providerBotId: undefined,
+      probeGeneration: 4,
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      credentialKind: 'oauth',
+      provisioning: {
+        appId: 'A0BOT',
+        appName: 'Day0 bot',
+        clientId: '1.2',
+        clientSecretCredentialId: id<'credentials'>('credential-client-secret'),
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.local/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      },
+    });
+    const { harness, authCalls } = await sweepWithAuth(
+      { ok: true, user_id: BOT_USER, bot_id: BOT_ID },
+      surfaces,
+    );
+    expect(harness.botIdentities).toEqual(
+      surfaces.map((surface) => ({ surfaceId: surface._id, generation: 4, providerBotId: BOT_ID })),
+    );
+    expect(authCalls).toBe(surfaces.length);
   });
 
   it('reads no work when the app identity cannot be established, and says what heals it', async (): Promise<void> => {
@@ -5247,5 +5278,221 @@ describe("a Slack ask's asker, by name where the card allows users.info (the sec
     });
     // One question per asker, however many asks they made.
     expect(infoAsked.toSorted()).toEqual(['UGONE', 'UPRIYA']);
+  });
+});
+
+describe('the people intake asks the graph about (wave 13, 13-P; Q11, RM6)', (): void => {
+  const observedAt = Date.parse('2026-10-05T02:00:00.000Z');
+
+  it("asks about a Linear creator and assignee by the provider's id and display name, then an address", (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+      providerWorkspaceId: 'org-kestrel',
+    });
+    const printed = linearCandidate(
+      {
+        id: 'FIN-1',
+        title: 'Post the close note',
+        url: 'https://linear.app/kestrel/issue/FIN-1',
+        createdBy: 'Rowan Hale',
+        createdById: 'lin-rowan',
+        assignee: 'Dana Okafor',
+        assigneeId: 'lin-dana',
+      },
+      surface,
+      observedAt,
+    );
+    expect(printed?.people).toEqual({
+      requester: [
+        {
+          provider: 'linear',
+          externalId: 'lin-rowan',
+          displayName: 'Rowan Hale',
+          workspaceId: 'org-kestrel',
+        },
+      ],
+      owner: [
+        {
+          provider: 'linear',
+          externalId: 'lin-dana',
+          displayName: 'Dana Okafor',
+          workspaceId: 'org-kestrel',
+        },
+      ],
+    });
+    expect(printed).toMatchObject({ requester: 'Rowan Hale', owner: 'Dana Okafor' });
+
+    const nested = linearCandidate(
+      {
+        id: 'FIN-2',
+        title: 'Reconcile',
+        url: 'https://linear.app/kestrel/issue/FIN-2',
+        assignee: { id: 'lin-dana', name: 'Dana Okafor', email: 'Dana@Kestrel.test' },
+      },
+      surface,
+      observedAt,
+    );
+    expect(nested?.people).toEqual({
+      owner: [
+        {
+          provider: 'linear',
+          externalId: 'lin-dana',
+          displayName: 'Dana Okafor',
+          workspaceId: 'org-kestrel',
+        },
+        { provider: 'email', externalId: 'Dana@Kestrel.test' },
+      ],
+    });
+    const unheld = linearCandidate(
+      { id: 'FIN-3', title: 'Unassigned', url: 'https://linear.app/kestrel/issue/FIN-3' },
+      surface,
+      observedAt,
+    );
+    expect(unheld).not.toHaveProperty('people');
+  });
+
+  it("asks about a Slack asker by the user id in the card's workspace, never by the name Slack gives them", (): void => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', { providerWorkspaceId: 'T0KESTREL' });
+    const ask = slackCandidate(
+      { ts: '1770000000.000100', user: 'UPRIYA', text: '<@UBOT> please review' },
+      { id: 'CASKS', name: 'ops-requests' },
+      surface,
+      observedAt,
+      'Priya',
+    );
+    expect(ask.requesterLabel).toBe('Priya');
+    expect(ask.people).toEqual({
+      requester: [{ provider: 'slack', externalId: 'UPRIYA', workspaceId: 'T0KESTREL' }],
+    });
+    const botless = slackCandidate(
+      { ts: '1770000000.000101', text: 'no author' },
+      { id: 'CASKS', name: 'ops-requests' },
+      surface,
+      observedAt,
+    );
+    expect(botless).not.toHaveProperty('people');
+  });
+});
+
+describe("the typed code on an employee's own app whose page names no history method (W13-R1, R-S1 (a))", (): void => {
+  const pollAt = Date.parse('2026-10-07T09:05:00.000Z');
+  const credentialId = id<'credentials'>('credential-slack');
+
+  /** A connected Slack card whose documentation page names only the work's list and post. */
+  function thinPageCard(patch: Partial<Doc<'surfaces'>> = {}): Doc<'surfaces'> {
+    return surfaceRow('slack', 'Slack', 'chat', {
+      credentialId,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'chat.postMessage'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: Date.parse('2026-10-07T09:00:00.000Z'),
+      ...patch,
+    });
+  }
+
+  /** The same card as an app Day0 created through IT's connection and installed. */
+  function ownAppCard(): Doc<'surfaces'> {
+    return thinPageCard({
+      credentialKind: 'oauth',
+      provisioning: {
+        appId: 'A0PRIYA',
+        appName: 'Priya (Day0)',
+        clientId: '1.2',
+        clientSecretCredentialId: id<'credentials'>('credential-client-secret'),
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.local/api/slack/oauth',
+        scopes: ['chat:write', 'im:history'],
+        createdAt: 1,
+        installedAt: 2,
+      },
+    });
+  }
+
+  /** Slack's DM: the manager's typed code at the top level and again under the request. */
+  function managerDm(): {
+    fetcher: (input: string | URL | Request) => Promise<Response>;
+    calls: URL[];
+  } {
+    const calls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      calls.push(url);
+      return slackResponse({
+        ok: true,
+        messages: [{ ts: '1791363000.000100', user: 'UMANAGER', text: 'approve cg7e4p' }],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+    return { fetcher, calls };
+  }
+
+  it('reads the typed code from the DM and decides it, with no decision error', async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [ownAppCard()],
+      [],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    harness.openDecisions.set('surface-slack', openRequest('cg7e4p', '1791362900.000100'));
+    const { fetcher, calls } = managerDm();
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+    ).resolves.toMatchObject({ polled: 1, skipped: 0 });
+    expect(calls.map((url) => [url.pathname, url.searchParams.get('channel')])).toEqual([
+      ['/api/conversations.history', 'DMANAGER'],
+      ['/api/conversations.replies', 'DMANAGER'],
+    ]);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1791363000.000100',
+        reply: { verb: 'approve', id: 'cg7e4p' },
+      },
+    ]);
+    expect(harness.decisionPolls).toEqual([
+      { surfaceId: id<'surfaces'>('surface-slack'), polledAt: pollAt },
+    ]);
+  });
+
+  it("still refuses on a shared token, whose page's half decides", async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [thinPageCard()],
+      [],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    harness.openDecisions.set('surface-slack', openRequest('cg7e4p', '1791362900.000100'));
+    const { fetcher, calls } = managerDm();
+
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher });
+    expect(calls).toEqual([]);
+    expect(harness.decisions).toEqual([]);
+    expect(harness.decisionPolls).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        failure:
+          'decision poll failed: Connected Slack surface does not allow conversations.history.',
+      },
+    ]);
+  });
+
+  it("reads no work channel through the DM's widening: intake still needs the page to name the history method", async (): Promise<void> => {
+    const harness = runtimeHarness(
+      [ownAppCard()],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(credentialId), 'slack-value']]),
+    );
+    const { fetcher, calls } = managerDm();
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher });
+    expect(calls.filter((url) => url.pathname.endsWith('/conversations.history'))).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([
+      'intake failed: Connected Slack surface does not allow conversations.history.',
+    ]);
   });
 });

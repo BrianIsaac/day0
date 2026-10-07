@@ -370,8 +370,8 @@ export const syncSource = internalAction({
  * Every link of a sync's chain enters here (the first batch, each
  * continuation, a restart, the finish), so while the deployment's scheduled
  * work is paused (`DAY0_CRONS_PAUSED`) a batch reads nothing and schedules
- * nothing: its run ends short at its cursor with {@link SYNC_HELD_REASON}
- * (`failSync`), the source is no longer `linking`, and the cron's first run
+ * nothing: its run ends short at its cursor, `held` with {@link SYNC_HELD_REASON}
+ * (`failSync`), the source is `held` rather than `linking`, and the cron's first run
  * after the pause lists it and takes the run over from that cursor
  * (`beginSync`), as a work step queued before the pause holds at its claim
  * (12-P; the wave file's 4.3).
@@ -392,7 +392,7 @@ export const syncBatch = internalAction({
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: args.sourceId,
         runId: args.runId,
-        status: 'error',
+        status: 'held',
         reason: SYNC_HELD_REASON,
       });
       return { ok: false, pages: 0, redactions: 0, complete: false, reason: SYNC_HELD_REASON };
@@ -597,6 +597,14 @@ async function finishGeneration(
       sourceId: source._id,
       runId,
     });
+    // The people the generation's pages name, proposed for the manager to confirm (wave 13,
+    // 13-P): the graph is real mode's.
+    if (SURFACE_MODE === 'real') {
+      await ctx.scheduler.runAfter(0, internal.peopleExtractionActions.extractSource, {
+        sourceId: source._id,
+        runId,
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
       sourceId: source._id,
       pagesRemoved,

@@ -37,10 +37,17 @@ export interface ProvisioningRowProps {
   readonly error?: string;
   /** Register or install the app: with the token pasted, or with none through IT's connection. */
   readonly onProvision: (configurationToken?: string) => void;
+  /** Forget an app IT's revoke ended, so a new one can be created (13-FS's design 2 (b)). */
+  readonly onForget?: () => void;
   readonly presentation: ProvisioningPresentation;
   readonly provisioning: boolean;
+  /** Whether the forget is in flight. */
+  readonly forgetting?: boolean;
   readonly surfaceSlug: string;
 }
+
+/** The control that forgets an app IT's revoke ended (13-FS's design 2 (b)). A draft. */
+export const FORGET_APP_LABEL = 'Forget this app';
 
 /** Where orientation found a system: the pages it cites, by source. */
 export function DiscoveryProvenance({
@@ -692,6 +699,18 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
             onClick={(): void => props.onProvision()}
           >
             {props.provisioning ? 'Registering the app…' : provisionLabel(props.presentation)}
+          </Button>
+        </div>
+      ) : null}
+      {props.presentation.stage === 'not-reinstalled' && props.onForget !== undefined ? (
+        <div className="mt-3">
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={props.forgetting === true}
+            onClick={props.onForget}
+          >
+            {props.forgetting === true ? 'Forgetting the app…' : FORGET_APP_LABEL}
           </Button>
         </div>
       ) : null}

@@ -34,9 +34,18 @@ import {
   withArgumentRepairs,
   runSkill,
   type RunDependentSkillArgs,
+  surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import type { AppliedAction } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import {
+  FIELDS_AS_LIST_ARGS,
+  FIELDS_AS_STRING_ARGS,
+  FIELDS_REFUSED,
+  FIELDS_REFUSED_AGAIN,
+  LINEAR_LIST,
+  listIssues,
+} from '../../fixtures/work/first-read-refused-2026-10-05';
 
 const recordedFlatArgs = {
   body: '',
@@ -1641,5 +1650,159 @@ describe('real-mode argument repair', (): void => {
       },
     });
     expect(modelDown.applied).toEqual([failed(VALIDATION)]);
+  });
+});
+
+describe('a first read refused by the tool’s schema (W12V-12, wave 13 item 3)', (): void => {
+  const candidate: WorkCandidate = {
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-5',
+    title: '[w12 walk] Post the close-week notes',
+    contentSummary: 'Count the open REVOPS tickets in Q3 close.',
+    contentRefs: ['ticket://REVOPS-5'],
+    observedAt: new Date(0),
+  };
+  const landed: AppliedAction = {
+    tool: 'mcp.call',
+    ok: true,
+    effect: 'list_issues on linear · {"issues":[]}',
+    authority: 'standing',
+    idempotencyKey: '',
+  };
+
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('takes the read once more without the arguments the repaired call was refused for', async (): Promise<void> => {
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(FIELDS_AS_STRING_ARGS) });
+    const sent: string[] = [];
+    const { fields: _fields, ...withoutFields } = FIELDS_AS_STRING_ARGS;
+    void _fields;
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (action: MockAction, index: number): Promise<AppliedAction> => {
+        sent.push(action.args.toolArgsJson ?? '');
+        return action.args.toolArgsJson === JSON.stringify(withoutFields)
+          ? { ...landed, idempotencyKey: `wi:run:${index}` }
+          : {
+              tool: 'mcp.call',
+              ok: false,
+              reason: FIELDS_REFUSED_AGAIN,
+              idempotencyKey: `wi:run:${index}`,
+            };
+      },
+    });
+    // One model call, as before; the second shape is the arguments the refusal named, left out.
+    expect(recorded.calls).toHaveLength(1);
+    expect(sent).toEqual([JSON.stringify(FIELDS_AS_STRING_ARGS), JSON.stringify(withoutFields)]);
+    expect(result.actions).toEqual([listIssues(withoutFields)]);
+    expect(result.applied[0]).toMatchObject({ ok: true, idempotencyKey: 'wi:run:0' });
+    expect(result.applied[0]!.repair).toEqual({
+      reason: `${FIELDS_REFUSED}; the repaired call was refused too for fields, so it was taken without them`,
+      toolArgsJson: JSON.stringify(FIELDS_AS_LIST_ARGS),
+    });
+  });
+
+  it('never leaves out a filter the repaired call was refused for, so a read is never taken wider than asked (the second pass)', async (): Promise<void> => {
+    const scoped = { ...FIELDS_AS_STRING_ARGS, state: 'Backlog' };
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(scoped) });
+    const sent: string[] = [];
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (action: MockAction, index: number): Promise<AppliedAction> => {
+        sent.push(action.args.toolArgsJson ?? '');
+        return {
+          tool: 'mcp.call',
+          ok: false,
+          reason: `Tool input validation failed for linear_list_issues. Please fix the following errors and try again:
+- state: must be equal to one of the allowed values
+
+Provided arguments: ${JSON.stringify(scoped)}`,
+          idempotencyKey: `wi:run:${index}`,
+        };
+      },
+    });
+    // The refusal named a filter: the repaired call's failure stands, and no third call is made.
+    expect(sent).toEqual([JSON.stringify(scoped)]);
+    expect(result.applied[0]).toMatchObject({ ok: false });
+  });
+
+  it('never leaves out an include filter the repaired call was refused for: it widens or narrows the read (W13-R42)', async (): Promise<void> => {
+    const archived = { ...FIELDS_AS_STRING_ARGS, includeArchived: false };
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(archived) });
+    const sent: string[] = [];
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (action: MockAction, index: number): Promise<AppliedAction> => {
+        sent.push(action.args.toolArgsJson ?? '');
+        return {
+          tool: 'mcp.call',
+          ok: false,
+          reason: `Tool input validation failed for linear_list_issues. Please fix the following errors and try again:
+- includeArchived: must be boolean
+
+Provided arguments: ${JSON.stringify(archived)}`,
+          idempotencyKey: `wi:run:${index}`,
+        };
+      },
+    });
+    expect(sent).toEqual([JSON.stringify(archived)]);
+    expect(result.applied[0]).toMatchObject({ ok: false });
+  });
+
+  it('leaves a second refusal that names no argument of the call as it stands', async (): Promise<void> => {
+    recorded.outputs.push({ toolArgsJson: JSON.stringify(FIELDS_AS_STRING_ARGS) });
+    const result = await repairFailedReads({
+      actions: [listIssues(FIELDS_AS_LIST_ARGS)],
+      applied: [
+        { tool: 'mcp.call', ok: false, reason: FIELDS_REFUSED, idempotencyKey: 'wi:run:0' },
+      ],
+      surfaces: [LINEAR_LIST],
+      skill: { name: 'kanban-comment-and-close' },
+      candidate,
+      apply: async (_action: MockAction, index: number): Promise<AppliedAction> => ({
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'Tool input validation failed: - root: must be object',
+        idempotencyKey: `wi:run:${index}`,
+      }),
+    });
+    expect(result.applied[0]).toMatchObject({
+      ok: false,
+      reason: 'Tool input validation failed: - root: must be object',
+    });
+    expect(result.actions).toEqual([listIssues(FIELDS_AS_STRING_ARGS)]);
+  });
+});
+
+describe('the executor’s read guidance for a list read (W12V-12, wave 13 item 3)', (): void => {
+  it('tells a real run to select no fields and to read open items across their open states', (): void => {
+    const text = surfaceInstructions([LINEAR_LIST], 1, 'real');
+    expect(text).toContain(
+      // Re-pinned for W13-R42: one closing-state vocabulary with isClosingState.
+      "  - A list read (`list_issues` and the like) takes only the filters the work needs. Leave out an argument that only selects which fields come back (`fields`): the list answers with every field. Scope it by `state` only to a state the work names: an open item can be in any state that is not done, cancelled, duplicate, released, shipped, archived, rejected or won't fix, such as Backlog, Todo or In Progress, so read open items with no state filter.",
+    );
+    expect(surfaceInstructions([LINEAR_LIST], 1, 'mock')).not.toContain('A list read');
   });
 });

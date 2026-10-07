@@ -6,13 +6,14 @@ import {
   nextCharterVersion,
   LIST_CLAUSE_FIELDS,
 } from '@/agent/charter-amendment';
-import { useState, useId, useRef } from 'react';
+import { useEffect, useState, useId, useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { CharterCardBody } from './CharterCard';
 import { listedRules, strikePreview, type CharterConstraint } from '@/agent/charter-constraints';
 import { type SystemClass, SYSTEM_CLASSES } from '@/agent/system-classes';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
+import { AMEND_CHARTER_ANCHOR } from '../employee-tabs';
 
 const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
   willDo: 'Will do',
@@ -242,9 +243,28 @@ export function AmendCharterPanel({
   });
   const answered = body.answeredQuestions ?? [];
   const openQuestions = managerOpenQuestions(body);
+  const disclosure = useRef<HTMLDetailsElement>(null);
+  const summary = useRef<HTMLElement>(null);
+  // Reached at its anchor (the Work tab's Amend the charter, 13-J), the disclosure opens itself
+  // and takes focus; the browser alone would only scroll to a closed summary. It covers the page's
+  // load at the anchor and a hash change; a client link to the anchor from this same page, which
+  // fires no hash change, would need its own call.
+  useEffect((): (() => void) => {
+    const openAtAnchor = (): void => {
+      if (window.location.hash !== `#${AMEND_CHARTER_ANCHOR}` || !disclosure.current) return;
+      disclosure.current.open = true;
+      disclosure.current.scrollIntoView({ block: 'start' });
+      summary.current?.focus({ preventScroll: true });
+    };
+    openAtAnchor();
+    window.addEventListener('hashchange', openAtAnchor);
+    return (): void => window.removeEventListener('hashchange', openAtAnchor);
+  }, []);
   return (
-    <details className="text-sm">
-      <summary className={DISCLOSURE_SUMMARY}>Amend this charter · next version v{next}</summary>
+    <details id={AMEND_CHARTER_ANCHOR} ref={disclosure} className="text-sm scroll-mt-24">
+      <summary ref={summary} className={DISCLOSURE_SUMMARY}>
+        Amend this charter · next version v{next}
+      </summary>
       <div className="mt-2 space-y-4 border-l border-[var(--color-border)] pl-3">
         <p className="text-[13px] text-[var(--color-muted)]">
           Each save writes version {next} as its own row and re-checks the work waiting on the

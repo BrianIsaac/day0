@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { DataModel, Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -1577,5 +1577,790 @@ describe('the wave 12 schema step (12-S3, N10)', (): void => {
     expect(indexNames('agents')).toContain('by_userId');
     expect(indexNames('skills')).not.toContain('by_version');
     expect(indexNames('skills')).toContain('by_owner_version');
+  });
+});
+
+describe('the wave 13 schema step (13-K, N10: additive and optional)', (): void => {
+  /** The names of a table's indexes, as the push declares them. */
+  const indexNames = (table: keyof typeof schema.tables): string[] =>
+    schema.tables[table][' indexes']().map((index) => index.indexDescriptor);
+
+  /** An owned employee, the row the tests below hang their rows on. */
+  async function employee(ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> {
+    return await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Priya',
+      userId: 'owner',
+      state: 'active',
+      createdAt: 1,
+    });
+  }
+
+  /** A person of the owner's graph, with the fields a test gives it. */
+  const person = (
+    fields: Partial<WithoutSystemFields<Doc<'people'>>> = {},
+  ): WithoutSystemFields<Doc<'people'>> => ({
+    userId: 'owner',
+    displayName: 'Aiko Tanaka',
+    nameKey: 'aiko tanaka',
+    status: 'unverified',
+    source: 'documentation',
+    evidence: [],
+    createdAt: 1,
+    updatedAt: 1,
+    ...fields,
+  });
+
+  it("stores the owner's people and their identities, read by status, address, name, the owner's own row, provider id and display name", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const owner = await ctx.db.insert(
+        'people',
+        person({
+          displayName: 'Rowan Hale',
+          nameKey: 'rowan hale',
+          primaryEmail: 'rowan@example.com',
+          isOwner: true,
+          status: 'active',
+          source: 'owner',
+          confirmedAt: 2,
+        }),
+      );
+      const proposed = await ctx.db.insert(
+        'people',
+        person({
+          title: 'Finance systems owner',
+          team: 'Finance',
+          sourceRef: 'handbook/access.md',
+          evidence: [{ quote: 'Aiko owns the ledger', where: 'Access owners', at: 3, ref: 'a.md' }],
+          possiblySameAs: owner,
+        }),
+      );
+      const dismissed = await ctx.db.insert(
+        'people',
+        person({ displayName: 'Sam', nameKey: 'sam', status: 'dismissed', dismissedAt: 4 }),
+      );
+      const slack = await ctx.db.insert('personIdentities', {
+        userId: 'owner',
+        personId: owner,
+        provider: 'slack',
+        providerWorkspaceId: 'T0123',
+        externalId: 'U0123',
+        displayName: 'Rowan',
+        displayNameKey: 'rowan',
+        verifiedAt: 5,
+        source: 'provider-lookup',
+        createdAt: 5,
+      });
+      const linear = await ctx.db.insert('personIdentities', {
+        userId: 'owner',
+        personId: proposed,
+        provider: 'linear',
+        externalId: 'lin-user-1',
+        displayName: 'Aiko T.',
+        displayNameKey: 'aiko t',
+        source: 'documentation',
+        createdAt: 6,
+      });
+      const people = ctx.db.query('people');
+      return {
+        owner,
+        proposed,
+        dismissed,
+        slack,
+        linear,
+        unverified: await people
+          .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'unverified'))
+          .collect(),
+        byEmail: await ctx.db
+          .query('people')
+          .withIndex('by_user_email', (q) =>
+            q.eq('userId', 'owner').eq('primaryEmail', 'rowan@example.com'),
+          )
+          .unique(),
+        byName: await ctx.db
+          .query('people')
+          .withIndex('by_user_name', (q) => q.eq('userId', 'owner').eq('nameKey', 'sam'))
+          .unique(),
+        ownersOwn: await ctx.db
+          .query('people')
+          .withIndex('by_user_owner', (q) => q.eq('userId', 'owner').eq('isOwner', true))
+          .unique(),
+        ofPerson: await ctx.db
+          .query('personIdentities')
+          .withIndex('by_person', (q) => q.eq('personId', owner))
+          .collect(),
+        byExternal: await ctx.db
+          .query('personIdentities')
+          .withIndex('by_user_provider_external', (q) =>
+            q.eq('userId', 'owner').eq('provider', 'slack').eq('externalId', 'U0123'),
+          )
+          .unique(),
+        byDisplay: await ctx.db
+          .query('personIdentities')
+          .withIndex('by_user_provider_display', (q) =>
+            q.eq('userId', 'owner').eq('provider', 'linear').eq('displayNameKey', 'aiko t'),
+          )
+          .collect(),
+        proposedRow: await ctx.db.get(proposed),
+      };
+    });
+    expect(read.unverified.map((row) => row._id)).toEqual([read.proposed]);
+    expect(read.byEmail?._id).toBe(read.owner);
+    expect(read.byName?._id).toBe(read.dismissed);
+    expect(read.ownersOwn?._id).toBe(read.owner);
+    expect(read.ofPerson.map((row) => row._id)).toEqual([read.slack]);
+    expect(read.byExternal?._id).toBe(read.slack);
+    expect(read.byDisplay.map((row) => row._id)).toEqual([read.linear]);
+    expect(read.proposedRow).toMatchObject({
+      possiblySameAs: read.owner,
+      evidence: [{ quote: 'Aiko owns the ledger', where: 'Access owners', at: 3, ref: 'a.md' }],
+    });
+  });
+
+  it('refuses a person status, an identity provider and a source the graph does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert('people', person({ status: 'merged' as never }));
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.run(async (ctx) => {
+        const personId = await ctx.db.insert('people', person());
+        await ctx.db.insert('personIdentities', {
+          userId: 'owner',
+          personId,
+          provider: 'teams' as never,
+          externalId: '29:1',
+          source: 'documentation',
+          createdAt: 1,
+        });
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert('people', person({ source: 'guess' as never }));
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("stores an employee's and a person's edges, read by whom they point at, by the employee and type, by type and date, and by the person they leave", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const aiko = await ctx.db.insert('people', person({ status: 'active' }));
+      const ben = await ctx.db.insert('people', person({ displayName: 'Ben', nameKey: 'ben' }));
+      const fromEmployee = await ctx.db.insert('relationships', {
+        userId: 'owner',
+        fromAgentId: agentId,
+        toPersonId: aiko,
+        type: 'escalation-contact',
+        effectiveFrom: 10,
+        status: 'active',
+        source: 'charter',
+        evidence: [{ quote: 'Escalate to Aiko', where: 'one-to-one', at: 9 }],
+        confirmedAt: 11,
+        createdAt: 10,
+      });
+      const superseded = await ctx.db.insert('relationships', {
+        userId: 'owner',
+        fromPersonId: ben,
+        toPersonId: aiko,
+        type: 'approval-authority',
+        scope: 'refunds over 500',
+        effectiveFrom: 1,
+        effectiveUntil: 20,
+        status: 'superseded',
+        source: 'documentation',
+        sourceRef: 'handbook/approvals.md',
+        createdAt: 1,
+      });
+      const current = await ctx.db.insert('relationships', {
+        userId: 'owner',
+        fromPersonId: ben,
+        toPersonId: aiko,
+        type: 'approval-authority',
+        scope: 'refunds over 500',
+        effectiveFrom: 20,
+        status: 'active',
+        supersedes: superseded,
+        source: 'manager',
+        createdAt: 20,
+      });
+      return {
+        fromEmployee,
+        superseded,
+        current,
+        toAiko: await ctx.db
+          .query('relationships')
+          .withIndex('by_user_to', (q) => q.eq('userId', 'owner').eq('toPersonId', aiko))
+          .collect(),
+        ofEmployee: await ctx.db
+          .query('relationships')
+          .withIndex('by_from_agent_type', (q) =>
+            q.eq('fromAgentId', agentId).eq('type', 'escalation-contact'),
+          )
+          .collect(),
+        approverOnDay15: await ctx.db
+          .query('relationships')
+          .withIndex('by_user_type', (q) =>
+            q.eq('userId', 'owner').eq('type', 'approval-authority').lte('effectiveFrom', 15),
+          )
+          .order('desc')
+          .first(),
+        fromBen: await ctx.db
+          .query('relationships')
+          .withIndex('by_from_person', (q) => q.eq('fromPersonId', ben))
+          .collect(),
+      };
+    });
+    expect(read.toAiko).toHaveLength(3);
+    expect(read.ofEmployee.map((row) => row._id)).toEqual([read.fromEmployee]);
+    expect(read.approverOnDay15?._id).toBe(read.superseded);
+    expect(read.fromBen.map((row) => row._id).sort()).toEqual(
+      [read.superseded, read.current].sort(),
+    );
+  });
+
+  it('refuses an edge type the graph does not have, a direct manager among them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const to = await ctx.db.insert('people', person());
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          toPersonId: to,
+          type: 'direct-manager' as never,
+          effectiveFrom: 1,
+          status: 'proposed',
+          source: 'charter',
+          createdAt: 1,
+        });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("stores an employee's and every employee's agreements with a refusal and their sources, read by the owner's status and the employee's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close the renewal ticket',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const correctionId = await ctx.db.insert('corrections', {
+        agentId,
+        workItemId,
+        kind: 'plan-rejection',
+        text: 'Always link the ticket in the post.',
+        itemTitle: 'Close the renewal ticket',
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: 1,
+        appliedTo: [],
+      });
+      const aiko = await ctx.db.insert('people', person({ status: 'active' }));
+      const own = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        agentId,
+        kind: 'convention',
+        statement: 'Link the ticket in every #revops post.',
+        scope: 'surface',
+        scopeRef: 'slack',
+        sourceType: 'correction-promotion',
+        correctionIds: [correctionId],
+        status: 'active',
+        approvedAt: 5,
+        approvedVia: 'promotion-card',
+        effectiveFrom: 5,
+        createdAt: 4,
+        appliedTo: [workItemId],
+      });
+      const everyone = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        kind: 'preference',
+        statement: 'Write to Aiko in the morning.',
+        scope: 'person',
+        personId: aiko,
+        sourceType: 'plan-approval',
+        workItemId,
+        status: 'proposed',
+        createdAt: 6,
+        appliedTo: [],
+      });
+      const refused = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        agentId,
+        kind: 'operating-decision',
+        statement: 'Close any ticket without asking.',
+        scope: 'global',
+        sourceType: 'manager-chat',
+        status: 'refused',
+        refusal: {
+          reason: 'contradicts-will-not-do',
+          clause: 'Never closes a ticket the manager has not approved.',
+          judgedAt: 7,
+        },
+        createdAt: 7,
+        appliedTo: [],
+      });
+      return {
+        own,
+        everyone,
+        refused,
+        ownersActive: await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'active'))
+          .collect(),
+        employeesRefused: await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', 'refused'))
+          .collect(),
+        everyEmployee: await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_agent_status', (q) => q.eq('agentId', undefined))
+          .collect(),
+        refusedRow: await ctx.db.get(refused),
+      };
+    });
+    expect(read.ownersActive.map((row) => row._id)).toEqual([read.own]);
+    expect(read.employeesRefused.map((row) => row._id)).toEqual([read.refused]);
+    expect(read.everyEmployee.map((row) => row._id)).toEqual([read.everyone]);
+    expect(read.refusedRow?.refusal?.reason).toBe('contradicts-will-not-do');
+  });
+
+  it('refuses an agreement status, scope, source or refusal reason the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agreement = {
+      userId: 'owner',
+      kind: 'preference' as const,
+      statement: 'Morning posts.',
+      scope: 'global' as const,
+      sourceType: 'manager-card' as const,
+      status: 'proposed' as const,
+      createdAt: 1,
+      appliedTo: [],
+    };
+    for (const wrong of [
+      { status: 'expired' },
+      { scope: 'team' },
+      { sourceType: 'model' },
+      { status: 'refused', refusal: { reason: 'too-long', judgedAt: 1 } },
+    ]) {
+      await expect(
+        harness.run(async (ctx) => {
+          await ctx.db.insert('workingAgreements', { ...agreement, ...wrong } as never);
+        }),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("gives a correction its origin, the agreement it became and the judgement's mark; an older one keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close the renewal ticket',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const correction = {
+        agentId,
+        workItemId,
+        kind: 'rejection' as const,
+        text: 'Not on a Friday.',
+        itemTitle: 'Close the renewal ticket',
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: 1,
+        appliedTo: [],
+      };
+      const older = await ctx.db.insert('corrections', correction);
+      const agreementId = await ctx.db.insert('workingAgreements', {
+        userId: 'owner',
+        agentId,
+        kind: 'preference',
+        statement: 'Not on a Friday.',
+        scope: 'global',
+        sourceType: 'correction-promotion',
+        status: 'proposed',
+        createdAt: 2,
+        appliedTo: [],
+      });
+      const fromSlack = await ctx.db.insert('corrections', {
+        ...correction,
+        origin: 'channel',
+        agreementId,
+        agreementJudgedAt: 3,
+      });
+      return {
+        older: await ctx.db.get(older),
+        fromSlack: await ctx.db.get(fromSlack),
+        agreementId,
+      };
+    });
+    expect(read.older).not.toHaveProperty('origin');
+    expect(read.fromSlack).toMatchObject({
+      origin: 'channel',
+      agreementId: read.agreementId,
+      agreementJudgedAt: 3,
+    });
+    await expect(
+      harness.run(async (ctx) => {
+        const row = (await ctx.db.query('corrections').first())!;
+        await ctx.db.patch(row._id, { origin: 'voice' as never });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("records beside a work item's requester and owner the person each resolved to, or that it was ambiguous or unknown; an older row keeps neither", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const aiko = await ctx.db.insert('people', person({ status: 'active' }));
+      const base = {
+        agentId,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        title: 'Close the renewal ticket',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        state: 'discovered' as const,
+        observedAt: 1,
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('workItems', { ...base, externalId: 'REVOPS-1' });
+      const resolved = await ctx.db.insert('workItems', {
+        ...base,
+        externalId: 'REVOPS-2',
+        requester: 'Aiko Tanaka',
+        requesterPerson: { kind: 'person', personId: aiko },
+        owner: 'Sam',
+        ownerPerson: { kind: 'ambiguous', candidates: 2 },
+      });
+      const unknown = await ctx.db.insert('workItems', {
+        ...base,
+        externalId: 'REVOPS-3',
+        requester: 'U0999',
+        requesterPerson: { kind: 'unknown' },
+      });
+      return {
+        aiko,
+        older: await ctx.db.get(older),
+        resolved: await ctx.db.get(resolved),
+        unknown: await ctx.db.get(unknown),
+      };
+    });
+    expect(read.older).not.toHaveProperty('requesterPerson');
+    expect(read.resolved).toMatchObject({
+      requesterPerson: { kind: 'person', personId: read.aiko },
+      ownerPerson: { kind: 'ambiguous', candidates: 2 },
+    });
+    expect(read.unknown?.requesterPerson).toEqual({ kind: 'unknown' });
+  });
+
+  it('holds a documentation source and its run under a pause, and records its people extraction; an older source keeps none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const source = {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder' as const,
+        locator: '.',
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const older = await ctx.db.insert('docSources', { ...source, status: 'synced' });
+      const held = await ctx.db.insert('docSources', { ...source, status: 'held' });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId: held,
+        cursor: 'checkpoint',
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 3,
+        redactionCount: 0,
+        state: 'held',
+        createdAt: 2,
+      });
+      await ctx.db.patch(held, {
+        peopleExtractionSyncId: runId,
+        peopleExtractionFingerprint: 'sha256:01',
+        lastPeopleExtractionAt: 3,
+        lastPeopleExtractionError: 'model unavailable',
+      });
+      return {
+        older: await ctx.db.get(older),
+        held: await ctx.db.get(held),
+        run: await ctx.db.get(runId),
+        runId,
+      };
+    });
+    expect(read.older).not.toHaveProperty('peopleExtractionFingerprint');
+    expect(read.held).toMatchObject({
+      status: 'held',
+      peopleExtractionSyncId: read.runId,
+      peopleExtractionFingerprint: 'sha256:01',
+      lastPeopleExtractionAt: 3,
+      lastPeopleExtractionError: 'model unavailable',
+    });
+    expect(read.run?.state).toBe('held');
+  });
+
+  it("records on a card's app whether its messages tab is open or its opening was refused, and the socket bridge's report per card, read by employee and by card", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const secret = await ctx.db.insert('credentials', {
+        userId: 'day0:organisation',
+        kind: 'oauth',
+        label: 'Priya app client secret',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      const provisioning = {
+        appId: 'A0123',
+        appName: 'Day0 Priya',
+        clientId: '123.456',
+        clientSecretCredentialId: secret,
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'http://localhost:3000/api/oauth/slack',
+        scopes: ['chat:write'],
+        createdAt: 1,
+      };
+      const card = {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected' as const,
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      };
+      const older = await ctx.db.insert('surfaces', { ...card, provisioning });
+      const open = await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'slack-2',
+        provisioning: { ...provisioning, messagesTab: { state: 'open', how: 'opened', at: 2 } },
+      });
+      const refused = await ctx.db.insert('surfaces', {
+        ...card,
+        slug: 'slack-3',
+        provisioning: {
+          ...provisioning,
+          messagesTab: { state: 'refused', reason: 'not_allowed', at: 3, attempts: 1 },
+        },
+      });
+      const heartbeat = await ctx.db.insert('socketHeartbeats', {
+        agentId,
+        surfaceId: open,
+        appId: 'A0123',
+        live: true,
+        liveSince: 4,
+        reportedAt: 5,
+      });
+      return {
+        heartbeat,
+        older: await ctx.db.get(older),
+        open: await ctx.db.get(open),
+        refused: await ctx.db.get(refused),
+        byAgent: await ctx.db
+          .query('socketHeartbeats')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+        bySurface: await ctx.db
+          .query('socketHeartbeats')
+          .withIndex('by_surface', (q) => q.eq('surfaceId', open))
+          .unique(),
+      };
+    });
+    expect(read.older?.provisioning).not.toHaveProperty('messagesTab');
+    expect(read.open?.provisioning?.messagesTab).toEqual({ state: 'open', how: 'opened', at: 2 });
+    expect(read.refused?.provisioning?.messagesTab).toEqual({
+      state: 'refused',
+      reason: 'not_allowed',
+      at: 3,
+      attempts: 1,
+    });
+    expect(read.byAgent.map((row) => row._id)).toEqual([read.heartbeat]);
+    expect(read.bySurface?._id).toBe(read.heartbeat);
+  });
+
+  it('gives a replaced request the decision it had and the answer it gave, and a version how its author left; older rows keep none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await employee(ctx);
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Close the renewal ticket',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const replaced = {
+        agentId,
+        workItemId,
+        kind: 'plan' as const,
+        surfaceSlug: 'slack',
+        channel: 'D0123',
+        replacedAt: 2,
+      };
+      const older = await ctx.db.insert('replacedDecisionRequests', {
+        ...replaced,
+        decisionId: 'abc234',
+      });
+      const decided = await ctx.db.insert('replacedDecisionRequests', {
+        ...replaced,
+        decisionId: '5z73m6',
+        outcome: 'rejected',
+        decidedAt: 1,
+        decidedVia: 'channel',
+        answeredAt: 3,
+      });
+      const version = {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Comment on a ticket, then close it.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 2,
+        createdAt: 2,
+      };
+      const kept = await ctx.db.insert('skillVersions', version);
+      const handed = await ctx.db.insert('skillVersions', {
+        ...version,
+        version: 2,
+        authorLeft: { how: 'transferred', at: 9 },
+      });
+      return {
+        older: await ctx.db.get(older),
+        decided: await ctx.db.get(decided),
+        kept: await ctx.db.get(kept),
+        handed: await ctx.db.get(handed),
+      };
+    });
+    expect(read.older).not.toHaveProperty('outcome');
+    expect(read.decided).toMatchObject({
+      outcome: 'rejected',
+      decidedAt: 1,
+      decidedVia: 'channel',
+      answeredAt: 3,
+    });
+    expect(read.kept).not.toHaveProperty('authorLeft');
+    expect(read.handed?.authorLeft).toEqual({ how: 'transferred', at: 9 });
+  });
+
+  it('declares the four people tables with the indexes 13-P and 13-W read', (): void => {
+    expect(indexNames('people')).toEqual(
+      expect.arrayContaining(['by_user_status', 'by_user_email', 'by_user_name', 'by_user_owner']),
+    );
+    expect(indexNames('personIdentities')).toEqual(
+      expect.arrayContaining([
+        'by_person',
+        'by_user_provider_external',
+        'by_user_provider_display',
+      ]),
+    );
+    expect(indexNames('relationships')).toEqual(
+      expect.arrayContaining([
+        'by_user_to',
+        'by_from_agent_type',
+        'by_user_type',
+        'by_from_person',
+      ]),
+    );
+    expect(indexNames('workingAgreements')).toEqual(
+      expect.arrayContaining(['by_user_status', 'by_agent_status', 'by_user_agent_status']),
+    );
+  });
+
+  it("reads one owner's every-employee agreements by owner first, never another owner's (the second pass)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agreement = (userId: string) => ({
+        userId,
+        kind: 'preference' as const,
+        statement: 'Post in the morning.',
+        scope: 'global' as const,
+        sourceType: 'manager-card' as const,
+        status: 'active' as const,
+        createdAt: 1,
+        appliedTo: [],
+      });
+      const ours = await ctx.db.insert('workingAgreements', agreement('owner'));
+      await ctx.db.insert('workingAgreements', agreement('rival'));
+      const everyEmployee = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_agent_status', (q) =>
+          q.eq('userId', 'owner').eq('agentId', undefined).eq('status', 'active'),
+        )
+        .collect();
+      return { ours, everyEmployee: everyEmployee.map((row) => row._id) };
+    });
+    expect(read.everyEmployee).toEqual([read.ours]);
+  });
+});
+
+describe('the schema module', (): void => {
+  it('evaluates without reading an environment variable, which the backend refuses while it evaluates a schema', async (): Promise<void> => {
+    // The day0-w13k bed, 5 October: a schema that imported a module whose import chain read the
+    // surface mode at load was refused at the push ("Environment variables unsupported when
+    // evaluating schema"), which convex-test never sees.
+    vi.resetModules();
+    const reads: string[] = [];
+    const real = process.env;
+    process.env = new Proxy(real, {
+      get(target, key): unknown {
+        if (typeof key === 'string') {
+          const ours = (new Error().stack ?? '')
+            .split('\n')
+            .slice(2)
+            .some(
+              (frame) =>
+                /\.tsx?:\d+/.test(frame) &&
+                !frame.includes('/tests/') &&
+                !frame.includes('node_modules'),
+            );
+          if (ours) reads.push(key);
+        }
+        return Reflect.get(target, key) as unknown;
+      },
+    });
+    try {
+      await import('../../convex/schema');
+    } finally {
+      process.env = real;
+    }
+    expect(reads).toEqual([]);
   });
 });

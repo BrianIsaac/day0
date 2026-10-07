@@ -193,6 +193,40 @@ describe('landing an employee app’s app-level token (wave 12, 12-M; RM3 (a))',
     expect(rows.map((row) => row.label)).toEqual(['Mateo (Day0) client secret']);
   });
 
+  it('refuses a card whose own app IT’s revoke ended, which is not installed again (13-FS, W12X-4)', async (): Promise<void> => {
+    slackOpens();
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedOwnApp(harness);
+    await harness.run(async (ctx) => {
+      const creator = await ctx.db.insert('organisationConnections', {
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 2,
+        statusReason: 'ending',
+        createdAt: 1,
+      });
+      const card = (await ctx.db.get(surfaceId))!;
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        credentialId: undefined,
+        provisioning: { ...card.provisioning!, organisationConnectionId: creator },
+      });
+    });
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .action(api.slackSocketActions.landAppLevelToken, { surfaceId, token: TOKEN }),
+    ).rejects.toThrow(
+      "Day0 takes no app-level token for this card's own Slack app: IT revoked the organisation's connection that created it, so the app is not installed again.",
+    );
+    expect(calls).toEqual([]);
+  });
+
   it('refuses a card with no app of the employee’s own, and another manager', async (): Promise<void> => {
     slackOpens();
     const harness = convexTest(schema, allConvexModules());

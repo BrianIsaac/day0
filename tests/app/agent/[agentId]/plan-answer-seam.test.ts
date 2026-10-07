@@ -121,7 +121,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     const t = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(t);
     const owner = t.withIdentity(OWNER);
-    await t.mutation(internal.work.setPlan, { workItemId, plan });
+    await t.mutation(internal.planApproval.setPlan, { workItemId, plan });
     const [question] = await owner.query(api.managerQuestions.openForAgent, { agentId });
     await owner.mutation(api.charters.amend, {
       agentId,
@@ -129,7 +129,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     });
     await expect(
       owner.mutation(
-        api.work.approvePlan,
+        api.planApproval.approvePlan,
         planApprovalRequest(workItemId, {
           answers: [{ questionId: question._id, text: 'Aman owns it.' }],
         }),
@@ -149,7 +149,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     const t = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(t);
     const owner = t.withIdentity(OWNER);
-    await t.mutation(internal.work.setPlan, { workItemId, plan });
+    await t.mutation(internal.planApproval.setPlan, { workItemId, plan });
     const [question] = await owner.query(api.managerQuestions.openForAgent, { agentId });
     await owner.mutation(api.charters.amend, {
       agentId,
@@ -164,7 +164,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     });
     expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
     await owner.mutation(
-      api.work.approvePlan,
+      api.planApproval.approvePlan,
       planApprovalRequest(workItemId, {
         answers: [{ questionId: question._id, text: 'Priya owns it.' }],
       }),
@@ -185,7 +185,9 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, charterId } = await seed(harness);
     const owner = harness.withIdentity(OWNER);
-    await expect(harness.mutation(internal.work.setPlan, { workItemId, plan })).resolves.toEqual({
+    await expect(
+      harness.mutation(internal.planApproval.setPlan, { workItemId, plan }),
+    ).resolves.toEqual({
       stored: true,
     });
 
@@ -212,7 +214,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     expect(form).toContain(plan.riskNotes);
     expect(form).toContain('Approve plan with answers');
 
-    // The form's decision is exactly what the page sends to work.approvePlan.
+    // The form's decision is exactly what the page sends to planApproval.approvePlan.
     const decision = {
       answers: [{ questionId: questions[0]._id, text: 'Priya owns it.' }],
       note: 'Use the sheet figure.',
@@ -220,7 +222,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     expect(planApprovalRequest(workItemId, { answers: [] })).toEqual({ workItemId });
     expect(planApprovalRequest(workItemId, decision)).toEqual({ workItemId, ...decision });
     await expect(
-      owner.mutation(api.work.approvePlan, planApprovalRequest(workItemId, decision)),
+      owner.mutation(api.planApproval.approvePlan, planApprovalRequest(workItemId, decision)),
     ).resolves.toEqual({ ok: true });
 
     // The executor reads the answers from the item the way the action hands them over.

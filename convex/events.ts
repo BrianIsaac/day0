@@ -6,7 +6,7 @@ import {
 } from 'convex/server';
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, employeeOwnerScope } from './ownership';
 import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -398,13 +398,24 @@ async function organisationLedgerOf(
   agentId: Id<'agents'>,
   surfaces: readonly Doc<'surfaces'>[],
 ): Promise<TraceLedgerLine[]> {
+  // An app the manager forgot after IT's revoke (13-S) is on no card any more; its event keeps
+  // the app and the connection that created it, so its creation stays on the export.
+  const forgotten = (
+    await eventsOfType(ctx, agentId, 'surface.app-forgotten').order('desc').take(TRACE_PAGE_ROWS)
+  ).flatMap((event) => (isEventOf(event, 'surface.app-forgotten') ? [event.payload] : []));
   const connectionIds = [
     ...new Set(
-      surfaces.flatMap((surface) =>
-        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
-          (id): id is Id<'organisationConnections'> => id !== undefined,
+      [
+        ...surfaces.flatMap((surface) => [
+          surface.organisationConnectionId,
+          surface.provisioning?.organisationConnectionId,
+        ]),
+        ...forgotten.map((app) =>
+          app.organisationConnectionId === undefined
+            ? undefined
+            : ctx.db.normalizeId('organisationConnections', app.organisationConnectionId),
         ),
-      ),
+      ].filter((id): id is Id<'organisationConnections'> => id !== undefined && id !== null),
     ),
   ];
   if (connectionIds.length === 0) return [];
@@ -420,11 +431,12 @@ async function organisationLedgerOf(
       isEventOf(event, 'credential.revoked-at-source') ? [event.payload.credentialId] : [],
     ),
   ]);
-  const ownApps = new Set<string>(
-    surfaces.flatMap((surface) =>
+  const ownApps = new Set<string>([
+    ...surfaces.flatMap((surface) =>
       surface.provisioning?.appId ? [surface.provisioning.appId] : [],
     ),
-  );
+    ...forgotten.map((app) => app.appId),
+  ]);
   return ledgers
     .flat()
     .flatMap((row) => {
@@ -518,7 +530,23 @@ export const exportHead = internalQuery({
 
 type SectionPage = PaginationResult<Record<string, unknown>>;
 
-/** One page of each section, read through the agent's own index. */
+/**
+ * One page of an owner-level table under the employee's owner scope, or an empty last page for an
+ * employee no owner holds, whose owner-level rows do not exist.
+ */
+async function ownerScopedPage(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  options: PaginationOptions,
+  read: (scope: string) => Promise<SectionPage>,
+): Promise<SectionPage> {
+  const agent = await ctx.db.get(agentId);
+  const scope = agent === null ? undefined : employeeOwnerScope(agent);
+  if (scope === undefined) return { page: [], isDone: true, continueCursor: options.cursor ?? '' };
+  return await read(scope);
+}
+
+/** One page of each section, read through the agent's own index, or its owner's scope. */
 const SECTION_PAGES: Readonly<
   Record<
     TraceSection,
@@ -572,6 +600,40 @@ const SECTION_PAGES: Readonly<
       .query('replacedDecisionRequests')
       .withIndex('by_agent_decision', (q) => q.eq('agentId', agentId))
       .paginate(options),
+  // The owner's people graph (wave 13, 13-P), read under the employee's owner scope only.
+  people: async (ctx, agentId, options) =>
+    await ownerScopedPage(
+      ctx,
+      agentId,
+      options,
+      async (scope) =>
+        await ctx.db
+          .query('people')
+          .withIndex('by_user_status', (q) => q.eq('userId', scope))
+          .paginate(options),
+    ),
+  personIdentities: async (ctx, agentId, options) =>
+    await ownerScopedPage(
+      ctx,
+      agentId,
+      options,
+      async (scope) =>
+        await ctx.db
+          .query('personIdentities')
+          .withIndex('by_user_provider_external', (q) => q.eq('userId', scope))
+          .paginate(options),
+    ),
+  relationships: async (ctx, agentId, options) =>
+    await ownerScopedPage(
+      ctx,
+      agentId,
+      options,
+      async (scope) =>
+        await ctx.db
+          .query('relationships')
+          .withIndex('by_user_type', (q) => q.eq('userId', scope))
+          .paginate(options),
+    ),
   events: async (ctx, agentId, options) =>
     await ctx.db
       .query('events')

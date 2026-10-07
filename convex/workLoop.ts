@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -30,6 +30,8 @@ import type { EventType } from '../src/events/contract';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { isPaused, stepHoldReason } from '../src/work/pause';
 import { runHoldOf, type RunHold } from '../src/work/item-display';
+import { pausedCheckRefusal } from '../src/work/held-starts';
+import { resumeHeldStartsInTransaction } from './heldStarts';
 
 /**
  * The server-driven work loop, real mode only.
@@ -929,6 +931,8 @@ export async function resumeAgentStepsInTransaction(
     rescheduled += 1;
   }
   if (resumes) rescheduled += await resumeHeldApplies(ctx, agentId);
+  // A skill's authoring and a system's orientation a pause held go on with the steps (D-8 (b)).
+  if (resumes) rescheduled += await resumeHeldStartsInTransaction(ctx, agentId);
   for (const row of await ready('executing', async (row) => {
     if (
       !row.executionRunId ||
@@ -1167,7 +1171,10 @@ export const checkForNewWork = mutation({
   handler: async (ctx, args): Promise<{ scheduled: number; retryInMs?: number }> => {
     await getCallerOrThrow(ctx);
     assertRealMode('Checking for new work');
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    // A paused employee's intake reads nothing, so a check would spend its minute and find nothing
+    // (W12-R29): it is refused in words and the minute is kept.
+    if (isPaused(agent)) throw new ConvexError(pausedCheckRefusal(agent.name));
     const now = Date.now();
     const since = now - CHECK_FOR_WORK_INTERVAL_MS;
     const lastCheck = await eventsOfType(ctx, args.agentId, CHECK_REQUESTED, { after: since })

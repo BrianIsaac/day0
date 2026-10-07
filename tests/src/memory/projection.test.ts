@@ -39,6 +39,7 @@ function mira(overrides: Partial<ProjectionInput> = {}): ProjectionInput {
       },
     },
     agreements: ['Name the ticket in every reply.'],
+    lessons: ['Use the Delay notice B template for customs holds.'],
     skills: [
       { name: 'see-internal-docs', sourceType: 'builtin' },
       { name: 'kanban-comment-and-close', sourceType: 'agent-authored' },
@@ -68,6 +69,7 @@ describe('projectKnowledge', (): void => {
       'People: you (sam@revops.example, manager), Priya (segment and pipeline), Aman (forecasting)',
       "  stays out of Aman's lane: leaving forecasts to him",
       'Working agreements: Name the ticket in every reply.',
+      'Lessons from your corrections: Use the Delay notice B template for customs holds.',
       'Skills: see-internal-docs (built in), kanban-comment-and-close',
       'Connections: Slack (connected until 25 Dec 2026), Looker (waiting for you)',
       'Documentation: RevOps runbooks',
@@ -76,12 +78,20 @@ describe('projectKnowledge', (): void => {
 
   it('says what is not there yet before the first approval', (): void => {
     const { text } = projectKnowledge(
-      mira({ charter: null, agreements: [], skills: [], surfaces: [], documentation: [] }),
+      mira({
+        charter: null,
+        agreements: [],
+        lessons: [],
+        skills: [],
+        surfaces: [],
+        documentation: [],
+      }),
     );
     expect(text.split('\n')).toEqual([
       'Charter: none approved yet.',
       'People: you (sam@revops.example, manager)',
       'Working agreements: none kept yet',
+      'Lessons from your corrections: none yet',
       'Skills: none registered yet',
       'Connections: none yet',
       'Documentation: none linked',

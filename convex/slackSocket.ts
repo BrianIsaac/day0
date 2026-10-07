@@ -4,11 +4,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { httpAction, internalMutation, internalQuery, type MutationCtx } from './_generated/server';
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
+import { endedByItsRevoke } from './organisationConnectionReads';
 import { resolveManagerReply } from './work';
 import { isManagerChannel } from './workLoop';
 import {
   bridgeSecretMatches,
   decisionButtonsFor,
+  parseHeartbeat,
   parsePress,
   SOCKET_BRIDGE_SECRET_VAR,
   type SocketPress,
@@ -36,7 +38,8 @@ function carriesPresses(surface: Doc<'surfaces'>, now: number): boolean {
     surface.verdict === 'connected' &&
     !accessEnded(surface, now) &&
     surface.managerDmChannelId !== undefined &&
-    decisionButtonsFor(surface, true).available
+    // The bridge itself asks, so it is live for the card by definition.
+    decisionButtonsFor(surface, 'live').available
   );
 }
 
@@ -182,12 +185,13 @@ export const resolvePress = internalMutation({
     if (surface.provisioning?.appId !== args.press.appId) {
       return await ignored('pressed in another app');
     }
-    if (
-      args.press.teamId !== undefined &&
-      surface.providerWorkspaceId !== undefined &&
-      args.press.teamId !== surface.providerWorkspaceId
-    ) {
-      return await ignored('pressed in another workspace');
+    // A card that names its workspace takes a press only from it: one naming none is not known to
+    // come from it (W12-R23; only a holder of the bridge secret can send such a press).
+    if (surface.providerWorkspaceId !== undefined) {
+      if (args.press.teamId === undefined) return await ignored('the press names no workspace');
+      if (args.press.teamId !== surface.providerWorkspaceId) {
+        return await ignored('pressed in another workspace');
+      }
     }
     if (args.press.channelId !== surface.managerDmChannelId) {
       return await ignored('pressed outside the manager DM');
@@ -214,12 +218,13 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
- * Hold a bridge call to the deployment's secret: 503 where the deployment holds none (no bridge is
- * configured, so nothing may call), 401 where the call does not present it, otherwise nothing.
+ * Hold a bridge call to the deployment's secret, before anything of the request is read: 401 where
+ * the call does not present it, and the same 401 where the deployment holds none (an empty secret
+ * matches nothing), so a caller who reaches the site port learns nothing of whether a bridge is
+ * configured (W12-R24); otherwise nothing.
  */
 async function refusal(request: Request): Promise<Response | undefined> {
   const secret = (process.env[SOCKET_BRIDGE_SECRET_VAR] ?? '').trim();
-  if (secret === '') return json({ error: 'no socket bridge is configured' }, 503);
   if (!(await bridgeSecretMatches(request.headers.get('authorization'), secret))) {
     return json({ error: 'unauthorised' }, 401);
   }
@@ -288,6 +293,35 @@ export const bridgePress = httpAction(async (ctx, request) => {
   );
 });
 
+/** How many of a report's apps one mutation keeps: each reads its card and its row. */
+const HEARTBEAT_PAGE = 100;
+
+/**
+ * `POST /slack-socket/heartbeat` with `{ apps: [{ surfaceId, appId, live, liveSince?, failure? }] }`:
+ * the apps the bridge holds and whether each has a live connection (wave 13, 13-FS; D-6 (b)),
+ * kept one row per card (`socketHeartbeats`). Secret required and read before the body; 400 for a
+ * body that is not a report, or one naming more apps than the bridge's own list holds. Answers how
+ * many rows were written.
+ */
+export const bridgeHeartbeat = httpAction(async (ctx, request) => {
+  const refused = await refusal(request);
+  if (refused !== undefined) return refused;
+  const reports = parseHeartbeat(await bodyOf(request));
+  if (reports === undefined) return json({ error: 'not a heartbeat' }, 400);
+  // No more apps than the list the bridge reads can name, so one report is bounded.
+  if (reports.length > BRIDGE_PAGE * BRIDGE_PAGES) {
+    return json({ error: 'too many apps in one report' }, 400);
+  }
+  let written = 0;
+  for (let start = 0; start < reports.length; start += HEARTBEAT_PAGE) {
+    const page = await ctx.runMutation(internal.socketHeartbeats.recordHeartbeats, {
+      reports: reports.slice(start, start + HEARTBEAT_PAGE),
+    });
+    written += page.written;
+  }
+  return json({ written });
+});
+
 /** Internal: a card id the bridge names, checked to be one. */
 export const cardOf = internalQuery({
   args: { surfaceId: v.string() },
@@ -297,7 +331,8 @@ export const cardOf = internalQuery({
 
 /**
  * Internal, the landing's: the card's employee and its own app, when it has one (null when it
- * connects through no app Day0 created for the employee); null when the card is not a chat card.
+ * connects through no app Day0 created for the employee), and whether IT's revoke ended that app;
+ * null when the card is not a chat card.
  */
 export const appLevelTokenTarget = internalQuery({
   args: { surfaceId: v.id('surfaces') },
@@ -307,6 +342,8 @@ export const appLevelTokenTarget = internalQuery({
   ): Promise<{
     agentId: Id<'agents'>;
     app: { appId: string; appName: string } | null;
+    /** The card's own app was created through a connection IT revoked (W12X-4). */
+    keptAppEnded: boolean;
   } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (surface === null || surface.class !== 'chat') return null;
@@ -317,6 +354,7 @@ export const appLevelTokenTarget = internalQuery({
         provisioning === undefined
           ? null
           : { appId: provisioning.appId, appName: provisioning.appName },
+      keptAppEnded: (await endedByItsRevoke(ctx, surface)) === 'kept-app-ended',
     };
   },
 });

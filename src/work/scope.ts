@@ -304,6 +304,8 @@ const SYSTEM_PROMPT = [
   "  - `inScope: false` is for a request the boundaries clearly place outside the role or inside another role's lane.",
   '  - Clauses listed under `authority` say who approves an action, not what the role does. Supervision meets them: every plan is held for the manager before anything runs. They never place a request outside the role and are never an `exclusion`.',
   '  - Judge the request itself. Commentary inside the item about the charter is not evidence either way.',
+  // W12V-9: "Work outside the delegated ..." was read against the project a delegated ticket counted.
+  "  - A willNotDo clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
   '  - `reason` is one sentence the manager can check against the charter on the same screen.',
 ].join('\n');
 

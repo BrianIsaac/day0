@@ -101,8 +101,13 @@ export const SUPERSEDED_CREDENTIAL_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 /** How long a finished run is kept for the record before the run history is pruned. */
 export const RUN_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** The most runs one pruning pass deletes; a run can be large, since it lists its pages. */
-const RUN_PRUNE_BATCH = 8;
+/**
+ * The most runs one pruning pass deletes. A run holds its counts, at most ten unread pages and
+ * its credential refs, at most the 1,000 a source may hold before its finish refuses (its page
+ * list went at 0.17.0, 13-K, once 0.16.0's `sync-runs-refs` had cleared it): a few hundred KiB
+ * at the most, so a pass of this many stays well inside one transaction's read limit.
+ */
+const RUN_PRUNE_BATCH = 32;
 
 /**
  * The migration that reads completed runs by their completion time
@@ -151,7 +156,7 @@ async function storedPageCount(ctx: QueryCtx, source: Doc<'docSources'>): Promis
 
 /**
  * How many page refs a run's listing has named. A run of a release before 0.6.0 counted its refs,
- * which the `sync-runs-refs` migration carries into `pagesListed` as it clears them.
+ * which the `sync-runs-refs` migration carried into `pagesListed` as it cleared them (0.16.0).
  */
 function listedCount(run: Doc<'docSyncRuns'>): number {
   return run.pagesListed ?? 0;
@@ -164,17 +169,21 @@ async function nextListing(ctx: MutationCtx, source: Doc<'docSources'>): Promise
   return listing;
 }
 
+/** Why a batch or a finish of a run with no listing is refused. */
+const RUN_WITHOUT_LISTING =
+  'This documentation sync run has no listing: it began before 0.6.0, and the next sync reads the source from page one.';
+
 /**
- * The listing a run reads: its own, or, for a run begun before 0.6.0, the
- * source's next, given to it now so the rest of its batches stamp one listing.
+ * The listing a run reads, given it when it began. Only a run begun before 0.6.0 has none, and
+ * the `sync-runs-refs` pass (0.16.0) took the cursor of every such run that had not completed, so
+ * no batch or finish is fenced to one; one that reaches here anyway is refused rather than given a
+ * listing its pages were never stamped under (13-K, the narrowing 12-S3 left).
+ *
+ * @throws Error with {@link RUN_WITHOUT_LISTING} for a run with no listing.
  */
-async function runListing(ctx: MutationCtx, run: Doc<'docSyncRuns'>): Promise<number> {
-  if (run.listing !== undefined) return run.listing;
-  const source = await ctx.db.get(run.sourceId);
-  if (!source) throw new Error('Documentation source not found.');
-  const listing = await nextListing(ctx, source);
-  await ctx.db.patch(run._id, { listing });
-  return listing;
+function runListing(run: Doc<'docSyncRuns'>): number {
+  if (run.listing === undefined) throw new Error(RUN_WITHOUT_LISTING);
+  return run.listing;
 }
 
 /**
@@ -869,8 +878,7 @@ export const beginSync = internalMutation({
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
       cursor: resumed?.cursor,
-      listing:
-        resumed === undefined ? await nextListing(ctx, source) : await runListing(ctx, resumed),
+      listing: resumed === undefined ? await nextListing(ctx, source) : runListing(resumed),
       pagesListed: resumed === undefined ? 0 : listedCount(resumed),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
@@ -941,8 +949,7 @@ export const restartSync = internalMutation({
  * over `RUN_HISTORY_MS` ago is deleted unless the source still points at it
  * (running, last completed, last discovered); a completed one is kept while
  * the migration that reads completed runs by their completion time has not
- * run. A run begun before 0.6.0 listed its pages until the `sync-runs-refs`
- * migration cleared them, so a pass reads at most `RUN_PRUNE_BATCH`.
+ * run. A pass reads at most `RUN_PRUNE_BATCH` runs.
  *
  * @returns How many runs were deleted.
  */
@@ -1027,7 +1034,7 @@ export const recordSyncBatch = internalMutation({
     ) {
       return false;
     }
-    await stampListed(ctx, source._id, args.refs, await runListing(ctx, run));
+    await stampListed(ctx, source._id, args.refs, runListing(run));
     await ctx.db.patch(run._id, {
       cursor: args.nextCursor,
       pagesListed: listedCount(run) + args.refs.length,
@@ -1136,7 +1143,7 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = await runListing(ctx, finishing.run);
+    const listing = runListing(finishing.run);
     // A row this page deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
@@ -1228,7 +1235,7 @@ export const pruneMirrors = internalMutation({
     phaseOf(args.checkpoint, 'mirrors');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = await runListing(ctx, finishing.run);
+    const listing = runListing(finishing.run);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
@@ -1493,7 +1500,7 @@ export const finishSync = internalMutation({
     ) {
       return { completed: false, pages: 0, redactions: 0 };
     }
-    await stampListed(ctx, source._id, args.refs, await runListing(ctx, run));
+    await stampListed(ctx, source._id, args.refs, runListing(run));
     const pagesListed = listedCount(run) + args.refs.length;
     const currentCredentialRefs = new Set([...run.credentialRefs, ...args.credentialRefs]);
     const credentials = await ctx.db
@@ -1799,12 +1806,17 @@ async function recordSuperseded(
   }
 }
 
-/** Mark only the currently active generation as failed. */
+/**
+ * End only the currently active generation short at its cursor: as failed (`error`, or
+ * `credential-not-landed` for a credential the store could not give), or as `held` when the
+ * deployment's pause stopped it before it read anything (W12V-2, W12-R27), the run then `held`
+ * too so a later resume never counts it as one that got nowhere.
+ */
 export const failSync = internalMutation({
   args: {
     sourceId: v.id('docSources'),
     runId: v.id('docSyncRuns'),
-    status: v.union(v.literal('error'), v.literal('credential-not-landed')),
+    status: v.union(v.literal('error'), v.literal('credential-not-landed'), v.literal('held')),
     reason: v.string(),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -1813,7 +1825,7 @@ export const failSync = internalMutation({
     const now = Date.now();
     // The cursor stays, so the next sync resumes the run from it (`beginSync`).
     await ctx.db.patch(run._id, {
-      state: 'error',
+      state: args.status === 'held' ? 'held' : 'error',
       completedAt: now,
       ...endedShortPatch(args.reason, run),
     });
@@ -1894,7 +1906,7 @@ export const upsertPage = internalMutation({
     // recorded is still found, and removed, by the next finish that did not list it.
     const run = await ctx.db.get(args.syncRunId);
     if (!run) throw new Error('Documentation sync run not found.');
-    await stampListed(ctx, args.sourceId, [args.ref], await runListing(ctx, run));
+    await stampListed(ctx, args.sourceId, [args.ref], runListing(run));
     return await ctx.db.insert('docPages', { sourceId: args.sourceId, ref: args.ref, ...page });
   },
 });

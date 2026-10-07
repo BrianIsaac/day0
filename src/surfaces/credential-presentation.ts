@@ -77,13 +77,13 @@ const DETAIL_LENGTH = 400;
 export const OAUTH_FALLBACK_LABEL = 'Land a shared bot token (fallback)';
 
 /**
- * Why the fallback field stays on a card whose own app is not installed again (W12X-4): no
- * control above makes one, so the note does not point at one.
+ * Why the fallback field stays on a card whose own app is not installed again (W12X-4): the
+ * workspace token instead of the new app the control above leads to (13-FS's design 2 (b)).
  */
 export const NOT_REINSTALLED_FALLBACK_NOTE =
-  'Day0 does not make this employee a new app. Where the administrator would rather hand over ' +
-  'the workspace token, land it here: it is stored encrypted as a shared credential, and writes ' +
-  'through it carry the employee name and run id so they stay attributable.';
+  'Where the administrator would rather hand over the workspace token than have Day0 make a new ' +
+  'app, land it here: it is stored encrypted as a shared credential, and writes through it ' +
+  'carry the employee name and run id so they stay attributable.';
 
 /** Why an OAuth surface still offers a landing field beside provisioning. */
 export const OAUTH_FALLBACK_NOTE =
@@ -91,6 +91,23 @@ export const OAUTH_FALLBACK_NOTE =
   'administrator would rather hand over the workspace token instead, land it here: it is stored ' +
   'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
   'so they stay attributable.';
+
+/**
+ * Why an OAuth card still offers a landing field where it draws no control that registers an app
+ * (W13V-1: a Slack page orientation did not read as Slack's API reaches escalation, and its card
+ * said "the control above registers one" with no control above): what IT does instead.
+ *
+ * @param system - The card's display name.
+ */
+export function oauthNoProvisioningNote(system: string): string {
+  return (
+    `Day0 offers no dedicated app on this card: the documentation does not show it that ${system} ` +
+    `is a system it can create one in. Ask IT how to connect ${system}, or, where the ` +
+    'administrator would rather hand over the workspace token, land it here: it is stored ' +
+    'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
+    'so they stay attributable.'
+  );
+}
 
 /** Button text for the documented self-provisioning control. */
 export const PROVISION_LABEL = 'Provision a dedicated app';
@@ -142,6 +159,13 @@ export interface CredentialPresentationInput {
   reason?: string;
   /** The card's own app is not installed again (`keptAppNotReinstalled`, W12X-4). */
   keptAppNotReinstalled?: boolean;
+  /**
+   * Whether the card draws the provisioning row above its credential field; absent reads as drawn.
+   * Where it is not, the fallback note says what IT does instead (W13V-1).
+   */
+  provisioningRowShown?: boolean;
+  /** The card's display name, which that note names. */
+  displayName?: string;
 }
 
 /**
@@ -155,6 +179,10 @@ export interface CredentialPresentationInput {
  * app whose access ended is offered again (A26), with what the renewal restores
  * of its channels (RM4), unless the connection that created it was revoked:
  * that app is never installed again, so nothing is offered (W12X-4).
+ *
+ * The procedure is offered where the documentation describes an install (an `oauth` finding) or,
+ * whatever the documentation records, where the organisation's Slack configuration connection is
+ * active (13-FS's design 1 (b)).
  *
  * Args:
  *   input.credential: The credential finding orientation extracted.
@@ -195,19 +223,30 @@ export function presentProvisioning(input: {
     input.keptAppNotReinstalled === true
   ) {
     const employee = input.employee ?? 'the employee';
+    // Forgetting it is the way on (13-FS's design 2 (b)). Only with IT's connection active is
+    // Connect certain to follow, so only then does the note promise it.
+    const way =
+      input.organisationConnected === true
+        ? `Forget this app, and Connect then creates ${employee} a new one through IT's Slack connection.`
+        : `Forget this app so Day0 can create ${employee} a new one.`;
+    // The new app takes the same name, so the old one is named by its Slack app id too: the one
+    // IT deletes.
+    const app = `${input.provisioning.appName} (Slack app ${input.provisioning.appId})`;
     return {
       note:
-        `${employee}'s own app, ${input.provisioning.appName}, was created through the ` +
-        "organisation's Slack connection, which IT revoked. Day0 does not install it again and " +
-        "cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not " +
-        `bring it back or give ${employee} a new app.`,
+        `${employee}'s own app, ${app}, was created through the organisation's Slack connection, ` +
+        'which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in ' +
+        `Slack's app settings. ${way}`,
       offerProvisioning: false,
       asksForConfigurationToken: false,
       stage: 'not-reinstalled',
       title: notReinstalledTitle(employee),
     };
   }
-  if (input.credential?.method !== 'oauth') {
+  // The employee's own app is offered wherever the organisation's Slack configuration connection
+  // is active, since its manifest is Day0's kit, not the customer's text; the documentation's
+  // finding decides only where there is no such connection (13-FS's design 1 (b), W12V-1).
+  if (input.credential?.method !== 'oauth' && input.organisationConnected !== true) {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
       offerProvisioning: false,
@@ -311,6 +350,15 @@ export function presentChannelsNotJoined(
   );
 }
 
+/** The note above an OAuth card's fallback field: what the rows above it offer, or what IT does. */
+function oauthFallbackNote(input: CredentialPresentationInput): string {
+  if (input.keptAppNotReinstalled === true) return NOT_REINSTALLED_FALLBACK_NOTE;
+  if (input.provisioningRowShown === false) {
+    return oauthNoProvisioningNote(input.displayName ?? 'this system');
+  }
+  return OAUTH_FALLBACK_NOTE;
+}
+
 /**
  * Compose safe credential copy without accepting credential material.
  *
@@ -366,8 +414,7 @@ export function presentSurfaceCredential(
       kind: 'oauth',
       label: input.credential.label,
       landingLabel: OAUTH_FALLBACK_LABEL,
-      landingNote:
-        input.keptAppNotReinstalled === true ? NOT_REINSTALLED_FALLBACK_NOTE : OAUTH_FALLBACK_NOTE,
+      landingNote: oauthFallbackNote(input),
       text: summary ?? 'Follow the documented OAuth approval procedure.',
     };
   }

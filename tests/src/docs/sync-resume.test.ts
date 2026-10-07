@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { FINISHING_CURSOR, finishingCursor } from '../../../src/docs/finishing';
 import { listingCursor } from '../../../src/docs/readers/batch';
+import { SYNC_HELD_REASON } from '../../../src/docs/sync-held';
 import { RESUMABLE_RUN_MS, runToResume, type ResumeCandidate } from '../../../src/docs/sync-resume';
 
 const NOW = 1_790_000_000_000;
@@ -13,6 +14,7 @@ function run(fields: Partial<ResumeCandidate> & Pick<ResumeCandidate, 'state'>):
   return {
     _id: `run-${Math.random()}` as Id<'docSyncRuns'>,
     cursor: listingCursor(300, LISTING),
+    listing: 1,
     pageCount: 300,
     createdAt: NOW - 60_000,
     ...fields,
@@ -35,6 +37,12 @@ describe('the run a new documentation sync takes over (step 17)', (): void => {
     expect(runToResume(undefined, undefined, NOW)).toBeUndefined();
   });
 
+  it('starts from page one after a run that carries no listing, which no batch could stamp under (13-K)', (): void => {
+    expect(
+      runToResume(run({ state: 'error', listing: undefined }), undefined, NOW),
+    ).toBeUndefined();
+  });
+
   it('starts from page one when the run is too old to finish a generation with', (): void => {
     const old = run({ state: 'error', createdAt: NOW - RESUMABLE_RUN_MS - 1 });
     expect(runToResume(old, undefined, NOW)).toBeUndefined();
@@ -50,6 +58,24 @@ describe('the run a new documentation sync takes over (step 17)', (): void => {
       pageCount: 325,
     });
     expect(runToResume(progressed, first, NOW)).toBe(progressed);
+  });
+
+  it('carries on from the cursor a second sync the pause held stopped at, never from page one (W12-R27)', (): void => {
+    const first = run({ state: 'held' });
+    const again = run({ state: 'held' });
+    expect(runToResume(again, first, NOW)).toBe(again);
+    const triedOnce = run({ state: 'error' });
+    expect(runToResume(triedOnce, first, NOW)).toBe(triedOnce);
+    expect(runToResume(again, run({ state: 'error' }), NOW)).toBe(again);
+  });
+
+  it('reads a run an earlier release held as an error with the held reason as held (W12-R27)', (): void => {
+    const first = run({ state: 'error', reason: SYNC_HELD_REASON });
+    const again = run({
+      state: 'error',
+      reason: `${SYNC_HELD_REASON} A newer sync of the source took over from its cursor after 300 pages.`,
+    });
+    expect(runToResume(again, first, NOW)).toBe(again);
   });
 
   it('starts from page one after a provider cursor or a bare offset, which no listing can check (D D5)', (): void => {

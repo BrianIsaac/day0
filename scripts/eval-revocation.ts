@@ -67,7 +67,7 @@ export interface WaitClock {
  *   The source, once it is synced with at least one page.
  *
  * Raises:
- *   Error: If the source reports an error, or reads no further page within
+ *   Error: If the source reports an error or a hold, or reads no further page within
  *     `SYNC_IDLE_MS`.
  */
 export async function waitForDocumentationSync(
@@ -78,7 +78,12 @@ export async function waitForDocumentationSync(
   let idleFrom = clock.now();
   for (;;) {
     const source = await read();
-    if (source?.status === 'error' || source?.status === 'credential-not-landed') {
+    // A held sync reads nothing until the deployment's jobs run again, so waiting is pointless.
+    if (
+      source?.status === 'error' ||
+      source?.status === 'credential-not-landed' ||
+      source?.status === 'held'
+    ) {
       throw new Error(source.lastError ?? `folder sync failed: ${source.status}`);
     }
     if (source && source.status === 'synced' && source.pageCount > 0) return source;

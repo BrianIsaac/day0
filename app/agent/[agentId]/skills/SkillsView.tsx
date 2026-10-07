@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
 import { autonomousActionsOn } from '@/work/autonomy';
+import { runHoldOf } from '@/work/item-display';
 import { useEmployee } from '../employee-context';
 import { useNow } from '../../../components/time';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
@@ -30,14 +31,30 @@ const VERDICT_SETTLED_STATES: ReadonlySet<string> = new Set([
  * another tab), beside how a skill is made.
  */
 export function SkillsView() {
-  const { agent, surfaceMode, surfaces, arriving, lastAttempt, setLastAttempt } = useEmployee();
+  const {
+    agent,
+    surfaceMode,
+    scheduledWorkPaused,
+    surfaces,
+    arriving,
+    lastAttempt,
+    setLastAttempt,
+  } = useEmployee();
+  // A pause holds a skill's authoring (D-8 (b)): an approved row not yet being written says so.
+  const authoringHold = runHoldOf({
+    real: surfaceMode === 'real',
+    employeeName: agent.name,
+    employeePaused: agent.pausedAt !== undefined,
+    scheduledWorkPaused,
+  });
   const agentId = agent._id;
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
-  // A revision approved and not yet being written appears in neither list above.
-  const pendingRevisions = useQuery(api.skillControls.pendingRevisions, { agentId });
+  // An approved skill not yet being written (a revision, an authoring a pause holds) appears in
+  // neither list above.
+  const notYetWritten = useQuery(api.skillControls.notYetWritten, { agentId });
   const adoptedSources = useQuery(api.skillVersions.adoptedSources, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const itemTitles = useMemo(
@@ -45,7 +62,7 @@ export function SkillsView() {
     [workItems],
   );
   useSkillAnchor(
-    failedSkills !== undefined && unverifiedSkills !== undefined && pendingRevisions !== undefined,
+    failedSkills !== undefined && unverifiedSkills !== undefined && notYetWritten !== undefined,
   );
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
@@ -68,12 +85,19 @@ export function SkillsView() {
   // verdict, and each of them makes it a lie. A claim whose run died is none
   // of them: it is left on the row by a run that never came back, so it is
   // exactly the case the verdict is describing and must not hide it.
-  const authoringFailure =
+  const verdictStands =
     lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
-    !VERDICT_SETTLED_STATES.has(attemptedSkill.state)
+    !VERDICT_SETTLED_STATES.has(attemptedSkill.state);
+  // An attempt a pause held has not failed: it says so, and when it starts (D-8 (b)).
+  const authoringFailure =
+    verdictStands && lastAttempt.held !== true
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
+      : null;
+  const authoringHeld =
+    verdictStands && lastAttempt.held === true
+      ? `${lastAttempt.name} is ${lastAttempt.reason}.`
       : null;
   // A registration the manager started is said once the row says it too.
   const authoringRegistered =
@@ -97,11 +121,13 @@ export function SkillsView() {
         // controls check the offered version again or set the offer aside first; a Retry here
         // would act on the row with the offer still on it (the wave 10 review, M3).
         unregistered={[
-          ...(pendingRevisions ?? []),
+          ...(notYetWritten ?? []),
           ...(unverifiedSkills ?? []),
           ...(failedSkills ?? []),
         ].filter((skill) => skill.offeredVersionId === undefined)}
         authoringFailure={authoringFailure}
+        authoringHeld={authoringHeld}
+        authoringHold={authoringHold}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
         surfaceMode={surfaceMode}

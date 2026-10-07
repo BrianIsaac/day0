@@ -31,6 +31,25 @@ function render(node: React.ReactNode): string {
 }
 
 describe('the charter as one document', (): void => {
+  it('lists the priority reading one entry a line, never joining sentences into ".," (the 13-FD second pass)', (): void => {
+    const html = render(
+      <CharterDocument
+        body={{
+          ...body,
+          priorityReading: [
+            'The close checklist page in the wiki.',
+            'The vendor reconciliation runbook.',
+          ],
+        }}
+        manager="sam@kestrel.example"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html).toContain('<li>The close checklist page in the wiki.</li>');
+    expect(html).toContain('<li>The vendor reconciliation runbook.</li>');
+    expect(html).not.toContain('.,');
+  });
+
   it('opens every section, draws the 60-day gap as a gap, and names the systems on one line', (): void => {
     const html = render(
       <CharterDocument
@@ -58,6 +77,26 @@ describe('the charter as one document', (): void => {
     expect(html).toContain('60 days · no goal stated');
     expect(html).toContain('<p>Salesforce (crm), Slack (chat)</p>');
     expect(html).toContain('<b class="font-semibold">Priya</b>, segment and pipeline');
+  });
+
+  it('draws a goal the model says was not given as a gap, whatever its words (C D11)', (): void => {
+    const html = render(
+      <CharterDocument
+        body={{
+          ...body,
+          shortTermGoals: {
+            ...body.shortTermGoals,
+            day90: 'Keep the close tidy.',
+            stated: { day30: true, day60: true, day90: false },
+          },
+        }}
+        manager="sam@kestrel.example"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html.match(/data-goal="gap"/g)).toHaveLength(1);
+    expect(html).toContain('90 days · no goal stated');
+    expect(html).not.toContain('60 days · no goal stated');
   });
 
   it('names the manager it reports to and sends a handover to People, never to the header', (): void => {

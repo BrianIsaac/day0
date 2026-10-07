@@ -29,7 +29,9 @@ import {
   missingScopes,
   type Adopter,
   type AdopterSurface,
+  type AuthorDeparture,
 } from '../src/work/skill-adoption';
+import { skillWaitingStamp } from '../src/work/needs-manager';
 
 /*
  * Adoption (the enhancements plan, section 4.1; A3; 10-A).
@@ -381,7 +383,7 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
     throw new ConvexError(`${row.name} cannot be adopted: ${offer.reason}.`);
   }
   const scopes = missingScopes(row.requiredScopes, await grantedScopes(ctx.db, row.agentId));
-  await ctx.db.patch(row._id, { state: 'approved' });
+  await ctx.db.patch(row._id, { state: 'approved', ...skillWaitingStamp('approved', now) });
   for (const scope of scopes) {
     await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
   }
@@ -533,6 +535,8 @@ export interface AdoptionView {
    * another manager (`releaseAuthor` clears the author on both).
    */
   readonly authorLeft: boolean;
+  /** How the author left, when the version records it (wave 13 item 7). */
+  readonly authorDeparture?: AuthorDeparture;
   readonly verifiedAt: number;
   /** The employee's connection the sandbox runs under, by name; absent in mock mode. */
   readonly connection?: string;
@@ -624,6 +628,9 @@ async function adoptionView(
     // never named one.
     authorLeft:
       version.authorAgentId === undefined && version.authorName !== HANDED_OVER_AUTHOR_NAME,
+    ...(version.authorAgentId === undefined && version.authorLeft !== undefined
+      ? { authorDeparture: version.authorLeft.how }
+      : {}),
     verifiedAt: version.verifiedAt,
     ...(offer.kind === 'ready' && offer.connection !== undefined
       ? { connection: offer.connection }

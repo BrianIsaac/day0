@@ -17,11 +17,11 @@ that team's to follow.
 
 | System | What it is for | Access owner |
 |---|---|---|
-| Linear | The formal work queue and audit trail. Each team works in its own Linear team and project, named in its handbook. Access details are on the `Linear automation` page. | Work management administrator |
-| Slack | Requests and team conversation. Each team reads its own channels, named in its handbook, and `#ops-requests` is the one request channel all three teams read. How automations post is on the `Slack automation policy` page. | Messaging administrator |
-| Looker pipeline tile | The pipeline coverage figure revenue operations maintains on its dashboard. | RevOps operations lead |
-| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner |
-| NetLedger | The general ledger, the source of record for the books. No approved connection surface is recorded. | Finance systems owner |
+| Linear | The formal work queue and audit trail. Each team works in its own Linear team and project, named in its handbook. Access details are on the `Linear automation` page. | Work management administrator: Lee Tan (lee.tan@kestrel.test) |
+| Slack | Requests and team conversation. Each team reads its own channels, named in its handbook, and `#ops-requests` is the one request channel all three teams read. How automations post is on the `Slack automation policy` page. | Messaging administrator: Noor Rahman (noor.rahman@kestrel.test) |
+| Looker pipeline tile | The pipeline coverage figure revenue operations maintains on its dashboard. | RevOps operations lead: Rowan Hale (rowan.hale@kestrel.test) |
+| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner: Femi Adeyemi (femi.adeyemi@kestrel.test) |
+| NetLedger | The general ledger, the source of record for the books. No approved connection surface is recorded. | Finance systems owner: Dana Okafor (dana.okafor@kestrel.test), who approves NetLedger access |
 
 ## Working rules for every team
 
@@ -37,7 +37,8 @@ that team's to follow.
 ## Escalation
 
 - Questions, drafts for review and connection questions go to the manager in the manager DM.
-- Route missing Linear or Slack access to the named administrator through the manager.
+- Route missing Linear access to Lee Tan and missing Slack access to Noor Rahman, the named
+  administrators, through the manager.
 - Where the work needs a system that has no approved connection surface, record where you looked
   and ask the manager to obtain an approved access path. Do not substitute a similarly named
   service or invent an endpoint.
