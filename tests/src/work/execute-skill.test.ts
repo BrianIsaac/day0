@@ -2124,7 +2124,7 @@ describe('frozen prompt text', (): void => {
         - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
-        - Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.
+        - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer \`workDone\` as the work will stand once the set lands.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
         - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
@@ -2411,7 +2411,7 @@ describe('the words a mock run writes into a message (finding 3 of the v0.17.0 r
   it('tells a mock run its messages are read once they land, never that they wait for approval', (): void => {
     const preamble = executorPreamble('mock');
     expect(preamble).toContain(
-      "  - Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.",
+      "  - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands.",
     );
     expect(preamble).not.toContain('waits for your approval');
   });

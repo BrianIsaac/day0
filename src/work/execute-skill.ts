@@ -209,10 +209,13 @@ const DEPENDENT_PHASE_MOCK =
  * How a mock run's writes land, and so how its messages are worded (finding 3 of the v0.17.0
  * redeploy): every action waits for the manager, and a message is read once it has landed. The
  * planner's line for the same mode tells a plan's step to say "waits for your approval"; a run
- * that read it wrote "it waits for manager approval before it lands here" into posts that landed.
+ * that read it wrote "it waits for manager approval before it lands here" into posts that landed,
+ * and on the 14-FW bed one followed such a step literally, posting "Will post the answer here once
+ * approved." and the answer as a draft in the DM. So the run is told, as real mode's held-set rule
+ * says, that the approval is what sends each write.
  */
 const MOCK_ACTION_MODE =
-  "Every emitted action is held for the manager's literal approval and only applied after that decision, so a post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval.";
+  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands.";
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
