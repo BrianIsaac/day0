@@ -117,6 +117,15 @@ function hours(value: number): string {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} h`;
 }
 
+/** The documentation an item read, against its billed input tokens when a provider reported them. */
+function retrievalRead(tokens: PilotFigures['retrieval']['tokens']): string {
+  if (tokens === null) return 'no selection read yet';
+  const chars = Math.round(tokens.charsPerItem).toLocaleString('en-GB');
+  return tokens.inputTokensPerItem === null
+    ? `${chars} characters an item`
+    : `${chars} characters an item against ${Math.round(tokens.inputTokensPerItem).toLocaleString('en-GB')} input tokens`;
+}
+
 /** One of decision A9's pilot figures as the Supervision cards print it. */
 export interface PilotFigure {
   readonly label: string;
@@ -177,10 +186,15 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   },
   {
     label: 'Retrieval',
-    unit: 'tokens read',
+    unit: 'documentation an item, and its recall',
     definition:
-      'Counted once each run records the documentation blocks it selected and the provider’s usage; not measured yet.',
-    value: () => 'not measured yet',
+      'The documentation characters the prompts carried for an item, beside the input tokens its model calls were billed, and how much of what a person would open the selection finds on the labelled set: the share of the pages and of the sections.',
+    value: ({ retrieval }) =>
+      `${retrievalRead(retrieval.tokens)}; ${
+        retrieval.recall === null
+          ? 'recall not graded'
+          : `recall ${Math.round(retrieval.recall.pages * 100)}% of pages, ${Math.round(retrieval.recall.blocks * 100)}% of sections`
+      }`,
   },
 ];
 

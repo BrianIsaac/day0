@@ -16,6 +16,7 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
+import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
   isWholeHistory,
@@ -710,6 +711,32 @@ interface PilotTotals {
   amended: number;
   estimatedItems: number;
   estimatedMinutes: number;
+  /** The items whose prompts carried a documentation selection, and their characters summed. */
+  retrievalItems: number;
+  retrievalChars: number;
+  /** Of those items, the ones a provider reported usage for, and their input tokens summed. */
+  tokenItems: number;
+  inputTokens: number;
+}
+
+/**
+ * The retrieval figure's tokens half from the documentation each item's prompts carried and the
+ * input tokens its model calls were billed (wave 14, 14-R): only items with a selection count.
+ */
+function retrievalTotals(
+  documentationChars: ReadonlyMap<string, number>,
+  inputTokens: ReadonlyMap<string, number>,
+): Pick<PilotTotals, 'retrievalItems' | 'retrievalChars' | 'tokenItems' | 'inputTokens'> {
+  const billed = [...documentationChars.keys()].flatMap((workItemId) => {
+    const tokens = inputTokens.get(workItemId);
+    return tokens === undefined ? [] : [tokens];
+  });
+  return {
+    retrievalItems: documentationChars.size,
+    retrievalChars: [...documentationChars.values()].reduce((total, chars) => total + chars, 0),
+    tokenItems: billed.length,
+    inputTokens: billed.reduce((total, tokens) => total + tokens, 0),
+  };
 }
 
 function pilotTotals(
@@ -726,9 +753,24 @@ function pilotTotals(
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
+  const documentationChars = new Map<string, number>();
+  const inputTokens = new Map<string, number>();
   for (const event of ordered) {
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
+    if (isEventOf(event, 'work.documentation-selected') && workItemId) {
+      const chars = typeof payload?.chars === 'number' ? payload.chars : 0;
+      documentationChars.set(workItemId, (documentationChars.get(workItemId) ?? 0) + chars);
+      continue;
+    }
+    if (
+      isEventOf(event, 'work.model-call') &&
+      workItemId &&
+      typeof payload?.inputTokens === 'number'
+    ) {
+      inputTokens.set(workItemId, (inputTokens.get(workItemId) ?? 0) + payload.inputTokens);
+      continue;
+    }
     if (isEventOf(event, 'work.execution-claimed') && workItemId) {
       const skillId = asString(payload?.skillId);
       if (!skillId || runs.has(`${workItemId}:${skillId}`)) continue;
@@ -793,6 +835,7 @@ function pilotTotals(
     amended,
     estimatedItems: estimates.length,
     estimatedMinutes: estimates.reduce((total, minutes) => total + minutes, 0),
+    ...retrievalTotals(documentationChars, inputTokens),
   };
 }
 
@@ -821,7 +864,18 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       estimatedItems: totals.estimatedItems,
       hours: totals.estimatedItems > 0 ? totals.estimatedMinutes / 60 : null,
     },
-    retrieval: { tokens: null, recall: null },
+    retrieval: {
+      tokens:
+        totals.retrievalItems === 0
+          ? null
+          : {
+              items: totals.retrievalItems,
+              charsPerItem: totals.retrievalChars / totals.retrievalItems,
+              inputTokensPerItem:
+                totals.tokenItems === 0 ? null : totals.inputTokens / totals.tokenItems,
+            },
+      recall: RETRIEVAL_RECALL,
+    },
   };
 }
 
@@ -836,6 +890,10 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     amended: rows.reduce((total, row) => total + row.amended, 0),
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
     estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
+    retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),
+    retrievalChars: rows.reduce((total, row) => total + row.retrievalChars, 0),
+    tokenItems: rows.reduce((total, row) => total + row.tokenItems, 0),
+    inputTokens: rows.reduce((total, row) => total + row.inputTokens, 0),
   };
 }
 

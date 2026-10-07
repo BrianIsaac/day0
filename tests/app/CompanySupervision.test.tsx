@@ -11,6 +11,15 @@ import type { Id } from '../../convex/_generated/dataModel';
 
 const query = vi.hoisted(() => ({ result: undefined as unknown }));
 
+/** A labelled-set grade, fixed so the cell's words do not move with the tracked grade. */
+const GRADED_RECALL = {
+  pages: 0.95,
+  blocks: 0.9333333333333333,
+  cases: 30,
+  gradedAt: '2026-10-07T19:39:48.260Z',
+  commit: '0123456789abcdef0123456789abcdef01234567',
+};
+
 vi.mock('convex/react', () => ({
   useQuery: (): unknown => query.result,
 }));
@@ -81,7 +90,7 @@ function agentMetrics(overrides: {
       },
       reorientation: { answered: 0, amended: 0, rate: null },
       hoursSaved: { estimatedItems: 0, hours: null },
-      retrieval: { tokens: null, recall: null },
+      retrieval: { tokens: null, recall: GRADED_RECALL },
     },
   };
 }
@@ -296,7 +305,7 @@ describe('the company supervision card', (): void => {
                   },
                   reorientation: { answered: 2, amended: 1, rate: 0.5 },
                   hoursSaved: { estimatedItems: 2, hours: 1.5 },
-                  retrieval: { tokens: null, recall: null },
+                  retrieval: { tokens: null, recall: GRADED_RECALL },
                 },
               },
             }
@@ -320,10 +329,50 @@ describe('the company supervision card', (): void => {
     expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');
     expect(priyaRow).toContain('1 of 2 answers');
     expect(priyaRow).toContain('1.5 h over 2 items');
-    expect(priyaRow).toContain('not measured yet');
+    // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
+    expect(priyaRow).toContain('no selection read yet; recall 95% of pages, 93% of sections');
+    expect(pilot).not.toContain('not measured yet');
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe('the retrieval figure (14-R)', (): void => {
+  const retrievalFigure = PILOT_FIGURES.find((figure) => figure.label === 'Retrieval')!;
+  const figures = (retrieval: PilotFigures['retrieval']): PilotFigures => ({
+    ...FIGURES.company.pilot,
+    retrieval,
+  });
+
+  it('says the documentation an item read against its billed input tokens, and the recall', (): void => {
+    expect(
+      retrievalFigure.value(
+        figures({
+          tokens: { items: 3, charsPerItem: 6_210.4, inputTokensPerItem: 31_402.6 },
+          recall: GRADED_RECALL,
+        }),
+      ),
+    ).toBe(
+      '6,210 characters an item against 31,403 input tokens; recall 95% of pages, 93% of sections',
+    );
+  });
+
+  it('says the recall is not graded when a backend before 0.18.0 answers none', (): void => {
+    expect(retrievalFigure.value(figures({ tokens: null, recall: null }))).toBe(
+      'no selection read yet; recall not graded',
+    );
+  });
+
+  it('leaves the tokens out when no provider reported usage', (): void => {
+    expect(
+      retrievalFigure.value(
+        figures({
+          tokens: { items: 1, charsPerItem: 980, inputTokensPerItem: null },
+          recall: GRADED_RECALL,
+        }),
+      ),
+    ).toBe('980 characters an item; recall 95% of pages, 93% of sections');
   });
 });
 

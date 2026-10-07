@@ -17,6 +17,7 @@ import { assembleTrace, type AgentTrace } from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
 import { hasHostTool } from '../setup/host-tools';
 import { MANAGER_ADDRESS, managerIdentity } from '../convex/fakes/manager-identity';
+import { RETRIEVAL_RECALL } from '../../src/metrics/retrieval-recall';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -523,7 +524,9 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       },
       reorientation: { answered: 0, amended: 0, rate: null },
       hoursSaved: { estimatedItems: 0, hours: null },
-      retrieval: { tokens: null, recall: null },
+      // The 16 September recording predates the selection (wave 14, 14-R): no item read one, and
+      // the recall is the labelled set's grade, which the recompute reports as the backend does.
+      retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
     });
   });
 });
