@@ -11,6 +11,7 @@ import {
   heldElsewhereLines,
   heldItemReplyFindings,
   plannedWriteTargets,
+  writtenBrowserSurfaces,
   providerItemKey,
   withHeldItemsSaid,
   withheldByClaim,
@@ -375,6 +376,25 @@ describe('a documented page field of a browser-driven surface', (): void => {
     ).toEqual([]);
     expect(plannedWriteTargets(undefined, surfaces, pages)).toEqual([]);
     expect(plannedWriteTargets(write, surfaces, [])).toEqual([]);
+  });
+
+  it('names the browser-driven surfaces a plan writes unconditionally, whose pages the selection keeps (14-R)', (): void => {
+    const surfaces = [tileSurface, linear];
+    expect(
+      writtenBrowserSurfaces(
+        {
+          steps: [
+            { kind: 'write', writes: [SLUG] },
+            { kind: 'write', writes: ['linear'] },
+          ],
+        },
+        surfaces,
+      ),
+    ).toEqual([SLUG]);
+    expect(
+      writtenBrowserSurfaces({ steps: [{ kind: 'conditional-write', writes: [SLUG] }] }, surfaces),
+    ).toEqual([]);
+    expect(writtenBrowserSurfaces(undefined, surfaces)).toEqual([]);
   });
 
   it('is what a fill addresses, under one key whatever the case; the sign-in, a click and a read address nothing', (): void => {
