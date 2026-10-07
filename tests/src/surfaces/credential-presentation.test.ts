@@ -395,8 +395,9 @@ describe('the dedicated-app procedure on the card', (): void => {
         asksForConfigurationToken: false,
         title: "Leo's own app is not installed again",
         // Re-pinned for 13-S: forgetting the app is the way on (13-FS's design 2 (b)), where the
-        // note said connecting Slack again gave Leo no new app.
-        note: "Leo's own app, Leo (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Forget this app to give Leo a new one: once IT connects Slack again, Connect creates it.",
+        // note said connecting Slack again gave Leo no new app; the old app is named by its Slack
+        // app id too, since the new one takes the same name (the design pass).
+        note: "Leo's own app, Leo (Day0) (Slack app A1), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Forget this app so Day0 can create Leo a new one.",
       });
       expect(shown.installUrl).toBeUndefined();
     }
@@ -418,10 +419,13 @@ describe('the dedicated-app procedure on the card', (): void => {
     );
   });
 
-  it('points the fallback field at the forget above on a card whose own app is not installed again (W12X-4, re-pinned for 13-S)', (): void => {
+  it('offers the fallback field as the workspace token instead of a new app on a card whose own app is not installed again (W12X-4, re-pinned for 13-S)', (): void => {
     const shown = presentSurfaceCredential({ credential: oauth, keptAppNotReinstalled: true });
     expect(shown.landingNote).toBe(NOT_REINSTALLED_FALLBACK_NOTE);
-    expect(shown.landingNote).toContain('only once you forget the old one above');
+    // Re-pinned for the design pass: the row above says the forget once; this note says the token.
+    expect(shown.landingNote).toContain(
+      'rather hand over the workspace token than have Day0 make a new app',
+    );
     expect(presentSurfaceCredential({ credential: oauth }).landingNote).toBe(OAUTH_FALLBACK_NOTE);
   });
 

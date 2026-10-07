@@ -526,6 +526,18 @@ export const NOT_REINSTALLED_ACTS_AS = 'nobody';
 export const NOT_REINSTALLED_ACCESS = 'Nothing is read or sent through this card.';
 
 /**
+ * How the forget's message names the app it forgot: its name and its Slack app id, since the new
+ * app takes the same name and IT deletes the old one by it (13-S). A draft.
+ *
+ * @param app - The card's app as it stood before the forget.
+ */
+export function forgottenAppWords(
+  app: { readonly appId: string; readonly appName: string } | undefined,
+): string {
+  return app === undefined ? 'The app' : `${app.appName} (Slack app ${app.appId})`;
+}
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *

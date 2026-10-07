@@ -99,7 +99,7 @@ describe('recordWords', (): void => {
         { name: 'Leo', connection: 'Slack' },
       ),
     ).toBe(
-      "You forgot Leo (Day0), Leo's own app on the Slack connection, which IT's revoke had ended, so Day0 can create a new one; IT deletes the old app in Slack's app settings, which Day0 cannot.",
+      "You forgot Leo (Day0) (Slack app A0LEO), Leo's own app on the Slack connection, which IT's revoke had ended. Day0 can now create a new one; only IT can delete the old app, in Slack's app settings.",
     );
   });
 

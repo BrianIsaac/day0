@@ -271,8 +271,8 @@ describe('an app whose creating connection IT revoked (R41X-9)', (): void => {
     expect(KEPT_APP_CONNECTION_REVOKED).toBe(
       "IT revoked the organisation's Slack connection this employee's app was created with, so " +
         'the app is not installed again, and Day0 cannot delete it, even once IT connects Slack ' +
-        "again: IT deletes it in Slack's app settings. Forget the app on the card for Day0 to " +
-        'create a new one.',
+        "again: IT deletes it in Slack's app settings. To get a new app, forget this one on the " +
+        'card.',
     );
   });
 });

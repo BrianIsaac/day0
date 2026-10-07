@@ -78,13 +78,12 @@ export const OAUTH_FALLBACK_LABEL = 'Land a shared bot token (fallback)';
 
 /**
  * Why the fallback field stays on a card whose own app is not installed again (W12X-4): the
- * control above forgets the old app so a new one can be made (13-FS's design 2 (b)).
+ * workspace token instead of the new app the control above leads to (13-FS's design 2 (b)).
  */
 export const NOT_REINSTALLED_FALLBACK_NOTE =
-  'Day0 makes this employee a new app only once you forget the old one above. Where the ' +
-  'administrator would rather hand over the workspace token, land it here: it is stored ' +
-  'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
-  'so they stay attributable.';
+  'Where the administrator would rather hand over the workspace token than have Day0 make a new ' +
+  'app, land it here: it is stored encrypted as a shared credential, and writes through it ' +
+  'carry the employee name and run id so they stay attributable.';
 
 /** Why an OAuth surface still offers a landing field beside provisioning. */
 export const OAUTH_FALLBACK_NOTE =
@@ -200,16 +199,20 @@ export function presentProvisioning(input: {
     input.keptAppNotReinstalled === true
   ) {
     const employee = input.employee ?? 'the employee';
-    // Forgetting it is the way on (13-FS's design 2 (b)); Connect then needs IT's connection.
+    // Forgetting it is the way on (13-FS's design 2 (b)). Only with IT's connection active is
+    // Connect certain to follow, so only then does the note promise it.
     const way =
       input.organisationConnected === true
         ? `Forget this app, and Connect then creates ${employee} a new one through IT's Slack connection.`
-        : `Forget this app to give ${employee} a new one: once IT connects Slack again, Connect creates it.`;
+        : `Forget this app so Day0 can create ${employee} a new one.`;
+    // The new app takes the same name, so the old one is named by its Slack app id too: the one
+    // IT deletes.
+    const app = `${input.provisioning.appName} (Slack app ${input.provisioning.appId})`;
     return {
       note:
-        `${employee}'s own app, ${input.provisioning.appName}, was created through the ` +
-        "organisation's Slack connection, which IT revoked. Day0 does not install it again and " +
-        `cannot delete it: IT deletes it in Slack's app settings. ${way}`,
+        `${employee}'s own app, ${app}, was created through the organisation's Slack connection, ` +
+        'which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in ' +
+        `Slack's app settings. ${way}`,
       offerProvisioning: false,
       asksForConfigurationToken: false,
       stage: 'not-reinstalled',

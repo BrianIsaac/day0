@@ -865,8 +865,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
   'surface.app-forgotten': (p, subject) => {
     const ownApp = `${subject.name}'s own app on ${connectionOf(subject)}`;
-    const app = text(p.appName);
-    return `${decider(subject)} forgot ${app === undefined ? ownApp : `${app}, ${ownApp}`}, which IT's revoke had ended, so Day0 can create a new one; IT deletes the old app in Slack's app settings, which Day0 cannot`;
+    const name = text(p.appName);
+    const id = text(p.appId);
+    // The new app takes the same name, so the old one is named by its Slack app id too.
+    const app =
+      name === undefined ? undefined : id === undefined ? name : `${name} (Slack app ${id})`;
+    return `${decider(subject)} forgot ${app === undefined ? ownApp : `${app}, ${ownApp}`}, which IT's revoke had ended. Day0 can now create a new one; only IT can delete the old app, in Slack's app settings`;
   },
   'surface.socket-token-landed': (p, subject) =>
     `${p.replaced === true ? 'A new' : 'An'} app-level token landed for ${text(p.appName) ? p.appName : connectionOf(subject)}, so its decision requests carry Approve and Reject buttons`,

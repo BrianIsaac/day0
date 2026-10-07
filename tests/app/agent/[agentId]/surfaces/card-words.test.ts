@@ -3,6 +3,7 @@ import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
 import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
+  forgottenAppWords,
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
@@ -566,5 +567,14 @@ describe('a Slack card whose own app is not installed again (W12X-4)', (): void 
         tone: 'warn',
       });
     }
+  });
+});
+
+describe('the app a forget names (13-S)', (): void => {
+  it('names it by its Slack app id beside its name, since the new app takes the same name', (): void => {
+    expect(forgottenAppWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
+      'Leo (Day0) (Slack app A0LEO)',
+    );
+    expect(forgottenAppWords(undefined)).toBe('The app');
   });
 });

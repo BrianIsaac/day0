@@ -527,7 +527,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
   'surface.app-forgotten': (payload) =>
-    `app forgotten${text(payload.appName) ? `: ${payload.appName}` : ''}; IT deletes it in Slack`,
+    `app forgotten${text(payload.appName) ? `: ${payload.appName}` : ''}; IT deletes it in Slack's app settings`,
   'surface.socket-token-landed': (payload) =>
     `app-level token ${payload.replaced === true ? 'replaced' : 'landed'}: decision buttons on`,
   'surface.app-messages-open': (payload) => `${messagesOpenLabel(payload.how)}: typed code on`,
