@@ -1047,7 +1047,7 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     });
     const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
     expect(section(view.container, 'Proposed').textContent).toContain(
-      'Same person also gives Priya Shah the address ceo@acme.test.',
+      'Same person would also give Priya Shah the address ceo@acme.test.',
     );
   });
 

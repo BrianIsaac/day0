@@ -1380,6 +1380,23 @@ describe('the people graph after the wave 13 review (14-FX)', (): void => {
       .query(api.people.forEmployee, { agentId });
     expect(view.proposals[0]?.possiblySameAs).toMatchObject({ bringsAddress: 'ceo@acme.test' });
   });
+
+  it('says no address for a Same person whose kept person has one already, which the merge keeps (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Ana Tan', { primaryEmail: 'ana@acme.test' });
+    await seedEdge(harness, known, { type: 'collaborator', fromAgentId: agentId });
+    await seedPerson(harness, 'Ana Tan', {
+      status: 'unverified',
+      primaryEmail: 'ceo@acme.test',
+      possiblySameAs: known,
+      evidence: [{ quote: 'Ana Tan <ceo@acme.test>', where: 'Team page', at: 5 }],
+    });
+    const view = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.forEmployee, { agentId });
+    expect(view.proposals[0]?.possiblySameAs).not.toHaveProperty('bringsAddress');
+  });
 });
 
 describe('the people graph past its read bound (14-FX, W13-R23)', (): void => {

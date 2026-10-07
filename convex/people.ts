@@ -1323,7 +1323,7 @@ const proposalShownValidator = v.object({
       role: v.optional(v.string()),
       /** Whether the person it may be is confirmed or itself still a proposal. */
       standing: v.union(v.literal('confirmed'), v.literal('proposed')),
-      /** The address Same person would give them, where it is not theirs already (W13-R24). */
+      /** The address Same person would give them, who have none (W13-R24). */
       bringsAddress: v.optional(v.string()),
     }),
   ),
@@ -1416,7 +1416,8 @@ async function proposalShown(
             name: offered.displayName,
             ...(roleOf(offered) === undefined ? {} : { role: roleOf(offered) }),
             standing: offered.status === 'active' ? ('confirmed' as const) : ('proposed' as const),
-            ...(person.primaryEmail !== undefined && person.primaryEmail !== offered.primaryEmail
+            // The merge gives an address only to a person with none (`samePerson`).
+            ...(person.primaryEmail !== undefined && offered.primaryEmail === undefined
               ? { bringsAddress: person.primaryEmail }
               : {}),
           },

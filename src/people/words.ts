@@ -347,14 +347,14 @@ export function lookupFailedLine(name: string, when: string): string {
 }
 
 /**
- * The line under a Same person offer that names the address the merge would give the person kept
- * (W13-R24, wording draft), so a page's wrong address is seen before it is merged.
+ * The line under a Same person offer that names the address the merge would give the person kept,
+ * one with none (W13-R24, wording draft), so a page's wrong address is seen before it is merged.
  *
  * @param name - The person kept.
  * @param address - The address the proposal holds.
  */
 export function sameBringsAddressLine(name: string, address: string): string {
-  return `Same person also gives ${name} the address ${address}.`;
+  return `Same person would also give ${name} the address ${address}.`;
 }
 
 /** The Proposed card's line when a standing holds more people than the tab reads (W13-R23, wording draft). */
