@@ -194,6 +194,32 @@ describe('the dedicated-app procedure on the card', (): void => {
     ).toMatchObject({ offerProvisioning: false, stage: 'not-applicable' });
   });
 
+  it("offers the employee's own app whenever the organisation's Slack connection is active, whatever the docs record (W12V-1, design 1 (b))", (): void => {
+    const botToken = { found: 'value', method: 'api-key' } as const;
+    const shown = presentProvisioning({
+      credential: botToken,
+      hasPublicUrl: true,
+      organisationConnected: true,
+    });
+    expect(shown).toMatchObject({
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+      stage: 'offer',
+    });
+    // No finding at all reads the same: the manifest is Day0's kit, not the customer's text.
+    expect(presentProvisioning({ hasPublicUrl: true, organisationConnected: true }).stage).toBe(
+      'offer',
+    );
+    // Without the connection the page's finding still decides.
+    expect(
+      presentProvisioning({
+        credential: botToken,
+        hasPublicUrl: true,
+        organisationConnected: false,
+      }).stage,
+    ).toBe('not-applicable');
+  });
+
   it('offers to register an app when the deployment can receive the redirect', (): void => {
     const shown = presentProvisioning({ credential: oauth, hasPublicUrl: true });
     expect(shown.stage).toBe('offer');
@@ -368,16 +394,38 @@ describe('the dedicated-app procedure on the card', (): void => {
         offerProvisioning: false,
         asksForConfigurationToken: false,
         title: "Leo's own app is not installed again",
-        note: "Leo's own app, Leo (Day0), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not bring it back or give Leo a new app.",
+        // Re-pinned for 13-S: forgetting the app is the way on (13-FS's design 2 (b)), where the
+        // note said connecting Slack again gave Leo no new app; the old app is named by its Slack
+        // app id too, since the new one takes the same name (the design pass).
+        note: "Leo's own app, Leo (Day0) (Slack app A1), was created through the organisation's Slack connection, which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in Slack's app settings. Forget this app so Day0 can create Leo a new one.",
       });
       expect(shown.installUrl).toBeUndefined();
     }
   });
 
-  it('points the fallback field at no control on a card whose own app is not installed again (W12X-4)', (): void => {
+  it("says Connect then creates the new app where IT's Slack connection is active again (design 2 (b))", (): void => {
+    const shown = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: { appId: 'A1', appName: 'Leo (Day0)', installUrl: 'u', installedAt: 1 },
+      credentialHeld: false,
+      keptAppNotReinstalled: true,
+      organisationConnected: true,
+      employee: 'Leo',
+    });
+    expect(shown.stage).toBe('not-reinstalled');
+    expect(shown.note).toContain(
+      "IT deletes it in Slack's app settings. Forget this app, and Connect then creates Leo a new one through IT's Slack connection.",
+    );
+  });
+
+  it('offers the fallback field as the workspace token instead of a new app on a card whose own app is not installed again (W12X-4, re-pinned for 13-S)', (): void => {
     const shown = presentSurfaceCredential({ credential: oauth, keptAppNotReinstalled: true });
     expect(shown.landingNote).toBe(NOT_REINSTALLED_FALLBACK_NOTE);
-    expect(shown.landingNote).not.toContain('the control above');
+    // Re-pinned for the design pass: the row above says the forget once; this note says the token.
+    expect(shown.landingNote).toContain(
+      'rather hand over the workspace token than have Day0 make a new app',
+    );
     expect(presentSurfaceCredential({ credential: oauth }).landingNote).toBe(OAUTH_FALLBACK_NOTE);
   });
 

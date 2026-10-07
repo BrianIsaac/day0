@@ -70,7 +70,7 @@ import {
   activeConnectionFor,
   activeSystemsAmong,
   endedByItsRevoke,
-  revokedConnectionsAmong,
+  revokeReasonsAmong,
 } from './organisationConnectionReads';
 import { keptAppNotReinstalled } from '../src/surfaces/kept-app';
 import {
@@ -295,6 +295,12 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
    */
   readonly keptAppNotReinstalled?: true;
   /**
+   * True on a card holding no credential whose reason is the one IT gave for revoking the
+   * organisation connection the card is linked to, or the one that created its app, whether or
+   * not IT has connected the system again since: the card says it as IT's, and only then (13-S).
+   */
+  readonly reasonFromIt?: true;
+  /**
    * On a chat card that carries the manager's decision requests: whether they carry Approve and
    * Reject buttons, and why not (wave 12, 12-M; RM3 (a)). Read against this deployment's Socket
    * Mode bridge, which only the server knows of.
@@ -444,7 +450,7 @@ export const listForAgent = query({
     const rejoins = await latestRejoins(ctx, args.agentId);
     // The connections the cards are linked to, and those their employees' own apps were created
     // through (W12X-4): an app created but never installed is linked to no connection yet.
-    const revoked = await revokedConnectionsAmong(
+    const revokeReasons = await revokeReasonsAmong(
       ctx,
       surfaces.flatMap((surface) =>
         [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
@@ -452,6 +458,7 @@ export const listForAgent = query({
         ),
       ),
     );
+    const revoked: ReadonlySet<Id<'organisationConnections'>> = new Set(revokeReasons.keys());
     // A system IT has connected again since a revoke is not one the revoke left ended (m2).
     const activeSystems = await activeSystemsAmong(
       ctx,
@@ -525,6 +532,15 @@ export const listForAgent = query({
         revoked.has(surface.organisationConnectionId) &&
         !activeSystems.has(organisationSystemOf(surface) ?? '');
       const notReinstalled = keptEnded(surface);
+      // The card's reason is IT's only when it is the revoke's own words, on the connection the
+      // card is linked to or the one that created its app: after IT connects again too, and never
+      // a manager's own reason on a card a revoke later ended (13-S).
+      const reasonFromIt =
+        surface.credentialId === undefined &&
+        surface.reason !== undefined &&
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].some(
+          (id) => id !== undefined && revoked.has(id) && revokeReasons.get(id) === surface.reason,
+        );
       const { pendingAuthorisation, ...card } = listed;
       const bridge = bridges.get(surface._id);
       return {
@@ -543,6 +559,7 @@ export const listForAgent = query({
         ...(rejoin === undefined ? {} : { lastRejoin: rejoin }),
         ...(connectionRevoked ? { connectionRevoked: true as const } : {}),
         ...(notReinstalled ? { keptAppNotReinstalled: true as const } : {}),
+        ...(reasonFromIt ? { reasonFromIt: true as const } : {}),
         ...(bridge === undefined ? {} : { decisionButtons: decisionButtonsFor(surface, bridge) }),
         ...(typedCodes.has(surface._id) ? { typedCode: typedCodes.get(surface._id) } : {}),
       };

@@ -5,7 +5,7 @@ import {
   activeConnectionFor,
   activeSystemsAmong,
   endedByItsRevoke,
-  revokedConnectionsAmong,
+  revokeReasonsAmong,
   systemConnectionRevoked,
 } from '../../convex/organisationConnectionReads';
 import { allConvexModules } from './all-modules';
@@ -47,6 +47,7 @@ describe('reading an organisation connection', (): void => {
         registeredBy: { via: 'setup-cli' as const, at: 1 },
         status,
         createdAt: 1,
+        ...(status === 'revoked' ? { statusReason: `IT moved ${system}` } : {}),
       });
       return {
         linearRevoked: await ctx.db.insert(
@@ -83,16 +84,15 @@ describe('reading an organisation connection', (): void => {
       expect([...(await activeSystemsAmong(ctx, ['linear', 'notion', 'linear']))]).toEqual([
         'linear',
       ]);
-      expect(
-        [
-          ...(await revokedConnectionsAmong(ctx, [
-            ids.linearRevoked,
-            ids.linearActive,
-            ids.notionRevoked,
-            ids.notionRevoked,
-          ])),
-        ].sort(),
-      ).toEqual([ids.linearRevoked, ids.notionRevoked].sort());
+      // Re-pinned for 13-S: the listing reads each revoked connection with IT's reason for it.
+      const reasons = await revokeReasonsAmong(ctx, [
+        ids.linearRevoked,
+        ids.linearActive,
+        ids.notionRevoked,
+        ids.notionRevoked,
+      ]);
+      expect([...reasons.keys()].sort()).toEqual([ids.linearRevoked, ids.notionRevoked].sort());
+      expect(reasons.get(ids.linearRevoked)).toBe('IT moved linear');
     });
   });
 

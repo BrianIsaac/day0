@@ -95,6 +95,32 @@ export interface HttpAdapterDeps {
  */
 export { resolveRequestUrl };
 
+const CONTENT_TYPE = 'Content-Type';
+/** The content type a JSON body goes with when its action names none. */
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
+
+/** Whether the headers already name a content type, in any case. */
+function namesContentType(headers: Readonly<Record<string, string>>): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === CONTENT_TYPE.toLowerCase());
+}
+
+/**
+ * Whether a body the action sends is a JSON object or array. Without a content type `fetch` sends
+ * a string body as `text/plain`, which Slack refuses with `invalid_arguments` (the first walk's
+ * row 19), so a JSON body is labelled JSON when its action names no type of its own.
+ */
+function isJsonText(body: string): boolean {
+  const text = body.trim();
+  if (!text.startsWith('{') && !text.startsWith('[')) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    // Not JSON after all: the body goes as the action wrote it.
+    return false;
+  }
+}
+
 /**
  * Move a documented RPC read's body parameters into the query.
  *
@@ -657,6 +683,9 @@ export class HttpAdapter implements SurfaceAdapter {
         request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
+      if (body !== undefined && !namesContentType(headers) && isJsonText(body)) {
+        headers[CONTENT_TYPE] = JSON_CONTENT_TYPE;
+      }
       const authorityRefusal = transportAuthority
         ? await this.deps.beforeTransport?.(action, surface, { authority: transportAuthority })
         : await this.deps.beforeTransport?.(action, surface);

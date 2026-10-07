@@ -824,6 +824,18 @@ export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
 }
 
 /**
+ * The payload of `surface.app-forgotten` (W12X-4; 13-FS's design 2 (b)): the manager forgot the
+ * employee's own Slack app that IT's revoke ended, so a new one can be created; IT deletes the old
+ * one in Slack's app settings, which Day0 cannot. Its id and name are the one pointer left to it,
+ * and the connection that created it keeps that app's creation on the employee's export.
+ */
+export interface SurfaceAppForgottenPayload extends SurfaceNamed {
+  readonly appId: string;
+  readonly appName: string;
+  readonly organisationConnectionId?: string;
+}
+
+/**
  * The payload of `surface.socket-token-landed`: a person's app-level token landed for the
  * employee's own Slack app, so its decision requests carry buttons (12-M; RM3 (a)). Names no token.
  */
@@ -1804,6 +1816,7 @@ export interface EventPayloads {
   'surface.orientation-held': SurfaceOrientationHeldPayload;
   'surface.orientation-resumed': SurfaceOrientationResumedPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
+  'surface.app-forgotten': SurfaceAppForgottenPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
   'surface.app-messages-open': SurfaceAppMessagesOpenPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
@@ -2003,6 +2016,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.orientation-held',
   'surface.orientation-resumed',
   'surface.app-provisioned',
+  'surface.app-forgotten',
   'surface.socket-token-landed',
   'surface.app-messages-open',
   'surface.install-failed',

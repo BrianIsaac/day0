@@ -39,7 +39,6 @@ import {
   moveLabel,
   moveOfferWords,
   noWayOnWords,
-  slackNoInstallWords,
   slackChannelsGoWords,
   unservedConnectionWords,
   identityChip,
@@ -116,7 +115,8 @@ export interface Operation {
     | 'provision'
     | 'reject'
     | 'socket-token'
-    | 'messages-tab';
+    | 'messages-tab'
+    | 'forget';
   readonly surfaceId: string;
 }
 
@@ -178,6 +178,8 @@ export interface SurfaceCardActions {
   readonly landSocketToken: (token: string) => void;
   /** Say a person turned on the messages tab of the employee's own Slack app (W12V-7). */
   readonly confirmMessagesTab: () => void;
+  /** Forget the employee's own Slack app IT's revoke ended, so a new one can be made (W12X-4). */
+  readonly forgetApp: () => void;
   readonly setDays: (days: number) => Promise<Renewed>;
   readonly approveTools: (tools: string[]) => Promise<unknown>;
   /** Connect through the organisation's connection, where the card's system has an issuer. */
@@ -283,6 +285,9 @@ export function SurfaceCard({
   const pending = operation && !operation.error ? operation.kind : undefined;
   const failed = (kind: Operation['kind']): string | undefined =>
     operation?.kind === kind ? operation.error : undefined;
+  // The card's reason is the administrator's, from IT's revoke, and is said as theirs (M13); the
+  // listing says when it is, so a manager's own reason is never called IT's (13-S).
+  const itsReason = surface.reasonFromIt === true;
   const skipReason =
     surface.intakeSkipReason ??
     (SKIPPED.has(surface.verdict)
@@ -412,16 +417,6 @@ export function SurfaceCard({
     !accessRequest &&
     !connectable &&
     !slack;
-  // A covered Slack card whose documentation describes no install of the employee's app has no
-  // way on either: it says what is missing (W12V-1, words only).
-  const slackNoInstall =
-    slack &&
-    covering !== undefined &&
-    approvedAccess &&
-    !ended &&
-    surface.credentialId === undefined &&
-    !accessRequest &&
-    provisioningPresentation.stage === 'not-applicable';
   const waitsOn =
     accessRequest || noWayOn ? 'it' : connectable || slackConnectable ? 'connect' : undefined;
   // The approval's own probe meets no credential and leaves the card `ungranted`; one that waits
@@ -442,22 +437,21 @@ export function SurfaceCard({
     >
       <div className="grid gap-4">
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
-            M13); a reason that is the skip line is said once, as the skip. */}
+            M13); a reason that is the skip line is said once, as the skip, unless it is IT's, which
+            is said as IT's (13-S). */}
         {surface.reason &&
         !awaitingAccess &&
-        surface.reason !== skipReason &&
+        (surface.reason !== skipReason || itsReason) &&
         surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
-            {surface.connectionRevoked || surface.keptAppNotReinstalled
-              ? itsReasonWords(surface.reason)
-              : surface.reason}
+            {itsReason ? itsReasonWords(surface.reason) : surface.reason}
           </p>
         ) : null}
         {awaitingAccess ? (
           <p className="text-sm text-[var(--color-muted)]">
             {awaitingAccessWords(context.employeeName, surface.displayName, waitsOn)}
           </p>
-        ) : skipReason ? (
+        ) : skipReason && !(itsReason && skipReason === surface.reason) ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
         {surface.lastDecisionError ? (
@@ -574,10 +568,12 @@ export function SurfaceCard({
         surface.managerApprovedAt !== undefined &&
         provisioningPresentation.stage !== 'installed' ? (
           <ProvisioningRow
-            error={failed('provision')}
+            error={failed('provision') ?? failed('forget')}
             onProvision={actions.provision}
+            onForget={actions.forgetApp}
             presentation={provisioningPresentation}
             provisioning={pending === 'provision'}
+            forgetting={pending === 'forget'}
             surfaceSlug={surface.slug}
           />
         ) : null}
@@ -624,11 +620,6 @@ export function SurfaceCard({
         {noWayOn && covering !== undefined ? (
           <p className="text-sm text-[var(--color-warn)]">
             {noWayOnWords(covering.displayName, context.employeeName)}
-          </p>
-        ) : null}
-        {slackNoInstall ? (
-          <p className="text-sm text-[var(--color-warn)]">
-            {slackNoInstallWords(context.employeeName)}
           </p>
         ) : null}
         {/* An ended card renews first; what IT is asked for follows the renewal. */}

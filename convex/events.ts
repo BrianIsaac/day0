@@ -398,13 +398,24 @@ async function organisationLedgerOf(
   agentId: Id<'agents'>,
   surfaces: readonly Doc<'surfaces'>[],
 ): Promise<TraceLedgerLine[]> {
+  // An app the manager forgot after IT's revoke (13-S) is on no card any more; its event keeps
+  // the app and the connection that created it, so its creation stays on the export.
+  const forgotten = (
+    await eventsOfType(ctx, agentId, 'surface.app-forgotten').order('desc').take(TRACE_PAGE_ROWS)
+  ).flatMap((event) => (isEventOf(event, 'surface.app-forgotten') ? [event.payload] : []));
   const connectionIds = [
     ...new Set(
-      surfaces.flatMap((surface) =>
-        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
-          (id): id is Id<'organisationConnections'> => id !== undefined,
+      [
+        ...surfaces.flatMap((surface) => [
+          surface.organisationConnectionId,
+          surface.provisioning?.organisationConnectionId,
+        ]),
+        ...forgotten.map((app) =>
+          app.organisationConnectionId === undefined
+            ? undefined
+            : ctx.db.normalizeId('organisationConnections', app.organisationConnectionId),
         ),
-      ),
+      ].filter((id): id is Id<'organisationConnections'> => id !== undefined && id !== null),
     ),
   ];
   if (connectionIds.length === 0) return [];
@@ -420,11 +431,12 @@ async function organisationLedgerOf(
       isEventOf(event, 'credential.revoked-at-source') ? [event.payload.credentialId] : [],
     ),
   ]);
-  const ownApps = new Set<string>(
-    surfaces.flatMap((surface) =>
+  const ownApps = new Set<string>([
+    ...surfaces.flatMap((surface) =>
       surface.provisioning?.appId ? [surface.provisioning.appId] : [],
     ),
-  );
+    ...forgotten.map((app) => app.appId),
+  ]);
   return ledgers
     .flat()
     .flatMap((row) => {

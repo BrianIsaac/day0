@@ -36,6 +36,7 @@ import {
 } from '../src/surfaces/chat-reader';
 import { slackApiBaseUrl } from '../src/surfaces/slack-endpoint';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { channelAllowlist } from '../src/surfaces/slack-own-channel';
 import {
   approvedChannelNames,
   approvedLinearScope,
@@ -1562,7 +1563,10 @@ async function connectedBotId(
   remember: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<string> {
   if (surface.providerBotId) return surface.providerBotId;
-  if (!surface.toolAllowlist?.includes('auth.test') || surface.probeGeneration === undefined) {
+  if (
+    !channelAllowlist(toSurfaceRecord(surface)).includes('auth.test') ||
+    surface.probeGeneration === undefined
+  ) {
     throw new Error(NO_APP_IDENTITY);
   }
   const identity = await reader.identity();

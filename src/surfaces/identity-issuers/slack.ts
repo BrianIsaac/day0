@@ -48,12 +48,13 @@ export const NO_CONFIGURATION_TOKEN =
 /**
  * Why a kept app is not installed again: IT revoked the connection that created it. Nor can Day0
  * delete it afterwards, even through a connection IT lands again: only the creating connection's
- * configuration token could, and its retire says so (the re-walk, R41X-9).
+ * configuration token could, and its retire says so (the re-walk, R41X-9). The manager forgets it
+ * on the card for a new one to be created (13-FS's design 2 (b)).
  */
 export const KEPT_APP_CONNECTION_REVOKED =
   "IT revoked the organisation's Slack connection this employee's app was created with, so the " +
   'app is not installed again, and Day0 cannot delete it, even once IT connects Slack again: ' +
-  "IT deletes it in Slack's app settings.";
+  "IT deletes it in Slack's app settings. To get a new app, forget this one on the card.";
 
 /** The manifest an employee's app is created from, and which template it was built from. */
 export interface SlackAppManifest extends BuiltSlackManifest {

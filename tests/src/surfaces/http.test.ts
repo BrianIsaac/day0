@@ -464,6 +464,76 @@ describe('HTTP adapter', (): void => {
     expect(fetchImpl.calls[0].init.body).toBeUndefined();
     expect(fetchImpl.calls[0].url).toBe('https://slack.com/api/auth.test');
   });
+
+  it('names no content type for a body a GET never sends, JSON or not (13-S)', async (): Promise<void> => {
+    const fetchImpl = fakeFetch(
+      (): Response => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    await adapter(fetchImpl).apply(
+      ctx,
+      run,
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'GET',
+          path: 'auth.test',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: '{"probe":true}',
+        },
+      },
+      0,
+      'k',
+    );
+    expect(fetchImpl.calls[0].init.body).toBeUndefined();
+    expect(fetchImpl.calls[0].init.headers).toEqual({ Authorization: 'Bearer xoxb-test-value' });
+  });
+});
+
+describe('the content type of a body the action sends', (): void => {
+  function untypedPost(body: string, headers: Record<string, string> = {}): MockAction {
+    return {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}', ...headers }),
+        body,
+      },
+    };
+  }
+
+  async function sentHeaders(action: MockAction): Promise<RequestInit['headers']> {
+    const fetchImpl = fakeFetch(
+      (): Response => Response.json({ ok: true, channel: 'D0MANAGER', ts: '1787654400.000100' }),
+    );
+    const result = await adapter(fetchImpl).apply(ctx, run, action, 0, 'k');
+    expect(result.ok).toBe(true);
+    return fetchImpl.calls[0].init.headers;
+  }
+
+  it('sends a JSON body as JSON when the action names no content type, as Slack requires (13-FS, row 19)', async (): Promise<void> => {
+    const body = JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' });
+    expect(await sentHeaders(untypedPost(body))).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+      'Content-Type': 'application/json; charset=utf-8',
+    });
+  });
+
+  it('keeps the content type the action names, in whatever case, and adds none beside it', async (): Promise<void> => {
+    const body = JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' });
+    expect(await sentHeaders(untypedPost(body, { 'content-type': 'application/json' }))).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+      'content-type': 'application/json',
+    });
+  });
+
+  it('names no content type for a body that is not JSON', async (): Promise<void> => {
+    expect(await sentHeaders(untypedPost('channel=D0MANAGER&text=Draft'))).toEqual({
+      Authorization: 'Bearer xoxb-test-value',
+    });
+  });
 });
 
 describe('request URL and provider id helpers', (): void => {

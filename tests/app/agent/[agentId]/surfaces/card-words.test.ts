@@ -3,12 +3,12 @@ import { ACTS_AS_KINDS } from '../../../../../src/surfaces/access-identity';
 import { issuerKindFor } from '../../../../../src/surfaces/access-request';
 import { cardIdentity } from '../../../../../src/surfaces/card-identity';
 import {
+  forgottenAppWords,
   accessStanding,
   actsAsWords,
   connectedForOrganisationWords,
   decisionButtonsWords,
   typedCodeWords,
-  slackNoInstallWords,
   disconnectLines,
   documentedKeyUnusedWords,
   expectedCredential,
@@ -549,14 +549,6 @@ describe('whether the typed code reaches the app, on a Slack card (W12V-7)', ():
   });
 });
 
-describe('a covered Slack card with no install described (W12V-1, words only)', (): void => {
-  it('says what is missing and which page would supply it', (): void => {
-    expect(slackNoInstallWords('Vela')).toBe(
-      'Day0 cannot create Vela’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying Vela’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.',
-    );
-  });
-});
-
 describe('a Slack card whose own app is not installed again (W12X-4)', (): void => {
   it('acts as nobody, says nothing goes through it and reads as ended, whatever it waited on', (): void => {
     expect(NOT_REINSTALLED_ACTS_AS).toBe('nobody');
@@ -575,5 +567,14 @@ describe('a Slack card whose own app is not installed again (W12X-4)', (): void 
         tone: 'warn',
       });
     }
+  });
+});
+
+describe('the app a forget names (13-S)', (): void => {
+  it('names it by its Slack app id beside its name, since the new app takes the same name', (): void => {
+    expect(forgottenAppWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
+      'Leo (Day0) (Slack app A0LEO)',
+    );
+    expect(forgottenAppWords(undefined)).toBe('The app');
   });
 });

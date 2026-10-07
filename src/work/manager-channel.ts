@@ -1,6 +1,7 @@
 import { summariseAction, type SummaryContext } from '../surfaces/summary';
 import { clippedSlackText, slackEscaped } from '../surfaces/slack-markup';
 import type { SurfaceRecord } from '../surfaces/types';
+import { channelAllowlist } from '../surfaces/slack-own-channel';
 import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
 import type { RunHold } from './item-display';
@@ -284,7 +285,8 @@ export function managerMessageAction(
   if (surface.class !== 'chat' || !surface.managerDmChannelId) {
     throw new Error('surface is not a manager chat channel');
   }
-  const postTool = surface.toolAllowlist?.find((tool) =>
+  // Day0's own post: on an app Day0 created its channel's methods are allowed whatever the page names.
+  const postTool = channelAllowlist(surface).find((tool) =>
     /(?:^|[._-])(?:post|send|create)(?:[._-])?message$|chat\.postmessage$/i.test(tool),
   );
   if (!postTool) throw new Error('manager chat surface exposes no message-send operation');
@@ -330,18 +332,23 @@ const MESSAGE_EDIT_METHOD = 'chat.update';
 
 /**
  * Whether a surface can edit one of Day0's messages in the manager DM: a
- * documented-API chat card with a manager DM whose allowlist names
- * `chat.update` exactly, as the gate's allowlist check reads it.
+ * documented-API chat card with a manager DM whose channel allowlist names
+ * `chat.update` exactly, as the gate's allowlist check reads it. On an app Day0
+ * created that is always so (`channelAllowlist`, 13-FS's design 1 (b)); on a
+ * shared token the page must name it.
  */
 export function canEditManagerMessage(
-  surface: Pick<SurfaceRecord, 'class' | 'managerDmChannelId' | 'path' | 'toolAllowlist'>,
+  surface: Pick<
+    SurfaceRecord,
+    'class' | 'managerDmChannelId' | 'path' | 'toolAllowlist' | 'ownSlackApp'
+  >,
 ): boolean {
   return (
     surface.class === 'chat' &&
     surface.managerDmChannelId !== undefined &&
     surface.managerDmChannelId !== '' &&
     surface.path === 'documented-api' &&
-    (surface.toolAllowlist ?? []).includes(MESSAGE_EDIT_METHOD)
+    channelAllowlist(surface).includes(MESSAGE_EDIT_METHOD)
   );
 }
 

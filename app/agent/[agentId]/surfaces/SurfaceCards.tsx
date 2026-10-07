@@ -17,7 +17,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { refusalText, useChange } from '../../../components/use-change';
 import { ENVIRONMENT_PANEL_ID } from '../environment-hash';
 import { useNow } from '../../../components/time';
-import type { OrganisationSystem } from './card-words';
+import { forgottenAppWords, type OrganisationSystem } from './card-words';
 import {
   SurfaceCard,
   type AccessRequestView,
@@ -112,6 +112,7 @@ export function SurfaceCards({
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const landAppLevelToken = useAction(api.slackSocketActions.landAppLevelToken);
   const confirmMessagesTab = useMutation(api.slackMessagesTab.confirmMessagesTab);
+  const forgetEndedApp = useMutation(api.slackProvision.forgetEndedApp);
   const connectLinear = useAction(api.linearIdentityActions.connect);
   const authoriseMcp = useAction(api.mcpOauthActions.startAuthorisation);
   const disconnect = useMutation(api.surfaces.disconnect);
@@ -306,6 +307,11 @@ export function SurfaceCards({
         operate('messages-tab', surface, () => confirmMessagesTab({ surfaceId: surface._id }), {
           done: `Recorded: ${surface.provisioning?.appName ?? 'the app'} takes messages, so new requests to you through ${surface.displayName} offer the typed code.`,
           refused: 'Nothing was recorded.',
+        }),
+      forgetApp: () =>
+        operate('forget', surface, () => forgetEndedApp({ surfaceId: surface._id }), {
+          done: `${forgottenAppWords(surface.provisioning)} is forgotten. IT deletes it in Slack's app settings.`,
+          refused: 'The app was not forgotten.',
         }),
       setDays: (days) => setAccessDays({ surfaceId: surface._id, days }),
       approveTools: (tools) => approveTools({ surfaceId: surface._id, tools }),

@@ -355,6 +355,79 @@ describe("the configuration token's uses on an employee's export (the review's m
     ).toEqual([['organisation.configuration-used', 'A_OWN']]);
     expect(JSON.stringify(head)).not.toContain('A_OTHER');
   });
+
+  it('keeps the creation of an app the manager forgot after IT’s revoke, which no card names any more (13-S)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const connection = (status: 'active' | 'revoked') => ({
+        system: 'slack',
+        displayName: 'Slack',
+        kind: 'slack-configuration' as const,
+        mode: 'per-employee' as const,
+        scopes: ['chat:write'],
+        registeredBy: { via: 'setup-cli' as const, at: 1 },
+        status,
+        createdAt: 1,
+      });
+      const revoked = await ctx.db.insert('organisationConnections', connection('revoked'));
+      const relanded = await ctx.db.insert('organisationConnections', connection('active'));
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      // The card now links IT's new connection and holds no app: the old one was forgotten.
+      await ctx.db.patch(surface!._id, { organisationConnectionId: relanded });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'surface.app-forgotten',
+        payload: {
+          surfaceId: surface!._id,
+          appId: 'A_OLD',
+          appName: 'Old (Day0)',
+          organisationConnectionId: revoked,
+        },
+        createdAt: 5,
+      });
+      const named = { system: 'slack', displayName: 'Slack' };
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: revoked,
+        type: 'organisation.configuration-used',
+        payload: {
+          ...named,
+          organisationConnectionId: revoked,
+          method: 'apps.manifest.create',
+          outcome: 'done',
+          appId: 'A_OLD',
+        },
+        createdAt: 2,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: revoked,
+        type: 'organisation.configuration-used',
+        payload: {
+          ...named,
+          organisationConnectionId: revoked,
+          method: 'apps.manifest.create',
+          outcome: 'done',
+          appId: 'A_OTHER',
+        },
+        createdAt: 3,
+      });
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(
+      head.organisationLedger
+        .filter((one) => one.type === 'organisation.configuration-used')
+        .map((one) => (one.payload as { appId?: string }).appId),
+    ).toEqual(['A_OLD']);
+    expect(JSON.stringify(head)).not.toContain('A_OTHER');
+  });
 });
 
 describe('the paged trace export', (): void => {

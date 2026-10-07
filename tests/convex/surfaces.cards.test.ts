@@ -480,6 +480,15 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
       .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
     expect(after.find((card) => card._id === revokedCard)?.connectionRevoked).toBeUndefined();
+    // Its reason is still IT's revoke reason, said as IT's (13-S): never a bare sentence.
+    expect(after.find((card) => card._id === revokedCard)?.reasonFromIt).toBe(true);
+    expect(after.find((card) => card._id === liveCard)?.reasonFromIt).toBeUndefined();
+    // A reason the card was given since is the card's own again.
+    await harness.run(async (ctx) => await ctx.db.patch(revokedCard, { reason: 'probe failed' }));
+    const later = await harness
+      .withIdentity(managerIdentity())
+      .query(api.surfaces.listForAgent, { agentId });
+    expect(later.find((card) => card._id === revokedCard)?.reasonFromIt).toBeUndefined();
   });
 
   it("says a Slack card's own app is not installed again once its creating connection is revoked, before and after IT connects Slack again (W12X-4)", async (): Promise<void> => {
@@ -567,6 +576,17 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
     expect(cards.find((card) => card._id === heldCard)?.keptAppNotReinstalled).toBeUndefined();
     // Another Slack connection active since is no creator of this app: it stays not installed.
     expect(cards.find((card) => card._id === endedCard)?.connectionRevoked).toBeUndefined();
+    // The card's reason is IT's only when it is the revoke's own (13-S's second pass): a manager's
+    // Disconnect before IT's revoke stays the manager's.
+    const reasonOf = async (reason: string): Promise<true | undefined> => {
+      await harness.run(async (ctx) => await ctx.db.patch(endedCard, { reason }));
+      const listed = await harness
+        .withIdentity(managerIdentity())
+        .query(api.surfaces.listForAgent, { agentId });
+      return listed.find((card) => card._id === endedCard)?.reasonFromIt;
+    };
+    expect(await reasonOf('ending')).toBe(true);
+    expect(await reasonOf('Disconnected by the manager.')).toBeUndefined();
     // Nothing goes through it, so the server computes no buttons or typed code for it (13-FS).
     expect(cards.find((card) => card._id === endedCard)?.decisionButtons).toBeUndefined();
     expect(cards.find((card) => card._id === endedCard)?.typedCode).toBeUndefined();

@@ -526,6 +526,18 @@ export const NOT_REINSTALLED_ACTS_AS = 'nobody';
 export const NOT_REINSTALLED_ACCESS = 'Nothing is read or sent through this card.';
 
 /**
+ * How the forget's message names the app it forgot: its name and its Slack app id, since the new
+ * app takes the same name and IT deletes the old one by it (13-S). A draft.
+ *
+ * @param app - The card's app as it stood before the forget.
+ */
+export function forgottenAppWords(
+  app: { readonly appId: string; readonly appName: string } | undefined,
+): string {
+  return app === undefined ? 'The app' : `${app.appName} (Slack app ${app.appId})`;
+}
+
+/**
  * The reason an administrator gave for the revoke that ended a card, said as theirs (the design
  * pass's major 2).
  *
@@ -556,18 +568,6 @@ export function unservedConnectionWords(system: string): string {
  */
 export function noWayOnWords(system: string, employee: string): string {
   return `IT connected ${system} for the organisation in a way this card cannot use for ${employee}. Ask IT how ${employee} should reach it.`;
-}
-
-/**
- * What a Slack card covered by IT's connection says when it has no way on because its
- * documentation describes no install of the employee's own app (W12V-1, words only): what is
- * missing and which page would supply it. What a card may offer is still read from the
- * documentation (wave 13's design).
- *
- * @param employee - The employee's name.
- */
-export function slackNoInstallWords(employee: string): string {
-  return `Day0 cannot create ${employee}’s own Slack app from this card: the linked documentation describes no install procedure for it. A Slack page saying ${employee}’s app is created with the organisation’s configuration token, or carrying the app’s manifest (docs/running/access-slack.md, section 2), lets this card create it.`;
 }
 
 /** What a Slack card says about where the manager's decisions reach them, and what it asks for. */

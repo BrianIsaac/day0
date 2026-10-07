@@ -1285,6 +1285,7 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
   async function decideInDm(
     harness: TestConvex<typeof schema>,
     allowlist: string[],
+    options: { readonly ownApp?: boolean } = {},
   ): Promise<{ workItemId: Id<'workItems'>; decisionId: string }> {
     const { agentId, workItemId } = await seedParkedPlan(harness);
     const surfaceId = await harness.run(async (ctx) => {
@@ -1293,6 +1294,32 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
         .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
         .unique();
       await ctx.db.patch(surface!._id, { toolAllowlist: allowlist });
+      if (options.ownApp === true) {
+        // The employee's own app, installed: Day0 created it, and the card holds its bot token.
+        const secret = await ctx.db.insert('credentials', {
+          userId: 'organisation',
+          kind: 'oauth',
+          label: 'Ops (Day0) client secret',
+          ciphertext: 'ciphertext',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+        });
+        await ctx.db.patch(surface!._id, {
+          credentialKind: 'oauth',
+          provisioning: {
+            appId: 'A0OPS',
+            appName: 'Ops (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: secret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+        });
+      }
       return surface!._id;
     });
     await harness.action(internal.managerChannelActions.requestDecision, {
@@ -1437,6 +1464,31 @@ describe('a decided request in the manager DM (M finding 3)', (): void => {
     const decision = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.decision;
     expect(decision?.closedAt).toBeUndefined();
     expect(decision?.closeFailure).toBe("the edit's claim lapsed with no result");
+  });
+
+  it('sends and closes the request on an app Day0 created though its page names neither method (W12V-3, design 1 (b))', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, ['conversations.history'], {
+      ownApp: true,
+    });
+    expect(sent.filter((call) => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: true });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+    // The stored allowlist stays the page's: the work never gains the channel's methods.
+    const surface = await harness.run(async (ctx) => {
+      const agentId = (await ctx.db.get(workItemId))!.agentId;
+      return await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+    });
+    expect(surface?.toolAllowlist).toEqual(['conversations.history']);
   });
 
   it('leaves the request as sent when the card does not allow chat.update', async (): Promise<void> => {
@@ -2569,6 +2621,35 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     expect(noticesIn(calls)).toHaveLength(1);
   });
 
+  it('sends through an app Day0 created though its page names none of the notice’s methods (design 1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const surface of await ctx.db.query('surfaces').collect()) {
+        await ctx.db.patch(surface._id, {
+          toolAllowlist: ['conversations.history'],
+          credentialKind: 'oauth',
+          provisioning: {
+            appId: 'A0MAYA',
+            appName: 'Maya (Day0)',
+            clientId: '1.2',
+            clientSecretCredentialId: surface.credentialId!,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'https://day0.example/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+        });
+      }
+    });
+    await askPriya(harness, agentId);
+    expect(noticesIn(calls)).toHaveLength(1);
+  });
+
   it('sends nothing through a card whose access has ended', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -2695,6 +2776,7 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
   async function seedMaya(
     harness: TestConvex<typeof schema>,
     grants: readonly string[] = ['boss:message'],
+    chat: { readonly ownApp?: boolean; readonly toolAllowlist?: string[] } = {},
   ): Promise<{ agentId: Id<'agents'>; linearId: Id<'surfaces'> }> {
     return await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
@@ -2725,14 +2807,29 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
         whereFound: [],
         path: 'documented-api',
         endpoint: 'https://slack.com/api/',
-        toolAllowlist: ['auth.test', 'chat.postMessage'],
+        toolAllowlist: chat.toolAllowlist ?? ['auth.test', 'chat.postMessage'],
         managerDmChannelId: 'D0MANAGER',
         managerUserId: 'UMANAGER',
         credentialId,
-        credentialKind: 'value',
+        credentialKind: chat.ownApp === true ? 'oauth' : 'value',
         credentialLanded: true,
         lastVerifiedAt: Date.now(),
         createdAt: 1,
+        ...(chat.ownApp === true
+          ? {
+              provisioning: {
+                appId: 'A0MAYA',
+                appName: 'Maya (Day0)',
+                clientId: '1.2',
+                clientSecretCredentialId: credentialId,
+                installUrl: 'https://slack.com/oauth/v2/authorize',
+                redirectUrl: 'https://day0.example/api/oauth/slack',
+                scopes: ['chat:write'],
+                createdAt: 1,
+                installedAt: 2,
+              },
+            }
+          : {}),
       });
       const linearId = await ctx.db.insert('surfaces', {
         agentId,
@@ -2797,6 +2894,25 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
       }),
     ).resolves.toEqual({ sent: false, reason: 'the request was already sent to the manager' });
     expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+  });
+
+  it('posts it through an app Day0 created though the card’s page never names chat.postMessage (design 1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness, ['boss:message'], {
+      ownApp: true,
+      toolAllowlist: ['conversations.history'],
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    const drafted = await owner.mutation(api.accessRequests.draft, {
+      surfaceId: linearId,
+      via: 'messaged',
+    });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts.map((post) => asRead(post.text))).toEqual([drafted.text]);
   });
 
   it("sends no DM when the manager copied or emailed the request, and one when they ask for it after (11-AC's item 2)", async (): Promise<void> => {

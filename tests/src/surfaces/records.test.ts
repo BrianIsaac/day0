@@ -84,3 +84,49 @@ describe('an identity its credential contradicts (join 14, the second pass)', ()
     ).toBe('trailer');
   });
 });
+
+describe('a card on an app Day0 created (design 1 (b))', (): void => {
+  const slackCard = {
+    ...base,
+    slug: 'team-chat',
+    displayName: 'Slack',
+    class: 'chat',
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['conversations.history'],
+    credentialId: 'cred-bot',
+  };
+
+  it('is marked once the app is installed and the card holds its token, its allowlist the page’s alone', (): void => {
+    const record = toSurfaceRecord({
+      ...slackCard,
+      credentialKind: 'oauth',
+      provisioning: { installedAt: 2 },
+    });
+    expect(record.ownSlackApp).toBe(true);
+    expect(record.toolAllowlist).toEqual(['conversations.history']);
+  });
+
+  it('is not marked for a shared token, an app awaiting its install, or another system', (): void => {
+    expect(toSurfaceRecord({ ...slackCard, credentialKind: 'value' }).ownSlackApp).toBeUndefined();
+    expect(
+      toSurfaceRecord({ ...slackCard, credentialKind: 'value', provisioning: {} }).ownSlackApp,
+    ).toBeUndefined();
+    expect(
+      toSurfaceRecord({
+        ...slackCard,
+        credentialKind: 'oauth',
+        provisioning: { installedAt: 2 },
+        credentialId: undefined,
+      }).ownSlackApp,
+    ).toBeUndefined();
+    expect(
+      toSurfaceRecord({
+        ...slackCard,
+        endpoint: 'https://chat.example.com/api/',
+        credentialKind: 'oauth',
+        provisioning: { installedAt: 2 },
+      }).ownSlackApp,
+    ).toBeUndefined();
+  });
+});

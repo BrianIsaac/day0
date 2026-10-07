@@ -77,13 +77,13 @@ const DETAIL_LENGTH = 400;
 export const OAUTH_FALLBACK_LABEL = 'Land a shared bot token (fallback)';
 
 /**
- * Why the fallback field stays on a card whose own app is not installed again (W12X-4): no
- * control above makes one, so the note does not point at one.
+ * Why the fallback field stays on a card whose own app is not installed again (W12X-4): the
+ * workspace token instead of the new app the control above leads to (13-FS's design 2 (b)).
  */
 export const NOT_REINSTALLED_FALLBACK_NOTE =
-  'Day0 does not make this employee a new app. Where the administrator would rather hand over ' +
-  'the workspace token, land it here: it is stored encrypted as a shared credential, and writes ' +
-  'through it carry the employee name and run id so they stay attributable.';
+  'Where the administrator would rather hand over the workspace token than have Day0 make a new ' +
+  'app, land it here: it is stored encrypted as a shared credential, and writes through it ' +
+  'carry the employee name and run id so they stay attributable.';
 
 /** Why an OAuth surface still offers a landing field beside provisioning. */
 export const OAUTH_FALLBACK_NOTE =
@@ -156,6 +156,10 @@ export interface CredentialPresentationInput {
  * of its channels (RM4), unless the connection that created it was revoked:
  * that app is never installed again, so nothing is offered (W12X-4).
  *
+ * The procedure is offered where the documentation describes an install (an `oauth` finding) or,
+ * whatever the documentation records, where the organisation's Slack configuration connection is
+ * active (13-FS's design 1 (b)).
+ *
  * Args:
  *   input.credential: The credential finding orientation extracted.
  *   input.provisioning: The dedicated app, once one has been registered.
@@ -195,19 +199,30 @@ export function presentProvisioning(input: {
     input.keptAppNotReinstalled === true
   ) {
     const employee = input.employee ?? 'the employee';
+    // Forgetting it is the way on (13-FS's design 2 (b)). Only with IT's connection active is
+    // Connect certain to follow, so only then does the note promise it.
+    const way =
+      input.organisationConnected === true
+        ? `Forget this app, and Connect then creates ${employee} a new one through IT's Slack connection.`
+        : `Forget this app so Day0 can create ${employee} a new one.`;
+    // The new app takes the same name, so the old one is named by its Slack app id too: the one
+    // IT deletes.
+    const app = `${input.provisioning.appName} (Slack app ${input.provisioning.appId})`;
     return {
       note:
-        `${employee}'s own app, ${input.provisioning.appName}, was created through the ` +
-        "organisation's Slack connection, which IT revoked. Day0 does not install it again and " +
-        "cannot delete it: IT deletes it in Slack's app settings. Connecting Slack again does not " +
-        `bring it back or give ${employee} a new app.`,
+        `${employee}'s own app, ${app}, was created through the organisation's Slack connection, ` +
+        'which IT revoked. Day0 does not install it again and cannot delete it: IT deletes it in ' +
+        `Slack's app settings. ${way}`,
       offerProvisioning: false,
       asksForConfigurationToken: false,
       stage: 'not-reinstalled',
       title: notReinstalledTitle(employee),
     };
   }
-  if (input.credential?.method !== 'oauth') {
+  // The employee's own app is offered wherever the organisation's Slack configuration connection
+  // is active, since its manifest is Day0's kit, not the customer's text; the documentation's
+  // finding decides only where there is no such connection (13-FS's design 1 (b), W12V-1).
+  if (input.credential?.method !== 'oauth' && input.organisationConnected !== true) {
     return {
       note: 'The documentation describes no app installation procedure for this system.',
       offerProvisioning: false,
