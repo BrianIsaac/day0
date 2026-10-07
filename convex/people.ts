@@ -444,8 +444,8 @@ export const dismiss = mutation({
 /**
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **Same person** on a
  * proposal whose name alone matched someone known (C5). The manager's word merges it: its
- * evidence, identities and edges move to that person (the edges still proposed, for Confirm), and
- * the proposal's row goes. A merge never confirms anything.
+ * evidence, identities, edges and the working agreements about it move to that person (the edges
+ * still proposed, for Confirm), and the proposal's row goes. A merge never confirms anything.
  *
  * @returns The person it was merged into.
  */
@@ -479,6 +479,17 @@ export const samePerson = mutation({
       .withIndex('by_person', (q) => q.eq('personId', proposal._id))
       .take(GRAPH_READ_LIMIT);
     for (const identity of identities) await ctx.db.patch(identity._id, { personId: target._id });
+    // An agreement about the person merged away is about the person kept (W13-R33), whatever its
+    // standing, so a later read of either finds it.
+    const agreements = await ctx.db
+      .query('workingAgreements')
+      .withIndex('by_user_person', (q) =>
+        q.eq('userId', proposal.userId).eq('personId', proposal._id),
+      )
+      .take(GRAPH_READ_LIMIT);
+    for (const agreement of agreements) {
+      await ctx.db.patch(agreement._id, { personId: target._id });
+    }
     for (const edge of await edgesTo(ctx, proposal.userId, proposal._id)) {
       // The manager is the owner, never the end of an edge (the one-role rulings).
       await ctx.db.patch(

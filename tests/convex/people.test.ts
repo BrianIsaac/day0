@@ -1086,6 +1086,43 @@ describe('people lookups at Confirm', (): void => {
     expect((await graphRows(harness)).identities).toEqual([]);
   });
 
+  it('repoints every agreement about the person merged away, in every standing, onto the person kept (W13-R33)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    const agreements = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          (['active', 'refused'] as const).map(
+            async (status) =>
+              await ctx.db.insert('workingAgreements', {
+                userId: 'owner',
+                agentId,
+                kind: 'preference',
+                statement: `Copy Lee on every reply (${status}).`,
+                scope: 'person',
+                personId: offered,
+                sourceType: 'manager-card',
+                status,
+                createdAt: 1,
+                appliedTo: [],
+              }),
+          ),
+        ),
+    );
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    const rows = await harness.run(
+      async (ctx) => await Promise.all(agreements.map(async (id) => await ctx.db.get(id))),
+    );
+    expect(rows.map((row) => row?.personId)).toEqual([known, known]);
+  });
+
   it('looks a confirmed person up when Same person brings them the address a page gave', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
