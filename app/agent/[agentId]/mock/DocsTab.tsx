@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useQuery } from 'convex/react';
+import { usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
+
+/** How many documents the list reads first, and adds on each "Show more" (M17). */
+export const DOCS_AT_A_TIME = 50;
 
 /** A group heading of the documents' rail. */
 const GROUP_HEADING =
@@ -22,9 +26,16 @@ export const LOADING_DOCS: Record<'mock' | 'real', string> = {
   real: 'Loading linked documentation…',
 };
 
+/** What the page beside the list says while its body loads, and once it is gone. */
+export const PAGE_STATES = {
+  loading: 'Loading the page…',
+  gone: 'This page is no longer available.',
+} as const;
+
 /**
  * The documents the employee reads, team documents then how-to guides, one open beside the list:
- * the office's wiki in mock mode, the linked documentation in real mode.
+ * the office's wiki in mock mode, the linked documentation in real mode. The list is read a page
+ * at a time without bodies, and only the open document is read whole (M17, R6).
  */
 export function DocsTab({
   agentId,
@@ -33,11 +44,14 @@ export function DocsTab({
   agentId: Id<'agents'>;
   mode?: 'mock' | 'real';
 }) {
-  const docs = useQuery(api.mock.listDocs, { agentId });
+  const {
+    results: docs,
+    status,
+    loadMore,
+  } = usePaginatedQuery(api.mock.listDocs, { agentId }, { initialNumItems: DOCS_AT_A_TIME });
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
   const sortedDocs = useMemo(() => {
-    if (!docs) return [];
     return [...docs].sort((a, b) => {
       // team-doc before how-to-guide
       if (a.category !== b.category) return a.category === 'team-doc' ? -1 : 1;
@@ -45,7 +59,7 @@ export function DocsTab({
     });
   }, [docs]);
   const sourceIds = useMemo(
-    () => [...new Set((docs ?? []).flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))],
+    () => [...new Set(docs.flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))],
     [docs],
   );
   const sources = useQuery(api.docSources.byIds, { sourceIds });
@@ -55,8 +69,10 @@ export function DocsTab({
   );
 
   const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
+  const page = useQuery(api.mock.getDoc, active ? { agentId, slug: active.slug } : 'skip');
 
-  if (!docs) return <p className="text-sm text-[var(--color-muted)]">{LOADING_DOCS[mode]}</p>;
+  if (status === 'LoadingFirstPage')
+    return <p className="text-sm text-[var(--color-muted)]">{LOADING_DOCS[mode]}</p>;
   if (sortedDocs.length === 0)
     return <p className="text-sm text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</p>;
 
@@ -126,6 +142,16 @@ export function DocsTab({
               </li>
             ))}
         </ul>
+        {status === 'CanLoadMore' || status === 'LoadingMore' ? (
+          <Button
+            size="small"
+            className="mt-4"
+            disabled={status === 'LoadingMore'}
+            onClick={() => loadMore(DOCS_AT_A_TIME)}
+          >
+            {status === 'LoadingMore' ? 'Loading…' : 'Show more documents'}
+          </Button>
+        ) : null}
       </nav>
 
       <article
@@ -140,9 +166,9 @@ export function DocsTab({
               <Chip tone={active.category === 'how-to-guide' ? 'warn' : 'muted'}>
                 {active.category === 'how-to-guide' ? 'How-to guide' : 'Team doc'}
               </Chip>
-              {active.sourceUrl ? (
+              {page?.sourceUrl ? (
                 <a
-                  href={active.sourceUrl}
+                  href={page.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex min-h-11 items-center text-sm"
@@ -151,9 +177,15 @@ export function DocsTab({
                 </a>
               ) : null}
             </div>
-            <pre className="font-sans text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-fg)]">
-              {active.body}
-            </pre>
+            {page ? (
+              <pre className="font-sans text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-fg)]">
+                {page.body}
+              </pre>
+            ) : (
+              <p className="text-sm text-[var(--color-muted)]">
+                {page === null ? PAGE_STATES.gone : PAGE_STATES.loading}
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-[var(--color-muted)]">Pick a document from the list.</p>

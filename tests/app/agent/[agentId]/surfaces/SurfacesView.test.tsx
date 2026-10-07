@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
 vi.mock('convex/react', () => ({
+  usePaginatedQuery: (reference: unknown) => ({
+    results: (backend.queries[getFunctionName(reference as never)] as unknown[] | undefined) ?? [],
+    status: 'Exhausted',
+    loadMore: (): void => undefined,
+  }),
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
   useMutation: () => async (): Promise<void> => undefined,

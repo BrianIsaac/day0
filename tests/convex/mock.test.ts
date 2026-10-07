@@ -5,6 +5,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
+import { MOCK_OFFICE_DOCS_READ } from '../../convex/mock';
 
 describe('mock documentation mirrors', (): void => {
   it('preserves source metadata when a page is upserted', async (): Promise<void> => {
@@ -155,8 +156,11 @@ describe('which mirrored pages an employee reads (transfer plan 6.2)', (): void 
     const agentId = await seedMirrors(harness);
     const docs = await harness
       .withIdentity(managerIdentity('colleague'))
-      .query(api.mock.listDocs, { agentId });
-    expect(docs.map((doc) => doc.slug).sort()).toEqual(['colleague-onboarding', 'office-welcome']);
+      .query(api.mock.listDocs, { agentId, paginationOpts: { numItems: 50, cursor: null } });
+    expect(docs.page.map((doc) => doc.slug).sort()).toEqual([
+      'colleague-onboarding',
+      'office-welcome',
+    ]);
   });
 
   it("answers no page for a slug mirrored from another owner's source", async (): Promise<void> => {
@@ -216,6 +220,140 @@ describe('a mirror written for an employee that no longer reads its source (tran
       }),
     ).resolves.toBeNull();
     expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([]);
+  });
+});
+
+describe('no reader collects every mirror (M17, R6)', (): void => {
+  /** An employee of `owner` holding `count` pages mirrored from one source, each `bytes` long. */
+  async function seedLargeMirror(
+    harness: ReturnType<typeof convexTest>,
+    count: number,
+    bytes: number,
+  ): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'mirror test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index < count; index += 1) {
+        const slug = `handbook-page-${String(index).padStart(2, '0')}`;
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug,
+          title: `Handbook page ${index}`,
+          body: `# Handbook page ${index}\n\n${'x'.repeat(bytes)}`,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: `${slug}.md`,
+          updatedAt: 1,
+        });
+      }
+      return agentId;
+    });
+  }
+
+  it('lists the Docs tab a bounded page at a time, without bodies, and reaches every page', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // The review's fixture: forty mirrors of about 532 KB, past one read's 16 MiB.
+    const agentId = await seedLargeMirror(harness, 40, 532 * 1024);
+    const caller = harness.withIdentity(managerIdentity('owner'));
+    const slugs: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const page: Awaited<ReturnType<typeof listPage>> = await listPage(cursor);
+      expect(page.page.length).toBeLessThanOrEqual(8);
+      for (const doc of page.page) {
+        expect(doc).not.toHaveProperty('body');
+        slugs.push(doc.slug);
+      }
+      pages += 1;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    expect(pages).toBeGreaterThan(1);
+    expect(slugs).toEqual(
+      Array.from(
+        { length: 40 },
+        (_value, index) => `handbook-page-${String(index).padStart(2, '0')}`,
+      ),
+    );
+
+    async function listPage(at: string | null) {
+      return await caller.query(api.mock.listDocs, {
+        agentId,
+        paginationOpts: { numItems: 50, cursor: at },
+      });
+    }
+  });
+
+  it("reads a mock office's documents up to its fixed size, and fails past it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seed = async (count: number): Promise<Id<'agents'>> =>
+      await harness.run(async (ctx) => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'office test',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        for (let index = 0; index < count; index += 1) {
+          await ctx.db.insert('mockDocs', {
+            agentId,
+            slug: `office-page-${String(index).padStart(2, '0')}`,
+            title: `Office page ${index}`,
+            body: `# Office page ${index}`,
+            category: 'team-doc',
+            updatedAt: 1,
+          });
+        }
+        return agentId;
+      });
+    const full = await seed(MOCK_OFFICE_DOCS_READ);
+    await expect(
+      harness.query(internal.mock.snapshotInternal, { agentId: full }),
+    ).resolves.toMatchObject({ teamDocs: expect.any(Array) });
+    const past = await seed(MOCK_OFFICE_DOCS_READ + 1);
+    await expect(harness.query(internal.mock.snapshotInternal, { agentId: past })).rejects.toThrow(
+      `holds more than ${MOCK_OFFICE_DOCS_READ} documents`,
+    );
+  });
+
+  it("seeds the hosted office within the snapshot's bound", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'office test',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const seeded = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(seeded.length).toBeGreaterThan(0);
+    expect(seeded.length).toBeLessThanOrEqual(MOCK_OFFICE_DOCS_READ);
   });
 });
 

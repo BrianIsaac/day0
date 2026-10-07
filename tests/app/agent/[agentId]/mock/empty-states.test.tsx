@@ -5,6 +5,11 @@ const state = vi.hoisted(() => ({ loading: false }));
 
 vi.mock('convex/react', () => ({
   useQuery: (): unknown[] | undefined => (state.loading ? undefined : []),
+  usePaginatedQuery: () => ({
+    results: [],
+    status: state.loading ? 'LoadingFirstPage' : 'Exhausted',
+    loadMore: (): void => undefined,
+  }),
 }));
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
