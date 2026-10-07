@@ -569,6 +569,27 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     expect(proposed).not.toMatch(/<button[^>]*>Connect<\/button>/);
   });
 
+  it("names what IT does, never a control that is not drawn, on an escalate-path Slack card that draws no provisioning row (W13V-1's card sentence)", (): void => {
+    const markup = render(
+      listed({
+        _id: 'surface-slack-policy' as ListedSurface['_id'],
+        slug: 'slack-automation-policy',
+        displayName: 'Slack automation policy',
+        class: 'chat',
+        path: 'escalate',
+        endpoint: undefined,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 89 * DAY,
+        request: { credential: { found: 'none', method: 'oauth', label: 'Slack OAuth access' } },
+      }),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(markup).not.toContain('Provision a dedicated app');
+    expect(markup).not.toContain('the control above');
+    expect(markup).toContain('Ask IT how to connect Slack automation policy');
+  });
+
   it('says on its chip that a card waits on IT or is ready to connect, never that it needs a credential nobody pastes (bed, 2 Oct)', (): void => {
     const waiting = render(listed(LINEAR_APPROVED), {}, { accessRequest: REQUEST });
     expect(chip(waiting)).toBe('Waiting on IT');

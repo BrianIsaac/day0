@@ -92,6 +92,23 @@ export const OAUTH_FALLBACK_NOTE =
   'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
   'so they stay attributable.';
 
+/**
+ * Why an OAuth card still offers a landing field where it draws no control that registers an app
+ * (W13V-1: a Slack page orientation did not read as Slack's API reaches escalation, and its card
+ * said "the control above registers one" with no control above): what IT does instead.
+ *
+ * @param system - The card's display name.
+ */
+export function oauthNoProvisioningNote(system: string): string {
+  return (
+    `Day0 offers no dedicated app on this card: the documentation does not show it that ${system} ` +
+    `is a system it can create one in. Ask IT how to connect ${system}, or, where the ` +
+    'administrator would rather hand over the workspace token, land it here: it is stored ' +
+    'encrypted as a shared credential, and writes through it carry the employee name and run id ' +
+    'so they stay attributable.'
+  );
+}
+
 /** Button text for the documented self-provisioning control. */
 export const PROVISION_LABEL = 'Provision a dedicated app';
 
@@ -142,6 +159,13 @@ export interface CredentialPresentationInput {
   reason?: string;
   /** The card's own app is not installed again (`keptAppNotReinstalled`, W12X-4). */
   keptAppNotReinstalled?: boolean;
+  /**
+   * Whether the card draws the provisioning row above its credential field; absent reads as drawn.
+   * Where it is not, the fallback note says what IT does instead (W13V-1).
+   */
+  provisioningRowShown?: boolean;
+  /** The card's display name, which that note names. */
+  displayName?: string;
 }
 
 /**
@@ -326,6 +350,15 @@ export function presentChannelsNotJoined(
   );
 }
 
+/** The note above an OAuth card's fallback field: what the rows above it offer, or what IT does. */
+function oauthFallbackNote(input: CredentialPresentationInput): string {
+  if (input.keptAppNotReinstalled === true) return NOT_REINSTALLED_FALLBACK_NOTE;
+  if (input.provisioningRowShown === false) {
+    return oauthNoProvisioningNote(input.displayName ?? 'this system');
+  }
+  return OAUTH_FALLBACK_NOTE;
+}
+
 /**
  * Compose safe credential copy without accepting credential material.
  *
@@ -381,8 +414,7 @@ export function presentSurfaceCredential(
       kind: 'oauth',
       label: input.credential.label,
       landingLabel: OAUTH_FALLBACK_LABEL,
-      landingNote:
-        input.keptAppNotReinstalled === true ? NOT_REINSTALLED_FALLBACK_NOTE : OAUTH_FALLBACK_NOTE,
+      landingNote: oauthFallbackNote(input),
       text: summary ?? 'Follow the documented OAuth approval procedure.',
     };
   }

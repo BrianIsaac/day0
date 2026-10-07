@@ -4,6 +4,7 @@ import type {
   OrganisationConnectionKind,
   OrganisationConnectionMode,
 } from './access-identity';
+import { SLACK_KIT_BOT_SCOPES } from './access-kit/slack';
 import { isSlackApiEndpoint } from './slack-endpoint';
 
 /*
@@ -322,6 +323,23 @@ function approvedScopes(card: AccessRequestCard): readonly string[] {
   return scopes.length > 0 ? scopes : [`${card.slug}:read`, `${card.slug}:write`];
 }
 
+/** A Slack OAuth scope's shape, `channels:read` or `users:read.email`: a method name has no colon. */
+const SLACK_SCOPE = /^[a-z][a-z_.]*:[a-z][a-z_.]*$/;
+
+/**
+ * The scopes an employee's own Slack app holds (W13V-5): the Slack scopes the card was approved
+ * for, as a manifest on the page names them, then the kit's it lacks, as the issuer unions them
+ * (W13V-2). The page's method names a card without a manifest proposes, and the `<slug>:read`
+ * placeholders orientation writes with no scope found, are not scopes and are left out.
+ */
+function slackAppScopes(card: AccessRequestCard): string[] {
+  const placeholders = new Set([`${card.slug}:read`, `${card.slug}:write`]);
+  const own = approvedScopes(card).filter(
+    (scope) => SLACK_SCOPE.test(scope) && !placeholders.has(scope),
+  );
+  return [...own, ...SLACK_KIT_BOT_SCOPES.filter((scope) => !own.includes(scope))];
+}
+
 /** Why the card asks, in IT's words: a connection IT revoked is said as revoked, never as not yet made. */
 function reasonLine(
   reason: AccessRequestReason,
@@ -430,7 +448,10 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     throw new Error('A card on no organisation system asks IT for nothing.');
   const name = input.connection?.displayName ?? input.card.displayName;
   const employee = input.employeeName;
-  const scopes = [...(input.scopes ?? approvedScopes(input.card))];
+  const scopes = [
+    ...(input.scopes ??
+      (system === 'slack' ? slackAppScopes(input.card) : approvedScopes(input.card))),
+  ];
   const subject = `Day0 access request: ${name} for ${employee}`;
   const lines = [
     `${employee}, a Day0 employee, needs access to ${name}; ${employee}’s manager approved it and asks IT to connect it.`,

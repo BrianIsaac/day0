@@ -145,11 +145,40 @@ function midSentence(clause: string): string {
  */
 const CLAUSE_END = /[.!?](?=\s+[A-Z])|;|\s[-\u2013\u2014]\s/;
 
-/** The first clause of a scope, cut at a word when still long, with no identity in it. */
-function oneClause(scope: string): string {
+/**
+ * The first clause of a scope, cut at a word when still long, with no identity in it; for an
+ * escalation contact, without the words that route it to them ({@link withoutRouting}).
+ *
+ * @param scope - The scope as the edge holds it.
+ * @param contact - The escalation contact's name, where the scope is theirs.
+ */
+function oneClause(scope: string, contact?: string): string {
   const clean = withoutIdentities(scope);
-  const clause = midSentence((clean.split(CLAUSE_END)[0] ?? '').replace(/[\s,.:]+$/, ''));
+  const first = clean.split(CLAUSE_END)[0] ?? '';
+  const matter = contact === undefined ? first : withoutRouting(first, contact);
+  const clause = midSentence(matter.replace(/[\s,.:]+$/, ''));
   return bounded(clause, SCOPE_MAX_CHARS);
+}
+
+/** The modal and the verbs an extraction routes a matter to someone with ("should go to", "is sent to"). */
+const ROUTING_VERB =
+  '(?:(?:should|must|can|will)\\s+)?(?:go(?:es)?|be\\s+(?:sent|routed|directed)|(?:is|are)\\s+(?:sent|routed|directed))';
+
+/**
+ * A scope without the routing words an extraction leaves at its end ("questions about the Q3 close
+ * queue go to her", "should go to Mei Ling"): the escalation line names the person already, so only
+ * the matter is kept (W13V-8). Only a trailing phrase whose object is a pronoun or the contact's own
+ * name is taken, so a matter that itself says "go to" ("how to go to market") stays whole.
+ *
+ * @param scope - The scope's first clause.
+ * @param name - The contact's name.
+ */
+function withoutRouting(scope: string, name: string): string {
+  const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const object = escaped === '' ? '(?:her|him|them)' : `(?:her|him|them|${escaped})`;
+  const routed = new RegExp(`\\s+${ROUTING_VERB}\\s+to\\s+${object}(?:\\s+first)?[\\s,.:;]*$`, 'i');
+  const kept = scope.replace(routed, '');
+  return kept.trim() === '' ? scope : kept;
 }
 
 /** A person's role as the block says it: the title, else the team, with no identity in it. */
@@ -219,7 +248,8 @@ function escalationLine(
 ): string | undefined {
   const named = personNamed(escalation);
   if (named === undefined) return undefined;
-  const scope = escalation.scope === undefined ? '' : oneClause(escalation.scope);
+  const scope =
+    escalation.scope === undefined ? '' : oneClause(escalation.scope, escalation.displayName);
   return scope === ''
     ? `- Escalate to: ${named}.`
     : `- Escalate to: ${named}, for ${scope}; anything else, the manager.`;

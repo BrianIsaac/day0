@@ -9,11 +9,13 @@ import { slackAuthorizeUrl } from './slack-endpoint';
  * down: this module locates the fenced manifest template on the synced policy
  * page, substitutes the two placeholders the page documents, and refuses
  * anything that is not a usable manifest. The template decides the app's name,
- * its description, its bot user and its bot scopes. Everything else is Day0's:
- * the manifest sent with the administrator's token is rebuilt from an
- * allowlist, so a page edit cannot add an event subscription, an interactivity
- * or slash-command address, user-token scopes or a second redirect. Interactivity
- * itself, the switch alone, is kept with Socket Mode on (wave 12, 12-M).
+ * its description, its bot user and the bot scopes it asks beyond Day0's own.
+ * Everything else is Day0's: the manifest sent with the administrator's token is
+ * rebuilt from an allowlist, so a page edit cannot add an event subscription, an
+ * interactivity or slash-command address, user-token scopes or a second redirect;
+ * and Socket Mode, interactivity's switch and the messages tab are always on,
+ * whatever the page wrote, since Day0's buttons and typed codes need them (W12V-7,
+ * W13V-2).
  */
 
 /** The placeholder the policy page uses for the employee's name. */
@@ -239,6 +241,7 @@ export function publicOrigin(publicUrl: string): string {
  *   input.agentName: The employee's name, which the template's placeholder takes.
  *   input.publicUrl: Day0's public origin, which the redirect placeholder takes.
  *   input.template: The manifest template as the policy page wrote it.
+ *   input.requiredScopes: Scopes added to the template's where it lacks them.
  *
  * Returns:
  *   The manifest to send, the resulting app name, its redirect URL and scopes.
@@ -250,6 +253,7 @@ export function buildSlackManifest(input: {
   agentName: string;
   publicUrl: string;
   template: string;
+  requiredScopes?: readonly string[];
 }): BuiltSlackManifest {
   const agentName = input.agentName.trim();
   if (!agentName)
@@ -286,7 +290,7 @@ export function buildSlackManifest(input: {
     );
   }
 
-  const scopes = botScopes(record(oauth.scopes).bot);
+  const scopes = unionScopes(botScopes(record(oauth.scopes).bot), input.requiredScopes ?? []);
   const manifest: SlackManifest = {
     display_information: displayInformation(display, appName),
     ...features(record(written.features), agentName),
@@ -344,21 +348,19 @@ function features(
 }
 
 /**
- * The documented switches, when the template set them, and no addresses. Interactivity is kept
- * only as its switch and only with Socket Mode on: Slack refuses interactivity with neither a
- * request URL nor Socket Mode, and a request URL is an inbound address Day0 never declares (Q13).
+ * The documented switches the template set, with Socket Mode and interactivity always on, and no
+ * addresses. Day0's Approve and Reject buttons reach it only over Socket Mode, with interactivity's
+ * switch and no request URL (an inbound address Day0 never declares, Q13), so a template that
+ * leaves either off is overridden as the messages tab is (W13V-2: an app built from such a page
+ * had no buttons on real Slack until a person turned Socket Mode on).
  */
-function settings(written: Record<string, unknown>): Pick<SlackManifest, 'settings'> {
+function settings(written: Record<string, unknown>): Required<Pick<SlackManifest, 'settings'>> {
   const out: SlackManifestSettings = {};
   for (const key of SETTING_KEYS) {
     const value = written[key];
     if (typeof value === 'boolean') out[key] = value;
   }
-  const interactive = record(written.interactivity).is_enabled;
-  if (out.socket_mode_enabled === true && typeof interactive === 'boolean') {
-    out.interactivity = { is_enabled: interactive };
-  }
-  return Object.keys(out).length > 0 ? { settings: out } : {};
+  return { settings: { ...out, socket_mode_enabled: true, interactivity: { is_enabled: true } } };
 }
 
 /** The bot scopes, trimmed, each one a Slack scope, at least one. */
@@ -376,6 +378,11 @@ function botScopes(value: unknown): string[] {
     );
   }
   return scopes;
+}
+
+/** The template's scopes in its order, then each required scope it lacks, in the required order. */
+function unionScopes(own: readonly string[], required: readonly string[]): string[] {
+  return [...own, ...required.filter((scope: string): boolean => !own.includes(scope))];
 }
 
 /**

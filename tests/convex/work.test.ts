@@ -29,6 +29,7 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { seedEmployee, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
@@ -1714,6 +1715,48 @@ describe('manager channel request claims', (): void => {
     expect(await scheduledFunctionNames(harness)).toContain(
       'managerChannelActions:requestDecision',
     );
+  });
+
+  it('re-sends a request stranded on the same DM with its own failure, never saying the DM changed (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787770700.000100',
+          requestFailedAt: 2,
+          requestFailure: THREAD_NOT_FOUND_REASON,
+        },
+      });
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: THREAD_NOT_FOUND_REASON },
+    ]);
   });
 
   it('closes a delivered request whose thread is gone and sends it again, once (M7)', async (): Promise<void> => {
@@ -8518,5 +8561,55 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
       await applyVerdict(ctx, waiting, { decision: 'claim', reason: 'part of the job' });
     });
     expect(await judged(harness, waiting)).toEqual(['queue', 'claim']);
+  });
+});
+
+describe('work.listForAgent', (): void => {
+  it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const rowan = await seedPerson(harness, 'Rowan Hale');
+    const gone = await seedPerson(harness, 'Dee Dismissed', { status: 'dismissed' } as never);
+    const ask = async (
+      externalId: string,
+      requesterPerson?: Doc<'workItems'>['requesterPerson'],
+    ): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'event-stream',
+          sourceSystem: 'slack',
+          externalId,
+          title: 'Slack mention in #revops-asks',
+          contentSummary: '<@U0C78V6LAPP> can you refresh the board?',
+          contentRefs: [],
+          state: 'discovered',
+          observedAt: 1,
+          createdAt: 1,
+          requesterLabel: 'U0C78V6LAPP',
+          ...(requesterPerson === undefined ? {} : { requesterPerson }),
+        });
+      });
+    };
+    const elsewhere = await seedPerson(harness, 'Rowan Elsewhere', { userId: 'another-owner' });
+    await ask('C0ASKS:1', { kind: 'person', personId: rowan });
+    await ask('C0ASKS:2', { kind: 'person', personId: gone });
+    await ask('C0ASKS:3', { kind: 'ambiguous', candidates: 2 });
+    await ask('C0ASKS:4');
+    await ask('C0ASKS:5', { kind: 'person', personId: elsewhere });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+
+    expect(
+      Object.fromEntries(listed.map((item) => [item.externalId, item.requesterName ?? null])),
+    ).toEqual({
+      'C0ASKS:1': 'Rowan Hale',
+      'C0ASKS:2': null,
+      'C0ASKS:3': null,
+      'C0ASKS:4': null,
+      'C0ASKS:5': null,
+    });
   });
 });

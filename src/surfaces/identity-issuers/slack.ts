@@ -1,6 +1,6 @@
 import type { Id } from '../../../convex/_generated/dataModel';
 import type { ActsAs, CredentialGrant } from '../access-identity';
-import { slackKitManifestTemplate } from '../access-kit/slack';
+import { SLACK_KIT_BOT_SCOPES, slackKitManifestTemplate } from '../access-kit/slack';
 import {
   buildSlackManifest,
   extractManifestTemplate,
@@ -66,7 +66,9 @@ export interface SlackAppManifest extends BuiltSlackManifest {
  * Build the manifest of one employee's own app: from the template the documentation carries, as
  * Day0 has always done, else from the access kit's (`slackKitManifestTemplate`), which is the app
  * IT was shown at install. Both go through `buildSlackManifest`, so the settings allowlist and the
- * redirect check hold either way.
+ * redirect check hold either way, Socket Mode and interactivity are on, and the kit's scopes are
+ * added to a template that lacks them, so a documented template gives an app with buttons that can
+ * join its channels (W13V-2, ruled 7 October: force, not refuse).
  *
  * @param input.documentation - The joined markdown of the pages the employee reads.
  * @param input.employeeName - The employee's name, which names the app and its bot user.
@@ -83,6 +85,7 @@ export function slackAppManifest(input: {
     agentName: input.employeeName,
     publicUrl: input.publicUrl,
     template: documented ?? slackKitManifestTemplate(),
+    requiredScopes: SLACK_KIT_BOT_SCOPES,
   });
   return { ...built, template: documented === undefined ? 'kit' : 'documentation' };
 }

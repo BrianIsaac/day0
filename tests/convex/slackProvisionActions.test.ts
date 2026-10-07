@@ -202,7 +202,18 @@ describe('registering a dedicated app', (): void => {
     expect(install.origin + install.pathname).toBe('https://slack.com/oauth/v2/authorize');
     expect(install.searchParams.get('client_id')).toBe('111.222');
     expect(install.searchParams.get('redirect_uri')).toBe(`${PUBLIC_URL}/api/oauth/slack`);
-    expect(install.searchParams.get('scope')?.split(',')).toHaveLength(8);
+    // Re-pinned for W13V-2: the documented template's eight scopes, then the kit's it lacks.
+    expect(install.searchParams.get('scope')?.split(',')).toEqual([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'channels:join',
+    ]);
 
     // The create, then Slack asked to revoke the configuration token it used (P7-3).
     expect(calls.map((call) => call.url)).toEqual([
@@ -214,6 +225,10 @@ describe('registering a dedicated app', (): void => {
     const manifest = JSON.parse(new URLSearchParams(calls[0].body).get('manifest') ?? '{}');
     expect(manifest.display_information.name).toBe('ops worker (Day0)');
     expect(manifest.oauth_config.redirect_urls).toEqual([`${PUBLIC_URL}/api/oauth/slack`]);
+    expect(manifest.settings).toMatchObject({
+      socket_mode_enabled: true,
+      interactivity: { is_enabled: true },
+    });
 
     const stored = await harness.run(async (ctx) => ({
       credentials: await ctx.db.query('credentials').collect(),

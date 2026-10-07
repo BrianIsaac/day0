@@ -11,7 +11,13 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import {
+  assertOwnsAgent,
+  assertOwnsWorkItem,
+  employeeOwnerScope,
+  getCallerOrThrow,
+} from './ownership';
+import { confirmedPersonOf } from './itemPeople';
 import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
@@ -147,7 +153,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import type { TicketHolderView } from '../src/work/item-display';
+import type { ListedWorkItem, TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -341,15 +347,45 @@ export async function assertSameAgent(
 /** Public, owner-guarded: every work item of one employee. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'workItems'>[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+  handler: async (ctx, args): Promise<ListedWorkItem[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const items = await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .collect();
+    return await withRequesterNames(ctx, agent, items);
   },
 });
+
+/**
+ * Each item with the name of the confirmed person its requester resolved to, where it resolved to
+ * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member").
+ * Each person is read once.
+ */
+async function withRequesterNames(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  items: readonly Doc<'workItems'>[],
+): Promise<ListedWorkItem[]> {
+  const scope = employeeOwnerScope(agent);
+  if (scope === undefined) return [...items];
+  const names = new Map<string, Promise<string | undefined>>();
+  const nameOf = (resolution: Doc<'workItems'>['requesterPerson']): Promise<string | undefined> => {
+    if (resolution?.kind !== 'person') return Promise.resolve(undefined);
+    const known = names.get(resolution.personId);
+    if (known !== undefined) return known;
+    const read = confirmedPersonOf(ctx, scope, resolution).then((person) => person?.displayName);
+    names.set(resolution.personId, read);
+    return read;
+  };
+  return await Promise.all(
+    items.map(async (item): Promise<ListedWorkItem> => {
+      const requesterName = await nameOf(item.requesterPerson);
+      return requesterName === undefined ? item : { ...item, requesterName };
+    }),
+  );
+}
 
 /** Public, owner-guarded: one work item. */
 export const get = query({
@@ -3691,12 +3727,16 @@ const REPLACEMENT_HOPS = 5;
  *
  * @param ctx - The decision's transaction.
  * @param replaced - The replaced request the code names.
- * @returns The answer's words, and the code that stands, when there is one.
+ * @returns The answer's words, and the code that stands and the DM it went to, when there is one.
  */
 async function replacedRequestAnswer(
   ctx: MutationCtx,
   replaced: Doc<'replacedDecisionRequests'>,
-): Promise<{ readonly text: string; readonly replacedBy?: string }> {
+): Promise<{
+  readonly text: string;
+  readonly replacedBy?: string;
+  readonly standingChannel?: string;
+}> {
   const opening =
     replaced.outcome === undefined
       ? `That request (${replaced.decisionId}) was replaced`
@@ -3704,12 +3744,17 @@ async function replacedRequestAnswer(
   const answerWith = (
     code: string,
     decision: NonNullable<Doc<'workItems'>['decision']>,
-  ): { readonly text: string; readonly replacedBy: string } =>
+  ): { readonly text: string; readonly replacedBy: string; readonly standingChannel: string } =>
     decision.decidedAt === undefined
-      ? { text: `${opening} by ${code}. Decide on ${code} instead.`, replacedBy: code }
+      ? {
+          text: `${opening} by ${code}. Decide on ${code} instead.`,
+          replacedBy: code,
+          standingChannel: decision.channel,
+        }
       : {
           text: `${opening} by ${code}, which was already ${decision.outcome ?? 'decided'}.`,
           replacedBy: code,
+          standingChannel: decision.channel,
         };
   let code = replaced.replacedBy;
   for (let hop = 0; code !== undefined && hop < REPLACEMENT_HOPS; hop += 1) {
@@ -3745,9 +3790,12 @@ async function replacedRequestAnswer(
 const INTERRUPTED_NOTE_REASON =
   'the apply was interrupted, so what it sent is not known; check each change marked below';
 
-/** Why a request delivered to the previous manager is sent again. */
+/**
+ * Why a request delivered to the manager's previous DM is sent again: a new manager, or the
+ * employee's new Slack app after a forget (W13V-4).
+ */
 export const MANAGER_CHANGED_RESEND_REASON =
-  'the manager changed; the request went to the previous one';
+  "the manager's DM changed (a new manager, or the employee's new Slack app after a forget), and the request had gone to the earlier DM";
 
 /**
  * Why a request asked of the manager who handed the employee over is closed at the move: their
@@ -3916,7 +3964,12 @@ export async function resendDecisionsAfterManagerChange(
     return open && decision ? [{ row, decision }] : [];
   });
   for (const { row, decision } of stale) {
-    await supersedeDecisionRequest(ctx, row, decision, MANAGER_CHANGED_RESEND_REASON);
+    // A request stranded on the DM that still stands keeps its own failure: the DM did not change.
+    const reason =
+      decision.channel === currentChannel
+        ? (decision.requestFailure ?? MANAGER_CHANGED_RESEND_REASON)
+        : MANAGER_CHANGED_RESEND_REASON;
+    await supersedeDecisionRequest(ctx, row, decision, reason);
   }
   return stale.length;
 }
@@ -5538,7 +5591,7 @@ export async function failInTransaction(
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row), row.actionVerdicts ?? []),
         outcome: 'failed',
         reason: stopDetail(reason),
       }),
@@ -6602,10 +6655,19 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       )
       .first();
     if (!replaced) return await unknown('unknown decision id');
-    if (replaced.surfaceSlug !== surface.slug || replaced.channel !== surface.managerDmChannelId) {
+    if (replaced.surfaceSlug !== surface.slug) {
       return await unknown('decision belongs to another manager channel');
     }
     const answer = await replacedRequestAnswer(ctx, replaced);
+    // Answered in the DM it was asked in, or in the DM its replacement went to once the manager's
+    // DM changed (the employee's new app after a forget, or a new manager): there the old code is
+    // the one the manager still has (W13V-4).
+    if (
+      replaced.channel !== surface.managerDmChannelId &&
+      answer.standingChannel !== surface.managerDmChannelId
+    ) {
+      return await unknown('decision belongs to another manager channel');
+    }
     // One "was replaced" notice per replaced request (W12-R19): a further reply or press, or a
     // button left on its message, is recorded and not answered again.
     const notified =
@@ -7087,7 +7149,12 @@ export const recoverInterruptedApply = internalMutation({
       landedNoteText({
         agentName,
         title: row.title,
-        rows: landedNoteRows({ ...output, applied }, surfaces, replyTargetFor(row)),
+        rows: landedNoteRows(
+          { ...output, applied },
+          surfaces,
+          replyTargetFor(row),
+          row.actionVerdicts ?? [],
+        ),
         outcome: 'failed',
         reason: INTERRUPTED_NOTE_REASON,
       }),

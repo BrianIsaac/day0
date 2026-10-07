@@ -431,7 +431,7 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     // the card tells nobody to turn it on; an older app's Enable Socket Mode makes the token itself
     // (the walk's row 15).
     expect(words.note).toBe(
-      "Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.",
+      "Requests reach you with a typed code only. To add Approve and Reject buttons, someone who manages Mateo (Day0) in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (every app Day0 creates from v0.17.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (an app created earlier may have it off), turning on Enable Socket Mode makes the token in the same dialog.",
     );
     expect(words.note).not.toContain('turns on Socket Mode');
     expect(words.asksForToken).toBe(true);
@@ -604,7 +604,7 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
 describe('what the forget says of the requests the old app sent (W13-R16)', (): void => {
   it('says a request it already sent is no longer decided in its messages, and where to decide it', (): void => {
     expect(forgetDoneWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
-      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.",
+      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in day0.",
     );
   });
 });

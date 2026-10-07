@@ -167,6 +167,33 @@ describe('retirePreview in real mode', (): void => {
     expect(retirement?.claims).toHaveLength(preview?.keptClaims ?? -1);
   });
 
+  it('names a Slack app the manager forgot, which the retire cannot delete, so IT is told it stays (W13V-9)', async (): Promise<void> => {
+    const { harness, retiring, sibling } = await seed();
+    const owner = harness.withIdentity(managerIdentity());
+    await harness.run(async (ctx) => {
+      const surfaceId = (await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', retiring))
+        .first())!._id;
+      for (const [agentId, appId, appName] of [
+        [retiring, 'A0OLDMIRA', 'Mira (Day0)'],
+        [retiring, 'A0OLDMIRA', 'Mira (Day0)'],
+        [sibling, 'A0OLDAMAN', 'Aman (Day0)'],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'surface.app-forgotten',
+          payload: { surfaceId, appId, appName },
+          createdAt: 2,
+        });
+      }
+    });
+
+    const preview = await owner.query(api.reset.retirePreview, { agentId: retiring });
+
+    expect(preview?.forgottenApps).toEqual([{ appId: 'A0OLDMIRA', appName: 'Mira (Day0)' }]);
+  });
+
   it('answers null once the employee is gone, so the open dialog reads nothing after the retire', async (): Promise<void> => {
     const { harness, retiring } = await seed();
     const owner = harness.withIdentity(managerIdentity());

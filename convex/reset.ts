@@ -8,6 +8,7 @@ import {
   query,
   type DatabaseReader,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import {
   assertOwnsAgent,
@@ -30,7 +31,8 @@ import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf } from '../src/events/contract';
 import {
   RETIREMENT_READ_LIMIT,
   ownerRetirements,
@@ -1494,6 +1496,30 @@ const previewOutcome = v.object({
   reason: v.optional(v.string()),
 });
 
+/**
+ * The employee's own Slack apps its manager forgot, each once, by `surface.app-forgotten`: the one
+ * pointer left to such an app once the card forgets it, removed with the employee's record at the
+ * retire, so the dialog is the last place it is named.
+ *
+ * @param ctx - The preview's query.
+ * @param agentId - The retiring employee.
+ */
+async function forgottenAppsOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+): Promise<{ appId: string; appName: string }[]> {
+  const events = await eventsOfType(ctx, agentId, 'surface.app-forgotten').take(
+    RETIRE_PREVIEW_ROW_LIMIT,
+  );
+  const apps = new Map<string, string>();
+  for (const event of events) {
+    if (isEventOf(event, 'surface.app-forgotten') && !apps.has(event.payload.appId)) {
+      apps.set(event.payload.appId, event.payload.appName);
+    }
+  }
+  return [...apps].map(([appId, appName]) => ({ appId, appName }));
+}
+
 /** What `retirePreview` answers. */
 const retirePreviewValidator = v.object({
   mode: v.union(v.literal('mock'), v.literal('real')),
@@ -1518,6 +1544,11 @@ const retirePreviewValidator = v.object({
   keptClaimsAtLeast: v.boolean(),
   /** Whether a retirement row outlives it: real mode only. */
   tombstone: v.boolean(),
+  /**
+   * The employee's own Slack apps the manager forgot after IT's revoke (13-S), which no card points
+   * at and the retire cannot delete, so IT is told each stays in Slack (W13V-9); absent when none.
+   */
+  forgottenApps: v.optional(v.array(v.object({ appId: v.string(), appName: v.string() }))),
 });
 
 /**
@@ -1597,6 +1628,7 @@ export const retirePreview = query({
       }
     }
     const boundaries = await boundariesOf(ctx.db, items, Date.now());
+    const forgottenApps = await forgottenAppsOf(ctx, agent._id);
     return {
       mode: 'real',
       rowCounts,
@@ -1607,6 +1639,7 @@ export const retirePreview = query({
       keptClaims: boundaries.claims.length,
       keptClaimsAtLeast: items.length >= RETIRE_PREVIEW_ROW_LIMIT,
       tombstone: true,
+      ...(forgottenApps.length > 0 ? { forgottenApps } : {}),
     };
   },
 });

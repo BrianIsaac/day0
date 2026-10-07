@@ -14,22 +14,37 @@ import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from './types';
 /** A Slack user id as intake records an asker: `U` or `W`, then capitals and digits. */
 const SLACK_USER_ID = /^[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,}$/;
 
+/** A raw Slack user mention in a message's text, `<@U0BTFK6FLNL>` or `<@W0ABCDEF12|rowan>`. */
+const SLACK_MENTION = /\s*<@[UW][A-Z0-9]+(?:\|[^>]*)?>/g;
+
+/**
+ * A work item as the Work tab lists it (`work.listForAgent`): the row, and the name of the
+ * confirmed person its requester resolved to (13-P's `requesterPerson`), where there is one.
+ */
+export type ListedWorkItem = Doc<'workItems'> & {
+  /** The confirmed requester's name, read from the owner's graph when the list is read (W13V-7). */
+  readonly requesterName?: string;
+};
+
 /**
  * Who asked for the work and where, for the line under the item's title: `Sara, in #revops-asks`,
- * `Aman, on REVOPS-30`, or whichever half the row knows.
+ * `Aman, on REVOPS-30`, or whichever half the row knows. A confirmed requester is named in place of
+ * the label intake recorded (W13V-7).
  *
- * @param item - The row's requester, source and reply target.
+ * @param item - The row's requester, source and reply target, and the confirmed requester's name.
  * @returns The line, or undefined when the row names neither.
  */
 export function sourceLine(
   item: Pick<
-    Doc<'workItems'>,
-    'requesterLabel' | 'replyTarget' | 'sourceCategory' | 'externalId' | 'title'
+    ListedWorkItem,
+    'requesterLabel' | 'replyTarget' | 'sourceCategory' | 'externalId' | 'title' | 'requesterName'
   >,
 ): string | undefined {
   const label = item.requesterLabel?.trim() || undefined;
   // Slack intake records the asker by user id (`U0BTFK6FLNL`), which says nothing to a manager.
-  const who = label !== undefined && SLACK_USER_ID.test(label) ? 'A Slack member' : label;
+  const who =
+    item.requesterName ??
+    (label !== undefined && SLACK_USER_ID.test(label) ? 'A Slack member' : label);
   const channel = replyTargetFor(item)?.channelName;
   const where = channel
     ? `in #${channel}`
@@ -39,6 +54,19 @@ export function sourceLine(
   if (who && where) return `${who}, ${where}`;
   if (who) return who;
   return where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}` : undefined;
+}
+
+/**
+ * A message's text with its raw Slack user mentions taken out, for a card to show: `<@U0C78V6LAPP>`
+ * says nothing to a manager (W13V-7). Naming the person mentioned instead is wave 14's.
+ *
+ * @param text - The text as intake stored it.
+ */
+export function withoutSlackMentions(text: string): string {
+  return text
+    .replace(SLACK_MENTION, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /**

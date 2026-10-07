@@ -268,21 +268,6 @@ export function SurfaceCard({
     ? context.credentials.get(String(surface.credentialId))
     : undefined;
   const provisioning = surface.provisioning as SurfaceProvisioning | undefined;
-  const presentation = presentSurfaceCredential({
-    verdict: surface.verdict,
-    credential: request?.credential,
-    credentialId: surface.credentialId ? String(surface.credentialId) : undefined,
-    credentialLocation: surface.credentialLocation,
-    provisioning,
-    sourceLabel:
-      summary && typeof summary.source === 'object'
-        ? context.sourceLabels.get(summary.source.sourceId)
-        : undefined,
-    summary,
-    reason: surface.reason,
-    keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
-  });
-  const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
   const pending = operation && !operation.error ? operation.kind : undefined;
   const failed = (kind: Operation['kind']): string | undefined =>
     operation?.kind === kind ? operation.error : undefined;
@@ -341,6 +326,29 @@ export function SurfaceCard({
     employee: context.employeeName,
     keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
   });
+  // The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
+  // approved card, as the action refuses one before; an installed app is named by the Acts as row.
+  const provisioningRowShown =
+    slack &&
+    surface.managerApprovedAt !== undefined &&
+    provisioningPresentation.stage !== 'installed';
+  const presentation = presentSurfaceCredential({
+    verdict: surface.verdict,
+    credential: request?.credential,
+    credentialId: surface.credentialId ? String(surface.credentialId) : undefined,
+    credentialLocation: surface.credentialLocation,
+    provisioning,
+    sourceLabel:
+      summary && typeof summary.source === 'object'
+        ? context.sourceLabels.get(summary.source.sourceId)
+        : undefined,
+    summary,
+    reason: surface.reason,
+    keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
+    provisioningRowShown,
+    displayName: surface.displayName,
+  });
+  const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
   // The employee's own app was created through a connection IT revoked, so it is never installed
   // again, whether or not IT has connected Slack since (W12X-4).
   const notReinstalled = provisioningPresentation.stage === 'not-reinstalled';
@@ -562,12 +570,7 @@ export function SurfaceCard({
           connectionRevoked={surface.connectionRevoked === true || notReinstalled}
           {...(notReinstalled ? { revokedWords: NOT_REINSTALLED_ACCESS } : {})}
         />
-        {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
-            approved card, as the action refuses one before. */}
-        {/* An installed app is named by the Acts as row; its row would only say it again. */}
-        {slack &&
-        surface.managerApprovedAt !== undefined &&
-        provisioningPresentation.stage !== 'installed' ? (
+        {provisioningRowShown ? (
           <ProvisioningRow
             error={failed('provision') ?? failed('forget')}
             onProvision={actions.provision}

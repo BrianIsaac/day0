@@ -538,16 +538,17 @@ export function forgottenAppWords(
 }
 
 /**
- * The forget's message (13-S): the app by its name and Slack app id, who deletes it, and that a
- * request it already sent is no longer decided in its own messages, so the manager decides it in
- * day0 (W13-R16: a press there is another app's and is ignored). A draft.
+ * The forget's message (13-S): the app by its name and Slack app id, who deletes it, that its
+ * app-level token stays live at Slack until then (W13V-11: Forget purges Day0's copy only), and
+ * that a request it already sent is no longer decided in its own messages, so the manager decides
+ * it in day0 (W13-R16: a press there is another app's and is ignored). A draft.
  *
  * @param app - The card's app as it stood before the forget.
  */
 export function forgetDoneWords(
   app: { readonly appId: string; readonly appName: string } | undefined,
 ): string {
-  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
 }
 
 /**
@@ -658,7 +659,7 @@ export function decisionButtonsWords(
           typedCode
             ? 'Requests reach you with a typed code only.'
             : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
-        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (apps Day0 created from v0.16.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (apps created before), turning on Enable Socket Mode makes the token in the same dialog.`,
+        } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (every app Day0 creates from v0.17.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (an app created earlier may have it off), turning on Enable Socket Mode makes the token in the same dialog.`,
         asksForToken: true,
         offersReplacement: false,
       };
