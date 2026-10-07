@@ -3,6 +3,7 @@ import {
   NOT_REINSTALLED_FALLBACK_NOTE,
   OAUTH_FALLBACK_LABEL,
   OAUTH_FALLBACK_NOTE,
+  oauthNoProvisioningNote,
   presentChannelsNotJoined,
   presentProvisioning,
   ORGANISATION_PROVISION_NOTE,
@@ -427,6 +428,21 @@ describe('the dedicated-app procedure on the card', (): void => {
       'rather hand over the workspace token than have Day0 make a new app',
     );
     expect(presentSurfaceCredential({ credential: oauth }).landingNote).toBe(OAUTH_FALLBACK_NOTE);
+  });
+
+  it('says what IT does, not a control above, on an OAuth card that draws no provisioning row (W13V-1)', (): void => {
+    const shown = presentSurfaceCredential({
+      credential: oauth,
+      displayName: 'Slack automation policy',
+      provisioningRowShown: false,
+    });
+    expect(shown.landingLabel).toBe(OAUTH_FALLBACK_LABEL);
+    expect(shown.landingNote).toBe(oauthNoProvisioningNote('Slack automation policy'));
+    expect(shown.landingNote).not.toContain('the control above');
+    expect(shown.landingNote).toContain('Ask IT to connect Slack automation policy');
+    expect(
+      presentSurfaceCredential({ credential: oauth, provisioningRowShown: true }).landingNote,
+    ).toBe(OAUTH_FALLBACK_NOTE);
   });
 
   it("names why a renewal's install did not complete, and offers it again", (): void => {
