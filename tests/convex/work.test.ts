@@ -1717,6 +1717,48 @@ describe('manager channel request claims', (): void => {
     );
   });
 
+  it('re-sends a request stranded on the same DM with its own failure, never saying the DM changed (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787770700.000100',
+          requestFailedAt: 2,
+          requestFailure: THREAD_NOT_FOUND_REASON,
+        },
+      });
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: THREAD_NOT_FOUND_REASON },
+    ]);
+  });
+
   it('closes a delivered request whose thread is gone and sends it again, once (M7)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

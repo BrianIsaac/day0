@@ -944,7 +944,7 @@ describe('a replaced decision request (wave 12, 12-M; F2 D14)', (): void => {
     expect(resent?.payload).toMatchObject({
       decisionId: oldCode,
       reason:
-        "the manager's DM changed, to a new manager or to the employee's new Slack app; the request went to the previous one",
+        "the manager's DM changed (a new manager, or the employee's new Slack app after a forget), and the request had gone to the earlier DM",
     });
 
     await expect(

@@ -3795,7 +3795,7 @@ const INTERRUPTED_NOTE_REASON =
  * employee's new Slack app after a forget (W13V-4).
  */
 export const MANAGER_CHANGED_RESEND_REASON =
-  "the manager's DM changed, to a new manager or to the employee's new Slack app; the request went to the previous one";
+  "the manager's DM changed (a new manager, or the employee's new Slack app after a forget), and the request had gone to the earlier DM";
 
 /**
  * Why a request asked of the manager who handed the employee over is closed at the move: their
@@ -3964,7 +3964,12 @@ export async function resendDecisionsAfterManagerChange(
     return open && decision ? [{ row, decision }] : [];
   });
   for (const { row, decision } of stale) {
-    await supersedeDecisionRequest(ctx, row, decision, MANAGER_CHANGED_RESEND_REASON);
+    // A request stranded on the DM that still stands keeps its own failure: the DM did not change.
+    const reason =
+      decision.channel === currentChannel
+        ? (decision.requestFailure ?? MANAGER_CHANGED_RESEND_REASON)
+        : MANAGER_CHANGED_RESEND_REASON;
+    await supersedeDecisionRequest(ctx, row, decision, reason);
   }
   return stale.length;
 }
