@@ -3612,6 +3612,60 @@ export async function rememberReplacedRequest(
   }
 }
 
+/**
+ * Remember a decided request whose message the decision's own edit has not marked yet, before a
+ * park clears it (W13-R50): the apply of an approval that left a close for its card parks the
+ * close and asks about it again, and the edit the approval scheduled (`closeDecisionRequest`)
+ * finds its request gone if it runs after the park, so the request's message would read as still
+ * open. Kept with its outcome, the message is edited once by the replaced edit to say how it was
+ * decided and that the close is asked about again; its code is answered as decided and replaced.
+ *
+ * @param ctx - The park's transaction.
+ * @param row - The work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+async function rememberDecidedUnmarked(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (
+    decision === undefined ||
+    decision.decidedAt === undefined ||
+    decision.ts === undefined ||
+    decision.requestText === undefined ||
+    decision.closeClaimedAt !== undefined
+  ) {
+    return;
+  }
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  const replacedId = await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    ts: decision.ts,
+    requestText: decision.requestText,
+    ...(decision.withButtons === true ? { withButtons: true } : {}),
+    replacedAt: now,
+    ...(decision.outcome === undefined ? {} : { outcome: decision.outcome }),
+    decidedAt: decision.decidedAt,
+    ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
+  });
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.markRequestReplaced, {
+    replacedId,
+  });
+}
+
 /** The most of an agent's recent acknowledgements the already-decided notice reads. */
 const ACKNOWLEDGEMENTS_READ = 50;
 
@@ -4529,7 +4583,12 @@ export const prepareReplacedEdit = internalMutation({
       channel: replaced.channel,
       ts: replaced.ts,
       withButtons: replaced.withButtons === true,
-      text: `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
+      // A decided request a park cleared before its own edit ran says how it was decided
+      // (`rememberDecidedUnmarked`); no other path keeps a decided request's text.
+      text:
+        replaced.outcome === undefined
+          ? `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`
+          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
     };
   },
 });
@@ -6138,6 +6197,7 @@ export const setAwaitingApproval = internalMutation({
       index,
       reason,
     }));
+    if (afterApproval) await rememberDecidedUnmarked(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),
