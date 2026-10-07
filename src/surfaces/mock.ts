@@ -49,15 +49,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
   ): Promise<MockSurfaceSnapshot> {
     return await ctx.runQuery(
       internal.mock.snapshotInternal,
-      selection === undefined
-        ? { agentId }
-        : {
-            agentId,
-            selection: {
-              ...selection,
-              writtenBrowserSurfaces: [...selection.writtenBrowserSurfaces],
-            },
-          },
+      selection === undefined ? { agentId } : { agentId, selection },
     );
   }
 

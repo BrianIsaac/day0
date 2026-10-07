@@ -15,6 +15,7 @@ import {
   planPreconditionAudit,
   planSchema,
   planSystemPrompt,
+  CITED_STEPS_PLANNER,
   planUserPrompt,
   realPlanSchema,
   redactCandidateRecordText,
@@ -212,6 +213,65 @@ describe('plan drafter grounding', (): void => {
     expect(user).toContain('--- Team docs (read-only context) ---');
     expect(user).toContain('The dashboard tile has a web UI only.');
     expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Surfaces ---'));
+  });
+
+  it('carries the documentation before the candidate, so a provider caches it with the charter (14-R)', async (): Promise<void> => {
+    await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents,
+      now,
+    });
+    const user = planRecorded.users[0];
+    expect(user.indexOf('--- Charter boundaries ---')).toBeLessThan(
+      user.indexOf('--- How-to guides ---'),
+    );
+    expect(user.indexOf('--- Team docs (read-only context) ---')).toBeLessThan(
+      user.indexOf('--- Candidate ---'),
+    );
+  });
+
+  it('keeps the cites each step names that the selection printed, with their blocks (14-R)', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Refresh the tile as the runbook says.',
+      steps: ['Sign in and set the figure.', 'Read the audit line back.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: null,
+      appliedAgreements: null,
+      stepCites: [['Handbook/tile.md#Refresh', 'Handbook/invented.md#Steps'], []],
+    });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents: {
+        ...documents,
+        documentation: {
+          site: 'plan',
+          blockIds: ['b1'],
+          chars: 100,
+          citations: [{ label: 'Handbook/tile.md#Refresh', blockIds: ['b1'] }],
+        },
+      },
+      now,
+    });
+    expect(plan.cites).toEqual([{ step: 1, label: 'Handbook/tile.md#Refresh', blockIds: ['b1'] }]);
+  });
+
+  it('asks the real planner, and only the real planner, to name each step’s cites (14-R)', (): void => {
+    expect(planSystemPrompt(false, 'real')).toContain(CITED_STEPS_PLANNER[0]);
+    expect(planSystemPrompt(false, 'mock')).not.toContain('stepCites');
   });
 
   it('gives the planner the candidate references and reply target the executor gets', async (): Promise<void> => {
@@ -1388,7 +1448,7 @@ describe('the People block in the planner (13-J)', (): void => {
     { id: 'wa-tile', since: '2026-10-05T12:00Z', text: 'Name the figure you set in the reply.' },
   ];
 
-  it('puts the block after the surfaces, before the documentation, the corrections and the agreements', (): void => {
+  it('puts the block after the surfaces, before the corrections and the agreements, the documentation ahead of the candidate', (): void => {
     const user = planUserPrompt({
       candidate,
       charter,
@@ -1401,9 +1461,11 @@ describe('the People block in the planner (13-J)', (): void => {
       people,
     });
     const at = (heading: string): number => user.indexOf(heading);
+    // The documentation moved before the candidate in wave 14 (14-R), so the People block,
+    // still after the surfaces, now follows it; the corrections and agreements stay last.
+    expect(at('--- How-to guides ---')).toBeLessThan(at('--- Candidate ---'));
     expect(at('--- People ---')).toBeGreaterThan(at('--- Surfaces ---'));
-    expect(at('--- People ---')).toBeLessThan(at('--- How-to guides ---'));
-    expect(at('--- How-to guides ---')).toBeLessThan(at('--- Corrections the manager gave'));
+    expect(at('--- People ---')).toBeLessThan(at('--- Corrections the manager gave'));
     expect(at('--- Corrections the manager gave')).toBeLessThan(at('--- Working agreements ---'));
     expect(user).toContain(
       [

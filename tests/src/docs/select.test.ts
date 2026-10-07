@@ -10,6 +10,8 @@ import {
   pageBlocksOf,
   scoutQueries,
   selectDocumentation,
+  selectionRequestFor,
+  selectionSwitchedOff,
   type SelectablePage,
   type SelectableBlock,
   type SelectionRequest,
@@ -351,5 +353,60 @@ describe('pageBlocksOf', (): void => {
     expect(pageBlocksOf(tileRunbook).map((block) => block.text)).toEqual(
       splitPage(tileRunbook.body).map((block) => block.text),
     );
+  });
+});
+
+describe('selectionRequestFor', (): void => {
+  const surfaces = [
+    { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp' },
+    {
+      slug: 'looker-pipeline-tile',
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      path: 'browser-driven',
+    },
+  ];
+  const candidate = {
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'The coverage figure is stale.',
+    sourceSystem: 'linear',
+    requesterLabel: 'Priya',
+  };
+
+  it('asks for the surface the work acts on, its shape, the role and the requester', (): void => {
+    expect(
+      selectionRequestFor({
+        site: 'execute',
+        candidate,
+        roleFunction: 'Revenue operations coordination',
+        surfaces,
+        obligations: { steps: [{ kind: 'write', reads: [], writes: ['looker-pipeline-tile'] }] },
+      }),
+    ).toEqual({
+      site: 'execute',
+      title: 'Refresh the Looker pipeline tile',
+      summary: 'The coverage figure is stale.',
+      target: { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
+      shape: { surfaceClass: 'analytics', operation: 'refresh-value' },
+      roleFunction: 'Revenue operations coordination',
+      requester: 'Priya',
+      writtenBrowserSurfaces: ['looker-pipeline-tile'],
+    });
+  });
+
+  it('names no browser surface before a plan declares its writes', (): void => {
+    expect(
+      selectionRequestFor({ site: 'plan', candidate, roleFunction: '', surfaces })
+        .writtenBrowserSurfaces,
+    ).toEqual([]);
+  });
+});
+
+describe('selectionSwitchedOff', (): void => {
+  it('turns the selection off only when the test switch reads 1', (): void => {
+    expect(selectionSwitchedOff({ DAY0_TEST_WHOLE_DOCUMENTATION: '1' })).toBe(true);
+    expect(selectionSwitchedOff({ DAY0_TEST_WHOLE_DOCUMENTATION: '' })).toBe(false);
+    expect(selectionSwitchedOff({ DAY0_TEST_WHOLE_DOCUMENTATION: 'true' })).toBe(false);
+    expect(selectionSwitchedOff({})).toBe(false);
   });
 });

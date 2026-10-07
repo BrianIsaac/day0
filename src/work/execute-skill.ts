@@ -2793,6 +2793,15 @@ async function withoutOwnThreadReferencesRecorded<
   return { ...output, actions: [...scrubbed.actions] };
 }
 
+/**
+ * The team documents' section of an executor user prompt. A real run reads it before the
+ * candidate (wave 14, 14-R: a provider's prefix cache holds the charter and the pages across the
+ * items that read them); the mock run keeps it after, so the hosted demo's prompt is unchanged.
+ */
+function teamDocsLines(mockEnv: Pick<MockSurfaceSnapshot, 'teamDocs'>): string[] {
+  return ['--- Team docs (read-only context) ---', renderTeamDocs(mockEnv.teamDocs)];
+}
+
 /** Execute one skill on one candidate through the model, with its output audited before it returns. */
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   return withoutOwnThreadReferencesRecorded(await authorSkillRun(args), args);
@@ -2837,6 +2846,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2857,9 +2867,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...(mode === 'mock'
       ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
       : []),
-    '--- Team docs (read-only context) ---',
-    renderTeamDocs(mockEnv.teamDocs),
-    '',
+    ...(mode === 'real' ? [] : [...teamDocsLines(mockEnv), '']),
     mode === 'real'
       ? 'Produce the draft, notes, needsDependentPhase flag, prerequisite actions, and procedure-trail accounting now.'
       : 'Produce the draft, notes, actions, and procedure-trail accounting now.',
@@ -3650,6 +3658,7 @@ async function authorDependentSkillRun(
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? [], args.unsentWrites),
     ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -3665,9 +3674,7 @@ async function authorDependentSkillRun(
     '--- Procedure trail applicability for this candidate ---',
     renderProcedureApplicability(procedureContract, candidate, mode),
     '',
-    '--- Team docs (read-only context) ---',
-    renderTeamDocs(mockEnv.teamDocs),
-    '',
+    ...(mode === 'real' ? [] : [...teamDocsLines(mockEnv), '']),
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
     ...(args.initialFailure

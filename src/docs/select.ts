@@ -1,12 +1,19 @@
 import { blockSearchQuery, searchTerms, splitPage } from './blocks';
 import { renderHowTos, renderTeamDocs } from '../work/documents';
 import { parseProcedureContract } from '../work/procedure-contract';
-import { documentedBrowserFields } from '../work/claim-key';
-import { candidateNamesSurface } from '../work/skill-shape';
+import { documentedBrowserFields, writtenBrowserSurfaces } from '../work/claim-key';
+import {
+  candidateNamesSurface,
+  skillShapeFor,
+  targetSurfaceFor,
+  type ShapeSurface,
+} from '../work/skill-shape';
 import type {
   DocumentationCitation,
   DocumentationSelectionRecord,
   MockSurfaceSnapshot,
+  PlanObligations,
+  WorkCandidate,
 } from '../work/types';
 
 /*
@@ -62,8 +69,59 @@ export interface SelectionRequest {
   readonly roleFunction: string;
   /** Who raised the item, by name. */
   readonly requester?: string;
-  /** The browser-driven surfaces the approved plan writes, by slug. */
-  readonly writtenBrowserSurfaces: readonly string[];
+  /**
+   * The browser-driven surfaces the approved plan writes, by slug. A mutable array, as the
+   * snapshot query's validator types it: the request crosses that boundary unchanged.
+   */
+  readonly writtenBrowserSurfaces: string[];
+}
+
+/**
+ * The deployment variable that turns the selection off, test beds only: set to `1`, a real-mode
+ * prompt carries the whole mirror again, so a bed can grade a run with the selection against one
+ * without it (the wave file's section 8). Not a configuration: `.env.example` does not name it.
+ */
+export const WHOLE_DOCUMENTATION_SWITCH = 'DAY0_TEST_WHOLE_DOCUMENTATION';
+
+/** Whether the deployment's environment turns the selection off (`WHOLE_DOCUMENTATION_SWITCH`). */
+export function selectionSwitchedOff(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env[WHOLE_DOCUMENTATION_SWITCH]?.trim() === '1';
+}
+
+/** A surface as the request reads it: its name, class and path. */
+export interface RequestSurface extends ShapeSurface {
+  readonly path?: string;
+}
+
+/**
+ * The selection request for one site of one item: its title and summary, the surface the work
+ * acts on and the skill shape (as the evaluator reads them in real mode), the role's function,
+ * the requester's name, and the browser-driven surfaces the approved plan writes.
+ */
+export function selectionRequestFor(input: {
+  readonly site: DocumentationSite;
+  readonly candidate: Pick<
+    WorkCandidate,
+    'title' | 'contentSummary' | 'sourceSystem' | 'requester' | 'requesterLabel'
+  >;
+  readonly roleFunction: string;
+  readonly surfaces: readonly RequestSurface[];
+  readonly obligations?: Pick<PlanObligations, 'steps'>;
+}): SelectionRequest {
+  const { candidate, surfaces } = input;
+  const target = targetSurfaceFor(candidate, surfaces);
+  const shape = skillShapeFor(candidate, surfaces, 'real');
+  const requester = candidate.requester ?? candidate.requesterLabel;
+  return {
+    site: input.site,
+    title: candidate.title,
+    summary: candidate.contentSummary,
+    ...(target ? { target: { slug: target.slug, displayName: target.displayName } } : {}),
+    shape: { surfaceClass: shape.surfaceClass, operation: shape.operation },
+    roleFunction: input.roleFunction,
+    ...(requester ? { requester } : {}),
+    writtenBrowserSurfaces: writtenBrowserSurfaces(input.obligations, surfaces),
+  };
 }
 
 /** A page the employee reads, as the selection sees it. */

@@ -124,6 +124,13 @@ import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-t
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput, LandedWrite, SkillShape, UnsentWrite } from '../src/work/types';
+import type { MockSurfaceSnapshot } from '../src/work/types';
+import {
+  selectionRequestFor,
+  selectionSwitchedOff,
+  type SelectionRequest,
+} from '../src/docs/select';
+import { goneCitesReason } from '../src/work/plan-cites';
 import {
   sameSkillShape,
   skillOperationLabel,
@@ -756,7 +763,13 @@ async function draftPlanHandler(
     : await ctx.runQuery(api.agents.get, { agentId });
   if (!agent) return { ok: false, reason: 'agent not found' };
   const candidate = rowToCandidate(item);
-  const grounding = await planGrounding(ctx, agentId, internalCaller);
+  const grounding = await planGrounding(ctx, {
+    agentId,
+    workItemId: args.workItemId,
+    internalCaller,
+    candidate,
+    roleFunction: (charterRow.body as Charter).proposedFunction,
+  });
   const knownValues = await knownValuesForAgent(ctx, agent);
   const grounded =
     SURFACE_MODE === 'real' && agent
@@ -1259,10 +1272,19 @@ async function holdDay0Actions(
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
-    const mockEnv = args.internalCaller
-      ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
-      : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
+    const mockEnv = await siteSnapshot(ctx, {
+      agentId: args.agentId,
+      workItemId: args.workItemId,
+      internalCaller: args.internalCaller,
+      request: selectionRequestFor({
+        site: 'execute',
+        candidate: args.candidate,
+        roleFunction: args.charter.proposedFunction,
+        surfaces,
+        obligations: args.plan.obligations,
+      }),
+    });
     const appliedCorrections = await executorCorrections(ctx, {
       agent,
       item: args.item,
@@ -2650,11 +2672,10 @@ export const authorDependentActions = internalAction({
         throw new Error('dependent phase context is no longer available');
       }
       if (!item.skillId) throw new Error('dependent phase has no registered skill');
-      const [charterRow, skills, agent, mockEnv, surfaces] = await Promise.all([
+      const [charterRow, skills, agent, surfaces] = await Promise.all([
         ctx.runQuery(internal.charters.latestInternal, { agentId: item.agentId }),
         ctx.runQuery(internal.skills.registeredInternal, { agentId: item.agentId }),
         ctx.runQuery(internal.agents.getInternal, { agentId: item.agentId }),
-        ctx.runQuery(internal.mock.snapshotInternal, { agentId: item.agentId }),
         loadSurfaces(ctx, item.agentId),
       ]);
       if (!charterRow) throw new Error('dependent phase has no charter');
@@ -2663,6 +2684,19 @@ export const authorDependentActions = internalAction({
       if (!skill) throw new Error('dependent phase skill is no longer registered');
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
+      await refuseGoneCites(ctx, plan);
+      const mockEnv = await siteSnapshot(ctx, {
+        agentId: item.agentId,
+        workItemId: args.workItemId,
+        internalCaller: true,
+        request: selectionRequestFor({
+          site: 'closing',
+          candidate: rowToCandidate(item),
+          roleFunction: (charterRow.body as Charter).proposedFunction,
+          surfaces,
+          obligations: plan.obligations,
+        }),
+      });
       const feedback = liveManagerFeedback(item.managerFeedback);
       const appliedCorrections = await executorCorrections(ctx, {
         agent,
@@ -4030,35 +4064,117 @@ function authorityBeforeTransport(
 
 /**
  * Load what a real-mode plan is drawn from: the agent's surfaces with their
- * verdicts and the same documentation the executor cites.
+ * verdicts and the documentation the item needs, selected for the planner
+ * (wave 14, 14-R) and read by the obligations judgement too.
  *
  * Mock mode passes nothing, so the hosted demo's planner prompt stays as it
  * is; the mock environment already carries its own documents to the executor.
  *
  * Args:
  *   ctx: Convex action context.
- *   agentId: The agent whose surfaces and documentation are read.
- *   internalCaller: Whether the documentation is read without a caller, for a scheduled step.
+ *   input: The agent and item, whether the documentation is read without a caller (a
+ *     scheduled step), the candidate and the charter's function the selection is made for.
  *
  * Returns:
  *   The planner's grounding, or an empty object outside real mode.
  */
 async function planGrounding(
   ctx: ActionCtx,
-  agentId: Id<'agents'>,
-  internalCaller: boolean,
+  input: {
+    readonly agentId: Id<'agents'>;
+    readonly workItemId: Id<'workItems'>;
+    readonly internalCaller: boolean;
+    readonly candidate: WorkCandidate;
+    readonly roleFunction: string;
+  },
 ): Promise<Pick<DraftPlanArgs, 'surfaces' | 'documents'>> {
   if (SURFACE_MODE !== 'real') return {};
-  const [surfaces, snapshot] = await Promise.all([
-    loadSurfaces(ctx, agentId),
-    internalCaller
-      ? ctx.runQuery(internal.mock.snapshotInternal, { agentId })
-      : readSurfaceSnapshot(ctx, agentId, 'mock', []),
-  ]);
+  const surfaces = await loadSurfaces(ctx, input.agentId);
+  const snapshot = await siteSnapshot(ctx, {
+    ...input,
+    request: selectionRequestFor({
+      site: 'plan',
+      candidate: input.candidate,
+      roleFunction: input.roleFunction,
+      surfaces,
+    }),
+  });
   return {
     surfaces,
-    documents: { howToGuides: snapshot.howToGuides, teamDocs: snapshot.teamDocs },
+    documents: {
+      howToGuides: snapshot.howToGuides,
+      teamDocs: snapshot.teamDocs,
+      ...(snapshot.documentation ? { documentation: snapshot.documentation } : {}),
+    },
   };
+}
+
+/**
+ * Refuse a closing phase whose plan cites documentation that is gone (wave 14, 14-R): a block
+ * the plan's steps were drawn from was deleted, or its page removed, after the plan was
+ * approved, so the steps no longer rest on what the team has written down. Real mode only;
+ * a plan with no cites passes.
+ *
+ * @throws Error naming each cite whose block is gone.
+ */
+async function refuseGoneCites(ctx: ActionCtx, plan: Pick<ExecutionPlan, 'cites'>): Promise<void> {
+  if (SURFACE_MODE !== 'real' || plan.cites === undefined || plan.cites.length === 0) return;
+  const missing = new Set(
+    await ctx.runQuery(internal.docSelection.missingCitedBlocks, {
+      blockIds: plan.cites.flatMap((cite) => cite.blockIds),
+    }),
+  );
+  const gone = [
+    ...new Set(
+      plan.cites
+        .filter((cite) => cite.blockIds.some((id) => missing.has(id)))
+        .map((cite) => cite.label),
+    ),
+  ];
+  if (gone.length > 0) throw new Error(goneCitesReason(gone));
+}
+
+/**
+ * Read an employee's environment for one model call site. In real mode the guides and team
+ * documents are the ones the item needs (wave 14, 14-R), and what was selected is recorded on
+ * the item as `work.documentation-selected`; in mock mode, or with the test switch
+ * `DAY0_TEST_WHOLE_DOCUMENTATION` set on a bed, they are the whole mirror (R3).
+ *
+ * @param input - The agent and item, whether the read has no caller (a scheduled step), and the
+ *   selection request, when the site makes one.
+ */
+async function siteSnapshot(
+  ctx: ActionCtx,
+  input: {
+    readonly agentId: Id<'agents'>;
+    readonly workItemId: Id<'workItems'>;
+    readonly internalCaller: boolean;
+    readonly request?: SelectionRequest;
+  },
+): Promise<MockSurfaceSnapshot> {
+  const selection =
+    SURFACE_MODE === 'real' && !selectionSwitchedOff(process.env) ? input.request : undefined;
+  const snapshot = input.internalCaller
+    ? await ctx.runQuery(
+        internal.mock.snapshotInternal,
+        selection === undefined
+          ? { agentId: input.agentId }
+          : { agentId: input.agentId, selection },
+      )
+    : await readSurfaceSnapshot(ctx, input.agentId, 'mock', [], selection);
+  if (snapshot.documentation !== undefined) {
+    await logEvent(ctx, {
+      agentId: input.agentId,
+      type: 'work.documentation-selected',
+      payload: {
+        workItemId: input.workItemId,
+        site: snapshot.documentation.site,
+        blockIds: [...snapshot.documentation.blockIds],
+        chars: snapshot.documentation.chars,
+      },
+    });
+  }
+  return snapshot;
 }
 
 /**

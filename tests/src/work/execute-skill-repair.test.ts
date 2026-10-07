@@ -1155,9 +1155,11 @@ describe('real initial procedure trails', (): void => {
     });
     expect(recorded.calls).toHaveLength(1);
     expect(direct.procedureTrails).toEqual(valid.procedureTrails);
+    // The section runs to the closing instruction: since wave 14 (14-R) a real run's team docs
+    // sit before the candidate, so they no longer follow it.
     const applicability = recorded.calls[0]!.user.split(
       '--- Procedure trail applicability for this candidate ---',
-    )[1]!.split('--- Team docs (read-only context) ---')[0]!;
+    )[1]!.split('Produce the draft,')[0]!;
     expect(applicability.trim().split('\n')).toEqual([
       'trail-1: choose exactly one procedure-trail state for this response',
       'trail-2: choose exactly one procedure-trail state for this response',

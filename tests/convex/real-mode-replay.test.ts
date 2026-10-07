@@ -224,6 +224,8 @@ vi.mock('../../src/lib/mastra', () => ({
           transitionStep: null,
           appliedCorrections: null,
           appliedAgreements: null,
+          // The 14 September planner predates the cites (wave 14, 14-R): it named none.
+          stepCites: null,
         } as T;
       }
       if (name === 'day0-plan-obligations') return cleanPlanObligations as T;

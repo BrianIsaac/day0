@@ -471,6 +471,21 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a documentation selection by its site, its characters and its blocks (14-R)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.documentation-selected',
+        payload: { site: 'plan', blockIds: ['b1', 'b2'], chars: 6210 },
+      }),
+    ).toBe('documentation · plan draft · 6,210 characters in 2 blocks');
+    expect(
+      eventLabel({
+        type: 'work.documentation-selected',
+        payload: { site: 'closing', blockIds: ['b1'], chars: 980 },
+      }),
+    ).toBe('documentation · closing · 980 characters in 1 block');
+  });
+
   it('labels the model-call and restart events in words (P7-18)', (): void => {
     expect(
       eventLabel({

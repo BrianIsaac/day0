@@ -190,6 +190,21 @@ export interface ExecutionPlan {
   appliedAgreements?: string[];
   /** Set when the agreements the planner saw were scrubbed without the span model. */
   agreementsRedaction?: 'structural-only';
+  /**
+   * The documentation each step follows, real mode only (wave 14, 14-R): the cite lines the
+   * planner named for a step, each with the stored blocks under it in the planner's selection.
+   * The closing phase refuses to run on a plan whose cited block is gone.
+   */
+  cites?: PlanCite[];
+}
+
+/** One cite of a plan step: the cite line's words and the stored blocks under it. */
+export interface PlanCite {
+  /** The one-based step that follows the cited documentation. */
+  readonly step: number;
+  /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
+  readonly label: string;
+  readonly blockIds: readonly string[];
 }
 
 /** The four verbs that write to the per-agent mock environment. */

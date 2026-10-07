@@ -130,6 +130,52 @@ describe('documentation grounding in the executor prompts', (): void => {
     recorded.instructions.length = 0;
   });
 
+  it('puts the team docs before the candidate in both real phases, and keeps the mock run’s order (14-R)', async (): Promise<void> => {
+    const plan = {
+      summary: 'Record the review.',
+      steps: ['Comment on the ticket.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: 'Reversible.',
+      estimatedMinutes: 2,
+    };
+    const skill = { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' };
+    await runSkill({ skill, plan, candidate, charter, mockEnv, mode: 'real', surfaces: [] });
+    await runDependentSkill({
+      skill,
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+    // A message plan, so the stub's empty reply meets the mock action contract.
+    await runSkill({
+      skill,
+      plan: { ...plan, expectedOutputType: 'message' },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'mock',
+      surfaces: [],
+    });
+    const [phaseOne, closing, mock] = recorded.users;
+    const before = (user: string): boolean =>
+      user.indexOf('--- Team docs (read-only context) ---') < user.indexOf('--- Candidate ---');
+    expect(before(phaseOne)).toBe(true);
+    expect(before(closing)).toBe(true);
+    expect(before(mock)).toBe(false);
+  });
+
   it('tells the real-mode executor that loaded documentation is citable evidence', (): void => {
     expect(executorPreamble('real')).toContain('citable');
   });
