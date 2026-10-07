@@ -27,6 +27,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import type { Charter } from '../../../src/agent/charter';
+import { log } from '../../../src/lib/logger';
 import {
   HANA_ASK,
   KOFI_ASK,
@@ -532,6 +533,60 @@ describe('the generation inside one seeding attempt (12-J item 6, option A)', ()
       'reached its budget',
     );
   });
+});
+
+describe('a draft kept when the budget ran out (W13-R39, W13-R40)', (): void => {
+  /** The second draft's call runs out of the budget, so the first draft is the one in hand. */
+  const budgetOutOnTheSecondDraft = (): void => {
+    calls.before = (call: number): void => {
+      if (call === 2) {
+        const spent = new Error(
+          'agentJson(day0-work-generator): the model call reached its budget',
+        );
+        spent.name = 'TimeoutError';
+        throw spent;
+      }
+    };
+  };
+
+  it('says how many drafts it read, not how many it may ask for', async (): Promise<void> => {
+    const warn = vi.spyOn(log, 'warn');
+    budgetOutOnTheSecondDraft();
+    drafts.push([READ, ACTION, BEYOND, SAYS_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(warn).toHaveBeenCalledWith(
+      'mock work generator left out an out-of-scope item that reads as the role',
+      expect.objectContaining({ attempts: 1 }),
+    );
+    warn.mockRestore();
+  });
+
+  it.each([
+    [
+      'without a beyond-the-office item',
+      [READ, ACTION, { ...BEYOND, purpose: 'action' }, PLAIN_OUT_OF_SCOPE],
+      'it has no beyond-the-office item',
+    ],
+    [
+      'with a read that shares no word with the role',
+      [UNTIED_READ, ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+      'its read-and-answer item shares no word with the role',
+    ],
+    [
+      'with an action ticket that names no record of the office',
+      [READ, UNGROUNDED_ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+      'its action ticket names no record of the office',
+    ],
+  ] as const)(
+    'fails the attempt rather than seed a draft %s',
+    async (_what, draft, fault): Promise<void> => {
+      budgetOutOnTheSecondDraft();
+      drafts.push([...draft]);
+      await expect(generateWorkItemsFromCharter(HYGIENE, OFFICE as never)).rejects.toThrow(
+        `the work generator's budget ran out on a draft that ${fault}`,
+      );
+    },
+  );
 });
 
 describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 13-FD's R4)", (): void => {
