@@ -36,6 +36,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { credentialPageRef } from '../src/docs/credential-ref';
+import { parseFeishuLocator, parseFeishuSecret } from '../src/docs/feishu-source';
 import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import {
   FINISHING_CURSOR,
@@ -51,6 +52,7 @@ const sourceKind = v.union(
   v.literal('folder'),
   v.literal('git'),
   v.literal('urls'),
+  v.literal('feishu'),
 );
 
 const serverKind = v.union(
@@ -209,7 +211,7 @@ async function stampListed(
 
 export interface LinkInput {
   label: string;
-  kind: 'mcp' | 'folder' | 'git' | 'urls';
+  kind: 'mcp' | 'folder' | 'git' | 'urls' | 'feishu';
   locator: string;
   serverKind?: 'notion' | 'confluence' | 'drive' | 'generic';
 }
@@ -260,6 +262,9 @@ export function validateLinkInput(input: LinkInput): LinkInput {
       }
       refuseUserinfo(url, value);
     }
+  } else if (input.kind === 'feishu') {
+    // The host names the region and the path the space or folder; nothing else is stored.
+    parseFeishuLocator(locator);
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
@@ -281,8 +286,11 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   return { ...input, label, locator };
 }
 
-/** The source kinds that read with a secret of their own: required for MCP, optional for the others. */
-const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'urls']);
+/**
+ * The source kinds that read with a secret of their own: required for MCP and Feishu, optional for
+ * git and URLs.
+ */
+const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'urls', 'feishu']);
 
 /**
  * Check the secret a source is linked with, before anything is stored (E-74).
@@ -291,8 +299,9 @@ const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'url
  * wiki behind a login may be linked with the reader's own secret, which is
  * stored as a credential and never written into the locator. A URL list
  * read with a secret must list pages of one https site, since the secret is
- * that site's and is sent to no other. A folder is read from the mounted
- * directory and takes none.
+ * that site's and is sent to no other. A Feishu source needs its app's ID
+ * and secret, joined by a colon, which it exchanges for the tenant's token. A
+ * folder is read from the mounted directory and takes none.
  *
  * @param input - The validated link values.
  * @param secret - The secret the owner entered, if any.
@@ -301,6 +310,9 @@ const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'url
 export function validateReaderSecret(input: LinkInput, secret: string | undefined): void {
   if (input.kind === 'mcp' && !secret) {
     throw new Error('Connection secret is required for an MCP source.');
+  }
+  if (input.kind === 'feishu' && !secret) {
+    throw new Error('A Feishu source needs its app ID and secret.');
   }
   if (secret === undefined) return;
   if (!SECRET_KINDS.has(input.kind)) {
@@ -312,6 +324,7 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
   if (/[\u0000-\u001f\u007f]/.test(secret)) {
     throw new Error('A secret cannot contain a line break or a control character.');
   }
+  if (input.kind === 'feishu') parseFeishuSecret(secret);
   if (input.kind === 'urls') {
     const origins = new Set(
       input.locator
@@ -331,7 +344,16 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
 
 /** What a source's own secret is called on its credential row. */
 function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
-  return `${source.label} ${source.kind === 'mcp' ? 'connection secret' : 'reader secret'}`;
+  switch (source.kind) {
+    case 'mcp':
+      return `${source.label} connection secret`;
+    case 'feishu':
+      return `${source.label} app ID and secret`;
+    case 'folder':
+    case 'git':
+    case 'urls':
+      return `${source.label} reader secret`;
+  }
 }
 
 /**

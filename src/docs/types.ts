@@ -1,8 +1,11 @@
 import type { Id } from '../../convex/_generated/dataModel';
 import { droppedScriptSuffix } from '../lib/short-hash';
 
-/** How a documentation source is read: an MCP server, a folder, a git repository or a URL list. */
-export type DocSourceKind = 'mcp' | 'folder' | 'git' | 'urls';
+/**
+ * How a documentation source is read: an MCP server, a folder, a git repository, a URL list, or
+ * a Feishu (or Lark) wiki space or folder.
+ */
+export type DocSourceKind = 'mcp' | 'folder' | 'git' | 'urls' | 'feishu';
 /** Which MCP documentation server a source speaks to. */
 export type DocServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
 

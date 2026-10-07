@@ -21,7 +21,27 @@ const KIND_NAMES: Readonly<Record<LinkedSource['kind'], string>> = {
   git: 'Git',
   urls: 'URLs',
   mcp: 'MCP server',
+  feishu: 'Feishu',
 };
+
+/**
+ * What the rotate field asks for: an MCP server's connection secret, a Feishu app's ID and
+ * secret in the one field, or another source's reader secret.
+ *
+ * @param kind - The source's kind.
+ */
+function rotateFieldName(kind: LinkedSource['kind']): string {
+  switch (kind) {
+    case 'mcp':
+      return 'New connection secret';
+    case 'feishu':
+      return 'New app ID and secret, as app ID:secret';
+    case 'folder':
+    case 'git':
+    case 'urls':
+      return 'New reader secret';
+  }
+}
 
 /** The employee whose reading the table shows beside each source, on its Documentation tab. */
 export interface SourceReader {
@@ -332,7 +352,7 @@ export function SourceTable({
                         className="mt-3 flex flex-wrap gap-2"
                       >
                         <label className="sr-only" htmlFor={`rotate-${source._id}`}>
-                          {source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'}
+                          {rotateFieldName(source.kind)}
                         </label>
                         <input
                           id={`rotate-${source._id}`}
@@ -340,9 +360,7 @@ export function SourceTable({
                           type="password"
                           autoComplete="new-password"
                           required
-                          placeholder={
-                            source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'
-                          }
+                          placeholder={rotateFieldName(source.kind)}
                           className={`${INPUT_CLASS} w-full sm:w-80`}
                         />
                         <Button type="submit" size="small" disabled={change.busy}>

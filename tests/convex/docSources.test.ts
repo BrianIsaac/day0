@@ -465,6 +465,82 @@ describe('documentation sources in real mode', (): void => {
     vi.unstubAllEnvs();
   });
 
+  it('links a Feishu wiki space with the app ID and secret held as its reader secret, and rotates them (14-F)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 7).toString('base64'));
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'RevOps wiki',
+      kind: 'feishu',
+      locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+      credential: 'cli_fixture_app:fixture-app-secret',
+    });
+    const linked = await harness.run(async (ctx) => {
+      const source = await ctx.db.get(sourceId);
+      return {
+        source,
+        credential: source?.credentialId ? await ctx.db.get(source.credentialId) : null,
+      };
+    });
+    expect(linked.source).toMatchObject({
+      kind: 'feishu',
+      locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+      status: 'linking',
+    });
+    expect(linked.credential).toMatchObject({
+      label: 'RevOps wiki app ID and secret',
+      source: 'entered',
+    });
+    expect(JSON.stringify(linked)).not.toContain('fixture-app-secret');
+    await owner.action(api.docSources.rotateCredential, {
+      sourceId,
+      credential: 'cli_fixture_app:fixture-app-secret-two',
+    });
+    const rotated = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(rotated?.credentialId).not.toBe(linked.credential?._id);
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId, credential: 'only-a-secret' }),
+    ).rejects.toThrow("A Feishu reader secret is the app's ID and its secret");
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses a Feishu source without its app, with a malformed one, or at another host (14-F)', (): void => {
+    const wiki = validateLinkInput({
+      label: 'Wiki',
+      kind: 'feishu',
+      locator: ' https://open.larksuite.com/drive/folders/fldcnArchive000000000000000 ',
+    });
+    expect(wiki.locator).toBe(
+      'https://open.larksuite.com/drive/folders/fldcnArchive000000000000000',
+    );
+    expect(() => validateReaderSecret(wiki, undefined)).toThrow(
+      'A Feishu source needs its app ID and secret.',
+    );
+    expect(() => validateReaderSecret(wiki, 'cli_fixture_app')).toThrow(
+      "A Feishu reader secret is the app's ID and its secret",
+    );
+    expect(() => validateReaderSecret(wiki, 'cli_fixture_app:fixture-app-secret')).not.toThrow();
+    for (const locator of [
+      'https://acme.feishu.cn/wiki/spaces/7300000000000000001',
+      'https://open.feishu.cn/docx/doxcnRevOpsHandbook00000000',
+      '7300000000000000001',
+    ]) {
+      expect(() => validateLinkInput({ label: 'Wiki', kind: 'feishu', locator }), locator).toThrow(
+        'A Feishu location is',
+      );
+    }
+    expect(() =>
+      validateLinkInput({
+        label: 'Wiki',
+        kind: 'feishu',
+        locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+        serverKind: 'notion',
+      }),
+    ).toThrow('Only MCP sources may name a server kind.');
+  });
+
   it('refuses a reader secret a source cannot keep to one https site, and a folder’s (E-74)', (): void => {
     const folder = validateLinkInput({ label: 'Folder', kind: 'folder', locator: '.' });
     expect(() => validateReaderSecret(folder, 'value')).toThrow('takes no secret');

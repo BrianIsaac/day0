@@ -162,6 +162,29 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
     expect(credentialForLink('folder', 'value')).toBeUndefined();
   });
 
+  it('names a Feishu source and asks for its app ID and secret when it is rotated (14-F)', async (): Promise<void> => {
+    state.sources = [
+      {
+        _id: 'source-feishu',
+        label: 'RevOps wiki',
+        kind: 'feishu',
+        locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+        status: 'synced',
+        pageCount: 4,
+        credentialId: 'credential-1',
+      },
+    ];
+    const view = mount(<DocumentationPage />);
+    expect(view.container.textContent).toContain('Feishu · https://open.feishu.cn/wiki/spaces/');
+    await press(view.container, 'Rotate the secret for RevOps wiki');
+    const field = view.container.querySelector<HTMLInputElement>('#rotate-source-feishu');
+    expect(field?.placeholder).toBe('New app ID and secret, as app ID:secret');
+    expect(view.container.querySelector('label[for="rotate-source-feishu"]')?.textContent).toBe(
+      'New app ID and secret, as app ID:secret',
+    );
+    view.unmount();
+  });
+
   it('lets the owner rotate or revoke a git source’s secret as an MCP source’s', (): void => {
     state.sources = [
       {

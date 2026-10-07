@@ -1,0 +1,245 @@
+{
+  "recorded": "2026-10-08, from the response shapes Feishu documents (no tenant was called)",
+  "app": {
+    "appId": "cli_fixture_app",
+    "appSecret": "fixture-app-secret"
+  },
+  "spaceId": "7300000000000000001",
+  "nodes": {
+    "handbook": {
+      "node": "wikcnRevOpsHandbook00000000",
+      "obj": "doxcnRevOpsHandbook00000000"
+    },
+    "sheet": {
+      "node": "wikcnQThreeNumbers000000000",
+      "obj": "shtcnQThreeNumbers000000000"
+    },
+    "zh1": {
+      "node": "wikcnRefreshBoard0000000000",
+      "obj": "doxcnRefreshBoard0000000000"
+    },
+    "zh2": {
+      "node": "wikcnOpsRules00000000000000",
+      "obj": "doxcnOpsRules00000000000000"
+    },
+    "restricted": {
+      "node": "wikcnPayroll000000000000000",
+      "obj": "doxcnPayroll000000000000000"
+    },
+    "refresh": {
+      "node": "wikcnRefreshTile00000000000",
+      "obj": "doxcnRefreshTile00000000000"
+    },
+    "map": {
+      "node": "wikcnPipelineMap00000000000",
+      "obj": "bmncnPipelineMap00000000000"
+    },
+    "export": {
+      "node": "wikcnCrmExport0000000000000",
+      "obj": "doxcnCrmExport0000000000000"
+    }
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/open-apis/auth/v3/tenant_access_token/internal",
+      "status": 200,
+      "body": "token.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/wiki/v2/spaces/7300000000000000001/nodes",
+      "query": {
+        "page_size": "50"
+      },
+      "status": 200,
+      "body": "wiki-root-1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/wiki/v2/spaces/7300000000000000001/nodes",
+      "query": {
+        "page_size": "50",
+        "page_token": "fixture-root-page-2"
+      },
+      "status": 200,
+      "body": "wiki-root-2.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/wiki/v2/spaces/7300000000000000001/nodes",
+      "query": {
+        "page_size": "50",
+        "parent_node_token": "wikcnRevOpsHandbook00000000"
+      },
+      "status": 200,
+      "body": "wiki-handbook-1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/wiki/v2/spaces/7300000000000000001/nodes",
+      "query": {
+        "page_size": "50",
+        "parent_node_token": "wikcnRevOpsHandbook00000000",
+        "page_token": "fixture-handbook-page-2"
+      },
+      "status": 200,
+      "body": "wiki-handbook-2.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnRevOpsHandbook00000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-handbook.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnRevOpsHandbook00000000",
+      "status": 200,
+      "body": "document-handbook.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnRefreshBoard0000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-zh1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnRefreshBoard0000000000",
+      "status": 200,
+      "body": "document-zh1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnOpsRules00000000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-zh2.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnOpsRules00000000000000",
+      "status": 200,
+      "body": "document-zh2.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnRefreshTile00000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-refresh.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnRefreshTile00000000000",
+      "status": 200,
+      "body": "document-refresh.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnCrmExport0000000000000",
+      "status": 200,
+      "body": "document-export.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnCrmExport0000000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 500,
+      "body": "content-too-large.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnPayroll000000000000000",
+      "status": 403,
+      "body": "document-restricted.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/drive/v1/files",
+      "query": {
+        "folder_token": "fldcnRevOpsFolder0000000000",
+        "page_size": "200",
+        "order_by": "CreatedTime",
+        "direction": "ASC"
+      },
+      "status": 200,
+      "body": "drive-folder.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/drive/v1/files",
+      "query": {
+        "folder_token": "fldcnArchive000000000000000",
+        "page_size": "200",
+        "order_by": "CreatedTime",
+        "direction": "ASC"
+      },
+      "status": 200,
+      "body": "drive-archive.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnCloseChecklist00000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-close.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnCloseChecklist00000000",
+      "status": 200,
+      "body": "document-close.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docs/v1/content",
+      "query": {
+        "doc_token": "doxcnOldProcess000000000000",
+        "doc_type": "docx",
+        "content_type": "markdown"
+      },
+      "status": 200,
+      "body": "content-old.json"
+    },
+    {
+      "method": "GET",
+      "path": "/open-apis/docx/v1/documents/doxcnOldProcess000000000000",
+      "status": 200,
+      "body": "document-old.json"
+    }
+  ],
+  "folderToken": "fldcnRevOpsFolder0000000000",
+  "folder": {
+    "archive": "fldcnArchive000000000000000",
+    "close": "doxcnCloseChecklist00000000",
+    "old": "doxcnOldProcess000000000000"
+  }
+}
