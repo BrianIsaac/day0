@@ -87,12 +87,15 @@ export const AGREEMENT_STATEMENT_TOO_LONG = `A working agreement keeps at most $
  */
 export const EVERY_EMPLOYEE_TOO_MANY = `Day0 can check an agreement for every employee only when you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. Keep it for this employee instead.`;
 
-/** The fewest words a kept note must have: a direction a later plan can follow (W13-R32). */
-const AGREEMENT_SENTENCE_WORDS = 3;
+/**
+ * The fewest words a kept note must have: a direction a later plan can follow ("Use UTC."), never a
+ * one-word answer ("Yes") (W13-R32).
+ */
+const AGREEMENT_SENTENCE_WORDS = 2;
 
 /** The refusal of a note kept from the plan approval that is no sentence ("Yes", "Evergreen"). */
 export const AGREEMENT_NOT_A_SENTENCE =
-  'A working agreement needs a sentence of at least three words that a later plan can follow. A short answer such as “Yes” is not one.';
+  'A working agreement needs a sentence a later plan can follow. A one-word answer such as “Yes” is not one.';
 
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
@@ -160,6 +163,25 @@ async function approvedBounds(
 }
 
 /**
+ * Refuse an agreement for every employee of an owner with more employees than its check reads
+ * (W13-R28), wherever one is kept or changed: the keep of one for every employee, and the edit of
+ * one that already is.
+ *
+ * @throws ConvexError `EVERY_EMPLOYEE_TOO_MANY`.
+ */
+async function refuseEveryEmployeePastTheCheck(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+): Promise<void> {
+  if ((await ownerEmployees(ctx, userId, EMPLOYEES_CHECKED + 1)).length > EMPLOYEES_CHECKED) {
+    throw new ConvexError(EVERY_EMPLOYEE_TOO_MANY);
+  }
+}
+
+/** The most rows under one user id the employee read scans past other owner scopes (standard 10.4). */
+const EMPLOYEE_SCAN_LIMIT = 500;
+
+/**
  * An owner's employees, at most `limit`, read past rows of another owner scope under the same
  * user id rather than counting them (W13-R28: the bound was taken before the filter).
  */
@@ -169,9 +191,10 @@ async function ownerEmployees(
   limit: number,
 ): Promise<Doc<'agents'>[]> {
   const employees: Doc<'agents'>[] = [];
-  for await (const agent of ctx.db
+  for (const agent of await ctx.db
     .query('agents')
-    .withIndex('by_userId', (q) => q.eq('userId', userId))) {
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .take(EMPLOYEE_SCAN_LIMIT)) {
     if (employeeOwnerScope(agent) !== userId) continue;
     employees.push(agent);
     if (employees.length >= limit) break;
@@ -927,12 +950,8 @@ export const keep = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
-    if (
-      args.forEveryEmployee &&
-      (await ownerEmployees(ctx, agreement.userId, EMPLOYEES_CHECKED + 1)).length >
-        EMPLOYEES_CHECKED
-    ) {
-      throw new ConvexError(EVERY_EMPLOYEE_TOO_MANY);
+    if (args.forEveryEmployee || agreement.agentId === undefined) {
+      await refuseEveryEmployeePastTheCheck(ctx, agreement.userId);
     }
     const now = Date.now();
     if (agreement.status === 'proposed' && agreement.approvedAt === undefined) {
@@ -977,6 +996,9 @@ export const edit = mutation({
   handler: async (ctx, args): Promise<{ agreementId: Id<'workingAgreements'> }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
     if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
+    if (agreement.agentId === undefined) {
+      await refuseEveryEmployeePastTheCheck(ctx, agreement.userId);
+    }
     if (args.statement.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
       throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
     }

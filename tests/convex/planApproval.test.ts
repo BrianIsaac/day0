@@ -251,6 +251,16 @@ describe('the note the tick keeps, held to what an edit keeps (W13-R32)', (): vo
       );
     }
   });
+
+  it('keeps a short direction of two words (the code reader: "Use UTC." is a sentence)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId, note: 'Use UTC.', keepNote: true });
+    expect((await agreementsOf(harness)).map((row) => row.statement)).toEqual(['Use UTC.']);
+  });
 });
 
 describe('a stored plan and the working agreements it applied', (): void => {

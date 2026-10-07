@@ -550,6 +550,38 @@ describe('keeping an agreement on a card', (): void => {
     expect((await agreementsOf(harness))[0]?.approvedAt).toBeUndefined();
   });
 
+  it('refuses an edit of an every-employee agreement past the employees its check reads, as keep does (the code reader)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: 'Name the vessel.',
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.edit, {
+        agreementId,
+        agentId,
+        statement: 'Name the vessel and the carrier.',
+      }),
+    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
+    expect(await agreementsOf(harness)).toHaveLength(1);
+  });
+
   it("refuses an employee's own agreement for every employee when another charter forbids it, and keeps it for its employee", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });
