@@ -940,7 +940,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 44 tables: 27 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the owner's skill library, three hold the owner's people graph, one is the transient lease on the verification sandbox, two are the deployment's own record of the migrations it has run and the release its rows are at, and two hold the systems IT connected for the whole organisation and their ledger, which no owner's reset touches.
+The schema contains 45 tables: 27 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), seven hold owner-level documentation and credential state, one is the owner's skill library, three hold the owner's people graph, one is the transient lease on the verification sandbox, two are the deployment's own record of the migrations it has run and the release its rows are at, and two hold the systems IT connected for the whole organisation and their ledger, which no owner's reset touches.
 
 | Table | Purpose |
 |---|---|
@@ -952,6 +952,7 @@ The schema contains 44 tables: 27 carry per-agent or agent-owned runtime state, 
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
 | `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
 | `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
+| `docBlocks` | Each stored page split at its headings into blocks after redaction, with a search index over their text and the bigrams of every Chinese, Japanese or Korean run, filtered by owner and source; real mode only |
 | `docPageListings` | The listing of its source that last named each page, which a finishing sync prunes by |
 | `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
 | `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
