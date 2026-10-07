@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
 import { PassThrough } from 'node:stream';
+import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkPageAddress,
@@ -101,6 +102,14 @@ describe('checkPageAddress', (): void => {
     );
   });
 
+  it('reads a resolver that failed without an error object as a resolver that did not answer', async (): Promise<void> => {
+    // A resolver can reject with anything, even null; the check must not trip over it.
+    const failing = (): Promise<string[]> => Promise.reject(null);
+    await expect(
+      checkPageAddress(new URL('https://docs.example.com/'), failing, none),
+    ).rejects.toThrow("https://docs.example.com/: Day0's resolver did not answer for its host.");
+  });
+
   it('refuses a written-in login and any scheme but http and https', async (): Promise<void> => {
     const resolve = resolverOf({ 'docs.example.com': ['93.184.215.14'] });
     await expect(
@@ -133,7 +142,11 @@ interface Dialled {
 
 /** A transport that records the dial, resolves through the lookup it was handed, and answers. */
 function fakeTransport(
-  answer: { status: number; headers?: Record<string, string>; chunks?: readonly string[] },
+  answer: {
+    status: number;
+    headers?: Record<string, string>;
+    chunks?: ReadonlyArray<string | Buffer>;
+  },
   dialled: Dialled[],
 ): PageRequest {
   return (url, options, callback) => ({
@@ -197,6 +210,44 @@ describe('pinnedPageFetch', (): void => {
     expect(https).toEqual([]);
     expect(http[0].resolvedTo).toEqual([{ address: '10.1.2.3', family: 4 }]);
     expect(http[0].options.headers).toMatchObject({ accept: 'text/markdown' });
+  });
+
+  it('names itself and accepts a compressed page, which it reads decoded (second pass)', async (): Promise<void> => {
+    const dialled: Dialled[] = [];
+    const transport = fakeTransport(
+      {
+        status: 200,
+        headers: { 'content-encoding': 'gzip', 'content-type': 'text/markdown' },
+        chunks: [gzipSync('# Start\n\nThe whole page.')],
+      },
+      dialled,
+    );
+    const response = await pinnedPageFetch(checked, 1024, { http: transport, https: transport })(
+      new URL('http://wiki.corp.internal/start'),
+    );
+    expect(await response.text()).toBe('# Start\n\nThe whole page.');
+    expect(response.headers.get('content-encoding')).toBeNull();
+    expect(dialled[0].options.headers).toMatchObject({
+      'user-agent': 'Day0 documentation reader',
+      'accept-encoding': 'gzip, deflate, br',
+    });
+  });
+
+  it('bounds a compressed page by what it decodes to, not by what was sent', async (): Promise<void> => {
+    const transport = fakeTransport(
+      {
+        status: 200,
+        headers: { 'content-encoding': 'gzip' },
+        chunks: [gzipSync('x'.repeat(4096))],
+      },
+      [],
+    );
+    const response = await pinnedPageFetch(checked, 1024, { http: transport, https: transport })(
+      new URL('http://wiki.corp.internal/start'),
+    );
+    await expect(response.text()).rejects.toThrow(
+      'http://wiki.corp.internal/start exceeds 1024 bytes.',
+    );
   });
 
   it('returns a redirect for the caller to check instead of following it', async (): Promise<void> => {

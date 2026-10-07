@@ -2,6 +2,8 @@ import type { IncomingMessage } from 'node:http';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
+import type { Readable } from 'node:stream';
+import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import { isDiallablePrivateAddress, isNonPublicAddress } from '../../lib/network-addresses';
 import {
   configuredPrivateHosts,
@@ -138,7 +140,8 @@ async function resolvedAddresses(
   try {
     addresses = await resolve(hostname);
   } catch (error) {
-    const code = (error as { code?: unknown }).code;
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
     if (code === 'ENOTFOUND' || code === 'EAI_NONAME' || code === 'EAI_NODATA') {
       throw new PageAddressRefusal(`${url.href}: its host does not resolve.`);
     }
@@ -168,12 +171,46 @@ function byteSize(bytes: number): string {
   return Number.isInteger(mebibytes) ? `${mebibytes} MiB` : `${bytes} bytes`;
 }
 
-/** A response body that errors once more than `limit` bytes have arrived. */
-function boundedBody(
-  url: URL,
-  response: IncomingMessage,
-  limit: number,
-): ReadableStream<Uint8Array> {
+/**
+ * How the reader introduces itself and the encodings it reads, as a browser's fetch would send
+ * them: some wikis refuse a request with no `User-Agent`, and a page sent compressed is decoded.
+ */
+const READER_HEADERS: Readonly<Record<string, string>> = {
+  'user-agent': 'Day0 documentation reader',
+  'accept-encoding': 'gzip, deflate, br',
+};
+
+/**
+ * A response's body decoded by its `Content-Encoding`, or the body as sent when it names none.
+ *
+ * @returns The stream to read, and whether it was decoded.
+ * @throws Error naming an encoding the reader does not decode.
+ */
+function decodedBody(url: URL, response: IncomingMessage): { body: Readable; decoded: boolean } {
+  const encoding = String(response.headers['content-encoding'] ?? '')
+    .trim()
+    .toLowerCase();
+  if (encoding === '' || encoding === 'identity') return { body: response, decoded: false };
+  const decoder =
+    encoding === 'gzip' || encoding === 'x-gzip'
+      ? createGunzip()
+      : encoding === 'deflate'
+        ? createInflate()
+        : encoding === 'br'
+          ? createBrotliDecompress()
+          : undefined;
+  if (decoder === undefined) {
+    response.destroy();
+    throw new Error(`${url.href} was sent in an encoding Day0 does not read (${encoding}).`);
+  }
+  response.on('error', (error: Error): void => {
+    decoder.destroy(error);
+  });
+  return { body: response.pipe(decoder), decoded: true };
+}
+
+/** A body that errors once more than `limit` bytes have arrived, counted after decoding. */
+function boundedBody(url: URL, response: Readable, limit: number): ReadableStream<Uint8Array> {
   let settled = false;
   return new ReadableStream<Uint8Array>({
     start(controller): void {
@@ -212,7 +249,8 @@ function boundedBody(
  * A fetch that reaches one checked page address through its checked addresses only.
  *
  * Another host or scheme is refused before a socket opens, a redirect is returned for the
- * caller to check and follow, and at most `limitBytes` of a body is read.
+ * caller to check and follow, a compressed body is decoded, and at most `limitBytes` of the
+ * decoded body is read.
  *
  * @param checked - The address and answers `checkPageAddress` returned.
  * @param limitBytes - The largest body read.
@@ -233,7 +271,7 @@ export function pinnedPageFetch(
         `Day0 refused to fetch ${input.href}, which is not the address it checked.`,
       );
     }
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...READER_HEADERS };
     new Headers(init.headers).forEach((value: string, key: string): void => {
       headers[key] = value;
     });
@@ -258,8 +296,16 @@ export function pinnedPageFetch(
             status === 204 || status === 205 || status === 304 || init.method === 'HEAD';
           if (empty) response.resume();
           try {
+            const { body, decoded } = empty
+              ? { body: undefined, decoded: false }
+              : decodedBody(input, response);
+            // The body read is the decoded one, so the sent encoding and length no longer apply.
+            if (decoded) {
+              responseHeaders.delete('content-encoding');
+              responseHeaders.delete('content-length');
+            }
             resolve(
-              new Response(empty ? null : boundedBody(input, response, limitBytes), {
+              new Response(body === undefined ? null : boundedBody(input, body, limitBytes), {
                 status,
                 statusText: response.statusMessage ?? '',
                 headers: responseHeaders,
