@@ -617,12 +617,12 @@ export class HttpAdapter implements SurfaceAdapter {
       };
     }
     // The same predicate decides Slack's probe and Slack's transport. Matching
-    // one exact spelling here would send a row documented as `.../api` past the
-    // isolated local proof service and out to slack.com.
-    const transportEndpoint =
-      surface.slug === 'slack' && isSlackApiEndpoint(surface.endpoint)
-        ? slackApiBaseUrl().href
-        : (surface.endpoint ?? '');
+    // one exact spelling here, or the card's slug, would send a row documented as
+    // `.../api`, or a Slack card called anything but `slack`, past the isolated
+    // local proof service and out to slack.com (the pre-tag bed, 7 October 2026).
+    const transportEndpoint = isSlackApiEndpoint(surface.endpoint)
+      ? slackApiBaseUrl().href
+      : (surface.endpoint ?? '');
     let url: URL;
     try {
       url = resolveRequestUrl(transportEndpoint, request.path);
