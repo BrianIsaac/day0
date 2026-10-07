@@ -820,6 +820,26 @@ describe('URL attribution', (): void => {
     ).toBeUndefined();
   });
 
+  it('refuses a public web UI over http, and admits one on a host DAY0_PRIVATE_HOSTS lists (M20, R9)', (): void => {
+    const unlisted = privateHostAllowlist('');
+    expect(documentedEndpoints(['http://portal.example.com/login'], unlisted)).toMatchObject({
+      webUi: undefined,
+      refusedWebUi: 'http://portal.example.com/login',
+    });
+    // A name inside the network is no exception until the operator lists it.
+    expect(documentedEndpoints(['http://looker-tile:8080/'], unlisted).webUi).toBeUndefined();
+    expect(
+      documentedEndpoints(['http://looker-tile:8080/'], privateHostAllowlist('looker-tile')),
+    ).toMatchObject({ webUi: 'http://looker-tile:8080/', refusedWebUi: undefined });
+    // The https page is the web UI; the plaintext one beside it is not noted against it.
+    expect(
+      documentedEndpoints(
+        ['http://portal.example.com/login', 'https://portal.example.com/login'],
+        unlisted,
+      ),
+    ).toMatchObject({ webUi: 'https://portal.example.com/login', refusedWebUi: undefined });
+  });
+
   it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
     const listed = privateHostAllowlist('mcp.corp.internal');
     expect(documentedEndpoints(['https://mcp.corp.internal/mcp'], listed)).toEqual({
@@ -963,6 +983,8 @@ describe('orientation run', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
@@ -2177,6 +2199,8 @@ describe('the browser floor in orientation', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
@@ -2244,6 +2268,28 @@ describe('the browser floor in orientation', (): void => {
     });
     expect(reports.request?.openQuestions).toContain(
       'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  });
+
+  it('refuses a public web UI over http and says on the card why (M20)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at http://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: page title `Forecast reports`.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // Documented, so not absent: the card escalates and says why the page was not opened.
+    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(reports.endpoint).toBeUndefined();
+    expect(reports.request?.openQuestions).toContain(
+      'The web UI http://reports.example.test/forecast is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it: a sign-in there would cross the network unencrypted. Document its https address, or list the host in DAY0_PRIVATE_HOSTS if it is inside this network.',
     );
   });
 
@@ -2708,6 +2754,8 @@ describe('each employee reads its own role', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
   });
 
   it("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {

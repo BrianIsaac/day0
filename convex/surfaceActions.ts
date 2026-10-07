@@ -49,6 +49,8 @@ import {
   type LoginForm,
   type SnapshotElement,
 } from '../src/surfaces/browser';
+import { webUiAddressRefusal } from '../src/surfaces/browser-address';
+import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import { interpretToolResult, isServerToolError } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
@@ -590,6 +592,8 @@ export interface BrowserProbeRequest {
   readonly markers: BrowserProbeMarkers;
   /** Absent when no credential is landed on the surface. */
   readonly login?: BrowserProbeLogin;
+  /** The operator's private-host list (`webUiAddressRefusal`); the environment's when omitted. */
+  readonly privateHosts?: PrivateHostAllowlist;
 }
 
 /** The argument names the driver's schema gives one browser tool. */
@@ -788,6 +792,9 @@ export async function probeBrowserSurface(
   } catch {
     throw new Day0ProbeLimitation('The documented web UI address is not a valid URL.');
   }
+  // Before any session: a sign-in over plain http to a host nobody listed is not attempted (M20).
+  const refusal = webUiAddressRefusal(endpoint, request.privateHosts);
+  if (refusal !== undefined) throw new Day0ProbeLimitation(refusal);
   const component = browserComponent(request.driverUrl);
   if (!component.present) throw new Error(component.reason);
   const client = makeClient(component.url);
