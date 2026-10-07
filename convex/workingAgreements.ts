@@ -22,6 +22,7 @@ import {
   type JudgedCorrection,
 } from '../src/work/agreements';
 import { awaitingCheck, type AgreementView } from '../src/work/agreement-words';
+import type { ExecutionPlan } from '../src/work/types';
 import {
   AGREEMENT_REFUSAL_REASONS,
   AGREEMENT_STATEMENT_LIMIT,
@@ -292,6 +293,35 @@ export async function markAgreementsAppliedInTransaction(
     kept.push(id);
   }
   return kept;
+}
+
+/**
+ * The plan as the manager's approval leaves it (W13-R29): an agreement it applied that was retired,
+ * superseded or dismissed between the draft and the approval no longer binds the run the approval
+ * starts, so it leaves the plan's `appliedAgreements`.
+ *
+ * @param ctx - The approval's mutation context.
+ * @param row - The work item being approved.
+ * @returns The plan to store, or undefined when every agreement it applied still holds.
+ */
+export async function planAgreementsAtApproval(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<ExecutionPlan | undefined> {
+  const plan = row.plan as ExecutionPlan | undefined;
+  const ids = plan?.appliedAgreements;
+  if (plan === undefined || ids === undefined) return undefined;
+  const agent = await ctx.db.get(row.agentId);
+  const inForce: string[] = [];
+  for (const raw of ids) {
+    const id = ctx.db.normalizeId('workingAgreements', raw);
+    const agreement = id ? await ctx.db.get(id) : null;
+    if (agent && agreement?.status === 'active' && binds(agreement, agent)) inForce.push(raw);
+  }
+  if (inForce.length === ids.length) return undefined;
+  const settled: ExecutionPlan = { ...plan };
+  delete settled.appliedAgreements;
+  return inForce.length > 0 ? { ...settled, appliedAgreements: inForce } : settled;
 }
 
 /** How many distinct items a correction has governed: the one it was given on and those it was applied to. */

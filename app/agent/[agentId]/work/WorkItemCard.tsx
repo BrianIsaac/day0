@@ -39,7 +39,7 @@ import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
-import { type ItemPlan, PlanSection } from './PlanSection';
+import { type ItemPlan, type PlanAgreement, PlanSection } from './PlanSection';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
@@ -163,6 +163,7 @@ export function WorkItemCard({
   managerKey,
   questions = [],
   corrections = [],
+  agreements = [],
   autonomyChanges = [],
   onApprovePlan,
   onCancelPlan,
@@ -189,6 +190,8 @@ export function WorkItemCard({
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
+  /** The employee's working agreements, for the line saying this plan applied one (W13-R29). */
+  agreements?: readonly PlanAgreement[];
   /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
   autonomyChanges?: readonly AutonomyChange[];
   onApprovePlan: (decision: PlanApproval) => Promise<unknown> | void;
@@ -507,7 +510,13 @@ export function WorkItemCard({
         />
       ) : null}
       {plan ? (
-        <PlanSection item={item} plan={plan} surfaces={surfaces} corrections={corrections} />
+        <PlanSection
+          item={item}
+          plan={plan}
+          surfaces={surfaces}
+          corrections={corrections}
+          agreements={agreements}
+        />
       ) : null}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm

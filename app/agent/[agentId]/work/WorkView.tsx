@@ -99,6 +99,7 @@ export function WorkView() {
         autonomousActions={autonomousActionsOn(agent)}
         surfaceMode={surfaceMode}
         corrections={corrections}
+        agreements={agreements ?? []}
         autonomyChanges={autonomyChanges ?? []}
         loading={workItems === undefined}
         employeeName={agent.name}

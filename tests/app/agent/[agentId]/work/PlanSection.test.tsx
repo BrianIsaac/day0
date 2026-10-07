@@ -52,3 +52,28 @@ describe("a work item's plan", (): void => {
     expect(section(drafted)).toContain('Slack');
   });
 });
+
+describe('the working agreements a plan applied, on its card (W13-R29)', (): void => {
+  it('lists each agreement the plan applied by its words, and none it did not', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanSection
+        item={DRAWN.planPending}
+        plan={{ ...PLAN, appliedAgreements: ['agreement-1'] }}
+        surfaces={SURFACES}
+        corrections={[]}
+        agreements={[
+          {
+            _id: 'agreement-1',
+            statement: 'Name the carrier and the new date in every delay notice.',
+          },
+          { _id: 'agreement-2', statement: 'Thread every Slack reply under the asker.' },
+        ]}
+      />,
+    );
+    expect(markup).toContain(
+      'Applies your working agreement: ‘Name the carrier and the new date in every delay notice.’',
+    );
+    expect(markup).not.toContain('Thread every Slack reply');
+    expect(section(DRAWN.planPending)).not.toContain('working agreement');
+  });
+});

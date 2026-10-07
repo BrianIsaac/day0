@@ -464,6 +464,32 @@ describe('where a working agreement reaches', (): void => {
     for (const text of words) expect(plannerPrompt).not.toContain(text);
   }, 30_000);
 
+  it('reaches no executor when retired between the plan that applied it and its approval (W13-R29)', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, 'Priya');
+    const agreementId = await keptForEveryEmployee(harness);
+    const ticket = await seedTicket(harness, priya, 'LOG-8');
+    await drain(harness);
+    expect(((await readItem(harness, ticket)).plan as ExecutionPlan).appliedAgreements).toEqual([
+      agreementId,
+    ]);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.retire, { agreementId, agentId: priya });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: ticket });
+    await drain(harness);
+    expect(
+      ((await readItem(harness, ticket)).plan as ExecutionPlan).appliedAgreements,
+    ).toBeUndefined();
+    const [executorPrompt] = promptsOf(
+      (name) => name.includes('-log-8-') && name.endsWith('-initial'),
+    );
+    expect(executorPrompt).toBeDefined();
+    expect(executorPrompt).not.toContain(STATEMENT);
+  }, 30_000);
+
   it('reaches no planner once retired', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const priya = await seedEmployee(harness, 'Priya');

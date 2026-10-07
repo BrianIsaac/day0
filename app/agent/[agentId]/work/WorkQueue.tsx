@@ -8,6 +8,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
+import type { PlanAgreement } from './PlanSection';
 import type { AutonomyChange } from '@/work/autonomy';
 import type { RunHold } from '@/work/item-display';
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
@@ -237,6 +238,7 @@ export function WorkQueue({
   autonomousActions,
   surfaceMode,
   corrections = [],
+  agreements = [],
   autonomyChanges = [],
   loading = false,
   employeeName = 'the employee',
@@ -270,6 +272,8 @@ export function WorkQueue({
   surfaceMode: 'mock' | 'real' | undefined;
   /** The employee's kept corrections, for the plan cards that applied one. */
   corrections?: KeptCorrection[];
+  /** The employee's working agreements, for the plan cards that applied one (W13-R29). */
+  agreements?: readonly PlanAgreement[];
   /** The employee's flips of the autonomous-actions switch, oldest first. */
   autonomyChanges?: readonly AutonomyChange[];
 }) {
@@ -410,6 +414,7 @@ export function WorkQueue({
                   autonomousActions={autonomousActions}
                   questions={openQuestions.filter((question) => question.workItemId === item._id)}
                   corrections={corrections}
+                  agreements={agreements}
                   autonomyChanges={autonomyChanges}
                   onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
                   onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
