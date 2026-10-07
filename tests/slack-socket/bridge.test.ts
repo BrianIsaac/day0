@@ -602,6 +602,21 @@ describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): v
     expect(backend.heartbeats.length).toBe(reports);
   });
 
+  it('reports a dropped app down at the next report the backend takes, when the first is lost (the second pass)', async (): Promise<void> => {
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    backend.heartbeatStatus = 503;
+    backend.apps = [];
+    await until(() => running.status().apps.length === 0, 'the app dropped');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    backend.heartbeatStatus = 200;
+    await until(
+      () => lastReport()?.live === false,
+      'the app reported down once the backend took it',
+    );
+  });
+
   it('stops within the compose grace when a report on the wire hangs, its farewell sent all the same (W13-R17)', async (): Promise<void> => {
     backend.liveHeartbeatDelayMs = 20_000;
     const running = start();
