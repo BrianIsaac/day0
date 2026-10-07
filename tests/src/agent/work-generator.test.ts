@@ -167,6 +167,8 @@ const PLAIN_OUT_OF_SCOPE = drafted(
 
 describe('generated demo work prompt', (): void => {
   it('derives role mismatch from the runtime charter without naming the seeded office', (): void => {
+    // W13-R41 (13-FD's R8): the prompt that asks for no dash writes none as a clause break.
+    expect(WORK_GEN_SYSTEM).not.toMatch(/\S - /);
     expect(WORK_GEN_SYSTEM).not.toMatch(/RevOps|revenue operations/i);
     expect(WORK_GEN_SYSTEM).toContain('outside the role described in the charter');
   });
@@ -309,7 +311,8 @@ describe("the role's words the in-scope items use (D2, the bed walk)", (): void 
 describe('the action item the mock office files on its ticket queue (D2 (b), a product call)', (): void => {
   it('tells the generator the action item is a new ticket on the ticket queue, never another surface', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(
-      '2. Action item - a new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket".',
+      // Re-pinned for W13-R41: the clause dash is a colon.
+      '2. Action item: a new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket".',
     );
     expect(WORK_GEN_SYSTEM).not.toContain('pick whichever surface best fits');
   });
@@ -372,7 +375,8 @@ describe('the first tickets the office can and cannot back (13-FD, the v0.16.0 r
 
   it('asks for a second ticket whose ask needs what the office does not hold, never saying so', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(
-      '3. Beyond-the-office item - a second new ticket filed for this role on the ticket queue',
+      // Re-pinned for W13-R41: the clause dash is a colon.
+      '3. Beyond-the-office item: a second new ticket filed for this role on the ticket queue',
     );
     expect(WORK_GEN_SYSTEM).toContain('the ticket never says the office lacks anything');
   });
