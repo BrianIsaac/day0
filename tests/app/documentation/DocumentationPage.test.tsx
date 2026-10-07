@@ -91,6 +91,16 @@ describe('a source whose system discovery failed', (): void => {
       'People from its pages: The people extraction did not answer in time.',
     );
   });
+
+  it('says one failure once when discovery and the people extraction failed alike (the first pre-tag, for wave 14)', (): void => {
+    const failure = 'The model did not answer in time.';
+    state.sources = [
+      { ...source, lastDiscoveryError: failure, lastPeopleExtractionError: failure },
+    ];
+    const markup = renderToStaticMarkup(<DocumentationPage />);
+    expect(markup).toContain(`System discovery and people from its pages: ${failure}`);
+    expect(markup.split(failure)).toHaveLength(2);
+  });
 });
 
 describe('the link form and the components a source needs', (): void => {
