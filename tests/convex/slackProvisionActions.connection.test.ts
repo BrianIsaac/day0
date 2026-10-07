@@ -1038,9 +1038,19 @@ describe('the renewal and the re-join (A26, RM4)', (): void => {
     expect(callsOf(slack, 'conversations.join')).toEqual([]);
   });
 
-  it("names every channel as needing a person when the documentation's template did not ask for channels:join, and keeps the install", async (): Promise<void> => {
+  // Re-pinned for W13V-2: an app built from a template now holds the kit's scopes, so the
+  // documentation's template no longer gives an app without channels:join. The path stays for an
+  // app a template made before v0.17.0, which held only the template's scopes.
+  it('names every channel as needing a person when the app does not hold channels:join (one a template made before v0.17.0), and keeps the install', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const leo = await expiredLeo(harness, POLICY);
+    const index = slack.apps.findIndex((candidate) => candidate.appId === leo.appId);
+    const older = slack.apps[index];
+    if (older === undefined) throw new Error('no app');
+    slack.apps[index] = {
+      ...older,
+      scopes: older.scopes.filter((scope) => scope !== 'channels:join'),
+    };
     await harness
       .withIdentity(managerIdentity())
       .mutation(api.surfaces.setAccessDays, { surfaceId: leo.surfaceId, days: 30 });

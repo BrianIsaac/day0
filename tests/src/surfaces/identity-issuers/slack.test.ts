@@ -44,6 +44,51 @@ describe('the manifest an employee’s own app is created from', (): void => {
     expect(built.redirectUrl).toBe(`${PUBLIC_URL}/api/oauth/slack`);
   });
 
+  it("turns Socket Mode and interactivity on and adds the kit's scopes to a template that leaves them out, so buttons work and channels can be joined (W13V-2)", (): void => {
+    const built = slackAppManifest({
+      documentation: POLICY,
+      employeeName: 'Iris',
+      publicUrl: PUBLIC_URL,
+    });
+    expect(built.template).toBe('documentation');
+    expect(built.manifest.settings).toEqual({
+      org_deploy_enabled: false,
+      socket_mode_enabled: true,
+      token_rotation_enabled: false,
+      interactivity: { is_enabled: true },
+    });
+    expect(built.scopes).toContain('channels:join');
+    expect([...built.scopes].sort()).toEqual([...SLACK_KIT_BOT_SCOPES].sort());
+    expect(built.manifest.oauth_config.scopes.bot).toEqual(built.scopes);
+    expect(built.manifest.display_information.description).toBe(
+      'RevOps digital employee. Drafts first, sends to the manager, holds public posts.',
+    );
+  });
+
+  it("keeps a scope the template asks for beyond the kit's, after the template's own and before the kit's it lacks", (): void => {
+    const wider = POLICY.replace(
+      '"users:read.email"]',
+      '"users:read.email", "chat:write.customize"]',
+    );
+    const built = slackAppManifest({
+      documentation: wider,
+      employeeName: 'Iris',
+      publicUrl: PUBLIC_URL,
+    });
+    expect(built.scopes).toEqual([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'chat:write.customize',
+      'channels:join',
+    ]);
+  });
+
   it("builds the kit's app where the documentation carries no template", (): void => {
     const built = slackAppManifest({
       documentation: '# RevOps handbook\n\nNo manifest here.',

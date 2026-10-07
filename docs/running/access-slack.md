@@ -99,15 +99,17 @@ that issues an app-level token, so a person generates one per app:
 
 1. Signed in to <https://api.slack.com/apps> as a collaborator on the
    employee's app (`<employee name> (Day0)`), open it.
-2. **If Socket Mode is off** (every app Day0 created before v0.16.0): on its
+2. **If Socket Mode is off** (every app Day0 created before v0.16.0, and one
+   created before v0.17.0 from a policy page's manifest that left it off): on its
    **Socket Mode** page turn on **Enable Socket Mode**. Slack's own dialog,
    "Generate an app-level token to enable Socket Mode", already carries the
    scope `connections:write`: give it any name (for example `day0-buttons`),
    **Generate**, and **Copy** the token (it starts `xapp-`). Interactivity turns
    on with it, with no request URL asked for. Go to step 4: the dialog made the
    token, so step 3 would make a second one.
-3. **If Socket Mode is on** (apps Day0 created from v0.16.0, from the manifest
-   in section 2, have it and Interactivity on already): **Basic Information**, **App-Level Tokens**,
+3. **If Socket Mode is on** (every app Day0 creates from v0.17.0 has it and
+   Interactivity on already, as do the apps it created at v0.16.0 from the
+   manifest in section 2): **Basic Information**, **App-Level Tokens**,
    **Generate Token and Scopes**, any name, the scope **`connections:write`**,
    **Generate**. Copy the token (it starts `xapp-`).
 
@@ -154,8 +156,14 @@ inbound is opened.
 IT creates no app by hand: Day0 creates each employee's app with
 `apps.manifest.create` from this manifest, filling in the employee's name and
 Day0's public address. `./setup.sh access --print-manifest slack` prints it.
-A policy page that carries this block in a fenced `json` block provisions the
-same app, since Day0's documentation reader finds it there.
+A policy page that carries a manifest in a fenced `json` block provisions the
+app that manifest describes instead, since Day0's documentation reader finds it
+there: its name, description and bot user, and any bot scope it asks beyond the
+nine of section 3. The rest is Day0's whatever the page says: Socket Mode,
+interactivity's switch and the messages tab are on, every scope of section
+3 is added where the page's manifest leaves one out, and no address the page
+adds is kept beyond the redirect. An app created before v0.17.0 from a page's
+manifest has that manifest's switches and scopes; Day0 does not change them.
 
 <!-- access-kit: manifest -->
 
@@ -219,7 +227,7 @@ the codes and tokens come back on the redirect.
 ## 3. The scopes
 
 Each employee's app asks for the scopes of exactly the methods Day0 calls in
-Slack, and no more: `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
+Slack (and any further scope a policy page's manifest asks, section 2): `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
 (`channels:read`, `im:read`), `conversations.history` and
 `conversations.replies` (`channels:history`, `im:history`), `conversations.open`
 (`im:write`), `users.lookupByEmail` (`users:read.email`, which Slack grants
