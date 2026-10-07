@@ -234,7 +234,12 @@ describe('the Slack recipe and the card it describes', (): void => {
   it('says what the walk on real Slack saw of the card a page gives and of the socket dial (W13V-1, rows 4, 9 and 10)', (): void => {
     const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
     expect(text).not.toContain('makes its card a pasted-token card, and with no page');
-    expect(text).toContain('title the page "Slack"');
+    // Re-pinned for W13V-1's fix (14-FX): the page under its own title is read as Slack's Web API,
+    // so the workaround ("title the page Slack") went and the guide says when it is read so.
+    expect(text).not.toContain('title the page "Slack"');
+    expect(text).toContain(
+      "is read as Slack's Web API from v0.18.0 when a sentence on it names Slack and gives `https://slack.com/api/`",
+    );
     expect(text).not.toContain('reports a live connection for it, within seconds');
   });
 
