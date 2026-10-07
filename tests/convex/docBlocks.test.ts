@@ -243,7 +243,7 @@ describe('searchBlocks', (): void => {
 describe('unchangedPage', (): void => {
   it('answers the stored page only under the hash it was stored with', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { sourceId } = await sourceOf(harness);
+    const { sourceId, runId } = await sourceOf(harness);
     await harness.run(async (ctx) => {
       await ctx.db.insert('docPages', {
         sourceId,
@@ -261,6 +261,12 @@ describe('unchangedPage', (): void => {
         updatedAt: 1,
       });
     });
+    // Re-pinned in the second pass: a page holding text is kept only once its blocks exist.
+    await harness.mutation(internal.docBlocks.splitStoredPage, {
+      sourceId,
+      ref: 'hashed.md',
+      generation: runId,
+    });
     const ask = async (ref: string, contentHash: string) =>
       await harness.query(internal.docBlocks.unchangedPage, { sourceId, ref, contentHash });
     expect(await ask('hashed.md', 'a'.repeat(32))).toEqual({
@@ -270,6 +276,42 @@ describe('unchangedPage', (): void => {
     expect(await ask('hashed.md', 'b'.repeat(32))).toBeNull();
     expect(await ask('older.md', 'a'.repeat(32))).toBeNull();
     expect(await ask('missing.md', 'a'.repeat(32))).toBeNull();
+  });
+});
+
+describe('unchangedPage and a split that never landed (second pass)', (): void => {
+  it('answers no page whose text holds blocks it has none of, so the sync stores and splits it again', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'headings.md',
+        title: 'Headings',
+        markdown: '# Only a heading',
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+    });
+    const ask = async (ref: string) =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref,
+        contentHash: 'a'.repeat(32),
+      });
+    expect(await ask('runbooks/refresh.md')).toBeNull();
+    // A page with no text under its headings has no block to miss.
+    expect(await ask('headings.md')).toMatchObject({ title: 'Headings' });
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    expect(await ask('runbooks/refresh.md')).toMatchObject({ title: 'Refresh' });
   });
 });
 

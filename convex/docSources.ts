@@ -1939,10 +1939,13 @@ export const upsertPage = internalMutation({
         existing.url === page.url &&
         existing.markdown === page.markdown;
       if (unchanged) {
-        // Once, for a page stored before its hash or under another key: the hash and the
-        // blocks, with its body and time left as they were.
-        if (args.contentHash !== undefined && existing.contentHash !== args.contentHash) {
-          await ctx.db.patch(existing._id, { contentHash: args.contentHash });
+        // A page stored before its hash or under another key takes the hash, with its body
+        // and time left as they were; and an unchanged page the sync stores again (its split
+        // never landed, or it was redacted again) is split again.
+        if (args.contentHash !== undefined) {
+          if (existing.contentHash !== args.contentHash) {
+            await ctx.db.patch(existing._id, { contentHash: args.contentHash });
+          }
           await splitStored();
         }
         return existing._id;

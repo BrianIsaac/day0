@@ -203,7 +203,8 @@ export const splitStoredPage = internalMutation({
  * redaction and no split (P8-10). Internal; reads one page, writes nothing.
  *
  * @returns The stored title, address and (redacted) Markdown, or null when the page is not
- *   stored, was stored without a hash, or has changed.
+ *   stored, was stored without a hash, has changed, or holds text but no block (its split
+ *   failed), so the sync stores it again and its split is scheduled again.
  */
 export const unchangedPage = internalQuery({
   args: { sourceId: v.id('docSources'), ref: v.string(), contentHash: v.string() },
@@ -213,6 +214,12 @@ export const unchangedPage = internalQuery({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null || page.contentHash !== args.contentHash) return null;
+    // A page whose split never landed is not kept: its next store schedules the split again.
+    const block = await ctx.db
+      .query('docBlocks')
+      .withIndex('by_source_page', (q) => q.eq('sourceId', args.sourceId).eq('pageRef', args.ref))
+      .first();
+    if (block === null && splitPage(page.markdown).length > 0) return null;
     return {
       title: page.title,
       ...(page.url !== undefined ? { url: page.url } : {}),
