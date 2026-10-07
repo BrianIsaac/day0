@@ -90,16 +90,19 @@ const IDENTITY_PATTERNS: readonly RegExp[] = [
   /[\w.+-]+\s*(?:\(at\)|\[at\]|\{at\})\s*[\w-]+(?:\s*(?:\(dot\)|\[dot\]|\{dot\}|\.)\s*[\w-]+)+/gi,
   /[\w.+-]+\s+at\s+[\w-]+(?:\s+dot\s+[\w-]+)+/gi,
   /[\w.+-]+%40[\w.-]+/gi,
-  new RegExp(`\\b(?:[\\w-]+\\.)+(?:${HOST_TLDS})(?::\\d+)?(?:\\/\\S*)?(?![\\w.])`, 'gi'),
+  new RegExp(`\\b(?:[\\w-]+\\.)+(?:${HOST_TLDS})(?::\\d+)?(?:\\/\\S*)?(?![\\w-])(?!\\.\\w)`, 'gi'),
   /\b[\w-]+(?:\.[\w-]+)+:\d{2,5}\b(?:\/\S*)?/g,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
   /(?<![\w@])@[\w.-]+/g,
   /\b[A-Za-z0-9]{32}\b/g,
 ];
 
-/** Characters that steer or hide text: controls, zero-width marks and bidirectional overrides. */
+/**
+ * Characters that steer or hide text: controls, zero-width spaces and bidirectional marks and
+ * overrides; never the zero-width joiners Persian and Indic names are written with (U+200C, U+200D).
+ */
 const HIDDEN_CHARACTERS =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
 
 /** A token shaped like a Slack user, channel, team, app, enterprise or file id. */
 const SLACK_ID_SHAPE = /(?<![A-Za-z0-9])[UWCGTDBASEF][A-Z0-9]{8,10}(?![A-Za-z0-9])/g;
@@ -121,11 +124,17 @@ const PHONE_SHAPE = /(?<![\w+])\+?\(?\d[\d\s().-]{6,}\d(?![\w])/g;
 
 /**
  * Whether a run is a phone number (W13-R19): one written with a country code or brackets, or of
- * nine digits or more; a date ("2026-10-08") or a year is not.
+ * nine digits or more in three groups or more joined by one kind of dot or dash; a date
+ * ("2026-10-08"), a year or a list of years is not.
  */
 function isPhoneNumber(run: string): boolean {
   const digits = run.replace(/\D/g, '').length;
-  return digits >= 8 && (run.startsWith('+') || run.includes('(') || digits >= 9);
+  if (run.startsWith('+') || run.includes('(')) return digits >= 8;
+  // Spaced digits with no country code or brackets are numbers in prose ("2024 2025 2026"); one
+  // separator, a dot or a dash, between three groups or more is how a bare number is written.
+  if (/\s/.test(run) || digits < 9) return false;
+  const separators = new Set(run.replace(/\d/g, ''));
+  return separators.size <= 1 && run.split(/[.-]/).length >= 3;
 }
 
 /**

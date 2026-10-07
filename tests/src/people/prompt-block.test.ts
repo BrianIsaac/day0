@@ -430,3 +430,15 @@ describe('the People block after the wave 13 review (14-FX, W13-R19 to W13-R21)'
     expect(namesEveryCollaborator(crowd, ['Person 12'])).toBe(false);
   });
 });
+
+describe('the People block after the second pass (14-FX)', (): void => {
+  it('takes out a host that ends a sentence, keeps years, and keeps the joiners a name is written with', (): void => {
+    expect(withoutIdentities('Ask on acme.com.')).toBe('Ask on');
+    expect(withoutIdentities('See wiki.acme.internal.')).toBe('See');
+    expect(withoutIdentities('Invoices 2024 2025 2026 close')).toBe(
+      'Invoices 2024 2025 2026 close',
+    );
+    expect(withoutIdentities('call 415.555.0134 today')).toBe('call today');
+    expect(withoutIdentities('Mehr‌dad Kh‍anna')).toBe('Mehr‌dad Kh‍anna');
+  });
+});
