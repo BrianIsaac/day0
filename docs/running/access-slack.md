@@ -148,7 +148,10 @@ that issues an app-level token, so a person generates one per app:
      refused it.
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
-deletes it) or when a collaborator revokes it on the same page; presses then
+deletes it) or when a collaborator revokes it on the same page. An app a
+manager forgot on its card keeps its token until IT deletes the app or revokes
+the token: Forget purges Day0's copy only, so IT deletes a forgotten app in
+Slack's app settings soon after. Once a token ends, presses
 stop reaching Day0 until a new token is landed on the card, and each request is
 decided by its typed code where the app takes messages, or in Day0. A token landed again replaces the last, and the `slack-socket` component dials
 with it at its next read of the app list, within half a minute, so a token of

@@ -604,7 +604,7 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
 describe('what the forget says of the requests the old app sent (W13-R16)', (): void => {
   it('says a request it already sent is no longer decided in its messages, and where to decide it', (): void => {
     expect(forgetDoneWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
-      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.",
+      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings: until then its app-level token stays live at Slack, though Day0 no longer holds it. A request it already sent can no longer be decided in its own messages: decide it in day0.",
     );
   });
 });

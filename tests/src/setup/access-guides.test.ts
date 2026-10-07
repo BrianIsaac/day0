@@ -238,6 +238,13 @@ describe('the Slack recipe and the card it describes', (): void => {
     expect(text).not.toContain('reports a live connection for it, within seconds');
   });
 
+  it("says a forgotten app's app-level token stays live until IT deletes the app (W13V-11)", (): void => {
+    const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
+    expect(text).toContain(
+      'An app a manager forgot on its card keeps its token until IT deletes the app',
+    );
+  });
+
   it('says a tab turned off refuses the bot too, and what turns it off (the re-walk on real Slack)', (): void => {
     const text = page(ACCESS_KIT.slack.guide).replace(/\s+/g, ' ');
     expect(text).toContain('`messages_tab_disabled`');

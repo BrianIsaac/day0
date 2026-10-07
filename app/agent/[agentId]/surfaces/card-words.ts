@@ -538,16 +538,17 @@ export function forgottenAppWords(
 }
 
 /**
- * The forget's message (13-S): the app by its name and Slack app id, who deletes it, and that a
- * request it already sent is no longer decided in its own messages, so the manager decides it in
- * day0 (W13-R16: a press there is another app's and is ignored). A draft.
+ * The forget's message (13-S): the app by its name and Slack app id, who deletes it, that its
+ * app-level token stays live at Slack until then (W13V-11: Forget purges Day0's copy only), and
+ * that a request it already sent is no longer decided in its own messages, so the manager decides
+ * it in day0 (W13-R16: a press there is another app's and is ignored). A draft.
  *
  * @param app - The card's app as it stood before the forget.
  */
 export function forgetDoneWords(
   app: { readonly appId: string; readonly appName: string } | undefined,
 ): string {
-  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings: until then its app-level token stays live at Slack, though Day0 no longer holds it. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
 }
 
 /**
