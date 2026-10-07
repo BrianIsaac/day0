@@ -777,6 +777,16 @@ describe("a closing set's message this run's first phase already sent (W12V-13, 
     ]);
   });
 
+  it("sends again what the manager asked for again in the note, as an earlier run's write is (W13-R47)", () => {
+    const note = 'Send the manager a second message with the same summary.';
+    expect(reusedFromThisRun([dm], [sent], thisRun, { managerFeedback: note })).toEqual([
+      undefined,
+    ]);
+    expect(
+      reusedFromThisRun([dm], [sent], thisRun, { managerFeedback: 'Thanks.' })[0],
+    ).toMatchObject({ reusedFrom: 'work:run:0' });
+  });
+
   it('reuses nothing the first phase held, failed or only read, and no status change', () => {
     const held: LandedWrite = {
       action: dm,
