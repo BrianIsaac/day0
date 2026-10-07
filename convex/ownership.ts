@@ -9,6 +9,7 @@ import {
   EMPLOYEE_NOT_YOURS,
   ONE_TO_ONE_NOT_YOURS,
   SKILL_NOT_YOURS,
+  SURFACE_NOT_YOURS,
   WORK_ITEM_NOT_YOURS,
 } from '../src/agent/employee-access';
 import {
@@ -489,6 +490,17 @@ export async function assertOwnsCharter(
   charterId: Id<'charters'>,
 ): Promise<Doc<'charters'>> {
   return await ownedEmployeeRow(ctx, async () => await ctx.db.get(charterId), CHARTER_NOT_YOURS);
+}
+
+/**
+ * The connection card, if the caller owns its employee; throws {@link SURFACE_NOT_YOURS} otherwise,
+ * the same for a card that does not exist (W13-R13).
+ */
+export async function assertOwnsSurface(
+  ctx: QueryCtx | MutationCtx,
+  surfaceId: Id<'surfaces'>,
+): Promise<Doc<'surfaces'>> {
+  return await ownedEmployeeRow(ctx, async () => await ctx.db.get(surfaceId), SURFACE_NOT_YOURS);
 }
 
 /** The work item, if the caller owns its employee; throws {@link WORK_ITEM_NOT_YOURS} otherwise. */

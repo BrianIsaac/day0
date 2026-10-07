@@ -28,6 +28,12 @@ export const CHARTER_NOT_YOURS = 'This charter is not yours.';
 /** The refusal of a skill the caller does not own, the same for one that does not exist. */
 export const SKILL_NOT_YOURS = 'This skill is not yours.';
 
+/**
+ * The refusal of a connection card the caller does not own, the same for one that does not exist
+ * (W13-R13, W12-R25's one-refusal shape).
+ */
+export const SURFACE_NOT_YOURS = 'This connection is not yours.';
+
 /** The refusal of a one-to-one the caller does not own, the same for one that does not exist. */
 export const ONE_TO_ONE_NOT_YOURS = 'This one-to-one is not yours.';
 
