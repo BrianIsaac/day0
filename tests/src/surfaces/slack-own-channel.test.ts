@@ -5,6 +5,7 @@ import {
   SLACK_CHANNEL_METHODS,
   withChannelMethods,
 } from '../../../src/surfaces/slack-own-channel';
+import { parseSurfaceAction, toolRefusal } from '../../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 
 const ownAppCard = {
@@ -75,5 +76,24 @@ describe('a card on an app Day0 created', (): void => {
     );
     expect(holdsOwnSlackApp({ ...ownAppCard, path: 'mcp' })).toBe(false);
     expect(holdsOwnSlackApp({ ...ownAppCard, class: 'kanban' })).toBe(false);
+  });
+});
+
+describe("the work's check on an app Day0 created", (): void => {
+  it('refuses a run’s method the page never names, though Day0’s own channel may call it', (): void => {
+    const parsed = parseSurfaceAction({
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: '/conversations.open',
+        headersJson: '{"Authorization":"Bearer {{secret}}"}',
+        body: '{"users":"U0SOMEONE"}',
+      },
+    });
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const ownApp: SurfaceRecord = { ...record, ownSlackApp: true };
+    expect(toolRefusal(parsed.action, ownApp)).toContain('conversations.open');
+    expect(toolRefusal(parsed.action, withChannelMethods(ownApp))).toBeUndefined();
   });
 });

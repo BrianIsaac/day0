@@ -296,8 +296,8 @@ export interface ListedSurface extends Omit<Doc<'surfaces'>, 'pendingAuthorisati
   readonly keptAppNotReinstalled?: true;
   /**
    * True on a card holding no credential whose reason is the one IT gave for revoking the
-   * organisation connection the card is linked to, whether or not IT has connected the system
-   * again since: the card says it as IT's, never as a bare sentence (13-S).
+   * organisation connection the card is linked to, or the one that created its app, whether or
+   * not IT has connected the system again since: the card says it as IT's, and only then (13-S).
    */
   readonly reasonFromIt?: true;
   /**
@@ -532,13 +532,15 @@ export const listForAgent = query({
         revoked.has(surface.organisationConnectionId) &&
         !activeSystems.has(organisationSystemOf(surface) ?? '');
       const notReinstalled = keptEnded(surface);
-      // The card still says why IT's revoke ended it, after IT connects again too (13-S).
+      // The card's reason is IT's only when it is the revoke's own words, on the connection the
+      // card is linked to or the one that created its app: after IT connects again too, and never
+      // a manager's own reason on a card a revoke later ended (13-S).
       const reasonFromIt =
         surface.credentialId === undefined &&
         surface.reason !== undefined &&
-        surface.organisationConnectionId !== undefined &&
-        revoked.has(surface.organisationConnectionId) &&
-        revokeReasons.get(surface.organisationConnectionId) === surface.reason;
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].some(
+          (id) => id !== undefined && revoked.has(id) && revokeReasons.get(id) === surface.reason,
+        );
       const { pendingAuthorisation, ...card } = listed;
       const bridge = bridges.get(surface._id);
       return {

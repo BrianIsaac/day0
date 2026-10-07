@@ -835,6 +835,8 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
         expiresAt: NOW + 80 * DAY,
         reason: 'The docs server is moving to a new host.',
         connectionRevoked: true,
+        // Re-pinned for 13-S's second pass: the listing says whose reason it is.
+        reasonFromIt: true,
       }),
     );
     expect(markup).toContain("IT's reason: The docs server is moving to a new host.");
@@ -859,6 +861,8 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       expiresAt: NOW + 80 * DAY,
       reason: 'The re-walk ends the bed connection.',
       keptAppNotReinstalled: true,
+      // Re-pinned for 13-S's second pass: the listing says whose reason it is.
+      reasonFromIt: true,
       // The last probe's channels, which the revoke leaves on the row (the 13-FS bed).
       channelsNotJoined: ['#revops'],
       // The server still reads such a card as carrying decisions (`carriesDecisions` reads the
@@ -928,6 +932,22 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       // Nothing is read through the card, so it asks no one to invite its app or probe again.
       expect(markup).not.toContain('Not in #revops');
     }
+  });
+
+  it("never calls the manager's own reason IT's on a card IT's revoke left ended (13-S's second pass)", (): void => {
+    const markup = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'Disconnected by the manager.',
+        keptAppNotReinstalled: true,
+        connectionRevoked: true,
+      } as Partial<ListedSurface>),
+      { installRedirectConfigured: true },
+    );
+    expect(markup).toContain('Disconnected by the manager.');
+    expect(markup).not.toContain("IT's reason: Disconnected by the manager.");
   });
 
   it("says IT's revoke reason as IT's on a card IT connected again, never as a bare sentence (13-S)", (): void => {

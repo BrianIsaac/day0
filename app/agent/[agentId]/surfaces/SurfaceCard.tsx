@@ -285,11 +285,9 @@ export function SurfaceCard({
   const pending = operation && !operation.error ? operation.kind : undefined;
   const failed = (kind: Operation['kind']): string | undefined =>
     operation?.kind === kind ? operation.error : undefined;
-  // The card's reason is the administrator's, from IT's revoke, and is said as theirs (M13, 13-S).
-  const itsReason =
-    surface.connectionRevoked === true ||
-    surface.keptAppNotReinstalled === true ||
-    surface.reasonFromIt === true;
+  // The card's reason is the administrator's, from IT's revoke, and is said as theirs (M13); the
+  // listing says when it is, so a manager's own reason is never called IT's (13-S).
+  const itsReason = surface.reasonFromIt === true;
   const skipReason =
     surface.intakeSkipReason ??
     (SKIPPED.has(surface.verdict)

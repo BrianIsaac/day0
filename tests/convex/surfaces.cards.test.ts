@@ -576,6 +576,17 @@ describe('a card an administrator ended by revoking its connection (the pre-tag 
     expect(cards.find((card) => card._id === heldCard)?.keptAppNotReinstalled).toBeUndefined();
     // Another Slack connection active since is no creator of this app: it stays not installed.
     expect(cards.find((card) => card._id === endedCard)?.connectionRevoked).toBeUndefined();
+    // The card's reason is IT's only when it is the revoke's own (13-S's second pass): a manager's
+    // Disconnect before IT's revoke stays the manager's.
+    const reasonOf = async (reason: string): Promise<true | undefined> => {
+      await harness.run(async (ctx) => await ctx.db.patch(endedCard, { reason }));
+      const listed = await harness
+        .withIdentity(managerIdentity())
+        .query(api.surfaces.listForAgent, { agentId });
+      return listed.find((card) => card._id === endedCard)?.reasonFromIt;
+    };
+    expect(await reasonOf('ending')).toBe(true);
+    expect(await reasonOf('Disconnected by the manager.')).toBeUndefined();
     // Nothing goes through it, so the server computes no buttons or typed code for it (13-FS).
     expect(cards.find((card) => card._id === endedCard)?.decisionButtons).toBeUndefined();
     expect(cards.find((card) => card._id === endedCard)?.typedCode).toBeUndefined();

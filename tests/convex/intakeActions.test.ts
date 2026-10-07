@@ -3603,6 +3603,34 @@ describe("the app's own posts are never intake", (): void => {
     expect(again.authCalls).toBe(0);
   });
 
+  it('reads the bot id on an app Day0 created though its page never names auth.test (design 1 (b))', async (): Promise<void> => {
+    const surfaces = sharedKeySurfaces({
+      providerBotId: undefined,
+      probeGeneration: 4,
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      credentialKind: 'oauth',
+      provisioning: {
+        appId: 'A0BOT',
+        appName: 'Day0 bot',
+        clientId: '1.2',
+        clientSecretCredentialId: id<'credentials'>('credential-client-secret'),
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'https://day0.local/api/slack/oauth',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      },
+    });
+    const { harness, authCalls } = await sweepWithAuth(
+      { ok: true, user_id: BOT_USER, bot_id: BOT_ID },
+      surfaces,
+    );
+    expect(harness.botIdentities).toEqual(
+      surfaces.map((surface) => ({ surfaceId: surface._id, generation: 4, providerBotId: BOT_ID })),
+    );
+    expect(authCalls).toBe(surfaces.length);
+  });
+
   it('reads no work when the app identity cannot be established, and says what heals it', async (): Promise<void> => {
     const refusal = 'intake failed: Slack probe stored no app identity; probe the surface again.';
     const noBot = await sweepWithAuth({ ok: true, user_id: BOT_USER }, legacySurfaces());

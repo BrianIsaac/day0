@@ -464,6 +464,30 @@ describe('HTTP adapter', (): void => {
     expect(fetchImpl.calls[0].init.body).toBeUndefined();
     expect(fetchImpl.calls[0].url).toBe('https://slack.com/api/auth.test');
   });
+
+  it('names no content type for a body a GET never sends, JSON or not (13-S)', async (): Promise<void> => {
+    const fetchImpl = fakeFetch(
+      (): Response => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    await adapter(fetchImpl).apply(
+      ctx,
+      run,
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'GET',
+          path: 'auth.test',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: '{"probe":true}',
+        },
+      },
+      0,
+      'k',
+    );
+    expect(fetchImpl.calls[0].init.body).toBeUndefined();
+    expect(fetchImpl.calls[0].init.headers).toEqual({ Authorization: 'Bearer xoxb-test-value' });
+  });
 });
 
 describe('the content type of a body the action sends', (): void => {

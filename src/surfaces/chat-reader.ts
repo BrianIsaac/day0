@@ -361,7 +361,10 @@ export function slackChatReader(
  * @param dependencies - The credential, the fetch and the API base.
  */
 export function chatReaderFor(
-  surface: Pick<SurfaceRecord, 'slug' | 'displayName' | 'path' | 'endpoint' | 'toolAllowlist'>,
+  surface: Pick<
+    SurfaceRecord,
+    'slug' | 'displayName' | 'path' | 'endpoint' | 'toolAllowlist' | 'ownSlackApp'
+  >,
   dependencies: ChatReaderDependencies,
 ): ChatReaderResult {
   switch (surface.path) {
