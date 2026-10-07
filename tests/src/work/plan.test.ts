@@ -297,13 +297,13 @@ describe('frozen planner text', (): void => {
       Draft a short execution plan. The live action mode below tells you whether later writes need another manager decision.
 
       Discipline:
-        - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.
+        - Stay inside the charter's will-do and will-not-do clauses. If borderline, narrow the plan to the safest interpretation.
         - Describe review and approval according to the live action mode; never assume the supervised mode.
         - 2-5 short concrete steps.
         - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
 
-      Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it (\"waits for your approval\"), never by the name of a mode."
+      Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode."
     `);
   });
 
@@ -312,9 +312,9 @@ describe('frozen planner text', (): void => {
       "Role: Operations coordination
 
       --- Charter boundaries ---
-      willDo: Keep the tracker current.
-      willNotDo: 
-      escalationTriggers: 
+      Will do: Keep the tracker current.
+      Will not do: 
+      Escalates when: 
 
       --- Candidate ---
       Source: tracker / ticket-queue
@@ -1449,5 +1449,40 @@ describe('the People block in the planner (13-J)', (): void => {
         requester: { displayName: 'lee@kestrel.test' },
       }),
     ).toContain('\nFrom: Manager\n');
+  });
+});
+
+describe("the charter's clauses as the planner reads them (finding 3 of the v0.17.0 redeploy)", (): void => {
+  // Lark's REVOPS-205 plan told a visitor "since the willNotDo boundary routes all contact ...
+  // through you": the planner's prompt named the clauses by the charter's field keys.
+  const bounded: Charter = {
+    ...charter,
+    proposedBoundaries: {
+      willDo: ['Keep the tracker current.'],
+      willNotDo: [
+        'Contact the sales lead or finance directly, going through the manager for both.',
+      ],
+      escalationTriggers: ['Anything unusual, talk to the manager first.'],
+    },
+  };
+
+  it('names the clauses in words and never by a field key, in both modes', (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const system = planSystemPrompt(false, mode);
+      const user = planUserPrompt({ candidate, charter: bounded, surfaceMode: mode });
+      for (const text of [system, user]) {
+        expect(text, mode).not.toMatch(/willDo|willNotDo|escalationTriggers/);
+      }
+      expect(system, mode).toContain(
+        "  - Stay inside the charter's will-do and will-not-do clauses. If borderline, narrow the plan to the safest interpretation.",
+      );
+      expect(user, mode).toContain(
+        [
+          'Will do: Keep the tracker current.',
+          'Will not do: Contact the sales lead or finance directly, going through the manager for both.',
+          'Escalates when: Anything unusual, talk to the manager first.',
+        ].join('\n'),
+      );
+    }
   });
 });

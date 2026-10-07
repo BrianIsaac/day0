@@ -52,7 +52,9 @@ const SYSTEM_PROMPT_HEAD = [
   'Draft a short execution plan. The live action mode below tells you whether later writes need another manager decision.',
   '',
   'Discipline:',
-  '  - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.',
+  // The clauses by their words, never the charter's field keys: a plan echoed "the willNotDo
+  // boundary" to a visitor (finding 3 of the v0.17.0 redeploy).
+  "  - Stay inside the charter's will-do and will-not-do clauses. If borderline, narrow the plan to the safest interpretation.",
   '  - Describe review and approval according to the live action mode; never assume the supervised mode.',
   '  - 2-5 short concrete steps.',
   `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
@@ -879,9 +881,9 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `Role: ${charter.proposedFunction}`,
     '',
     '--- Charter boundaries ---',
-    `willDo: ${charter.proposedBoundaries.willDo.join(' | ')}`,
-    `willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
-    `escalationTriggers: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
+    `Will do: ${charter.proposedBoundaries.willDo.join(' | ')}`,
+    `Will not do: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
+    `Escalates when: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
     ...answeredQuestionLines(charter),
     '',
     '--- Candidate ---',
