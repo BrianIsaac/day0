@@ -80,6 +80,16 @@ describe('a source whose system discovery failed', (): void => {
   it('says nothing about discovery on a healthy source', (): void => {
     state.sources = [source];
     expect(renderToStaticMarkup(<DocumentationPage />)).not.toContain('System discovery:');
+    expect(renderToStaticMarkup(<DocumentationPage />)).not.toContain('People from its pages:');
+  });
+
+  it('names a failed people extraction, which nothing else read (W13-R9)', (): void => {
+    state.sources = [
+      { ...source, lastPeopleExtractionError: 'The people extraction did not answer in time.' },
+    ];
+    expect(renderToStaticMarkup(<DocumentationPage />)).toContain(
+      'People from its pages: The people extraction did not answer in time.',
+    );
   });
 });
 

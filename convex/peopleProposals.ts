@@ -754,14 +754,20 @@ function documentationProposal(
 /**
  * Internal, for `peopleExtractionActions.extractSource`: propose the people a completed
  * generation's pages ground ({@link proposePersonInTransaction}, source `documentation`), each
- * with its page quote and the owner-wide approval and escalation edges its quote states, and
- * stamp the source's four extraction fields. Fenced as the read was: nothing for a generation
- * that is no longer the one to extract.
+ * with its page quote and the owner-wide approval and escalation edges its quote states, and,
+ * for the generation's last chunk, stamp the source's four extraction fields. Fenced as the read
+ * was: nothing for a generation that is no longer the one to extract.
  *
  * @returns Whether it applied, and the people proposed or merged whose address a lookup may match.
  */
 export const applyExtraction = internalMutation({
-  args: { ...extractionArgs, fingerprint: v.string(), people: v.array(extractedPersonValidator) },
+  args: {
+    ...extractionArgs,
+    fingerprint: v.string(),
+    people: v.array(extractedPersonValidator),
+    /** A chunk before the generation's last (W13-R9): proposed, the source not yet stamped. */
+    partial: v.optional(v.literal(true)),
+  },
   returns: v.object({ applied: v.boolean(), withAddress: v.array(v.id('people')) }),
   handler: async (ctx, args): Promise<{ applied: boolean; withAddress: Id<'people'>[] }> => {
     const generation = await extractableGeneration(ctx, args.sourceId, args.runId);
@@ -781,13 +787,15 @@ export const applyExtraction = internalMutation({
         withAddress.add(outcome.personId);
       }
     }
-    await ctx.db.patch(args.sourceId, {
-      peopleExtractionSyncId: args.runId,
-      peopleExtractionFingerprint: args.fingerprint,
-      lastPeopleExtractionAt: now,
-      lastPeopleExtractionError: undefined,
-      updatedAt: now,
-    });
+    if (args.partial !== true) {
+      await ctx.db.patch(args.sourceId, {
+        peopleExtractionSyncId: args.runId,
+        peopleExtractionFingerprint: args.fingerprint,
+        lastPeopleExtractionAt: now,
+        lastPeopleExtractionError: undefined,
+        updatedAt: now,
+      });
+    }
     return { applied: true, withAddress: [...withAddress] };
   },
 });

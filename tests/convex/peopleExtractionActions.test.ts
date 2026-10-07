@@ -226,7 +226,9 @@ describe('peopleExtractionActions.extractSource', (): void => {
     ).toEqual([[{ personIds: [dana] }]]);
   });
 
-  it('records a generation naming more people than one apply can hold as a failure, and proposes nobody', async (): Promise<void> => {
+  // Re-pinned for W13-R9: a generation past one apply's 250 people is applied in chunks of 250,
+  // where before it proposed nobody and failed again on every later sync.
+  it('applies a generation naming more people than one apply can hold in chunks of 250, and stamps it once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, runId } = await seedGeneration(harness);
     const names = Array.from({ length: 251 }, (_, index) => `Person Number${index}`);
@@ -245,11 +247,12 @@ describe('peopleExtractionActions.extractSource', (): void => {
     }));
     await expect(
       harness.action(internal.peopleExtractionActions.extractSource, { sourceId, runId }),
-    ).resolves.toMatchObject({ applied: false });
+    ).resolves.toMatchObject({ applied: true, people: 251, applies: 2 });
     const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
-    expect(source?.lastPeopleExtractionError).toBe(
-      'The people extraction found more than 250 people.',
-    );
-    expect((await graphRows(harness)).people).toEqual([]);
+    expect(source?.lastPeopleExtractionError).toBeUndefined();
+    expect(source?.peopleExtractionSyncId).toBe(runId);
+    const { people } = await graphRows(harness);
+    expect(people).toHaveLength(251);
+    expect(people.every((person) => person.status === 'unverified')).toBe(true);
   });
 });
