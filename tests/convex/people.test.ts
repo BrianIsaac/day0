@@ -1335,6 +1335,36 @@ describe('the people graph after the wave 13 review (14-FX)', (): void => {
     expect(edges.find((edge) => edge._id === copy)?.status).toBe('retired');
   });
 
+  it('moves an edge the person kept held once but ended, rather than retiring it as a copy (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    await seedEdge(harness, known, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'close',
+      effectiveUntil: 2,
+    });
+    const live = await seedEdge(harness, offered, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'close',
+      status: 'proposed',
+      confirmedAt: undefined,
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    expect((await graphRows(harness)).edges.find((edge) => edge._id === live)).toMatchObject({
+      status: 'proposed',
+      toPersonId: known,
+    });
+  });
+
   it("refuses Same person when the proposal's verified identity contradicts the person's own, moving nothing (W13-R24)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

@@ -59,13 +59,20 @@ export function sourceLine(
 }
 
 /**
- * The Slack user ids a message's text mentions, each once, in the order first mentioned.
+ * The Slack user ids a message's text mentions, each once, in the order first mentioned, at most
+ * ten: one message naming hundreds never asks the graph hundreds of times.
  *
  * @param text - The text as intake stored it.
  */
 export function slackMentionIds(text: string): string[] {
-  return [...new Set([...text.matchAll(SLACK_MENTION)].map((match) => match[2]!))];
+  return [...new Set([...text.matchAll(SLACK_MENTION)].map((match) => match[2]!))].slice(
+    0,
+    MENTIONS_NAMED,
+  );
 }
+
+/** The most mentions of one message the Work tab asks the people graph about (the second pass). */
+const MENTIONS_NAMED = 10;
 
 /**
  * A message's text with its raw Slack user mentions said by name, for a card to show (W13V-7):

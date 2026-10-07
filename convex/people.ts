@@ -541,7 +541,9 @@ export const samePerson = mutation({
       await ctx.db.patch(agreement._id, { personId: target._id });
     }
     const kept = (await edgesTo(ctx, proposal.userId, target._id)).filter(
-      (edge) => edge.status === 'proposed' || edge.status === 'active',
+      (edge) =>
+        (edge.status === 'proposed' || edge.status === 'active') &&
+        edge.effectiveUntil === undefined,
     );
     for (const edge of await edgesTo(ctx, proposal.userId, proposal._id)) {
       // The manager is the owner, never the end of an edge (the one-role rulings); and an edge the

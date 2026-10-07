@@ -406,6 +406,12 @@ describe('withSlackMentionsNamed', (): void => {
         U0BTFK6FLNL: 'Sam Lee',
       }),
     ).toBe('@Rowan Hale can you ask @Sam Lee?');
+    const crowd = Array.from(
+      { length: 30 },
+      (_, at) => `<@U0CROWD${String(at).padStart(4, '0')}>`,
+    ).join(' ');
+    // The second pass: a message mentioning hundreds asks the graph about at most ten.
+    expect(slackMentionIds(crowd)).toHaveLength(10);
     expect(slackMentionIds('<@U0C78V6LAPP> and <@W0ABCDEF12|rowan>, twice <@U0C78V6LAPP>')).toEqual(
       ['U0C78V6LAPP', 'W0ABCDEF12'],
     );
