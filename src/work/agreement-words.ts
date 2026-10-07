@@ -55,6 +55,13 @@ export function keepNoteHint(name: string): string {
   return `Your answer above becomes a working agreement for ${name} once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.`;
 }
 
+/**
+ * What the plan approval says in the hosted office, where no working agreement is kept, in place
+ * of the "Keep this note" tick (13-FD's R10; wording draft).
+ */
+export const KEEP_NOTE_IN_MOCK =
+  'Your answer is for this run. In a deployment of your own, a tick here keeps it as a working agreement for later work of this kind.';
+
 /** Where a card stands: the Work tab's promotion card, or the Charter tab's Agreements card. */
 export type AgreementPlace = 'work' | 'charter';
 

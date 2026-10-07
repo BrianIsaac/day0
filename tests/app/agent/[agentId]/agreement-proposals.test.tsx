@@ -249,6 +249,10 @@ describe('the plan approval tick', (): void => {
       />,
     );
     expect(view.container.textContent).not.toContain('Keep this note');
+    // 13-FD's R10: the hosted office says where the tick lives instead of leaving it absent.
+    expect(view.container.textContent).toContain(
+      'Your answer is for this run. In a deployment of your own, a tick here keeps it as a working agreement for later work of this kind.',
+    );
     expect(button(view.container, 'Approve plan with answers')).toBeDefined();
     view.unmount();
   });
