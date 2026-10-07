@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { feishuReaderSecret } from '../../../../src/docs/feishu-source';
+import { ListingChangedError } from '../../../../src/docs/readers/batch';
 import { FeishuReader } from '../../../../src/docs/readers/feishu';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
 import {
@@ -350,6 +351,113 @@ describe('the Feishu documentation reader', (): void => {
     const { reader } = readerOnTenant();
     await expect(reader.listPageBatch(wiki, undefined, undefined, 25)).rejects.toThrow(
       'A Feishu source reads with its app ID and secret',
+    );
+  });
+});
+
+/** A wiki node listing answered by a test: these items, and a next page when one is named. */
+function nodePage(items: readonly unknown[], next?: string): Response {
+  return new Response(
+    JSON.stringify({
+      code: 0,
+      msg: 'success',
+      data: {
+        items,
+        has_more: next !== undefined,
+        ...(next === undefined ? {} : { page_token: next }),
+      },
+    }),
+    { status: 200 },
+  );
+}
+
+/** A sheet node, which the reader lists and does not read. */
+function sheetNode(index: number): Record<string, unknown> {
+  return {
+    node_token: `wikcnSheet${String(index).padStart(17, '0')}`,
+    obj_token: `shtcnSheet${String(index).padStart(17, '0')}`,
+    obj_type: 'sheet',
+    node_type: 'origin',
+    has_child: false,
+    title: `Sheet ${index}`,
+    obj_edit_time: '1759312800',
+  };
+}
+
+describe('the Feishu walk between batches (second pass)', (): void => {
+  it('asks for each listing page about once a sync, not once a batch', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant();
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const batch = await reader.listPageBatch(wiki, SECRET, cursor, 3);
+      seen.push(...batch.pages.map((page) => page.ref), ...batch.unread.map((page) => page.ref));
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    // Four listing pages; the handbook's second page is asked for again by the batch that
+    // stopped inside it. Re-listing the tree each batch asked for twelve.
+    expect(listings(requests)).toEqual([
+      'top|',
+      'top|fixture-root-page-2',
+      `${NODES.handbook.node}|`,
+      `${NODES.handbook.node}|fixture-handbook-page-2`,
+      `${NODES.handbook.node}|fixture-handbook-page-2`,
+    ]);
+    // Every node once, none twice.
+    expect(seen.sort()).toEqual(
+      Object.values(NODES)
+        .map((each) => each.node)
+        .sort(),
+    );
+  });
+
+  it('ends a batch after 100 listing requests and goes on in the next', async (): Promise<void> => {
+    const empty = (request: RecordedRequest): Response | undefined => {
+      if (!request.url.pathname.endsWith('/nodes')) return undefined;
+      const page = Number(request.url.searchParams.get('page_token') ?? '0');
+      return page < 150 ? nodePage([], String(page + 1)) : nodePage([sheetNode(1)]);
+    };
+    const { reader, requests } = readerOnTenant({ override: empty });
+    const first = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect([first.pages.length + first.unread.length, listings(requests).length]).toEqual([0, 100]);
+    expect(first.nextCursor).toBeDefined();
+    const second = await reader.listPageBatch(wiki, SECRET, first.nextCursor, 25);
+    expect(second.unread.map((page) => page.ref)).toEqual([sheetNode(1).node_token]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('refuses a source past 2,000 pages and folders', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) => {
+        if (!request.url.pathname.endsWith('/nodes')) return undefined;
+        const page = Number(request.url.searchParams.get('page_token') ?? '0');
+        const items = Array.from({ length: 50 }, (_, index) => sheetNode(page * 50 + index));
+        return nodePage(items, String(page + 1));
+      },
+    });
+    await expect(reader.listPageBatch(wiki, SECRET, undefined, 5_000)).rejects.toThrow(
+      'This Feishu source has more than 2,000 pages, the most day0 reads from one source',
+    );
+  });
+
+  it('refuses a listing that says more follows and gives no new page token', async (): Promise<void> => {
+    for (const next of ['', 'same']) {
+      const { reader } = readerOnTenant({
+        override: (request) =>
+          request.url.pathname.endsWith('/nodes')
+            ? nodePage([sheetNode(1)], next === '' ? '' : 'same')
+            : undefined,
+      });
+      await expect(reader.listPageBatch(wiki, SECRET, undefined, 25), next).rejects.toThrow(
+        'Feishu said more of the listing follows but gave no new page token.',
+      );
+    }
+  });
+
+  it('starts the sync again from the first page on a cursor it did not write', async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    await expect(reader.listPageBatch(wiki, SECRET, '3@abcdefg', 25)).rejects.toThrow(
+      ListingChangedError,
     );
   });
 });

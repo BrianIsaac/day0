@@ -9,9 +9,9 @@
  * host: `open.feishu.cn` for Feishu, `open.larksuite.com` for Lark.
  *
  * The listing walks the space breadth first, one parent at a time, 50 nodes
- * a page, and every batch walks it again, so the cursor is bound to the
- * listing (`listingCursor`) as a folder's or a repository's is: a node added
- * or moved mid-sync restarts the sync rather than losing a page. Each new-style
+ * a page, and the walk is carried from batch to batch in the run's cursor
+ * (`feishu-walk.ts`), so each listing page is asked for about once a sync
+ * rather than once a batch (second pass). Each new-style
  * document (`docx`) is read as Markdown by `docs/v1/content`; every other node
  * (a sheet, a base, a mind note, a file, an old-style document) is named unread
  * with its reason. Requests are spaced to each endpoint's documented limit,
@@ -29,12 +29,12 @@ import {
 } from '../feishu-source';
 import type { DocPage, DocSourceRecord } from '../types';
 import {
-  listingCursor,
-  offsetInListing,
+  ListingChangedError,
   type DocumentationReader,
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
+import { firstWalk, walkCursor, walkFromCursor, type FeishuWalk } from './feishu-walk';
 
 /** How one request is made: the reader's fetch, which a test answers in-process. */
 export type FeishuFetch = (input: URL, init: RequestInit) => Promise<Response>;
@@ -56,8 +56,14 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 const TOKEN_REFRESH_MARGIN_MS = 10 * 60_000;
 
-/** The most nodes one source lists: a wiki past this is linked by a smaller space or folder. */
+/** The most nodes and folders one source lists: past this it is linked by a smaller folder. */
 const MAX_LISTED_NODES = 2_000;
+
+/** The most listing requests one batch makes (a minute of wiki listings at 100 a minute). */
+const MAX_LISTING_REQUESTS_PER_BATCH = 100;
+
+/** The most listing requests a whole sync makes, so a listing that never ends is stopped. */
+const MAX_LISTING_REQUESTS = 5_000;
 
 /**
  * How a limited or failed request is tried again: a minute's limit can name a
@@ -119,6 +125,18 @@ interface ListedEntry {
   readonly shortcut: boolean;
   readonly editedAt?: number;
   readonly url?: string;
+}
+
+/** One listed item: a page to take, a parent (or folder) to list later, or both. */
+interface ListedItem {
+  readonly entry?: ListedEntry;
+  readonly child?: string;
+}
+
+/** One listing page: its items in order, and the next page's token. */
+interface ListedPage {
+  readonly items: readonly ListedItem[];
+  readonly next: string | undefined;
 }
 
 /** One source's read: where it is, the app it reads as. */
@@ -255,7 +273,7 @@ export class FeishuReader implements DocumentationReader {
    *
    * @param source - The linked Feishu source.
    * @param secret - The app's ID and secret, joined (`feishuReaderSecret`).
-   * @param cursor - Where the previous batch stopped, bound to the listing.
+   * @param cursor - Where the previous batch left the walk (`walkCursor`).
    * @param limit - The most listed nodes this batch takes.
    * @throws Error when the app or the listing is refused, or Feishu stays limited past the waits;
    *   the batch's own retry and the sync's resume are for those.
@@ -275,13 +293,15 @@ export class FeishuReader implements DocumentationReader {
       locator: parseFeishuLocator(source.locator),
       app: parseFeishuSecret(secret),
     };
-    const listing = await this.list(session);
-    const refs = listing.map((entry): string => entry.ref);
-    const offset = offsetInListing(cursor, refs);
-    const selected = listing.slice(offset, offset + limit);
+    const scope = session.locator.scope;
+    const walk =
+      cursor === undefined
+        ? firstWalk(scope.kind === 'wiki' ? null : scope.folderToken)
+        : walkFromCursor(cursor);
+    const listed = await this.listBatch(session, walk, limit);
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
-    for (const entry of selected) {
+    for (const entry of listed.entries) {
       if (entry.type !== 'docx' || entry.shortcut) {
         unread.push({ ref: entry.ref, reason: notReadReason(entry) });
         continue;
@@ -295,53 +315,115 @@ export class FeishuReader implements DocumentationReader {
         unread.push({ ref: entry.ref, reason: pageFailureReason(entry, error) });
       }
     }
-    const nextOffset = offset + selected.length;
     return {
       pages,
       unread,
-      nextCursor: nextOffset < listing.length ? listingCursor(nextOffset, refs) : undefined,
+      nextCursor: listed.walk === undefined ? undefined : walkCursor(listed.walk),
     };
   }
 
-  /** Every node or file the source lists, in reading order. */
-  private async list(session: FeishuSession): Promise<ListedEntry[]> {
+  /**
+   * The next entries of the walk, at most `limit`, and where the walk then stands.
+   *
+   * Each parent's listing pages are read in turn, its children queued behind
+   * the parents already waiting (breadth first). A batch ends once it has its
+   * entries or has made `MAX_LISTING_REQUESTS_PER_BATCH` requests, part way
+   * through a page if need be: the next batch asks for that page again and
+   * skips what this one took.
+   *
+   * @returns The entries, and the walk to continue from, or undefined once every parent is listed.
+   * @throws ListingChangedError when a page token an earlier batch kept is refused, so the sync
+   *   reads the source again from the first page.
+   */
+  private async listBatch(
+    session: FeishuSession,
+    start: FeishuWalk,
+    limit: number,
+  ): Promise<{ entries: ListedEntry[]; walk: FeishuWalk | undefined }> {
+    const entries: ListedEntry[] = [];
+    let { queue, pageToken, skip, listed, requests } = start;
+    for (let made = 0; queue.length > 0 && entries.length < limit; made += 1) {
+      if (made === MAX_LISTING_REQUESTS_PER_BATCH) break;
+      if (requests >= MAX_LISTING_REQUESTS) throw endlessListing();
+      const page = await this.listedPage(session, queue[0], pageToken, made === 0 && skip > 0);
+      requests += 1;
+      let index = skip;
+      const children: string[] = [];
+      for (; index < page.items.length && entries.length < limit; index += 1) {
+        const item = page.items[index];
+        listed += 1;
+        if (listed > MAX_LISTED_NODES) throw tooManyNodes();
+        if (item.entry !== undefined) entries.push(item.entry);
+        if (item.child !== undefined) children.push(item.child);
+      }
+      queue = [...queue, ...children];
+      if (index < page.items.length) {
+        skip = index;
+      } else if (page.next !== undefined) {
+        if (page.next === pageToken) throw noNewPageToken();
+        [pageToken, skip] = [page.next, 0];
+      } else {
+        [queue, pageToken, skip] = [queue.slice(1), null, 0];
+      }
+    }
+    return {
+      entries,
+      walk: queue.length === 0 ? undefined : { queue, pageToken, skip, listed, requests },
+    };
+  }
+
+  /**
+   * One listing page of a parent: a wiki node's children, or a folder's files.
+   *
+   * @param resumed - Whether the page token was kept by an earlier batch, whose refusal means the
+   *   listing moved on and the sync starts again.
+   */
+  private async listedPage(
+    session: FeishuSession,
+    parent: string | null,
+    pageToken: string | null,
+    resumed: boolean,
+  ): Promise<ListedPage> {
     const scope = session.locator.scope;
     try {
       return scope.kind === 'wiki'
-        ? await this.listWiki(session, scope.spaceId)
-        : await this.listFolder(session, scope.folderToken);
+        ? await this.wikiPage(session, scope.spaceId, parent, pageToken)
+        : await this.folderPage(session, parent ?? scope.folderToken, pageToken);
     } catch (error) {
-      if (error instanceof FeishuApiError && error.code < 99_990_000) {
-        throw listingFailure(scope, error);
-      }
-      throw error;
+      if (!(error instanceof FeishuApiError) || error.code >= 99_990_000) throw error;
+      if (resumed && pageToken !== null) throw new ListingChangedError();
+      throw listingFailure(scope, error);
     }
   }
 
-  /** The wiki space's nodes, breadth first: each parent's pages before its children's. */
-  private async listWiki(session: FeishuSession, spaceId: string): Promise<ListedEntry[]> {
-    const entries: ListedEntry[] = [];
-    const parents: Array<string | undefined> = [undefined];
-    const visited = new Set<string>();
-    const path = `/open-apis/wiki/v2/spaces/${encodeURIComponent(spaceId)}/nodes`;
-    for (let index = 0; index < parents.length; index += 1) {
-      const parent = parents[index];
-      let pageToken: string | undefined;
-      do {
-        const data = await this.call(session, 'wiki', path, {
-          page_size: '50',
-          ...(parent === undefined ? {} : { parent_node_token: parent }),
-          ...(pageToken === undefined ? {} : { page_token: pageToken }),
-        });
-        const items = field(data, 'items') ?? [];
-        if (!Array.isArray(items))
-          throw new Error('Feishu listed wiki nodes in a shape Day0 does not read.');
-        for (const item of items) {
-          const ref = text(item, 'node_token');
-          if (ref === undefined || visited.has(ref)) continue;
-          visited.add(ref);
-          const shortcut = text(item, 'node_type') === 'shortcut';
-          entries.push({
+  /** One page of a wiki parent's children (the top level for null). */
+  private async wikiPage(
+    session: FeishuSession,
+    spaceId: string,
+    parent: string | null,
+    pageToken: string | null,
+  ): Promise<ListedPage> {
+    const data = await this.call(
+      session,
+      'wiki',
+      `/open-apis/wiki/v2/spaces/${encodeURIComponent(spaceId)}/nodes`,
+      {
+        page_size: '50',
+        ...(parent === null ? {} : { parent_node_token: parent }),
+        ...(pageToken === null ? {} : { page_token: pageToken }),
+      },
+    );
+    const items = field(data, 'items') ?? [];
+    if (!Array.isArray(items)) {
+      throw new Error('Feishu listed wiki nodes in a shape day0 does not read.');
+    }
+    return {
+      items: items.map((item: unknown): ListedItem => {
+        const ref = text(item, 'node_token');
+        if (ref === undefined) return {};
+        const shortcut = text(item, 'node_type') === 'shortcut';
+        return {
+          entry: {
             ref,
             title: text(item, 'title')?.trim() || 'Untitled',
             type: text(item, 'obj_type') ?? 'unknown',
@@ -349,49 +431,43 @@ export class FeishuReader implements DocumentationReader {
             shortcut,
             editedAt: secondsToMs(text(item, 'obj_edit_time')),
             url: `https://${BROWSER_HOSTS[session.locator.region]}/wiki/${ref}`,
-          });
+          },
           // A shortcut's children are listed where the page it points to lives.
-          if (field(item, 'has_child') === true && !shortcut) parents.push(ref);
-        }
-        if (entries.length > MAX_LISTED_NODES) throw tooManyNodes();
-        pageToken = nextPageToken(data, 'page_token', pageToken);
-      } while (pageToken !== undefined);
-    }
-    return entries;
+          ...(field(item, 'has_child') === true && !shortcut ? { child: ref } : {}),
+        };
+      }),
+      next: nextPageToken(data, 'page_token'),
+    };
   }
 
-  /** The folder's files and those of the folders under it, breadth first. */
-  private async listFolder(session: FeishuSession, folderToken: string): Promise<ListedEntry[]> {
-    const entries: ListedEntry[] = [];
-    const folders = [folderToken];
-    const visited = new Set<string>(folders);
-    for (let index = 0; index < folders.length; index += 1) {
-      const folder = folders[index];
-      let pageToken: string | undefined;
-      do {
-        const data = await this.call(session, 'drive', '/open-apis/drive/v1/files', {
-          folder_token: folder,
-          page_size: '200',
-          // Oldest first by creation, which an edit never changes, so an edit mid-sync moves no
-          // file across the cursor.
-          order_by: 'CreatedTime',
-          direction: 'ASC',
-          ...(pageToken === undefined ? {} : { page_token: pageToken }),
-        });
-        const files = field(data, 'files') ?? [];
-        if (!Array.isArray(files))
-          throw new Error('Feishu listed a folder in a shape Day0 does not read.');
-        for (const file of files) {
-          const ref = text(file, 'token');
-          if (ref === undefined || visited.has(ref)) continue;
-          visited.add(ref);
-          const type = text(file, 'type') ?? 'unknown';
-          if (type === 'folder') {
-            folders.push(ref);
-            continue;
-          }
-          const url = text(file, 'url');
-          entries.push({
+  /** One page of a Drive folder's files; a folder in it is a child, walked later. */
+  private async folderPage(
+    session: FeishuSession,
+    folder: string,
+    pageToken: string | null,
+  ): Promise<ListedPage> {
+    const data = await this.call(session, 'drive', '/open-apis/drive/v1/files', {
+      folder_token: folder,
+      page_size: '200',
+      // Oldest first by creation, which an edit never changes, so an edit mid-sync moves no
+      // file across the walk.
+      order_by: 'CreatedTime',
+      direction: 'ASC',
+      ...(pageToken === null ? {} : { page_token: pageToken }),
+    });
+    const files = field(data, 'files') ?? [];
+    if (!Array.isArray(files)) {
+      throw new Error('Feishu listed a folder in a shape day0 does not read.');
+    }
+    return {
+      items: files.map((file: unknown): ListedItem => {
+        const ref = text(file, 'token');
+        const type = text(file, 'type') ?? 'unknown';
+        if (ref === undefined) return {};
+        if (type === 'folder') return { child: ref };
+        const url = text(file, 'url');
+        return {
+          entry: {
             ref,
             title: text(file, 'name')?.trim() || 'Untitled',
             type,
@@ -399,13 +475,11 @@ export class FeishuReader implements DocumentationReader {
             shortcut: type === 'shortcut',
             editedAt: secondsToMs(text(file, 'modified_time')),
             url: url?.startsWith('https://') ? url : undefined,
-          });
-        }
-        if (entries.length > MAX_LISTED_NODES) throw tooManyNodes();
-        pageToken = nextPageToken(data, 'next_page_token', pageToken);
-      } while (pageToken !== undefined);
-    }
-    return entries;
+          },
+        };
+      }),
+      next: nextPageToken(data, 'next_page_token'),
+    };
   }
 
   /**
@@ -522,7 +596,7 @@ export class FeishuReader implements DocumentationReader {
     const value = text(body, 'tenant_access_token');
     const expire = field(body, 'expire');
     if (value === undefined || typeof expire !== 'number') {
-      throw new Error('Feishu answered the token request in a shape Day0 does not read.');
+      throw new Error('Feishu answered the token request in a shape day0 does not read.');
     }
     this.token = { key, value, expiresAt: askedAt + expire * 1_000 };
     return value;
@@ -555,7 +629,7 @@ export class FeishuReader implements DocumentationReader {
           status: response.status,
         });
       }
-      throw new Error(`Feishu answered HTTP ${response.status} with a body Day0 does not read.`);
+      throw new Error(`Feishu answered HTTP ${response.status} with a body day0 does not read.`);
     }
     if (body.code === 0) return body;
     // A server failure is tried again, except a document too large to export, which stays so.
@@ -591,18 +665,29 @@ async function readBody(response: Response): Promise<FeishuBody | undefined> {
   return { ...(parsed as Record<string, unknown>), code, msg: text(parsed, 'msg') ?? '' };
 }
 
-/** The listing's next page token, refusing a page that says more follow and names none. */
-function nextPageToken(
-  data: unknown,
-  name: string,
-  current: string | undefined,
-): string | undefined {
+/**
+ * The listing's next page token, or undefined at its end.
+ *
+ * @throws Error for a page that says more follow and names no token.
+ */
+function nextPageToken(data: unknown, name: string): string | undefined {
   if (field(data, 'has_more') !== true) return undefined;
   const next = text(data, name);
-  if (next === undefined || next === '' || next === current) {
-    throw new Error('Feishu said more of the listing follows but gave no new page token.');
-  }
+  if (next === undefined || next === '') throw noNewPageToken();
   return next;
+}
+
+/** The refusal for a listing that says more follows and gives no new page token. */
+function noNewPageToken(): Error {
+  return new Error('Feishu said more of the listing follows but gave no new page token.');
+}
+
+/** The refusal for a listing that never ends. */
+function endlessListing(): Error {
+  return new Error(
+    `Feishu kept listing this source past ${MAX_LISTING_REQUESTS.toLocaleString('en-GB')} ` +
+      'requests without reaching its end, so day0 stopped; link a smaller wiki space or folder.',
+  );
 }
 
 /** The refusal for a source past the listing bound. */
