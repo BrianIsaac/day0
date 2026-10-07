@@ -285,6 +285,11 @@ export function SurfaceCard({
   const pending = operation && !operation.error ? operation.kind : undefined;
   const failed = (kind: Operation['kind']): string | undefined =>
     operation?.kind === kind ? operation.error : undefined;
+  // The card's reason is the administrator's, from IT's revoke, and is said as theirs (M13, 13-S).
+  const itsReason =
+    surface.connectionRevoked === true ||
+    surface.keptAppNotReinstalled === true ||
+    surface.reasonFromIt === true;
   const skipReason =
     surface.intakeSkipReason ??
     (SKIPPED.has(surface.verdict)
@@ -434,22 +439,21 @@ export function SurfaceCard({
     >
       <div className="grid gap-4">
         {/* An ended card says why first, whatever else it skips (the administrator's revoke reason,
-            M13); a reason that is the skip line is said once, as the skip. */}
+            M13); a reason that is the skip line is said once, as the skip, unless it is IT's, which
+            is said as IT's (13-S). */}
         {surface.reason &&
         !awaitingAccess &&
-        surface.reason !== skipReason &&
+        (surface.reason !== skipReason || itsReason) &&
         surface.reason !== 'expired' ? (
           <p className="text-sm text-[var(--color-fg)]">
-            {surface.connectionRevoked || surface.keptAppNotReinstalled || surface.reasonFromIt
-              ? itsReasonWords(surface.reason)
-              : surface.reason}
+            {itsReason ? itsReasonWords(surface.reason) : surface.reason}
           </p>
         ) : null}
         {awaitingAccess ? (
           <p className="text-sm text-[var(--color-muted)]">
             {awaitingAccessWords(context.employeeName, surface.displayName, waitsOn)}
           </p>
-        ) : skipReason ? (
+        ) : skipReason && !(itsReason && skipReason === surface.reason) ? (
           <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
         ) : null}
         {surface.lastDecisionError ? (

@@ -943,6 +943,21 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
       { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
     );
     expect(markup).toContain("IT's reason: The 13-S bed ends the bed connection.");
+    // Intake skips such a card for the same words (the 13-S bed): still IT's, said once.
+    const skipped = render(
+      listed({
+        ...SLACK_CARD,
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        reason: 'The 13-S bed ends the bed connection.',
+        intakeSkipReason: 'The 13-S bed ends the bed connection.',
+        reasonFromIt: true,
+      } as Partial<ListedSurface>),
+      { organisation: organisation({ system: 'slack' }), installRedirectConfigured: true },
+    );
+    expect(skipped).toContain("IT's reason: The 13-S bed ends the bed connection.");
+    expect(skipped).not.toContain('Skipped: The 13-S bed ends the bed connection.');
+    expect(skipped.split('The 13-S bed ends the bed connection.')).toHaveLength(2);
   });
 
   it("offers Send to me in Slack only where a connected Slack card can carry the manager's DM (code pass, M2)", (): void => {
