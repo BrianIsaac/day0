@@ -413,3 +413,32 @@ describe('a rule bound to the proposed function (14-FX, W13-R38)', (): void => {
     );
   });
 });
+
+describe('a rule to check that no strike would change (14-FX second pass)', (): void => {
+  it('says once that the charter does not enforce it, and what to do, with no strike line', (): void => {
+    const html = row({
+      constraint: { ...rule, binds: [{ field: 'willDo', index: 0 }] },
+      placement: {
+        kind: 'bound',
+        clauses: ['Draft replies for the routine access tickets.'],
+        carriesWords: false,
+        notCarrying: ['Draft replies for the routine access tickets.'],
+      },
+      preview: {
+        removedClauses: [],
+        rewrittenClauses: [],
+        keptClauses: [
+          { clause: 'Draft replies for the routine access tickets.', because: 'not-this-rule' },
+        ],
+        changes: false,
+      },
+      name: 'Nell',
+    });
+    expect(html).toContain(
+      'This clause does not carry your words. The charter does not enforce it. Ask Nell for changes to add it, or approve without it.',
+    );
+    expect(html).not.toContain('nothing to strike');
+    expect(html).not.toContain('keeps the clause');
+    expect(html).toContain('Check the clause');
+  });
+});
