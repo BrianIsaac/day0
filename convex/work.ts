@@ -398,12 +398,12 @@ async function withRequesterNames(
   return await Promise.all(
     items.map(async (item): Promise<ListedWorkItem> => {
       const ids = slackMentionIds(`${item.title}\n${item.contentSummary}`);
-      const [requesterName, names] = await Promise.all([
+      const [requesterName, mentionedNames] = await Promise.all([
         nameOf(item.requesterPerson),
         Promise.all(ids.map(async (id) => [id, await mentionedName(id)] as const)),
       ]);
       const mentionNames = Object.fromEntries(
-        names.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]])),
+        mentionedNames.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]])),
       );
       return {
         ...item,

@@ -123,8 +123,13 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { browserComponent } from '../src/surfaces/browser';
-import type { ExecutionOutput, LandedWrite, SkillShape, UnsentWrite } from '../src/work/types';
-import type { MockSurfaceSnapshot } from '../src/work/types';
+import type {
+  ExecutionOutput,
+  LandedWrite,
+  MockSurfaceSnapshot,
+  SkillShape,
+  UnsentWrite,
+} from '../src/work/types';
 import {
   selectionRequestFor,
   selectionSwitchedOff,
