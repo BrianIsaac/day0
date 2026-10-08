@@ -1,4 +1,4 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +6,9 @@ import { isIP } from 'node:net';
 import { basename, join } from 'node:path';
 import { isDiallablePrivateAddress } from '../../lib/network-addresses';
 import {
+  configuredGitHosts,
   configuredPrivateHosts,
+  isGitHostListed,
   isPrivateHostAllowed,
   type PrivateHostAllowlist,
 } from '../../lib/private-hosts';
@@ -32,16 +34,20 @@ const ARCHIVE_HOSTS = ['github.com', 'gitlab.com'];
  * only, and a user name or token in the URL would be stored on the source row
  * and shown back on the page. It is refused, and no refusal repeats the
  * locator. A repository on a host inside the operator's network is read once
- * that host is listed in `DAY0_PRIVATE_HOSTS`.
+ * that host is listed in `DAY0_PRIVATE_HOSTS`, and one on another public code
+ * host (Gitee, JiHu, the customer's own) once it is listed in `DAY0_GIT_HOSTS`.
  *
  * @param locator - Repository locator supplied by the owner.
  * @param privateHosts - Hosts inside the operator's network; the environment's by default.
+ * @param gitHosts - Further public git hosts; the environment's by default, read only for a
+ *   host neither GitHub, GitLab nor private, so a refused list stops only the hosts it would list.
  * @returns HTTPS repository URL and requested ref.
  * @throws Error when the locator is not an HTTPS URL, carries credentials, or names an unsupported host.
  */
 export function parseGitLocator(
   locator: string,
   privateHosts: PrivateHostAllowlist = configuredPrivateHosts(),
+  gitHosts?: PrivateHostAllowlist,
 ): GitLocator {
   const separator = locator.lastIndexOf('#');
   const rawUrl = separator === -1 ? locator : locator.slice(0, separator);
@@ -59,10 +65,14 @@ export function parseGitLocator(
         'the backend can read without one.',
     );
   }
-  if (!ARCHIVE_HOSTS.includes(url.hostname) && !isPrivateHostAllowed(url.hostname, privateHosts)) {
+  if (
+    !ARCHIVE_HOSTS.includes(url.hostname) &&
+    !isPrivateHostAllowed(url.hostname, privateHosts) &&
+    !isGitHostListed(url.hostname, gitHosts ?? configuredGitHosts())
+  ) {
     throw new Error(
       'Git documentation supports GitHub and GitLab archive URLs, and repositories on hosts ' +
-        'listed in DAY0_PRIVATE_HOSTS.',
+        'listed in DAY0_GIT_HOSTS or DAY0_PRIVATE_HOSTS.',
     );
   }
   if (!ref.trim()) throw new Error('Git documentation ref cannot be empty.');
@@ -171,7 +181,7 @@ export function gitPinsResolve(version: string): boolean {
  * The `git` arguments that clone one locator into a checkout directory.
  *
  * GitHub and GitLab are cloned by name. A host the operator listed in
- * `DAY0_PRIVATE_HOSTS` is resolved once, every answer is checked the way a
+ * `DAY0_PRIVATE_HOSTS` or `DAY0_GIT_HOSTS` is resolved once, every answer is checked the way a
  * listed MCP server's are (never loopback, link-local, multicast or
  * unspecified), and git is told to dial only the first checked answer and to
  * follow no redirect, so neither a later DNS answer nor a 302 to a metadata
@@ -285,10 +295,7 @@ export function cloneEnvironment(
  * @param hostname - The repository's host.
  * @param cloned - The finished `git clone`.
  */
-export function cloneFailure(
-  hostname: string,
-  cloned: Pick<SpawnSyncReturns<string>, 'error' | 'stderr'>,
-): string {
+export function cloneFailure(hostname: string, cloned: Pick<GitRun, 'error' | 'stderr'>): string {
   if ((cloned.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
     return (
       `The backend has no git binary, so the repository on ${hostname} cannot be cloned; ` +
@@ -299,13 +306,49 @@ export function cloneFailure(
   return `Git clone from ${hostname} failed${reason ? `: ${reason}` : ''}.`;
 }
 
-/** Reader for public GitHub and GitLab Markdown repositories, and repositories on listed private hosts. */
+/** What one `git` run answered. */
+export interface GitRun {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: Error;
+}
+
+/** How a `git` run is started: its arguments, and the time and environment it runs with. */
+export interface GitRunOptions {
+  readonly timeout: number;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/** Runs `git` with these arguments. */
+export type GitRunner = (args: readonly string[], options: GitRunOptions) => Promise<GitRun>;
+
+/** The machine's own `git`, run as a child process. */
+const spawnGit: GitRunner = async (args, options): Promise<GitRun> => {
+  const run = spawnSync('git', args, { encoding: 'utf8', ...options });
+  return {
+    status: run.status,
+    stdout: run.stdout ?? '',
+    stderr: run.stderr ?? '',
+    error: run.error,
+  };
+};
+
+/**
+ * Reader for public GitHub and GitLab Markdown repositories, and repositories on
+ * the hosts listed in `DAY0_GIT_HOSTS` or `DAY0_PRIVATE_HOSTS`.
+ */
 export class GitReader implements DocumentationReader {
   private readonly resolve: HostResolver;
+  private readonly runGit: GitRunner;
 
-  /** @param resolve - Resolves a listed host's name; the system's resolver by default. */
-  constructor(resolve: HostResolver = resolveHostname) {
+  /**
+   * @param resolve - Resolves a listed host's name; the system's resolver by default.
+   * @param runGit - Runs `git`; the machine's own by default.
+   */
+  constructor(resolve: HostResolver = resolveHostname, runGit: GitRunner = spawnGit) {
     this.resolve = resolve;
+    this.runGit = runGit;
   }
 
   /**
@@ -356,7 +399,7 @@ export class GitReader implements DocumentationReader {
     const locator = parseGitLocator(source.locator);
     const archived = ARCHIVE_HOSTS.includes(locator.url.hostname);
     if (!archived || secret !== undefined) {
-      const version = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 10_000 });
+      const version = await this.runGit(['--version'], { timeout: 10_000 });
       if (version.error || version.status !== 0) {
         throw new Error(cloneFailure(locator.url.hostname, version));
       }
@@ -378,12 +421,10 @@ export class GitReader implements DocumentationReader {
     const temporary = await mkdtemp(join(tmpdir(), 'day0-docs-git-'));
     const checkout = join(temporary, 'checkout');
     try {
-      const cloned = spawnSync(
-        'git',
+      const cloned = await this.runGit(
         await cloneArguments(locator, checkout, this.resolve, withSecret),
         // A repository that wants credentials fails at once rather than waiting on a prompt.
         {
-          encoding: 'utf8',
           timeout: 30_000,
           env: cloneEnvironment(
             archived,

@@ -58,7 +58,14 @@ import {
 } from '../src/lib/customer-oidc';
 import { isManagerAddressShaped } from '../src/agent/manager-address';
 import { LOCAL_MANAGER_ADDRESS_VAR } from '../src/lib/dev-auth-token';
-import { PRIVATE_HOSTS_VAR, privateHostAllowlist } from '../src/lib/private-hosts';
+import { FEISHU_REGIONS } from '../src/docs/feishu-source';
+import {
+  GIT_HOSTS_VAR,
+  gitHostAllowlist,
+  PRIVATE_HOSTS_VAR,
+  privateHostAllowlist,
+  type PrivateHostAllowlist,
+} from '../src/lib/private-hosts';
 import { DEPLOYMENT_PROFILES } from '../src/lib/surface-mode';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
@@ -163,6 +170,7 @@ export const WATCHED = [
   'DAY0_SESSION_SECRET',
   'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
   'DAY0_PRIVATE_HOSTS',
+  'DAY0_GIT_HOSTS',
   'CONVEX_BIND_ADDR',
   'CONVEX_DASHBOARD_BIND_ADDR',
   'MODEL_BIND_ADDR',
@@ -625,6 +633,14 @@ export function settingsSection(v: Values): Section | undefined {
     lines.push(
       `${PRIVATE_HOSTS_VAR} is refused as it stands, and with it every credentialed MCP client`,
       `and every git source, GitHub and GitLab included: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    gitHostAllowlist(v[GIT_HOSTS_VAR]);
+  } catch (error) {
+    lines.push(
+      `${GIT_HOSTS_VAR} is refused as it stands, so no git source outside GitHub, GitLab and`,
+      `${PRIVATE_HOSTS_VAR} is read: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return lines.length === 0
@@ -1745,6 +1761,21 @@ export interface SetupReport {
   access?: Array<{ subject: string; check: AccessCheck['name']; status: Status }>;
 }
 
+/**
+ * The hosts a git hosts list names, a suffix as `*.suffix`; none when the list is refused, since
+ * the reader then clones from none of them.
+ */
+function listedGitHosts(value: string | undefined): string[] {
+  let list: PrivateHostAllowlist;
+  try {
+    list = gitHostAllowlist(value);
+  } catch {
+    // The settings section words the refusal; a refused list reaches no host.
+    return [];
+  }
+  return [...list.names, ...list.suffixes.map((suffix: string): string => `*${suffix}`)];
+}
+
 /** The host of an address that leaves this machine, or undefined for one that stays. */
 function outboundHost(url: string | undefined): string | undefined {
   if (!url?.trim() || isLoopback(url)) return undefined;
@@ -1807,6 +1838,17 @@ export function egressHosts(
     );
     add('github.com', 'a git documentation source on GitHub, when one is linked');
     add('gitlab.com', 'a git documentation source on GitLab, when one is linked');
+    add(
+      FEISHU_REGIONS.feishu,
+      'a Feishu documentation source in the Feishu region, when one is linked',
+    );
+    add(
+      FEISHU_REGIONS.lark,
+      'a Feishu documentation source in the Lark region, when one is linked',
+    );
+    for (const host of listedGitHosts(values[GIT_HOSTS_VAR])) {
+      add(host, `a git documentation source on a host ${GIT_HOSTS_VAR} lists`);
+    }
     add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
     add('huggingface.co', "the redactor's model snapshot, on its first start");
     add('pypi.org', "the redactor's wheels, on its first start");

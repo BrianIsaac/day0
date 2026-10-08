@@ -293,6 +293,15 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.calls).toContain('convex env remove DAY0_NANGO_SECRET_KEY');
   });
 
+  it('puts the git hosts list on the deployment, and clears it once the file drops it (14-F)', (): void => {
+    const listed = runSync([], 'DAY0_SURFACE_MODE=mock\nDAY0_GIT_HOSTS=gitee.com\n');
+    expect(listed.status).toBe(0);
+    expect(listed.calls).toContain('convex env set DAY0_GIT_HOSTS -- gitee.com');
+    const dropped = runSync(['DAY0_GIT_HOSTS=gitee.com'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_GIT_HOSTS');
+    expect(dropped.deployment).not.toContain('DAY0_GIT_HOSTS=gitee.com');
+  });
+
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {
     const configured = runSync(
       [],

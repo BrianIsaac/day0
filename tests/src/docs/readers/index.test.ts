@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FeishuReader } from '../../../../src/docs/readers/feishu';
 import { FolderReader } from '../../../../src/docs/readers/folder';
 import { GitReader } from '../../../../src/docs/readers/git';
 import { McpReader } from '../../../../src/docs/readers/mcp';
@@ -14,5 +15,9 @@ describe('documentation reader registry', (): void => {
 
   it('resolves the credential-bound MCP reader', (): void => {
     expect(readerFor('mcp')).toBeInstanceOf(McpReader);
+  });
+
+  it('resolves the Feishu reader, which reads as its app', (): void => {
+    expect(readerFor('feishu')).toBeInstanceOf(FeishuReader);
   });
 });

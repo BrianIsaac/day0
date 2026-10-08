@@ -1,5 +1,6 @@
 import type { DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
+import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
 import { McpReader } from './mcp';
@@ -24,5 +25,7 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
       return new UrlsReader();
     case 'mcp':
       return new McpReader();
+    case 'feishu':
+      return new FeishuReader();
   }
 }

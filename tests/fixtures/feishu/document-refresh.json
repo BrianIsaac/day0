@@ -1,0 +1,11 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "document": {
+      "document_id": "doxcnRefreshTile00000000000",
+      "revision_id": 7,
+      "title": "How to refresh the Looker pipeline tile"
+    }
+  }
+}

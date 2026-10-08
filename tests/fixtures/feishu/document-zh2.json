@@ -1,0 +1,11 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "document": {
+      "document_id": "doxcnOpsRules00000000000000",
+      "revision_id": 5,
+      "title": "运维规则"
+    }
+  }
+}

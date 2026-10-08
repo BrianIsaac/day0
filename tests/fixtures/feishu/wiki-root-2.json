@@ -1,0 +1,45 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "space_id": "7300000000000000001",
+        "node_token": "wikcnOpsRules00000000000000",
+        "obj_token": "doxcnOpsRules00000000000000",
+        "obj_type": "docx",
+        "parent_node_token": "",
+        "node_type": "origin",
+        "origin_node_token": "wikcnOpsRules00000000000000",
+        "origin_space_id": "7300000000000000001",
+        "has_child": false,
+        "title": "运维规则",
+        "obj_create_time": "1759226400",
+        "obj_edit_time": "1759323600",
+        "node_create_time": "1759226400",
+        "creator": "ou_fixture_creator",
+        "owner": "ou_fixture_owner",
+        "node_creator": "ou_fixture_creator"
+      },
+      {
+        "space_id": "7300000000000000001",
+        "node_token": "wikcnPayroll000000000000000",
+        "obj_token": "doxcnPayroll000000000000000",
+        "obj_type": "docx",
+        "parent_node_token": "",
+        "node_type": "origin",
+        "origin_node_token": "wikcnPayroll000000000000000",
+        "origin_space_id": "7300000000000000001",
+        "has_child": false,
+        "title": "Payroll",
+        "obj_create_time": "1759226400",
+        "obj_edit_time": "1759312800",
+        "node_create_time": "1759226400",
+        "creator": "ou_fixture_creator",
+        "owner": "ou_fixture_owner",
+        "node_creator": "ou_fixture_creator"
+      }
+    ],
+    "has_more": false
+  }
+}
