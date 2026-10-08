@@ -738,6 +738,15 @@ describe('keeping an agreement on a card', (): void => {
       .withIdentity(OWNER)
       .query(api.workingAgreements.listForAgent, { agentId: hired });
     expect(listed.map((row) => [row._id, row.status])).toEqual([[held?._id, 'refused']]);
+    // The hold is not the manager's to dismiss: dismissing it would bind the hire unchecked.
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.workingAgreements.dismiss, { agreementId: held!._id, agentId: hired }),
+    ).rejects.toThrow();
+    expect((await agreementsOf(harness)).find((row) => row._id === held?._id)?.status).toBe(
+      'refused',
+    );
     // A second approval of the same charter holds nothing twice.
     await harness.action(internal.workingAgreementActions.checkForCharter, {
       agentId: hired,

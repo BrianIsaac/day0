@@ -151,8 +151,12 @@ export function AgreementsCard({
   const checking = agreements.filter(
     (row) => awaitingCheck(row) && row.sourceType === 'manager-card',
   );
+  // A hold of an agreement for every employee for this one says why it does not bind this employee,
+  // whichever card kept it (W14-R15).
   const refused = agreements.filter(
-    (row) => row.status === 'refused' && row.sourceType === 'manager-card',
+    (row) =>
+      row.status === 'refused' &&
+      (row.sourceType === 'manager-card' || row.refusal?.reason === 'unchecked-for-employee'),
   );
   const waiting = agreements.filter(awaitingManager);
   const empty = inForce.length + checking.length + refused.length + waiting.length === 0;
@@ -301,22 +305,24 @@ export function AgreementsCard({
                   ? refusalSentence(row.refusal, employeeName, 'charter')
                   : REFUSED_WITHOUT_REASON}
               </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  variant="quiet"
-                  size="small"
-                  disabled={change.busy}
-                  aria-label={`Dismiss the refused agreement “${row.statement}”`}
-                  onClick={() =>
-                    change.run(() => onDismiss(row._id), {
-                      done: 'Dismissed.',
-                      refused: 'The refusal was not dismissed.',
-                    })
-                  }
-                >
-                  Dismiss
-                </Button>
-              </div>
+              {row.refusal?.reason === 'unchecked-for-employee' ? null : (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    variant="quiet"
+                    size="small"
+                    disabled={change.busy}
+                    aria-label={`Dismiss the refused agreement “${row.statement}”`}
+                    onClick={() =>
+                      change.run(() => onDismiss(row._id), {
+                        done: 'Dismissed.',
+                        refused: 'The refusal was not dismissed.',
+                      })
+                    }
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              )}
             </li>
           ))}
           {waiting.map((row) => (

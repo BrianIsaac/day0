@@ -188,6 +188,22 @@ describe('the Agreements card', (): void => {
     view.unmount();
   });
 
+  it('shows an agreement for every employee held for this one, whatever card kept it, and offers no Dismiss (second pass on W14-R15)', (): void => {
+    const held: AgreementView = {
+      ...refused,
+      _id: 'wa6' as Id<'workingAgreements'>,
+      statement: 'Name the vessel in every customer comment.',
+      sourceType: 'correction-promotion',
+      refusal: { reason: 'unchecked-for-employee' },
+    };
+    const view = card([held]);
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('“Name the vessel in every customer comment.”');
+    expect(text).toContain('It stays in effect for your other employees.');
+    expect(view.container.querySelector('[aria-label^="Dismiss"]')).toBeNull();
+    view.unmount();
+  });
+
   it('says a check that could not be had once it is stale, and offers Try again (W13-R30)', async (): Promise<void> => {
     vi.setSystemTime((checking.approvedAt ?? 0) + CHECK_STALE_MS + 1);
     const calls: string[] = [];

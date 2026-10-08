@@ -1271,7 +1271,10 @@ export const dismiss = mutation({
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
     const open = agreement.status === 'proposed' || agreement.status === 'refused';
-    if (!open) throw new ConvexError(AGREEMENT_MOVED_ON);
+    // A hold for one employee is not a refusal to set aside: dismissed, the agreement for every
+    // employee would bind that employee unchecked (the second pass on W14-R15).
+    const held = agreement.refusal?.reason === 'unchecked-for-employee';
+    if (!open || held) throw new ConvexError(AGREEMENT_MOVED_ON);
     await ctx.db.patch(agreement._id, { status: 'dismissed' });
     await appendEvent(ctx, {
       agentId: args.agentId,
