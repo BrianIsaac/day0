@@ -60,8 +60,21 @@ const SYSTEM_PROMPT_HEAD = [
   '  - Describe review and approval according to the live action mode; never assume the supervised mode.',
   '  - 2-5 short concrete steps.',
   `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
-  "  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.",
 ];
+
+/** How a plan rests on what it was shown, after the line that names where each part sits. */
+const EVIDENCE_RULE =
+  'Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.';
+
+/**
+ * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
+ * candidate and the surfaces after it (wave 14, 14-R); the mock line is the hosted demo's, pinned
+ * byte for byte, where both follow the candidate.
+ */
+const EVIDENCE_LINE: Readonly<Record<SurfaceMode, string>> = {
+  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE}`,
+  mock: `  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. ${EVIDENCE_RULE}`,
+};
 
 /**
  * The scope-not-gate invariant, real mode only: the mock planner text is the
@@ -145,6 +158,7 @@ export function planSystemPrompt(
 ): string {
   return [
     ...SYSTEM_PROMPT_HEAD,
+    EVIDENCE_LINE[surfaceMode],
     ...(surfaceMode === 'real'
       ? [
           ...SCOPE_NOT_GATE_PLANNER,
