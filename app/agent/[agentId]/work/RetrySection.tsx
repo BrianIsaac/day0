@@ -29,6 +29,8 @@ export type RetryMode =
   | { readonly kind: 'send-back' }
   | { readonly kind: 'answer'; readonly question: string }
   | { readonly kind: 'retry-failed'; readonly rejected: boolean }
+  /** A run that stopped because documentation its plan cited has since changed: Retry redrafts. */
+  | { readonly kind: 'cites-changed' }
   | { readonly kind: 'cancelled'; readonly hadPlan: boolean }
   | { readonly kind: 'take'; readonly waived: 'scope' | 'quality-fit' }
   | { readonly kind: 'skip-retry' }
@@ -72,6 +74,10 @@ export function retryWhy(
       return mode.rejected
         ? `${capitalised(employeeName)} runs the approved plan again, reading your note as direction when you write one and your reason when you do not. A note can change what is proposed; it cannot approve anything, and ${heldAgain}.`
         : `Retry runs the item again, with your note when you write one; ${heldAgain}.`;
+    case 'cites-changed':
+      return autonomous
+        ? `Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; with autonomous actions on, the plan runs once it is drafted, and ${heldAgain}.`
+        : 'Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; the plan comes back to you before anything runs.';
     case 'cancelled':
       return mode.hadPlan
         ? autonomous
@@ -262,6 +268,7 @@ export function RetrySection({
     mode.kind === 'send-back' ||
     mode.kind === 'answer' ||
     mode.kind === 'retry-failed' ||
+    mode.kind === 'cites-changed' ||
     (mode.kind === 'cancelled' && mode.hadPlan);
   const blocked = reconciliation.needed && !reconciliation.recorded;
   // A finished item is sent back only with a note, so its checklist waits

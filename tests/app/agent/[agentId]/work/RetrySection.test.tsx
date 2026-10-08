@@ -24,6 +24,7 @@ const MODES: RetryMode[] = [
   { kind: 'take', waived: 'quality-fit' },
   { kind: 'skip-retry' },
   { kind: 'parked' },
+  { kind: 'cites-changed' },
 ];
 
 describe('what each settling control does', (): void => {
@@ -47,6 +48,12 @@ describe('what each settling control does', (): void => {
     );
     expect(retryWhy({ kind: 'cancelled', hadPlan: true }, 'Mira', false)).toBe(
       'Retry drafts a new plan from your note when you write one, and from your reason when you do not; the plan comes back to you before anything runs.',
+    );
+    expect(retryWhy({ kind: 'cites-changed' }, 'Mira', false)).toBe(
+      'Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; the plan comes back to you before anything runs.',
+    );
+    expect(retryWhy({ kind: 'cites-changed' }, 'Mira', true)).toBe(
+      'Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; with autonomous actions on, the plan runs once it is drafted, and when it finishes, the writes the gate allows apply on their own, and any it holds wait for you.',
     );
     expect(retryWhy({ kind: 'parked' }, 'Mira', false)).not.toContain('Retry sends it back');
     expect(retryWhy({ kind: 'send-back' }, 'Mira', false, 'mock')).toContain(
